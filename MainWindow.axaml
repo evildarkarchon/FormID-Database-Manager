@@ -1,0 +1,117 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="using:FormID_Database_Manager"
+        xmlns:models="using:FormID_Database_Manager.Models"
+        x:Class="FormID_Database_Manager.MainWindow"
+        Title="FormID Database Manager" Height="800" Width="1200" MinHeight="600" MinWidth="800"
+        TransparencyLevelHint="AcrylicBlur"
+        Background="Transparent"
+        ExtendClientAreaToDecorationsHint="True">
+
+    <Panel>
+        <ExperimentalAcrylicBorder IsHitTestVisible="False">
+            <ExperimentalAcrylicBorder.Material>
+                <ExperimentalAcrylicMaterial
+                    BackgroundSource="Digger"
+                    TintColor="Black"
+                    TintOpacity="1"
+                    MaterialOpacity="0.65" />
+            </ExperimentalAcrylicBorder.Material>
+        </ExperimentalAcrylicBorder>
+
+        <Grid RowDefinitions="30,*">
+            <!-- Title Bar -->
+            <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto">
+                <TextBlock Text="FormID Database Manager"
+                           VerticalAlignment="Center"
+                           Margin="10,0,0,0" />
+            </Grid>
+
+            <!-- Main Content -->
+            <Grid Grid.Row="1" Margin="10" RowDefinitions="Auto,Auto,Auto,Auto,Auto,*,Auto">
+                <!-- Game Directory Selection -->
+                <DockPanel Grid.Row="0">
+                    <TextBlock Text="Game Directory:" VerticalAlignment="Center" />
+                    <Button Content="Select Directory"
+                            DockPanel.Dock="Right"
+                            Click="SelectGameDirectory_Click" />
+                    <TextBox x:Name="GameDirectoryTextBox"
+                             IsReadOnly="True"
+                             Margin="5" />
+                </DockPanel>
+
+                <!-- Database Selection -->
+                <DockPanel Grid.Row="1">
+                    <TextBlock Text="Database File:" VerticalAlignment="Center" />
+                    <Button Content="Select Database"
+                            DockPanel.Dock="Right"
+                            Click="OnSelectDatabase_Click" />
+                    <TextBox x:Name="DatabasePathTextBox"
+                             IsReadOnly="True"
+                             Margin="5" />
+                </DockPanel>
+
+                <!-- Game Release Info -->
+                <StackPanel Grid.Row="2" Orientation="Horizontal">
+                    <TextBlock Text="Detected Game:" VerticalAlignment="Center" />
+                    <TextBlock x:Name="GameReleaseTextBlock"
+                               Margin="5"
+                               VerticalAlignment="Center" />
+                </StackPanel>
+
+                <!-- Plugin Selection -->
+                <Grid Grid.Row="3" ColumnDefinitions="*,auto" Margin="0,10">
+                    <ScrollViewer Grid.Column="0" MaxHeight="355">
+                        <ItemsControl x:Name="PluginList">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate DataType="{x:Type models:PluginListItem}">
+                                    <CheckBox Content="{Binding Path=Name}"
+                                              IsChecked="{Binding Path=IsSelected}"
+                                              Margin="2" />
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+                    <StackPanel Grid.Column="1" Margin="5,0">
+                        <Button Content="Select All"
+                                Click="SelectAll_Click"
+                                Margin="0,2" />
+                        <Button Content="Select None"
+                                Click="SelectNone_Click"
+                                Margin="0,2" />
+                    </StackPanel>
+                </Grid>
+
+                <!-- Mode Selection -->
+                <StackPanel Grid.Row="4" Orientation="Horizontal" Margin="0,10">
+                    <CheckBox x:Name="UpdateModeCheckBox"
+                              Content="Update Mode (replaces existing entries)" />
+                    <CheckBox x:Name="VerboseCheckBox"
+                              Content="Verbose Output"
+                              Margin="10,0" />
+                    <CheckBox x:Name="DryRunCheckBox"
+                              Content="Dry Run (preview changes)" />
+                    <CheckBox x:Name="AdvancedModeCheckBox"
+                              Content="Show Base Game/DLC Files"
+                              Margin="10,0"
+                              IsCheckedChanged="AdvancedMode_CheckedChanged" />
+                </StackPanel>
+
+                <!-- Log Area -->
+                <TextBox x:Name="LogTextBox"
+                         Grid.Row="5"
+                         IsReadOnly="True"
+                         TextWrapping="Wrap"
+                         AcceptsReturn="True"
+                         Margin="5" />
+
+                <!-- Process Button -->
+                <Button Grid.Row="6"
+                        Content="Process FormIDs"
+                        Click="ProcessFormIds_Click"
+                        HorizontalAlignment="Stretch"
+                        Margin="5" />
+            </Grid>
+        </Grid>
+    </Panel>
+</Window>
