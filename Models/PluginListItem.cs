@@ -3,7 +3,7 @@ using System.Runtime.CompilerServices;
 
 namespace FormID_Database_Manager.Models;
 
-public class PluginListItem : INotifyPropertyChanged
+public class PluginListItem : INotifyPropertyChanged, IDataErrorInfo
 {
     private string _name = string.Empty;
     private bool _isSelected;
@@ -30,6 +30,23 @@ public class PluginListItem : INotifyPropertyChanged
             {
                 _isSelected = value;
                 OnPropertyChanged();
+            }
+        }
+    }
+
+    // IDataErrorInfo implementation to prevent error states
+    public string Error => null!;
+
+    public string this[string columnName]
+    {
+        get
+        {
+            switch (columnName)
+            {
+                case nameof(Name):
+                    return (string.IsNullOrWhiteSpace(Name) ? "Name cannot be empty" : null) ?? string.Empty;
+                default:
+                    return null!;
             }
         }
     }

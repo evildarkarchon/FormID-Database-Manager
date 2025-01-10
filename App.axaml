@@ -1,7 +1,13 @@
 <Application xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="using:FormID_Database_Manager"
              x:Class="FormID_Database_Manager.App"
              RequestedThemeVariant="Dark">
+    <Application.Resources>
+        <!-- Boolean converter for error messages visibility -->
+        <local:BooleanConverter x:Key="BooleanConverter" />
+    </Application.Resources>
+
     <Application.Styles>
         <FluentTheme DensityStyle="Normal" />
     </Application.Styles>

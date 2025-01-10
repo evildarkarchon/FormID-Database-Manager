@@ -1,14 +1,11 @@
 using Avalonia.Controls;
 using Avalonia.Interactivity;
-using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using FormID_Database_Manager.Services;
 using FormID_Database_Manager.ViewModels;
 using FormID_Database_Manager.Models;
 using Mutagen.Bethesda;
-using Mutagen.Bethesda.Environments;
 using System;
-using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
@@ -18,7 +15,9 @@ namespace FormID_Database_Manager;
 public partial class MainWindow : Window
 {
     private readonly MainWindowViewModel _viewModel;
+    private readonly WindowManager _windowManager;
     private readonly GameDetectionService _gameDetectionService;
+    private readonly PluginListManager _pluginListManager;
     private readonly DatabaseService _databaseService;
     private readonly PluginProcessingService _pluginProcessingService;
 
@@ -29,151 +28,70 @@ public partial class MainWindow : Window
         _viewModel = new MainWindowViewModel();
         DataContext = _viewModel;
 
+        _windowManager = new WindowManager(StorageProvider, _viewModel);
         _gameDetectionService = new GameDetectionService();
+        _pluginListManager = new PluginListManager(_gameDetectionService, _viewModel);
         _databaseService = new DatabaseService();
-        _pluginProcessingService = new PluginProcessingService(_databaseService, Log);
-    }
-
-    private void Log(string message)
-    {
-        if (Dispatcher.UIThread.CheckAccess())
-        {
-            LogTextBox.Text += $"{message}\n";
-            LogTextBox.CaretIndex = LogTextBox.Text?.Length ?? 0;
-        }
-        else
-        {
-            Dispatcher.UIThread.Post(() =>
-            {
-                LogTextBox.Text += $"{message}\n";
-                LogTextBox.CaretIndex = LogTextBox.Text?.Length ?? 0;
-            });
-        }
+        _pluginProcessingService = new PluginProcessingService(_databaseService, _viewModel);
     }
 
     private async void SelectGameDirectory_Click(object sender, RoutedEventArgs e)
     {
-        await HandleSelectGameDirectory();
-    }
+        var path = await _windowManager.SelectGameDirectory();
+        if (string.IsNullOrEmpty(path)) return;
 
-    private async Task HandleSelectGameDirectory()
-    {
-        try
+        _viewModel.GameDirectory = path;
+        GameDirectoryTextBox.Text = path;
+
+        var detectedGame = await _gameDetectionService.DetectGame(path);
+        if (detectedGame.HasValue)
         {
-            var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
-            {
-                Title = "Select Game Directory",
-                AllowMultiple = false
-            });
+            _viewModel.DetectedGame = detectedGame.ToString();
+            GameReleaseTextBlock.Text = detectedGame.ToString();
+            await _pluginListManager.RefreshPluginList(
+                path,
+                detectedGame.Value,
+                _viewModel.Plugins,
+                AdvancedModeCheckBox.IsChecked ?? false);
 
-            if (!folders.Any()) return;
-
-            var path = folders[0].Path.LocalPath;
-            _viewModel.GameDirectory = path;
-            GameDirectoryTextBox.Text = path;
-
-            var detectedGame = await _gameDetectionService.DetectGame(path);
-            if (detectedGame.HasValue)
-            {
-                _viewModel.DetectedGame = detectedGame.ToString();
-                GameReleaseTextBlock.Text = detectedGame.ToString();
-                await RefreshPluginList(detectedGame.Value);
-            }
-            else
-            {
-                Log("Error: Could not detect game from directory. Please ensure this is a valid game Data directory.");
-            }
+            PluginList.ItemsSource = null;
+            PluginList.ItemsSource = _viewModel.Plugins;
         }
-        catch (Exception ex)
+        else
         {
-            Log($"Error selecting game directory: {ex.Message}");
+            _viewModel.AddErrorMessage(
+                "Could not detect game from directory. Please ensure this is a valid game Data directory.");
         }
     }
 
     private async void OnSelectDatabase_Click(object sender, RoutedEventArgs e)
     {
-        try
-        {
-            var fileTypeChoices = new List<FilePickerFileType>
-            {
-                new("Database Files")
-                {
-                    Patterns = new[] { "*.db" }
-                }
-            };
+        var path = await _windowManager.SelectDatabaseFile();
+        if (string.IsNullOrEmpty(path)) return;
 
-            var options = new FilePickerSaveOptions
-            {
-                Title = "Select Database Location",
-                DefaultExtension = "db",
-                SuggestedFileName = "FormIDs.db",
-                FileTypeChoices = fileTypeChoices
-            };
-
-            var file = await StorageProvider.SaveFilePickerAsync(options);
-
-            if (file == null) return;
-
-            _viewModel.DatabasePath = file.Path.LocalPath;
-            DatabasePathTextBox.Text = file.Path.LocalPath;
-        }
-        catch (Exception ex)
-        {
-            Log($"Error selecting database: {ex.Message}");
-        }
+        _viewModel.DatabasePath = path;
+        DatabasePathTextBox.Text = path;
     }
 
-    private async Task RefreshPluginList(GameRelease gameRelease)
+    private async void OnSelectFormIdList_Click(object sender, RoutedEventArgs e)
     {
-        try
-        {
-            var env = GameEnvironment.Typical.Construct(gameRelease);
-            var loadOrder = env.LoadOrder.ListedOrder;
-            var basePlugins = _gameDetectionService.GetBaseGamePlugins(gameRelease);
-            var showAdvanced = AdvancedModeCheckBox.IsChecked ?? false;
+        var path = await _windowManager.SelectFormIdListFile();
+        if (string.IsNullOrEmpty(path)) return;
 
-            _viewModel.Plugins.Clear();
-            foreach (var plugin in loadOrder)
-            {
-                if (!showAdvanced && basePlugins.Contains(plugin.ModKey.FileName))
-                    continue;
-
-                _viewModel.Plugins.Add(new PluginListItem
-                {
-                    Name = plugin.ModKey.FileName,
-                    IsSelected = false
-                });
-            }
-
-            PluginList.ItemsSource = null;
-            PluginList.ItemsSource = _viewModel.Plugins;
-            Log($"Found {_viewModel.Plugins.Count} plugins");
-        }
-        catch (Exception ex)
-        {
-            Log($"Error loading plugin list: {ex.Message}");
-            Log("Make sure you selected the game's Data directory (e.g., 'Skyrim Special Edition\\Data')");
-        }
+        _viewModel.FormIdListPath = path;
+        FormIdListPathTextBox.Text = path;
     }
 
     private void SelectAll_Click(object sender, RoutedEventArgs e)
     {
-        foreach (var plugin in _viewModel.Plugins)
-        {
-            plugin.IsSelected = true;
-        }
-
+        _pluginListManager.SelectAll(_viewModel.Plugins);
         PluginList.ItemsSource = null;
         PluginList.ItemsSource = _viewModel.Plugins;
     }
 
     private void SelectNone_Click(object sender, RoutedEventArgs e)
     {
-        foreach (var plugin in _viewModel.Plugins)
-        {
-            plugin.IsSelected = false;
-        }
-
+        _pluginListManager.SelectNone(_viewModel.Plugins);
         PluginList.ItemsSource = null;
         PluginList.ItemsSource = _viewModel.Plugins;
     }
@@ -182,7 +100,14 @@ public partial class MainWindow : Window
     {
         if (!string.IsNullOrEmpty(_viewModel.GameDirectory) && !string.IsNullOrEmpty(_viewModel.DetectedGame))
         {
-            await RefreshPluginList(Enum.Parse<GameRelease>(_viewModel.DetectedGame));
+            await _pluginListManager.RefreshPluginList(
+                _viewModel.GameDirectory,
+                Enum.Parse<GameRelease>(_viewModel.DetectedGame),
+                _viewModel.Plugins,
+                AdvancedModeCheckBox.IsChecked ?? false);
+
+            PluginList.ItemsSource = null;
+            PluginList.ItemsSource = _viewModel.Plugins;
         }
     }
 
@@ -190,60 +115,102 @@ public partial class MainWindow : Window
     {
         if (_viewModel.IsProcessing)
         {
-            Log("Already processing...");
+            _viewModel.ProgressStatus = "Cancelling...";
+            _pluginProcessingService.CancelProcessing();
             return;
         }
 
+        var processButton = (Button)sender;
+
         try
         {
-            var processButton = (Button)sender;
-            processButton.Content = "Cancel Processing";
-            _viewModel.IsProcessing = true;
-
-            var selectedPlugins = _viewModel.Plugins.Where(p => p.IsSelected).ToList();
-            if (!selectedPlugins.Any())
+            // Get all UI values on the UI thread
+            var parameters = await Dispatcher.UIThread.InvokeAsync(() =>
             {
-                Log("No plugins selected");
+                processButton.Content = "Cancel Processing";
+                _viewModel.IsProcessing = true;
+                _viewModel.ProgressValue = 0;
+                _viewModel.ProgressStatus = "Initializing...";
+                _viewModel.ErrorMessages.Clear(); // Clear previous error messages
+
+                return new ProcessingParameters
+                {
+                    GameDirectory = _viewModel.GameDirectory,
+                    DatabasePath = _viewModel.DatabasePath,
+                    GameRelease = Enum.Parse<GameRelease>(_viewModel.DetectedGame),
+                    SelectedPlugins = _viewModel.Plugins.Where(p => p.IsSelected).ToList(),
+                    UpdateMode = UpdateModeCheckBox.IsChecked ?? false,
+                    FormIdListPath = _viewModel.FormIdListPath
+                };
+            });
+
+            // Validate parameters
+            var usingTextFile = !string.IsNullOrEmpty(parameters.FormIdListPath);
+
+            if (!usingTextFile && string.IsNullOrEmpty(parameters.GameDirectory))
+            {
+                _viewModel.AddErrorMessage("Game directory must be specified when processing plugins");
                 return;
             }
 
-            var dbPath = _viewModel.DatabasePath;
-            if (string.IsNullOrEmpty(dbPath))
+            if (!usingTextFile && !parameters.SelectedPlugins.Any())
             {
-                dbPath = Path.Combine(
-                    Directory.GetCurrentDirectory(),
-                    $"{_viewModel.DetectedGame}.db");
-                _viewModel.DatabasePath = dbPath;
+                _viewModel.AddErrorMessage("No plugins selected");
+                return;
             }
 
-            var progress = new Progress<string>(message => Log(message));
+            // Validate game type is selected
+            if (string.IsNullOrEmpty(_viewModel.DetectedGame))
+            {
+                _viewModel.AddErrorMessage("Game type must be specified. Please select a game directory first.");
+                return;
+            }
+
+            // Set database path if not specified
+            if (string.IsNullOrEmpty(parameters.DatabasePath))
+            {
+                parameters.DatabasePath = Path.Combine(
+                    Directory.GetCurrentDirectory(),
+                    $"{_viewModel.DetectedGame}.db");
+
+                await Dispatcher.UIThread.InvokeAsync(() =>
+                {
+                    _viewModel.DatabasePath = parameters.DatabasePath;
+                    DatabasePathTextBox.Text = parameters.DatabasePath;
+                });
+            }
+
+            var progress = new Progress<(string Message, double? Value)>(update =>
+            {
+                _viewModel.ProgressStatus = update.Message;
+                if (update.Value.HasValue)
+                {
+                    _viewModel.ProgressValue = update.Value.Value;
+                }
+            });
 
             try
             {
-                await _pluginProcessingService.ProcessPlugins(
-                    _viewModel.GameDirectory,
-                    dbPath,
-                    Enum.Parse<GameRelease>(_viewModel.DetectedGame),
-                    selectedPlugins,
-                    UpdateModeCheckBox.IsChecked ?? false,
-                    VerboseCheckBox.IsChecked ?? false,
-                    DryRunCheckBox.IsChecked ?? false,
-                    progress);
+                // Run the processing in a background thread
+                await Task.Run(async () => { await _pluginProcessingService.ProcessPlugins(parameters, progress); });
             }
             catch (OperationCanceledException)
             {
-                Log("Processing cancelled by user.");
+                _viewModel.ProgressStatus = "Processing cancelled by user.";
             }
         }
         catch (Exception ex)
         {
-            Log($"Error processing FormIDs: {ex.Message}");
+            _viewModel.AddErrorMessage($"Error processing FormIDs: {ex.Message}");
         }
         finally
         {
-            _viewModel.IsProcessing = false;
-            var processButton = (Button)sender;
-            processButton.Content = "Process FormIDs";
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                _viewModel.IsProcessing = false;
+                _viewModel.ProgressStatus = string.Empty;
+                processButton.Content = "Process FormIDs";
+            });
         }
     }
 }
