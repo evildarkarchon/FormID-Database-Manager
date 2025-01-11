@@ -18,6 +18,8 @@ public class MainWindowViewModel : INotifyPropertyChanged
     private double _progressValue;
     private string _progressStatus = string.Empty;
     private ObservableCollection<PluginListItem> _plugins = new();
+    private ObservableCollection<PluginListItem> _filteredPlugins = new();
+    private string _pluginFilter = string.Empty;
     private ObservableCollection<string> _errorMessages = new();
     private ObservableCollection<string> _informationMessages = new();
 
@@ -66,7 +68,31 @@ public class MainWindowViewModel : INotifyPropertyChanged
     public ObservableCollection<PluginListItem> Plugins
     {
         get => _plugins;
-        set => SetProperty(ref _plugins, value);
+        set
+        {
+            if (SetProperty(ref _plugins, value))
+            {
+                ApplyFilter();
+            }
+        }
+    }
+
+    public ObservableCollection<PluginListItem> FilteredPlugins
+    {
+        get => _filteredPlugins;
+        private set => SetProperty(ref _filteredPlugins, value);
+    }
+
+    public string PluginFilter
+    {
+        get => _pluginFilter;
+        set
+        {
+            if (SetProperty(ref _pluginFilter, value))
+            {
+                ApplyFilter();
+            }
+        }
     }
 
     public ObservableCollection<string> ErrorMessages
@@ -83,24 +109,35 @@ public class MainWindowViewModel : INotifyPropertyChanged
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
-    // Method to add error messages with optional limit to prevent overflow
+    private void ApplyFilter()
+    {
+        if (string.IsNullOrWhiteSpace(_pluginFilter))
+        {
+            FilteredPlugins = new ObservableCollection<PluginListItem>(_plugins);
+        }
+        else
+        {
+            var filteredList = _plugins
+                .Where(p => p.Name.Contains(_pluginFilter, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            FilteredPlugins = new ObservableCollection<PluginListItem>(filteredList);
+        }
+    }
+
     public void AddErrorMessage(string message, int maxMessages = 10)
     {
         ErrorMessages.Add(message);
 
-        // Optionally limit the number of error messages
         if (ErrorMessages.Count > maxMessages)
         {
             ErrorMessages.RemoveAt(0);
         }
     }
 
-    // Method to add information messages
     public void AddInformationMessage(string message, int maxMessages = 10)
     {
         InformationMessages.Add(message);
 
-        // Optionally limit the number of information messages
         if (InformationMessages.Count > maxMessages)
         {
             InformationMessages.RemoveAt(0);

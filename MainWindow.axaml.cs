@@ -53,9 +53,6 @@ public partial class MainWindow : Window
                 detectedGame.Value,
                 _viewModel.Plugins,
                 AdvancedModeCheckBox.IsChecked ?? false);
-
-            PluginList.ItemsSource = null;
-            PluginList.ItemsSource = _viewModel.Plugins;
         }
         else
         {

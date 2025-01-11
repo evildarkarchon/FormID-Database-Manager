@@ -5,7 +5,7 @@
         xmlns:vm="using:FormID_Database_Manager.ViewModels"
         x:Class="FormID_Database_Manager.MainWindow"
         x:DataType="vm:MainWindowViewModel"
-        Title="FormID Database Manager" Height="650" Width="1200" MinHeight="600" MinWidth="800"
+        Title="FormID Database Manager" Height="750" Width="1200" MinHeight="600" MinWidth="800"
         TransparencyLevelHint="AcrylicBlur"
         Background="Transparent"
         ExtendClientAreaToDecorationsHint="True">
@@ -30,7 +30,7 @@
             </Grid>
 
             <!-- Main Content -->
-            <Grid Grid.Row="1" Margin="10,10,10,0" RowDefinitions="Auto,Auto,Auto,Auto,Auto,*,Auto,Auto,Auto,Auto">
+            <Grid Grid.Row="1" Margin="10,10,10,0" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,*,Auto,Auto,Auto,Auto">
                 <!-- Game Directory Selection -->
                 <DockPanel Grid.Row="0">
                     <TextBlock Text="Game Directory:" VerticalAlignment="Center" />
@@ -76,11 +76,20 @@
                                Text="{Binding DetectedGame}" />
                 </StackPanel>
 
+                <!-- Plugin Filter -->
+                <DockPanel Grid.Row="4" Margin="0,10,0,5">
+                    <TextBlock Text="Filter Plugins:" VerticalAlignment="Center" />
+                    <TextBox Text="{Binding PluginFilter}"
+                             Margin="5,0,0,0"
+                             Watermark="Type to filter plugins..." />
+                </DockPanel>
+
                 <!-- Plugin Selection -->
-                <Grid Grid.Row="4" Grid.RowSpan="2" ColumnDefinitions="*,Auto" Margin="0,10,0,0">
+                <Grid Grid.Row="5" Grid.RowSpan="2" ColumnDefinitions="*,Auto" Margin="0,5,0,0">
                     <Border Grid.Column="0" BorderBrush="Gray" BorderThickness="1" Margin="0,0,5,0">
                         <ScrollViewer>
-                            <ItemsControl x:Name="PluginList">
+                            <ItemsControl x:Name="PluginList"
+                                          ItemsSource="{Binding FilteredPlugins}">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate DataType="{x:Type models:PluginListItem}">
                                         <CheckBox Content="{Binding Path=Name}"
@@ -102,7 +111,7 @@
                 </Grid>
 
                 <!-- Mode Selection -->
-                <StackPanel Grid.Row="6" Orientation="Horizontal" Margin="0,10">
+                <StackPanel Grid.Row="7" Orientation="Horizontal" Margin="0,10">
                     <CheckBox x:Name="UpdateModeCheckBox"
                               Content="Update Mode (replaces existing entries)" />
                     <CheckBox x:Name="AdvancedModeCheckBox"
@@ -112,7 +121,7 @@
                 </StackPanel>
 
                 <!-- Error Messages Section -->
-                <Border Grid.Row="7"
+                <Border Grid.Row="8"
                         Background="#FF4444"
                         Margin="0,5"
                         IsVisible="{Binding ErrorMessages.Count, Converter={StaticResource BooleanConverter}}">
@@ -131,7 +140,7 @@
                 </Border>
 
                 <!-- Information Messages Section -->
-                <Border Grid.Row="8"
+                <Border Grid.Row="9"
                         Background="#4CAF50"
                         Margin="0,5"
                         IsVisible="{Binding InformationMessages.Count, Converter={StaticResource BooleanConverter}}">
@@ -150,7 +159,7 @@
                 </Border>
 
                 <!-- Progress and Process Button Section -->
-                <Grid Grid.Row="9" RowDefinitions="Auto,Auto" VerticalAlignment="Bottom">
+                <Grid Grid.Row="10" RowDefinitions="Auto,Auto" VerticalAlignment="Bottom">
                     <!-- Progress Section -->
                     <Grid Grid.Row="0" Margin="0,10" IsVisible="{Binding IsProcessing}">
                         <Grid.RowDefinitions>

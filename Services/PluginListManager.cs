@@ -38,7 +38,9 @@ public class PluginListManager
                 : Path.Combine(gameDirectory, "Data");
 
             plugins.Clear();
+            _viewModel.FilteredPlugins.Clear();
             int nonBasePluginCount = 0;
+
             foreach (var plugin in loadOrder)
             {
                 var pluginFileName = plugin.ModKey.FileName;
@@ -60,13 +62,20 @@ public class PluginListManager
                 nonBasePluginCount++;
             }
 
-            // Add a standard informational message instead of an error
+            // Initialize filtered plugins with all plugins
+            foreach (var plugin in plugins)
+            {
+                _viewModel.FilteredPlugins.Add(plugin);
+            }
+
+            // Add a standard informational message
             _viewModel.AddInformationMessage($"Loaded {nonBasePluginCount} non-base game plugins");
         }
         catch (Exception ex)
         {
-            // Clear the plugins list in case of error
+            // Clear both collections in case of error
             plugins.Clear();
+            _viewModel.FilteredPlugins.Clear();
 
             // Provide a clear error message
             _viewModel.AddErrorMessage($"Failed to load plugins: {ex.Message}");
