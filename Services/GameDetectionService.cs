@@ -35,18 +35,31 @@ public class GameDetectionService
         {
             try
             {
-                // Check if this is a data directory or the game root directory
-                var dataPath = Path.GetFileName(gameDirectory).Equals("Data", StringComparison.OrdinalIgnoreCase)
-                    ? gameDirectory
-                    : Path.Combine(gameDirectory, "Data");
-
-                // Check for game-specific master files
-                if (File.Exists(Path.Combine(dataPath, "Skyrim.esm")))
-                    return GameRelease.SkyrimSE;
-                if (File.Exists(Path.Combine(dataPath, "Fallout4.esm")))
-                    return GameRelease.Fallout4;
-                if (File.Exists(Path.Combine(dataPath, "Starfield.esm")))
-                    return GameRelease.Starfield;
+                // If this is already a data directory, use it directly
+                if (Path.GetFileName(gameDirectory).Equals("Data", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Check for game-specific master files in the current directory
+                    if (File.Exists(Path.Combine(gameDirectory, "Skyrim.esm")))
+                        return GameRelease.SkyrimSE;
+                    if (File.Exists(Path.Combine(gameDirectory, "Fallout4.esm")))
+                        return GameRelease.Fallout4;
+                    if (File.Exists(Path.Combine(gameDirectory, "Starfield.esm")))
+                        return GameRelease.Starfield;
+                }
+                else
+                {
+                    // Check in the Data subdirectory
+                    var dataPath = Path.Combine(gameDirectory, "Data");
+                    if (Directory.Exists(dataPath))
+                    {
+                        if (File.Exists(Path.Combine(dataPath, "Skyrim.esm")))
+                            return GameRelease.SkyrimSE;
+                        if (File.Exists(Path.Combine(dataPath, "Fallout4.esm")))
+                            return GameRelease.Fallout4;
+                        if (File.Exists(Path.Combine(dataPath, "Starfield.esm")))
+                            return GameRelease.Starfield;
+                    }
+                }
             }
             catch (Exception)
             {

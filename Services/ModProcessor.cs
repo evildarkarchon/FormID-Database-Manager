@@ -22,6 +22,18 @@ public class ModProcessor
     private readonly Action<string> _errorCallback;
     private const int BatchSize = 1000;
 
+    // HashSet for O(1) lookups of error patterns to ignore
+    private static readonly HashSet<string> IgnorableErrorPatterns = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "KSIZ",
+        "KWDA",
+        "Expected EDID",
+        "List with a non zero counter",
+        "Unexpected record type",
+        "Failed to parse record header",
+        "Object reference not set to an instance"
+    };
+
     public ModProcessor(DatabaseService databaseService, Action<string> errorCallback)
     {
         _databaseService = databaseService;
@@ -37,9 +49,10 @@ public class ModProcessor
         bool updateMode,
         CancellationToken cancellationToken)
     {
-        await using var transaction = await conn.BeginTransactionAsync(cancellationToken);
+        SQLiteTransaction? transaction = null;
         try
         {
+            transaction = conn.BeginTransaction();
             var plugin = loadOrder.FirstOrDefault(p =>
                 string.Equals(p.ModKey.FileName, pluginItem.Name, StringComparison.OrdinalIgnoreCase));
 
@@ -69,12 +82,12 @@ public class ModProcessor
 
             try
             {
+                bool success = false;
                 await Task.Run(() =>
                 {
-                    IModGetter? mod;
                     try
                     {
-                        mod = gameRelease switch
+                        IModGetter? mod = gameRelease switch
                         {
                             GameRelease.SkyrimSE => SkyrimMod.CreateFromBinaryOverlay(pluginPath,
                                 SkyrimRelease.SkyrimSE),
@@ -86,27 +99,29 @@ public class ModProcessor
                         };
 
                         ProcessModRecords(conn, gameRelease, pluginItem.Name, mod, cancellationToken);
+                        success = true;
                     }
                     catch (Exception ex)
                     {
                         _errorCallback($"Error processing {pluginItem.Name}: {ex.Message}");
-                        throw;
+                        transaction?.Rollback();
+                        success = false;
                     }
                 }, cancellationToken);
-            }
-            catch (Exception ex)
-            {
-                _errorCallback($"Error processing {pluginItem.Name}: {ex.Message}");
-                await transaction.RollbackAsync(cancellationToken);
-                throw;
-            }
 
-            await transaction.CommitAsync(cancellationToken);
+                if (success)
+                {
+                    transaction?.Commit();
+                }
+            }
+            catch (Exception)
+            {
+                transaction?.Rollback();
+            }
         }
-        catch (Exception)
+        finally
         {
-            await transaction.RollbackAsync(cancellationToken);
-            throw;
+            transaction?.Dispose();
         }
     }
 
@@ -120,63 +135,89 @@ public class ModProcessor
         var batch = new List<(string formId, string entry)>(BatchSize);
         var errorCount = 0;
         var processedCount = 0;
+        var skippedRecords = 0;
 
-        try
+        var majorRecords = mod.EnumerateMajorRecords();
+
+        foreach (var record in majorRecords)
         {
-            var majorRecords = mod.EnumerateMajorRecords().ToList();
-            var totalRecords = majorRecords.Count;
+            cancellationToken.ThrowIfCancellationRequested();
 
-            foreach (var record in majorRecords)
+            try
             {
-                cancellationToken.ThrowIfCancellationRequested();
-
+                string formId;
                 try
                 {
-                    var formId = record.FormKey.ID.ToString("X6");
-                    string entry;
+                    formId = record.FormKey.ID.ToString("X6");
+                }
+                catch (Exception)
+                {
+                    skippedRecords++;
+                    continue;
+                }
 
-                    try
+                string entry;
+                try
+                {
+                    if (!string.IsNullOrEmpty(record.EditorID))
+                    {
+                        entry = record.EditorID;
+                    }
+                    else
                     {
                         entry = GetRecordName(record);
                     }
-                    catch (Exception)
-                    {
-                        errorCount++;
-                        entry = $"[{record.GetType().Name}_{formId}]";
-                    }
+                }
+                catch (Exception)
+                {
+                    errorCount++;
+                    entry = $"[{record.GetType().Name}_{formId}]";
+                }
 
-                    batch.Add((formId, entry));
-                    processedCount++;
+                batch.Add((formId, entry));
+                processedCount++;
 
-                    if (batch.Count >= BatchSize)
+                if (batch.Count >= BatchSize)
+                {
+                    try
                     {
                         InsertBatch(conn, gameRelease, pluginName, batch);
                         batch.Clear();
                     }
+                    catch (Exception ex)
+                    {
+                        _errorCallback($"Warning: Failed to insert batch in {pluginName}: {ex.Message}");
+                        errorCount++;
+                        batch.Clear();
+                    }
                 }
-                catch (Exception ex)
+            }
+            catch (Exception ex)
+            {
+                if (IgnorableErrorPatterns.Any(pattern =>
+                        ex.Message.Contains(pattern, StringComparison.OrdinalIgnoreCase)))
+                {
+                    skippedRecords++;
+                }
+                else
                 {
                     errorCount++;
                     _errorCallback($"Warning: Error processing record in {pluginName}: {ex.Message}");
                 }
             }
+        }
 
-            if (batch.Count > 0)
+        if (batch.Count > 0)
+        {
+            try
             {
                 InsertBatch(conn, gameRelease, pluginName, batch);
             }
-
-            if (errorCount > 0)
+            catch (Exception ex)
             {
-                _errorCallback(
-                    $"Completed processing {pluginName} with {errorCount} records using fallback names out of {totalRecords} total records");
+                _errorCallback($"Warning: Failed to insert final batch in {pluginName}: {ex.Message}");
+                errorCount++;
             }
-        }
-        catch (Exception ex)
-        {
-            _errorCallback($"Error processing {pluginName}: {ex.Message}");
-            _errorCallback($"Processed {processedCount} records before error occurred");
-            throw;
         }
     }
 
