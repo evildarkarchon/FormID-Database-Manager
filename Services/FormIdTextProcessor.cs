@@ -9,19 +9,29 @@ using Mutagen.Bethesda;
 
 namespace FormID_Database_Manager.Services;
 
-public class FormIdTextProcessor
+/// <summary>
+/// Provides functionality for processing FormID list files and managing their insertion into a SQLite database.
+/// This class is designed to handle parsing and batching of FormID records for efficient database operations.
+/// </summary>
+public class FormIdTextProcessor(DatabaseService databaseService)
 {
-    private readonly DatabaseService _databaseService;
-    private readonly Action<string> _errorCallback;
+/*
+    private readonly Action<string> _errorCallback = errorCallback;
+*/
     private const int BatchSize = 10000; // Increased batch size for better performance
     private const int UiUpdateInterval = 1000; // Update UI every 1000 records
 
-    public FormIdTextProcessor(DatabaseService databaseService, Action<string> errorCallback)
-    {
-        _databaseService = databaseService;
-        _errorCallback = errorCallback;
-    }
-
+    /// <summary>
+    /// Processes a FormID list file by reading records, organizing them by the associated plugin,
+    /// and batching them for insertion into a SQLite database.
+    /// </summary>
+    /// <param name="formIdListPath">The file path of the FormID list to process.</param>
+    /// <param name="conn">The SQLite connection to the database where records will be inserted.</param>
+    /// <param name="gameRelease">The game release associated with the FormID records.</param>
+    /// <param name="updateMode">Indicates whether the operation is performed in update mode or not.</param>
+    /// <param name="cancellationToken">The token to monitor for cancellation requests.</param>
+    /// <param name="progress">Optional progress reporter for updating task details and progress percentage.</param>
+    /// <returns>A task that represents the asynchronous operation of processing the FormID list file.</returns>
     public async Task ProcessFormIdListFile(
         string formIdListPath,
         SQLiteConnection conn,
@@ -40,7 +50,7 @@ public class FormIdTextProcessor
         progress?.Report(("Counting records...", 0));
 
         // Read the file line by line
-        await foreach (var line in ReadLinesAsync(formIdListPath))
+        await foreach (var line in ReadLinesAsync(formIdListPath).WithCancellation(cancellationToken))
         {
             cancellationToken.ThrowIfCancellationRequested();
 
@@ -77,7 +87,7 @@ public class FormIdTextProcessor
                     if (updateMode)
                     {
                         progress?.Report(($"Processing plugin: {pluginName}", null));
-                        await _databaseService.ClearPluginEntries(conn, gameRelease, pluginName);
+                        await databaseService.ClearPluginEntries(conn, gameRelease, pluginName);
                     }
 
                     processedPlugins.Add(pluginName);
@@ -95,6 +105,11 @@ public class FormIdTextProcessor
             100));
     }
 
+    /// <summary>
+    /// Asynchronously reads lines from a specified file, one at a time.
+    /// </summary>
+    /// <param name="filePath">The path to the file to be read.</param>
+    /// <returns>An asynchronous enumerable of strings representing each line in the file.</returns>
     private async IAsyncEnumerable<string> ReadLinesAsync(string filePath)
     {
         using var reader = new StreamReader(filePath);
@@ -105,48 +120,48 @@ public class FormIdTextProcessor
     }
 
     // Optimized batch inserter to handle large numbers of records efficiently
-    private class BatchInserter
+    /// <summary>
+    /// Optimized batch inserter designed to handle efficient insertion of large numbers of records
+    /// into a SQLite database. This class facilitates batching operations to reduce database overhead
+    /// and supports asynchronous processing to enhance performance in bulk insertion scenarios.
+    /// </summary>
+    private class BatchInserter(SQLiteConnection conn, GameRelease gameRelease, int batchSize)
     {
-        private readonly SQLiteConnection _conn;
-        private readonly GameRelease _gameRelease;
-        private readonly int _batchSize;
-        private readonly List<(string plugin, string formId, string entry)> _batch;
+        private readonly List<(string plugin, string formId, string entry)> _batch = new(batchSize);
         private SQLiteCommand? _insertCommand;
-
-        public BatchInserter(SQLiteConnection conn, GameRelease gameRelease, int batchSize)
-        {
-            _conn = conn;
-            _gameRelease = gameRelease;
-            _batchSize = batchSize;
-            _batch = new List<(string, string, string)>(batchSize);
-        }
 
         public async Task AddRecordAsync(string plugin, string formId, string entry,
             CancellationToken cancellationToken)
         {
             _batch.Add((plugin, formId, entry));
 
-            if (_batch.Count >= _batchSize)
+            if (_batch.Count >= batchSize)
             {
                 await FlushBatchAsync(cancellationToken);
             }
         }
 
+        /// <summary>
+        /// Flushes the current batch of records to the database, committing them in a single transaction.
+        /// This method ensures the batched records are inserted and any associated resources, such as transactions, are properly handled.
+        /// </summary>
+        /// <param name="cancellationToken">The token to monitor for cancellation requests during the flushing process.</param>
+        /// <returns>A task representing the asynchronous operation of flushing the batch to the database.</returns>
         public async Task FlushBatchAsync(CancellationToken cancellationToken)
         {
             if (_batch.Count == 0) return;
 
             if (_insertCommand == null)
             {
-                _insertCommand = new SQLiteCommand(_conn);
-                _insertCommand.CommandText = $@"INSERT INTO {_gameRelease} (plugin, formid, entry) 
+                _insertCommand = new SQLiteCommand(conn);
+                _insertCommand.CommandText = $@"INSERT INTO {gameRelease} (plugin, formid, entry) 
                                                VALUES (@plugin, @formid, @entry)";
                 _insertCommand.Parameters.Add(new SQLiteParameter("@plugin"));
                 _insertCommand.Parameters.Add(new SQLiteParameter("@formid"));
                 _insertCommand.Parameters.Add(new SQLiteParameter("@entry"));
             }
 
-            using var transaction = _conn.BeginTransaction();
+            await using var transaction = conn.BeginTransaction();
             try
             {
                 foreach (var (plugin, formId, entry) in _batch)

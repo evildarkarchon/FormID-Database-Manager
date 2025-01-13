@@ -6,12 +6,14 @@ using System.Threading;
 using System.Threading.Tasks;
 using FormID_Database_Manager.Models;
 using FormID_Database_Manager.ViewModels;
-using Mutagen.Bethesda;
 using Mutagen.Bethesda.Environments;
 using Avalonia.Threading;
 
 namespace FormID_Database_Manager.Services;
 
+/// <summary>
+/// Provides functionality to process game plugins using various parameters and services.
+/// </summary>
 public class PluginProcessingService
 {
     private readonly DatabaseService _databaseService;
@@ -20,16 +22,28 @@ public class PluginProcessingService
     private readonly MainWindowViewModel _viewModel;
     private CancellationTokenSource? _cancellationTokenSource;
 
+    /// <summary>
+    /// Service responsible for processing game plugins, utilizing various modules such as
+    /// database operations, form ID text processing, and mod-specific logic.
+    /// </summary>
+    /// <remarks>
+    /// This service integrates multiple components to handle plugin processing for different
+    /// scenarios, including adding error messages and allowing cancellation of ongoing tasks.
+    /// </remarks>
     public PluginProcessingService(
         DatabaseService databaseService,
         MainWindowViewModel viewModel)
     {
         _databaseService = databaseService;
         _viewModel = viewModel;
-        _textProcessor = new FormIdTextProcessor(databaseService, AddErrorMessage);
+        _textProcessor = new FormIdTextProcessor(databaseService);
         _modProcessor = new ModProcessor(databaseService, AddErrorMessage);
     }
 
+    /// <summary>
+    /// Adds an error message to the view model, ensuring thread-safe access to UI updates.
+    /// </summary>
+    /// <param name="message">The error message to be added.</param>
     private void AddErrorMessage(string message)
     {
         // Use Dispatcher to ensure UI thread update
@@ -43,6 +57,21 @@ public class PluginProcessingService
         }
     }
 
+    /// <summary>
+    /// Processes game plugins based on the provided parameters, handling actions such as database initialization,
+    /// plugin processing, and optional text file processing.
+    /// </summary>
+    /// <param name="parameters">
+    /// The parameters that specify how the plugin processing should be conducted, including game directory,
+    /// selected plugins, and database path.
+    /// </param>
+    /// <param name="progress">
+    /// Optional progress reporter to report the current status and progress value during the processing.
+    /// </param>
+    /// <returns>
+    /// A task representing the asynchronous operation of processing plugins, allowing cancellation or exception handling
+    /// when required.
+    /// </returns>
     public async Task ProcessPlugins(
         ProcessingParameters parameters,
         IProgress<(string Message, double? Value)>? progress = null)
@@ -168,6 +197,14 @@ public class PluginProcessingService
         }
     }
 
+    /// <summary>
+    /// Cancels the ongoing plugin processing operation, if one is in progress.
+    /// </summary>
+    /// <remarks>
+    /// This method signals the cancellation token source associated with the current
+    /// plugin processing task, allowing the operation to terminate gracefully. If no
+    /// processing task is active, the method has no effect.
+    /// </remarks>
     public void CancelProcessing()
     {
         _cancellationTokenSource?.Cancel();

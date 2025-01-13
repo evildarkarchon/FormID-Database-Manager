@@ -2,22 +2,36 @@
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using Avalonia.Platform.Storage;
-using FormID_Database_Manager.Models;
 using FormID_Database_Manager.ViewModels;
 
 namespace FormID_Database_Manager.Services;
 
+/// <summary>
+/// Handles various window-based operations such as file and folder selection
+/// for the application using the provided IStorageProvider.
+/// </summary>
 public class WindowManager
 {
     private readonly MainWindowViewModel _viewModel;
     private readonly IStorageProvider _storageProvider;
 
+    /// <summary>
+    /// Manages window-related operations for the application, including file and directory selection.
+    /// Acts as a bridge between the UI and the backend services, utilizing Avalonia's IStorageProvider.
+    /// </summary>
     public WindowManager(IStorageProvider storageProvider, MainWindowViewModel viewModel)
     {
         _storageProvider = storageProvider;
         _viewModel = viewModel;
     }
 
+    /// <summary>
+    /// Allows the user to select a game directory through a folder picker dialog.
+    /// Returns the selected directory path or null if no selection is made or an error occurs.
+    /// </summary>
+    /// <returns>
+    /// A string representing the selected game's directory path or null if no folder is selected or an error occurs.
+    /// </returns>
     public async Task<string?> SelectGameDirectory()
     {
         try
@@ -37,6 +51,13 @@ public class WindowManager
         }
     }
 
+    /// <summary>
+    /// Opens a file save dialog for the user to select or create a database file.
+    /// Allows saving with a default name, extension, and file type filtering for database files.
+    /// </summary>
+    /// <returns>
+    /// The local file system path of the selected database file, or null if the action is canceled or an error occurs.
+    /// </returns>
     public async Task<string?> SelectDatabaseFile()
     {
         try
@@ -67,6 +88,14 @@ public class WindowManager
         }
     }
 
+    /// <summary>
+    /// Opens a file picker dialog to allow the user to select a FormID list file.
+    /// Filters the files to display only text files with a .txt extension.
+    /// Returns the local path of the selected file or null if no file was selected.
+    /// </summary>
+    /// <returns>
+    /// A string containing the local path of the selected FormID list file, or null if no file was selected.
+    /// </returns>
     public async Task<string?> SelectFormIdListFile()
     {
         try
