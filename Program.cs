@@ -18,12 +18,7 @@ class Program
         {
             var assemblyPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "libs",
                 new AssemblyName(resolveEventArgs.Name).Name + ".dll");
-            if (File.Exists(assemblyPath))
-            {
-                return Assembly.LoadFrom(assemblyPath);
-            }
-
-            return null;
+            return File.Exists(assemblyPath) ? Assembly.LoadFrom(assemblyPath) : null;
         };
         BuildAvaloniaApp()
             .StartWithClassicDesktopLifetime(args);
@@ -32,7 +27,7 @@ class Program
     /// Configures and builds the Avalonia application instance.
     /// Returns:
     /// An instance of AppBuilder configured with application-specific settings.
-    public static AppBuilder BuildAvaloniaApp()
+    private static AppBuilder BuildAvaloniaApp()
         => AppBuilder.Configure<App>()
             .UsePlatformDetect()
             .LogToTrace();

@@ -5,11 +5,11 @@ namespace FormID_Database_Manager.Models;
 
 public class ProcessingParameters
 {
-    public string? GameDirectory { get; set; }
+    public string? GameDirectory { get; init; }
     public string DatabasePath { get; set; } = string.Empty;
-    public GameRelease GameRelease { get; set; }
-    public List<PluginListItem> SelectedPlugins { get; set; } = new();
-    public bool UpdateMode { get; set; }
+    public GameRelease GameRelease { get; init; }
+    public List<PluginListItem> SelectedPlugins { get; init; } = [];
+    public bool UpdateMode { get; init; }
     public bool DryRun { get; set; }
-    public string? FormIdListPath { get; set; }
+    public string? FormIdListPath { get; init; }
 }

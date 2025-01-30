@@ -9,6 +9,7 @@ using FormID_Database_Manager.Models;
 using Mutagen.Bethesda;
 using Mutagen.Bethesda.Plugins.Records;
 using Mutagen.Bethesda.Fallout4;
+using Mutagen.Bethesda.Oblivion;
 using Mutagen.Bethesda.Plugins.Order;
 using Mutagen.Bethesda.Skyrim;
 using Mutagen.Bethesda.Starfield;
@@ -95,8 +96,13 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
                     {
                         IModGetter mod = gameRelease switch
                         {
+                            GameRelease.Oblivion => OblivionMod.CreateFromBinaryOverlay(pluginPath),
                             GameRelease.SkyrimSE => SkyrimMod.CreateFromBinaryOverlay(pluginPath,
                                 SkyrimRelease.SkyrimSE),
+                            GameRelease.SkyrimSEGog => SkyrimMod.CreateFromBinaryOverlay(pluginPath,
+                                SkyrimRelease.SkyrimSEGog),
+                            GameRelease.SkyrimVR => SkyrimMod.CreateFromBinaryOverlay(pluginPath,
+                                SkyrimRelease.SkyrimVR),
                             GameRelease.Fallout4 => Fallout4Mod.CreateFromBinaryOverlay(pluginPath,
                                 Fallout4Release.Fallout4),
                             GameRelease.Starfield => StarfieldMod.CreateFromBinaryOverlay(pluginPath,
@@ -170,14 +176,7 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
                 string entry;
                 try
                 {
-                    if (!string.IsNullOrEmpty(record.EditorID))
-                    {
-                        entry = record.EditorID;
-                    }
-                    else
-                    {
-                        entry = GetRecordName(record);
-                    }
+                    entry = !string.IsNullOrEmpty(record.EditorID) ? record.EditorID : GetRecordName(record);
                 }
                 catch (Exception)
                 {

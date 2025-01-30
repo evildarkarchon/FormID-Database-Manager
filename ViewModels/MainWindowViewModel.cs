@@ -17,11 +17,11 @@ public class MainWindowViewModel : INotifyPropertyChanged
     private bool _isProcessing;
     private double _progressValue;
     private string _progressStatus = string.Empty;
-    private ObservableCollection<PluginListItem> _plugins = new();
-    private ObservableCollection<PluginListItem> _filteredPlugins = new();
+    private ObservableCollection<PluginListItem> _plugins = [];
+    private ObservableCollection<PluginListItem> _filteredPlugins = [];
     private string _pluginFilter = string.Empty;
-    private ObservableCollection<string> _errorMessages = new();
-    private ObservableCollection<string> _informationMessages = new();
+    private ObservableCollection<string> _errorMessages = [];
+    private ObservableCollection<string> _informationMessages = [];
 
     public string GameDirectory
     {

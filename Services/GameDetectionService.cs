@@ -34,6 +34,13 @@ public class GameDetectionService
         "OldMars.esm", "Constellation.esm"
     };
 
+    private readonly HashSet<string> _oblivionPlugins = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "Oblivion.esm", "Knights.esp", "DLCVileLair.esp", "DLCThievesDen.esp", "DLCSpellTomes.esp",
+        "DLCShiveringIsles.esp",
+        "DLCOrrery.esp", "DLCMehrunesRazor.esp", "DLCHorseArmor.esp", "DLCFrostcrag.esp", "DLCBattlehornCastle.esp"
+    };
+
     /// <summary>
     /// Detects the game based on the specified game directory by checking for
     /// the presence of game master files in the directory or its subdirectory.
@@ -54,9 +61,28 @@ public class GameDetectionService
                 {
                     // Check for game-specific master files in the current directory
                     if (File.Exists(Path.Combine(gameDirectory, "Skyrim.esm")))
+                    {
+                        if (Directory.Exists(Path.Combine(gameDirectory, "..", "gogscripts")) ||
+                            File.Exists(Path.Combine(gameDirectory, "..", "goggame-1746476928.info")))
+                        {
+                            return GameRelease.SkyrimSEGog;
+                        }
+
+                        if (File.Exists(Path.Combine(gameDirectory, "..", "SkyrimVR.exe")))
+                        {
+                            return GameRelease.SkyrimVR;
+                        }
+
                         return GameRelease.SkyrimSE;
+                    }
+
+                    if (File.Exists(Path.Combine(gameDirectory, "Oblivion.esm")))
+                        return GameRelease.Oblivion;
                     if (File.Exists(Path.Combine(gameDirectory, "Fallout4.esm")))
                         return GameRelease.Fallout4;
+                    if (File.Exists(Path.Combine(gameDirectory, "..", "Fallout4VR.exe")) &&
+                        File.Exists(Path.Combine(gameDirectory, "Fallout4.esm")))
+                        return GameRelease.Fallout4VR;
                     if (File.Exists(Path.Combine(gameDirectory, "Starfield.esm")))
                         return GameRelease.Starfield;
                 }
@@ -66,10 +92,29 @@ public class GameDetectionService
                     var dataPath = Path.Combine(gameDirectory, "Data");
                     if (Directory.Exists(dataPath))
                     {
-                        if (File.Exists(Path.Combine(dataPath, "Skyrim.esm")))
+                        if (File.Exists(Path.Combine(dataPath, "Oblivion.esm")))
+                            return GameRelease.Oblivion;
+                        if (File.Exists(Path.Combine(gameDirectory, "Skyrim.esm")))
+                        {
+                            if (Directory.Exists(Path.Combine(gameDirectory, "gogscripts")) ||
+                                File.Exists(Path.Combine(gameDirectory, "goggame-1746476928.info")))
+                            {
+                                return GameRelease.SkyrimSEGog;
+                            }
+
+                            if (File.Exists(Path.Combine(gameDirectory, "SkyrimVR.exe")))
+                            {
+                                return GameRelease.SkyrimVR;
+                            }
+
                             return GameRelease.SkyrimSE;
+                        }
+
                         if (File.Exists(Path.Combine(dataPath, "Fallout4.esm")))
                             return GameRelease.Fallout4;
+                        if (File.Exists(Path.Combine(gameDirectory, "Fallout4VR.exe")) &&
+                            File.Exists(Path.Combine(dataPath, "Fallout4.esm")))
+                            return GameRelease.Fallout4VR;
                         if (File.Exists(Path.Combine(dataPath, "Starfield.esm")))
                             return GameRelease.Starfield;
                     }
@@ -94,8 +139,12 @@ public class GameDetectionService
     public HashSet<string> GetBaseGamePlugins(GameRelease gameRelease) => gameRelease switch
     {
         GameRelease.SkyrimSE => _skyrimPlugins,
+        GameRelease.SkyrimVR => _skyrimPlugins,
+        GameRelease.SkyrimSEGog => _skyrimPlugins,
+        GameRelease.Oblivion => _oblivionPlugins,
         GameRelease.Fallout4 => _falloutPlugins,
+        GameRelease.Fallout4VR => _falloutPlugins,
         GameRelease.Starfield => _starfieldPlugins,
-        _ => new HashSet<string>()
+        _ => []
     };
 }
