@@ -21,7 +21,6 @@ namespace FormID_Database_Manager.Services;
 public class ModProcessor(DatabaseService databaseService, Action<string> errorCallback)
 {
     private const int BatchSize = 1000;
-    private const int MaxErrorsPerPlugin = 50; // Limit errors reported per plugin
 
     // HashSet for O(1) lookups of error patterns to ignore
     private static readonly HashSet<string> IgnorableErrorPatterns = new(StringComparer.OrdinalIgnoreCase)
@@ -39,6 +38,14 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
     /// Processes the specified plugin file, updates the database with its entries,
     /// and provides error handling during processing.
     /// </summary>
+    /// <param name="gameDir">The root directory of the game where the plugin resides.</param>
+    /// <param name="conn">The SQLite database connection used for processing.</param>
+    /// <param name="gameRelease">The specific game release associated with the plugin.</param>
+    /// <param name="pluginItem">The plugin to be processed, represented as a list item.</param>
+    /// <param name="loadOrder">The load order that includes all the plugins for the current session.</param>
+    /// <param name="updateMode">Indicates if the plugin entries should be updated in the database.</param>
+    /// <param name="cancellationToken">The cancellation token to handle processing termination requests.</param>
+    /// <returns>A task that processes the plugin asynchronously and manages its database entries accordingly.</returns>
     public async Task ProcessPlugin(
         string gameDir,
         SQLiteConnection conn,
@@ -82,7 +89,7 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
             try
             {
                 bool success = false;
-                await Task.Run(async () =>
+                await Task.Run(() =>
                 {
                     try
                     {
@@ -97,34 +104,25 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
                             _ => throw new NotSupportedException($"Unsupported game release: {gameRelease}")
                         };
 
-                        await ProcessModRecords(conn, gameRelease, pluginItem.Name, mod, cancellationToken);
+                        ProcessModRecords(conn, gameRelease, pluginItem.Name, mod, cancellationToken);
                         success = true;
                     }
                     catch (Exception ex)
                     {
                         errorCallback($"Error processing {pluginItem.Name}: {ex.Message}");
-                        if (transaction != null)
-                        {
-                            transaction.Rollback();
-                        }
-
+                        transaction?.Rollback();
                         success = false;
                     }
                 }, cancellationToken);
 
-                if (success && transaction != null)
+                if (success)
                 {
-                    transaction.Commit();
+                    transaction?.Commit();
                 }
             }
             catch (Exception)
             {
-                if (transaction != null)
-                {
-                    transaction.Rollback();
-                }
-
-                throw;
+                transaction?.Rollback();
             }
         }
         finally
@@ -135,9 +133,14 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
 
     /// <summary>
     /// Processes the records from the provided mod plugin, extracts relevant data,
-    /// and batches the results for database insertion.
+    /// batches the results, and inserts them into the database while supporting cancellation and error handling.
     /// </summary>
-    private async Task ProcessModRecords(
+    /// <param name="conn">The active SQLite database connection used for data insertion.</param>
+    /// <param name="gameRelease">The game release version associated with the mod plugin.</param>
+    /// <param name="pluginName">The name of the plugin being processed.</param>
+    /// <param name="mod">The mod plugin containing the records to be processed.</param>
+    /// <param name="cancellationToken">The cancellation token to handle termination of the processing operation.</param>
+    private void ProcessModRecords(
         SQLiteConnection conn,
         GameRelease gameRelease,
         string pluginName,
@@ -145,278 +148,92 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
         CancellationToken cancellationToken)
     {
         var batch = new List<(string formId, string entry)>(BatchSize);
-        var errorCount = 0;
-        var processedRecords = 0;
-        var failedRecords = 0;
 
-        try
+        var majorRecords = mod.EnumerateMajorRecords();
+
+        foreach (var record in majorRecords)
         {
-            IEnumerable<IMajorRecordGetter> majorRecords;
+            cancellationToken.ThrowIfCancellationRequested();
+
             try
             {
-                majorRecords = mod.EnumerateMajorRecords();
-            }
-            catch (Exception ex)
-            {
-                errorCallback($"Failed to enumerate records in plugin {pluginName}: {ex.Message}");
-                errorCallback("Attempting to enumerate records using fallback method...");
-                majorRecords = AttemptFallbackEnumeration(mod);
-            }
-
-            foreach (var record in majorRecords)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-
+                string formId;
                 try
                 {
-                    if (TryProcessRecord(record, out var formId, out var entry))
-                    {
-                        batch.Add((formId, entry));
-                        processedRecords++;
+                    formId = record.FormKey.ID.ToString("X6");
+                }
+                catch (Exception)
+                {
+                    continue;
+                }
 
-                        if (batch.Count >= BatchSize)
-                        {
-                            await TryInsertBatch(conn, gameRelease, pluginName, batch);
-                            batch.Clear();
-                        }
+                string entry;
+                try
+                {
+                    if (!string.IsNullOrEmpty(record.EditorID))
+                    {
+                        entry = record.EditorID;
                     }
                     else
                     {
-                        failedRecords++;
+                        entry = GetRecordName(record);
                     }
                 }
-                catch (Exception ex) when (IsHandleableError(ex))
+                catch (Exception)
                 {
-                    failedRecords++;
-                    LogErrorWithLimit(pluginName, ex, ref errorCount);
+                    entry = $"[{record.GetType().Name}_{formId}]";
                 }
-            }
 
-            // Process any remaining records in the batch
-            if (batch.Count > 0)
-            {
-                await TryInsertBatch(conn, gameRelease, pluginName, batch);
-            }
+                batch.Add((formId, entry));
 
-            // Log summary for this plugin
-            if (failedRecords > 0)
-            {
-                errorCallback(
-                    $"Plugin {pluginName}: Processed {processedRecords} records, Failed {failedRecords} records");
-            }
-        }
-        catch (Exception ex)
-        {
-            errorCallback($"Critical error processing plugin {pluginName}: {ex.Message}");
-            throw; // Rethrow critical errors
-        }
-    }
-
-    private IEnumerable<IMajorRecordGetter> AttemptFallbackEnumeration(IModGetter mod)
-    {
-        var records = new List<IMajorRecordGetter>();
-
-        switch (mod)
-        {
-            case ISkyrimModGetter skyrimMod:
-                EnumerateSkyrimRecords(skyrimMod, records);
-                break;
-            case IFallout4ModGetter falloutMod:
-                EnumerateFallout4Records(falloutMod, records);
-                break;
-            case IStarfieldModGetter starfieldMod:
-                EnumerateStarfieldRecords(starfieldMod, records);
-                break;
-        }
-
-        errorCallback($"Fallback enumeration found {records.Count} records");
-        return records;
-    }
-
-    private void EnumerateSkyrimRecords(ISkyrimModGetter mod, List<IMajorRecordGetter> records)
-    {
-        try
-        {
-            // Items and Equipment
-            AddToRecords(records, mod.Weapons);
-            AddToRecords(records, mod.Armors);
-            AddToRecords(records, mod.Books);
-
-            // Characters
-            AddToRecords(records, mod.Npcs);
-
-            // World Objects
-            foreach (var block in mod.Cells)
-            {
-                foreach (var subBlock in block.SubBlocks)
+                if (batch.Count >= BatchSize)
                 {
-                    foreach (var cell in subBlock.Cells)
+                    try
                     {
-                        records.Add(cell);
+                        InsertBatch(conn, gameRelease, pluginName, batch);
+                        batch.Clear();
                     }
-                }
-            }
-
-            AddToRecords(records, mod.Worldspaces);
-            AddToRecords(records, mod.Locations);
-
-            // Magic
-            AddToRecords(records, mod.Spells);
-            AddToRecords(records, mod.MagicEffects);
-
-            // Base Records
-            AddToRecords(records, mod.Keywords);
-        }
-        catch (Exception ex)
-        {
-            errorCallback($"Error enumerating Skyrim records: {ex.Message}");
-        }
-    }
-
-    private void EnumerateFallout4Records(IFallout4ModGetter mod, List<IMajorRecordGetter> records)
-    {
-        try
-        {
-            // Items and Equipment
-            AddToRecords(records, mod.Weapons);
-            AddToRecords(records, mod.Armors);
-            AddToRecords(records, mod.Books);
-            AddToRecords(records, mod.Ammunitions);
-            AddToRecords(records, mod.Components);
-            AddToRecords(records, mod.Holotapes);
-
-            // Characters
-            AddToRecords(records, mod.Npcs);
-
-            // World Objects
-            foreach (var block in mod.Cells)
-            {
-                foreach (var subBlock in block.SubBlocks)
-                {
-                    foreach (var cell in subBlock.Cells)
+                    catch (Exception ex)
                     {
-                        records.Add(cell);
+                        errorCallback($"Warning: Failed to insert batch in {pluginName}: {ex.Message}");
+                        batch.Clear();
                     }
                 }
             }
-
-            AddToRecords(records, mod.Worldspaces);
-            AddToRecords(records, mod.Locations);
-            AddToRecords(records, mod.EncounterZones);
-            AddToRecords(records, mod.Regions);
-
-            // Base Records
-            AddToRecords(records, mod.Keywords);
-
-            // Other Records
-            AddToRecords(records, mod.Activators);
-            AddToRecords(records, mod.Furniture);
-            AddToRecords(records, mod.Factions);
-            AddToRecords(records, mod.Quests);
-            AddToRecords(records, mod.Races);
-            AddToRecords(records, mod.Relationships);
-            AddToRecords(records, mod.MagicEffects);
-            AddToRecords(records, mod.Spells);
-            AddToRecords(records, mod.FormLists);
-        }
-        catch (Exception ex)
-        {
-            errorCallback($"Error enumerating Fallout 4 records: {ex.Message}");
-        }
-    }
-
-    private void EnumerateStarfieldRecords(IStarfieldModGetter mod, List<IMajorRecordGetter> records)
-    {
-        try
-        {
-            // Items and Equipment
-            AddToRecords(records, mod.Weapons);
-            AddToRecords(records, mod.Armors);
-            AddToRecords(records, mod.Books);
-
-            // Characters
-            AddToRecords(records, mod.Npcs);
-
-            // World Objects
-            foreach (var block in mod.Cells)
+            catch (Exception ex)
             {
-                foreach (var subBlock in block.SubBlocks)
+                if (IgnorableErrorPatterns.Any(pattern =>
+                        ex.Message.Contains(pattern, StringComparison.OrdinalIgnoreCase)))
                 {
-                    foreach (var cell in subBlock.Cells)
-                    {
-                        records.Add(cell);
-                    }
+                }
+                else
+                {
+                    errorCallback($"Warning: Error processing record in {pluginName}: {ex.Message}");
                 }
             }
-
-            AddToRecords(records, mod.Worldspaces);
-            AddToRecords(records, mod.Locations);
-
-            // Base Records
-            AddToRecords(records, mod.Keywords);
         }
-        catch (Exception ex)
-        {
-            errorCallback($"Error enumerating Starfield records: {ex.Message}");
-        }
-    }
 
-    private static void AddToRecords(List<IMajorRecordGetter> records, IEnumerable<IMajorRecordGetter>? items)
-    {
-        if (items != null)
+        if (batch.Count > 0)
         {
-            records.AddRange(items);
-        }
-    }
-
-    private bool TryProcessRecord(IMajorRecordGetter record, out string formId, out string entry)
-    {
-        formId = string.Empty;
-        entry = string.Empty;
-
-        try
-        {
-            formId = record.FormKey.ID.ToString("X6");
-
-            entry = !string.IsNullOrEmpty(record.EditorID) ? record.EditorID : GetRecordName(record);
-
-            return true;
-        }
-        catch
-        {
-            return false;
-        }
-    }
-
-    private async Task TryInsertBatch(
-        SQLiteConnection conn,
-        GameRelease gameRelease,
-        string pluginName,
-        List<(string formId, string entry)> batch)
-    {
-        try
-        {
-            await InsertBatch(conn, gameRelease, pluginName, batch);
-        }
-        catch (Exception ex)
-        {
-            errorCallback($"Warning: Failed to insert batch in {pluginName}: {ex.Message}");
-            // Try to insert records individually to salvage what we can
-            foreach (var (formId, entry) in batch)
+            try
             {
-                try
-                {
-                    await databaseService.InsertRecord(conn, gameRelease, pluginName, formId, entry);
-                }
-                catch
-                {
-                    // Ignore individual insertion failures
-                }
+                InsertBatch(conn, gameRelease, pluginName, batch);
+            }
+            catch (Exception ex)
+            {
+                errorCallback($"Warning: Failed to insert final batch in {pluginName}: {ex.Message}");
             }
         }
     }
 
-    private async Task InsertBatch(
+    /// <summary>
+    /// Inserts a batch of form ID and entry pairs into the specified database table for the given game release and plugin.
+    /// </summary>
+    /// <param name="conn">The SQLite database connection used to execute the insertion commands.</param>
+    /// <param name="gameRelease">The specific game release that determines the target database table.</param>
+    /// <param name="pluginName">The name of the plugin associated with the records being inserted.</param>
+    /// <param name="batch">The list of form ID and entry pairs to be inserted into the database.</param>
+    private void InsertBatch(
         SQLiteConnection conn,
         GameRelease gameRelease,
         string pluginName,
@@ -424,7 +241,7 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
     {
         using var cmd = new SQLiteCommand(conn);
         cmd.CommandText = $@"INSERT INTO {gameRelease} (plugin, formid, entry) 
-                       VALUES (@plugin, @formid, @entry)";
+                           VALUES (@plugin, @formid, @entry)";
 
         var pluginParam = cmd.CreateParameter();
         pluginParam.ParameterName = "@plugin";
@@ -443,33 +260,17 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
         {
             formIdParam.Value = formId;
             entryParam.Value = entry;
-            await cmd.ExecuteNonQueryAsync();
+            cmd.ExecuteNonQuery();
         }
     }
 
-    private bool IsHandleableError(Exception ex)
-    {
-        return IgnorableErrorPatterns.Any(pattern =>
-            ex.Message.Contains(pattern, StringComparison.OrdinalIgnoreCase));
-    }
-
-    private void LogErrorWithLimit(string pluginName, Exception ex, ref int errorCount)
-    {
-        if (errorCount < MaxErrorsPerPlugin)
-        {
-            if (!IsHandleableError(ex))
-            {
-                errorCallback($"Warning: Error processing record in {pluginName}: {ex.Message}");
-                errorCount++;
-            }
-        }
-        else if (errorCount == MaxErrorsPerPlugin)
-        {
-            errorCallback($"Warning: Maximum error limit reached for {pluginName}. Suppressing further errors.");
-            errorCount++;
-        }
-    }
-
+    /// <summary>
+    /// Retrieves a human-readable name for a given major record, prioritizing the editor ID,
+    /// or extracting the name from the record type, if applicable. Fallbacks to a default
+    /// formatted string if no name or editor ID is available.
+    /// </summary>
+    /// <param name="record">The major record for which the name is to be retrieved.</param>
+    /// <returns>A string representing the name of the record, or a formatted fallback string if no name or editor ID is found.</returns>
     private string GetRecordName(IMajorRecordGetter record)
     {
         if (!string.IsNullOrEmpty(record.EditorID))
