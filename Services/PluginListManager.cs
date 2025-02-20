@@ -34,6 +34,7 @@ public class PluginListManager(GameDetectionService gameDetectionService, MainWi
     {
         try
         {
+            // Prepare environment
             var env = GameEnvironment.Typical.Construct(gameRelease);
             var loadOrder = env.LoadOrder.ListedOrder;
             var basePlugins = gameDetectionService.GetBaseGamePlugins(gameRelease);
@@ -43,10 +44,12 @@ public class PluginListManager(GameDetectionService gameDetectionService, MainWi
                 ? gameDirectory
                 : Path.Combine(gameDirectory, "Data");
 
+            // Clear plugin lists
             plugins.Clear();
             viewModel.FilteredPlugins.Clear();
-            int nonBasePluginCount = 0;
+            var nonBasePluginCount = 0;
 
+            // Process plugins asynchronously using Task.Run for file checks
             foreach (var plugin in loadOrder)
             {
                 var pluginFileName = plugin.ModKey.FileName;
@@ -55,11 +58,12 @@ public class PluginListManager(GameDetectionService gameDetectionService, MainWi
                 if (!showAdvanced && basePlugins.Contains(pluginFileName))
                     continue;
 
-                // Check if the plugin file actually exists in the data directory
+                // Check if the plugin file exists asynchronously
                 var pluginPath = Path.Combine(dataPath, pluginFileName);
-                if (!File.Exists(pluginPath))
+                if (!await Task.Run(() => File.Exists(pluginPath)))
                     continue;
 
+                // Add the plugin to the list
                 plugins.Add(new PluginListItem
                 {
                     Name = pluginFileName,
@@ -68,7 +72,7 @@ public class PluginListManager(GameDetectionService gameDetectionService, MainWi
                 nonBasePluginCount++;
             }
 
-            // Initialize filtered plugins with all plugins
+            // Populate the filtered plugins list (UI-bound operation)
             foreach (var plugin in plugins)
             {
                 viewModel.FilteredPlugins.Add(plugin);

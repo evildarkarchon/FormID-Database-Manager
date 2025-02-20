@@ -46,7 +46,7 @@ public partial class MainWindow : Window
         var detectedGame = await _gameDetectionService.DetectGame(path);
         if (detectedGame.HasValue)
         {
-            _viewModel.DetectedGame = detectedGame.ToString();
+            _viewModel.DetectedGame = detectedGame.ToString() ?? string.Empty;
             GameReleaseTextBlock.Text = detectedGame.ToString();
             await _pluginListManager.RefreshPluginList(
                 path,
