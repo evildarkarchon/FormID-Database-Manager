@@ -96,7 +96,8 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
                     {
                         IModGetter mod = gameRelease switch
                         {
-                            GameRelease.Oblivion => OblivionMod.CreateFromBinaryOverlay(pluginPath),
+                            GameRelease.Oblivion => OblivionMod.CreateFromBinaryOverlay(pluginPath,
+                                OblivionRelease.Oblivion),
                             GameRelease.SkyrimSE => SkyrimMod.CreateFromBinaryOverlay(pluginPath,
                                 SkyrimRelease.SkyrimSE),
                             GameRelease.SkyrimSEGog => SkyrimMod.CreateFromBinaryOverlay(pluginPath,
