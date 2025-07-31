@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
@@ -132,7 +132,7 @@ public class MainWindowViewModel : INotifyPropertyChanged
         }
     }
 
-    public void AddErrorMessage(string message, int maxMessages = 10)
+    public virtual void AddErrorMessage(string message, int maxMessages = 10)
     {
         // Ensure collection operations happen on UI thread
         if (!Dispatcher.UIThread.CheckAccess())
@@ -149,7 +149,7 @@ public class MainWindowViewModel : INotifyPropertyChanged
         }
     }
 
-    public void AddInformationMessage(string message, int maxMessages = 10)
+    public virtual void AddInformationMessage(string message, int maxMessages = 10)
     {
         // Ensure collection operations happen on UI thread
         if (!Dispatcher.UIThread.CheckAccess())
@@ -173,7 +173,11 @@ public class MainWindowViewModel : INotifyPropertyChanged
 
     protected bool SetProperty<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
     {
-        if (EqualityComparer<T>.Default.Equals(field, value)) return false;
+        if (EqualityComparer<T>.Default.Equals(field, value))
+        {
+            return false;
+        }
+
         field = value;
         OnPropertyChanged(propertyName);
         return true;

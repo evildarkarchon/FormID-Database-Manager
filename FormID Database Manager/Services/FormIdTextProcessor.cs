@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Data.SQLite;
 using System.IO;
@@ -15,9 +15,9 @@ namespace FormID_Database_Manager.Services;
 /// </summary>
 public class FormIdTextProcessor(DatabaseService databaseService)
 {
-/*
-    private readonly Action<string> _errorCallback = errorCallback;
-*/
+    /*
+        private readonly Action<string> _errorCallback = errorCallback;
+    */
     private const int BatchSize = 10000; // Increased batch size for better performance
     private const int UiUpdateInterval = 1000; // Update UI every 1000 records
 
@@ -54,10 +54,16 @@ public class FormIdTextProcessor(DatabaseService databaseService)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            if (string.IsNullOrWhiteSpace(line)) continue;
+            if (string.IsNullOrWhiteSpace(line))
+            {
+                continue;
+            }
 
             var parts = line.Split('|').Select(p => p.Trim()).ToArray();
-            if (parts.Length != 3) continue;
+            if (parts.Length != 3)
+            {
+                continue;
+            }
 
             recordCount++;
 
@@ -161,7 +167,10 @@ public class FormIdTextProcessor(DatabaseService databaseService)
         /// <returns>A task representing the asynchronous operation of flushing the batch to the database.</returns>
         public async Task FlushBatchAsync(CancellationToken cancellationToken)
         {
-            if (_batch.Count == 0) return;
+            if (_batch.Count == 0)
+            {
+                return;
+            }
 
             if (_insertCommand == null)
             {

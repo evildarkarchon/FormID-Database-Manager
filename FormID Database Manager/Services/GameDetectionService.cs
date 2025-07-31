@@ -1,4 +1,4 @@
-﻿// Services/GameDetectionService.cs
+// Services/GameDetectionService.cs
 
 using Mutagen.Bethesda;
 using System;
@@ -75,14 +75,23 @@ public class GameDetectionService
                 }
 
                 if (File.Exists(Path.Combine(gameDirectory, "Oblivion.esm")))
+                {
                     return GameRelease.Oblivion;
+                }
+
                 if (File.Exists(Path.Combine(gameDirectory, "Fallout4.esm")))
+                {
+                    if (File.Exists(Path.Combine(gameDirectory, "..", "Fallout4VR.exe")))
+                    {
+                        return GameRelease.Fallout4VR;
+                    }
+
                     return GameRelease.Fallout4;
-                if (File.Exists(Path.Combine(gameDirectory, "..", "Fallout4VR.exe")) &&
-                    File.Exists(Path.Combine(gameDirectory, "Fallout4.esm")))
-                    return GameRelease.Fallout4VR;
+                }
                 if (File.Exists(Path.Combine(gameDirectory, "Starfield.esm")))
+                {
                     return GameRelease.Starfield;
+                }
             }
             else
             {
@@ -91,7 +100,10 @@ public class GameDetectionService
                 if (Directory.Exists(dataPath))
                 {
                     if (File.Exists(Path.Combine(dataPath, "Oblivion.esm")))
+                    {
                         return GameRelease.Oblivion;
+                    }
+
                     if (File.Exists(Path.Combine(dataPath, "Skyrim.esm")))
                     {
                         if (Directory.Exists(Path.Combine(gameDirectory, "gogscripts")) ||
@@ -109,12 +121,18 @@ public class GameDetectionService
                     }
 
                     if (File.Exists(Path.Combine(dataPath, "Fallout4.esm")))
+                    {
+                        if (File.Exists(Path.Combine(gameDirectory, "Fallout4VR.exe")))
+                        {
+                            return GameRelease.Fallout4VR;
+                        }
+
                         return GameRelease.Fallout4;
-                    if (File.Exists(Path.Combine(gameDirectory, "Fallout4VR.exe")) &&
-                        File.Exists(Path.Combine(dataPath, "Fallout4.esm")))
-                        return GameRelease.Fallout4VR;
+                    }
                     if (File.Exists(Path.Combine(dataPath, "Starfield.esm")))
+                    {
                         return GameRelease.Starfield;
+                    }
                 }
             }
         }

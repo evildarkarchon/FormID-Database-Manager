@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Data.SQLite;
 using System.Linq;
@@ -96,7 +96,10 @@ public class PluginProcessingService : IDisposable
             foreach (var plugin in parameters.SelectedPlugins)
             {
                 if (parameters.UpdateMode)
+                {
                     progress?.Report(($"Would delete existing entries for {plugin.Name}", null));
+                }
+
                 progress?.Report(($"Would process {plugin.Name}", null));
             }
 
@@ -142,7 +145,9 @@ public class PluginProcessingService : IDisposable
             for (var i = 0; i < pluginList.Count; i++)
             {
                 if (cancellationTokenSource.Token.IsCancellationRequested)
+                {
                     break;
+                }
 
                 var pluginItem = pluginList[i];
                 var progressPercent = (double)(i + 1) / pluginList.Count * 100;

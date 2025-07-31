@@ -12,10 +12,25 @@ FormID Database Manager is a cross-platform desktop application built with Avalo
 # Build the project
 dotnet build
 
-# Run the application
-dotnet run
+# Run the application  
+dotnet run --project "FormID Database Manager/FormID Database Manager.csproj"
 
-# Publish for release
+# Run all tests
+dotnet test
+
+# Run specific test project
+dotnet test "FormID Database Manager.Tests/FormID Database Manager.Tests.csproj"
+
+# Run a single test
+dotnet test --filter "FullyQualifiedName~DatabaseServiceTests.InitializeDatabase_CreatesCorrectTable"
+
+# Check code formatting
+dotnet format --verify-no-changes
+
+# Fix code formatting
+dotnet format
+
+# Publish for release (with DLL organization)
 dotnet publish -c Release
 ```
 
@@ -25,7 +40,7 @@ The application follows MVVM pattern with these key components:
 
 ### Services (Business Logic)
 - **DatabaseService**: Manages SQLite database operations with game-specific tables
-- **GameDetectionService**: Auto-detects game type from plugin directory
+- **GameDetectionService**: Auto-detects game type from plugin directory  
 - **ModProcessor**: Processes individual plugins using Mutagen library
 - **PluginProcessingService**: Orchestrates the entire processing workflow
 - **FormIdTextProcessor**: Filters FormID text files based on plugin lists
@@ -58,3 +73,17 @@ CREATE TABLE {GameRelease} (
 4. **Error Handling**: Ignorable errors are defined in GameDetectionService for known issues
 5. **UI Threading**: Heavy operations use Task.Run to avoid blocking UI
 6. **Acrylic Effect**: MainWindow uses platform-specific acrylic blur for modern appearance
+
+## Testing Strategy
+
+- **Unit Tests**: Located in `FormID Database Manager.Tests/Unit/`
+- **Integration Tests**: Located in `FormID Database Manager.Tests/Integration/`
+- **UI Tests**: Use Avalonia.Headless.XUnit for testing ViewModels and UI components
+- **Test Utilities**: Shared test builders and mocks in `FormID Database Manager.TestUtilities/`
+
+## Key Dependencies
+
+- **Avalonia UI 11.3.1**: Cross-platform UI framework
+- **Mutagen.Bethesda 0.51.0**: For parsing Bethesda game plugins
+- **System.Data.SQLite 1.0.119**: Database operations
+- **xUnit**: Testing framework with Moq for mocking

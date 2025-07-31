@@ -1,4 +1,4 @@
-﻿// Services/DatabaseService.cs
+// Services/DatabaseService.cs
 
 using System.IO;
 using Mutagen.Bethesda;
@@ -22,7 +22,7 @@ public class DatabaseService
     /// <param name="dbPath">The file path of the database to initialize.</param>
     /// <param name="gameRelease">The specific game release (e.g., Skyrim, Fallout) for which the database is being initialized.</param>
     /// <returns>A task that represents the asynchronous operation of initializing the database.</returns>
-    public async Task InitializeDatabase(string dbPath, GameRelease gameRelease, CancellationToken cancellationToken = default)
+    public virtual async Task InitializeDatabase(string dbPath, GameRelease gameRelease, CancellationToken cancellationToken = default)
     {
         if (!File.Exists(dbPath))
         {
@@ -69,7 +69,7 @@ public class DatabaseService
     /// <param name="gameRelease">The game release (e.g., Skyrim, Fallout) for which the plugin's entries will be cleared.</param>
     /// <param name="pluginName">The name of the plugin whose entries are to be cleared from the database.</param>
     /// <returns>A task that represents the asynchronous operation of clearing plugin entries from the database.</returns>
-    public async Task ClearPluginEntries(SQLiteConnection conn, GameRelease gameRelease, string pluginName, CancellationToken cancellationToken = default)
+    public virtual async Task ClearPluginEntries(SQLiteConnection conn, GameRelease gameRelease, string pluginName, CancellationToken cancellationToken = default)
     {
         await using var command = new SQLiteCommand(conn);
         command.CommandText = $"DELETE FROM {gameRelease} WHERE plugin = @plugin";
@@ -86,7 +86,7 @@ public class DatabaseService
     /// <param name="formId">The FormID associated with the record.</param>
     /// <param name="entry">The entry details to be stored in the database.</param>
     /// <returns>A task that represents the asynchronous operation of inserting the record into the database.</returns>
-    public async Task InsertRecord(SQLiteConnection conn, GameRelease gameRelease, string pluginName, string formId,
+    public virtual async Task InsertRecord(SQLiteConnection conn, GameRelease gameRelease, string pluginName, string formId,
         string entry, CancellationToken cancellationToken = default)
     {
         await using var command = new SQLiteCommand(conn);
@@ -104,7 +104,7 @@ public class DatabaseService
     /// </summary>
     /// <param name="conn">The SQLite database connection used to execute the optimization command. The connection must be open before calling this method.</param>
     /// <returns>A task that represents the asynchronous operation of optimizing the database.</returns>
-    public async Task OptimizeDatabase(SQLiteConnection conn, CancellationToken cancellationToken = default)
+    public virtual async Task OptimizeDatabase(SQLiteConnection conn, CancellationToken cancellationToken = default)
     {
         await using var command = new SQLiteCommand("VACUUM", conn);
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);

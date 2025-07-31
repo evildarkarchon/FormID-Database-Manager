@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Threading.Tasks;
@@ -26,7 +26,7 @@ public class PluginListManager(GameDetectionService gameDetectionService, MainWi
     /// <param name="plugins">The observable collection that will hold the list of plugins to be displayed.</param>
     /// <param name="showAdvanced">A flag indicating whether advanced mode is enabled for filtering plugins.</param>
     /// <returns>A task that represents the asynchronous operation of refreshing the plugin list.</returns>
-    public async Task RefreshPluginList(
+    public Task RefreshPluginList(
         string gameDirectory,
         GameRelease gameRelease,
         ObservableCollection<PluginListItem> plugins,
@@ -56,12 +56,16 @@ public class PluginListManager(GameDetectionService gameDetectionService, MainWi
 
                 // Skip base plugins if not in advanced mode
                 if (!showAdvanced && basePlugins.Contains(pluginFileName))
+                {
                     continue;
+                }
 
                 // Check if the plugin file exists
                 var pluginPath = Path.Combine(dataPath, pluginFileName);
                 if (!File.Exists(pluginPath))
+                {
                     continue;
+                }
 
                 // Add the plugin to the list
                 plugins.Add(new PluginListItem
@@ -91,6 +95,8 @@ public class PluginListManager(GameDetectionService gameDetectionService, MainWi
             viewModel.AddErrorMessage($"Failed to load plugins: {ex.Message}");
             viewModel.AddErrorMessage("Ensure you selected the correct game Data directory");
         }
+
+        return Task.CompletedTask;
     }
 
     /// <summary>

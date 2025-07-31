@@ -49,7 +49,10 @@ public partial class MainWindow : Window, IDisposable
     private async Task SelectGameDirectoryAsync()
     {
         var path = await _windowManager.SelectGameDirectory();
-        if (string.IsNullOrEmpty(path)) return;
+        if (string.IsNullOrEmpty(path))
+        {
+            return;
+        }
 
         _viewModel.GameDirectory = path;
 
@@ -85,7 +88,10 @@ public partial class MainWindow : Window, IDisposable
     private async Task SelectDatabaseAsync()
     {
         var path = await _windowManager.SelectDatabaseFile();
-        if (string.IsNullOrEmpty(path)) return;
+        if (string.IsNullOrEmpty(path))
+        {
+            return;
+        }
 
         _viewModel.DatabasePath = path;
     }
@@ -105,7 +111,10 @@ public partial class MainWindow : Window, IDisposable
     private async Task SelectFormIdListAsync()
     {
         var path = await _windowManager.SelectFormIdListFile();
-        if (string.IsNullOrEmpty(path)) return;
+        if (string.IsNullOrEmpty(path))
+        {
+            return;
+        }
 
         _viewModel.FormIdListPath = path;
     }
@@ -173,7 +182,10 @@ public partial class MainWindow : Window, IDisposable
         }
 
         if (processButton != null)
+        {
             processButton.Content = "Cancel Processing";
+        }
+
         _viewModel.IsProcessing = true;
         _viewModel.ProgressValue = 0;
         _viewModel.ProgressStatus = "Initializing...";
@@ -235,9 +247,9 @@ public partial class MainWindow : Window, IDisposable
             });
 
             // Run the processing in a background thread
-            await Task.Run(async () => 
-            { 
-                await _pluginProcessingService.ProcessPlugins(parameters, progress).ConfigureAwait(false); 
+            await Task.Run(async () =>
+            {
+                await _pluginProcessingService.ProcessPlugins(parameters, progress).ConfigureAwait(false);
             }).ConfigureAwait(true);
         }
         catch (OperationCanceledException)
@@ -253,10 +265,12 @@ public partial class MainWindow : Window, IDisposable
             _viewModel.IsProcessing = false;
             _viewModel.ProgressStatus = string.Empty;
             if (processButton != null)
+            {
                 processButton.Content = "Process FormIDs";
+            }
         }
     }
-    
+
     public void Dispose()
     {
         // Dispose managed resources

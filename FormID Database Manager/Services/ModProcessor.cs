@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Data.SQLite;
 using System.IO;
@@ -249,7 +249,7 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
         foreach (var (formId, entry) in batch)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            
+
             formIdParam.Value = formId;
             entryParam.Value = entry;
             await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
@@ -266,7 +266,9 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
     private string GetRecordName(IMajorRecordGetter record)
     {
         if (!string.IsNullOrEmpty(record.EditorID))
+        {
             return record.EditorID;
+        }
 
         var namedRecord = record.GetType().GetInterfaces()
             .FirstOrDefault(i => i.Name.Contains("INamedGetter"));
@@ -279,7 +281,9 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
                 var stringProperty = nameValue.GetType().GetProperty("String");
                 var stringValue = stringProperty?.GetValue(nameValue) as string;
                 if (!string.IsNullOrEmpty(stringValue))
+                {
                     return stringValue;
+                }
             }
         }
 
