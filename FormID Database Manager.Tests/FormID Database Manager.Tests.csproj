@@ -21,6 +21,7 @@
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
     <PackageReference Include="System.Data.SQLite" Version="1.0.119" />
+    <PackageReference Include="Xunit.SkippableFact" Version="1.5.23" />
   </ItemGroup>
 
   <ItemGroup>

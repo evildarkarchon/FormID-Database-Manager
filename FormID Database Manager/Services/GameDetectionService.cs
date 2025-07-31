@@ -50,7 +50,7 @@ public class GameDetectionService
     /// It can be the "Data" directory or the game's root directory.</param>
     /// <returns>A <see cref="GameRelease"/> enum value representing the detected game,
     /// or null if the game could not be determined.</returns>
-    public GameRelease? DetectGame(string gameDirectory)
+    public virtual GameRelease? DetectGame(string gameDirectory)
     {
         try
         {
@@ -151,7 +151,7 @@ public class GameDetectionService
     /// <param name="gameRelease">The <see cref="GameRelease"/> value representing the target game version.</param>
     /// <returns>A <see cref="HashSet{T}"/> containing the base game plugin filenames for the specified game release.
     /// Returns an empty set if the game release is unsupported.</returns>
-    public HashSet<string> GetBaseGamePlugins(GameRelease gameRelease) => gameRelease switch
+    public virtual HashSet<string> GetBaseGamePlugins(GameRelease gameRelease) => gameRelease switch
     {
         GameRelease.SkyrimSE => _skyrimPlugins,
         GameRelease.SkyrimVR => _skyrimPlugins,
