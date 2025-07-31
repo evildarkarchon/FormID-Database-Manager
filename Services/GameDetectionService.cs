@@ -50,25 +50,57 @@ public class GameDetectionService
     /// It can be the "Data" directory or the game's root directory.</param>
     /// <returns>A <see cref="GameRelease"/> enum value representing the detected game,
     /// or null if the game could not be determined.</returns>
-    public Task<GameRelease?> DetectGame(string gameDirectory)
+    public GameRelease? DetectGame(string gameDirectory)
     {
-        return Task.Run(new Func<GameRelease?>(() =>
+        try
         {
-            try
+            // If this is already a data directory, use it directly
+            if (Path.GetFileName(gameDirectory).Equals("Data", StringComparison.OrdinalIgnoreCase))
             {
-                // If this is already a data directory, use it directly
-                if (Path.GetFileName(gameDirectory).Equals("Data", StringComparison.OrdinalIgnoreCase))
+                // Check for game-specific master files in the current directory
+                if (File.Exists(Path.Combine(gameDirectory, "Skyrim.esm")))
                 {
-                    // Check for game-specific master files in the current directory
-                    if (File.Exists(Path.Combine(gameDirectory, "Skyrim.esm")))
+                    if (Directory.Exists(Path.Combine(gameDirectory, "..", "gogscripts")) ||
+                        File.Exists(Path.Combine(gameDirectory, "..", "goggame-1746476928.info")))
                     {
-                        if (Directory.Exists(Path.Combine(gameDirectory, "..", "gogscripts")) ||
-                            File.Exists(Path.Combine(gameDirectory, "..", "goggame-1746476928.info")))
+                        return GameRelease.SkyrimSEGog;
+                    }
+
+                    if (File.Exists(Path.Combine(gameDirectory, "..", "SkyrimVR.exe")))
+                    {
+                        return GameRelease.SkyrimVR;
+                    }
+
+                    return GameRelease.SkyrimSE;
+                }
+
+                if (File.Exists(Path.Combine(gameDirectory, "Oblivion.esm")))
+                    return GameRelease.Oblivion;
+                if (File.Exists(Path.Combine(gameDirectory, "Fallout4.esm")))
+                    return GameRelease.Fallout4;
+                if (File.Exists(Path.Combine(gameDirectory, "..", "Fallout4VR.exe")) &&
+                    File.Exists(Path.Combine(gameDirectory, "Fallout4.esm")))
+                    return GameRelease.Fallout4VR;
+                if (File.Exists(Path.Combine(gameDirectory, "Starfield.esm")))
+                    return GameRelease.Starfield;
+            }
+            else
+            {
+                // Check in the Data subdirectory
+                var dataPath = Path.Combine(gameDirectory, "Data");
+                if (Directory.Exists(dataPath))
+                {
+                    if (File.Exists(Path.Combine(dataPath, "Oblivion.esm")))
+                        return GameRelease.Oblivion;
+                    if (File.Exists(Path.Combine(dataPath, "Skyrim.esm")))
+                    {
+                        if (Directory.Exists(Path.Combine(gameDirectory, "gogscripts")) ||
+                            File.Exists(Path.Combine(gameDirectory, "goggame-1746476928.info")))
                         {
                             return GameRelease.SkyrimSEGog;
                         }
 
-                        if (File.Exists(Path.Combine(gameDirectory, "..", "SkyrimVR.exe")))
+                        if (File.Exists(Path.Combine(gameDirectory, "SkyrimVR.exe")))
                         {
                             return GameRelease.SkyrimVR;
                         }
@@ -76,57 +108,22 @@ public class GameDetectionService
                         return GameRelease.SkyrimSE;
                     }
 
-                    if (File.Exists(Path.Combine(gameDirectory, "Oblivion.esm")))
-                        return GameRelease.Oblivion;
-                    if (File.Exists(Path.Combine(gameDirectory, "Fallout4.esm")))
+                    if (File.Exists(Path.Combine(dataPath, "Fallout4.esm")))
                         return GameRelease.Fallout4;
-                    if (File.Exists(Path.Combine(gameDirectory, "..", "Fallout4VR.exe")) &&
-                        File.Exists(Path.Combine(gameDirectory, "Fallout4.esm")))
+                    if (File.Exists(Path.Combine(gameDirectory, "Fallout4VR.exe")) &&
+                        File.Exists(Path.Combine(dataPath, "Fallout4.esm")))
                         return GameRelease.Fallout4VR;
-                    if (File.Exists(Path.Combine(gameDirectory, "Starfield.esm")))
+                    if (File.Exists(Path.Combine(dataPath, "Starfield.esm")))
                         return GameRelease.Starfield;
                 }
-                else
-                {
-                    // Check in the Data subdirectory
-                    var dataPath = Path.Combine(gameDirectory, "Data");
-                    if (Directory.Exists(dataPath))
-                    {
-                        if (File.Exists(Path.Combine(dataPath, "Oblivion.esm")))
-                            return GameRelease.Oblivion;
-                        if (File.Exists(Path.Combine(gameDirectory, "Skyrim.esm")))
-                        {
-                            if (Directory.Exists(Path.Combine(gameDirectory, "gogscripts")) ||
-                                File.Exists(Path.Combine(gameDirectory, "goggame-1746476928.info")))
-                            {
-                                return GameRelease.SkyrimSEGog;
-                            }
-
-                            if (File.Exists(Path.Combine(gameDirectory, "SkyrimVR.exe")))
-                            {
-                                return GameRelease.SkyrimVR;
-                            }
-
-                            return GameRelease.SkyrimSE;
-                        }
-
-                        if (File.Exists(Path.Combine(dataPath, "Fallout4.esm")))
-                            return GameRelease.Fallout4;
-                        if (File.Exists(Path.Combine(gameDirectory, "Fallout4VR.exe")) &&
-                            File.Exists(Path.Combine(dataPath, "Fallout4.esm")))
-                            return GameRelease.Fallout4VR;
-                        if (File.Exists(Path.Combine(dataPath, "Starfield.esm")))
-                            return GameRelease.Starfield;
-                    }
-                }
             }
-            catch (Exception)
-            {
-                // Return null if any error occurs during detection
-            }
+        }
+        catch (Exception)
+        {
+            // Return null if any error occurs during detection
+        }
 
-            return null;
-        }));
+        return null;
     }
 
     /// <summary>

@@ -14,12 +14,13 @@ namespace FormID_Database_Manager.Services;
 /// <summary>
 /// Provides functionality to process game plugins using various parameters and services.
 /// </summary>
-public class PluginProcessingService
+public class PluginProcessingService : IDisposable
 {
     private readonly DatabaseService _databaseService;
     private readonly FormIdTextProcessor _textProcessor;
     private readonly ModProcessor _modProcessor;
     private readonly MainWindowViewModel _viewModel;
+    private readonly object _cancellationLock = new object();
     private CancellationTokenSource? _cancellationTokenSource;
 
     /// <summary>
@@ -76,7 +77,13 @@ public class PluginProcessingService
         ProcessingParameters parameters,
         IProgress<(string Message, double? Value)>? progress = null)
     {
-        _cancellationTokenSource = new CancellationTokenSource();
+        CancellationTokenSource cancellationTokenSource;
+        lock (_cancellationLock)
+        {
+            _cancellationTokenSource?.Dispose();
+            _cancellationTokenSource = new CancellationTokenSource();
+            cancellationTokenSource = _cancellationTokenSource;
+        }
 
         if (parameters.DryRun)
         {
@@ -96,9 +103,10 @@ public class PluginProcessingService
             return;
         }
 
-        await _databaseService.InitializeDatabase(parameters.DatabasePath, parameters.GameRelease);
+        await _databaseService.InitializeDatabase(parameters.DatabasePath, parameters.GameRelease, cancellationTokenSource.Token)
+            .ConfigureAwait(false);
         await using var conn = new SQLiteConnection($"Data Source={parameters.DatabasePath};Version=3;");
-        await conn.OpenAsync(_cancellationTokenSource.Token);
+        await conn.OpenAsync(cancellationTokenSource.Token).ConfigureAwait(false);
 
         try
         {
@@ -110,12 +118,13 @@ public class PluginProcessingService
                     conn,
                     parameters.GameRelease,
                     parameters.UpdateMode,
-                    _cancellationTokenSource.Token,
-                    progress);
+                    cancellationTokenSource.Token,
+                    progress).ConfigureAwait(false);
 
-                if (!_cancellationTokenSource.Token.IsCancellationRequested)
+                if (!cancellationTokenSource.Token.IsCancellationRequested)
                 {
-                    await _databaseService.OptimizeDatabase(conn);
+                    await _databaseService.OptimizeDatabase(conn, cancellationTokenSource.Token)
+                        .ConfigureAwait(false);
                     progress?.Report(("Processing completed successfully!", 100));
                 }
 
@@ -132,7 +141,7 @@ public class PluginProcessingService
 
             for (var i = 0; i < pluginList.Count; i++)
             {
-                if (_cancellationTokenSource.Token.IsCancellationRequested)
+                if (cancellationTokenSource.Token.IsCancellationRequested)
                     break;
 
                 var pluginItem = pluginList[i];
@@ -149,7 +158,7 @@ public class PluginProcessingService
                         pluginItem,
                         loadOrder,
                         parameters.UpdateMode,
-                        _cancellationTokenSource.Token);
+                        cancellationTokenSource.Token).ConfigureAwait(false);
                     successfulPlugins++;
                 }
                 catch (Exception ex)
@@ -161,9 +170,10 @@ public class PluginProcessingService
                 }
             }
 
-            if (!_cancellationTokenSource.Token.IsCancellationRequested)
+            if (!cancellationTokenSource.Token.IsCancellationRequested)
             {
-                await _databaseService.OptimizeDatabase(conn);
+                await _databaseService.OptimizeDatabase(conn, cancellationTokenSource.Token)
+                    .ConfigureAwait(false);
                 if (failedPlugins > 0)
                 {
                     progress?.Report(
@@ -192,8 +202,14 @@ public class PluginProcessingService
         }
         finally
         {
-            _cancellationTokenSource.Dispose();
-            _cancellationTokenSource = null;
+            lock (_cancellationLock)
+            {
+                if (_cancellationTokenSource == cancellationTokenSource)
+                {
+                    _cancellationTokenSource?.Dispose();
+                    _cancellationTokenSource = null;
+                }
+            }
         }
     }
 
@@ -207,6 +223,21 @@ public class PluginProcessingService
     /// </remarks>
     public void CancelProcessing()
     {
-        _cancellationTokenSource?.Cancel();
+        lock (_cancellationLock)
+        {
+            _cancellationTokenSource?.Cancel();
+        }
+    }
+
+    /// <summary>
+    /// Disposes of the resources used by the PluginProcessingService.
+    /// </summary>
+    public void Dispose()
+    {
+        lock (_cancellationLock)
+        {
+            _cancellationTokenSource?.Dispose();
+            _cancellationTokenSource = null;
+        }
     }
 }

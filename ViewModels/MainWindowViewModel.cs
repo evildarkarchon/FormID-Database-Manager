@@ -5,6 +5,7 @@ using System.ComponentModel;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using FormID_Database_Manager.Models;
+using Avalonia.Threading;
 
 namespace FormID_Database_Manager.ViewModels;
 
@@ -111,6 +112,13 @@ public class MainWindowViewModel : INotifyPropertyChanged
 
     private void ApplyFilter()
     {
+        // Ensure filter operations happen on UI thread
+        if (!Dispatcher.UIThread.CheckAccess())
+        {
+            Dispatcher.UIThread.Post(() => ApplyFilter());
+            return;
+        }
+
         if (string.IsNullOrWhiteSpace(_pluginFilter))
         {
             FilteredPlugins = new ObservableCollection<PluginListItem>(_plugins);
@@ -126,6 +134,13 @@ public class MainWindowViewModel : INotifyPropertyChanged
 
     public void AddErrorMessage(string message, int maxMessages = 10)
     {
+        // Ensure collection operations happen on UI thread
+        if (!Dispatcher.UIThread.CheckAccess())
+        {
+            Dispatcher.UIThread.Post(() => AddErrorMessage(message, maxMessages));
+            return;
+        }
+
         ErrorMessages.Add(message);
 
         if (ErrorMessages.Count > maxMessages)
@@ -136,6 +151,13 @@ public class MainWindowViewModel : INotifyPropertyChanged
 
     public void AddInformationMessage(string message, int maxMessages = 10)
     {
+        // Ensure collection operations happen on UI thread
+        if (!Dispatcher.UIThread.CheckAccess())
+        {
+            Dispatcher.UIThread.Post(() => AddInformationMessage(message, maxMessages));
+            return;
+        }
+
         InformationMessages.Add(message);
 
         if (InformationMessages.Count > maxMessages)
@@ -159,6 +181,13 @@ public class MainWindowViewModel : INotifyPropertyChanged
 
     public void ResetProgress()
     {
+        // Ensure collection operations happen on UI thread
+        if (!Dispatcher.UIThread.CheckAccess())
+        {
+            Dispatcher.UIThread.Post(() => ResetProgress());
+            return;
+        }
+
         ProgressValue = 0;
         ProgressStatus = string.Empty;
         IsProcessing = false;
@@ -168,6 +197,13 @@ public class MainWindowViewModel : INotifyPropertyChanged
 
     public void UpdateProgress(string status, double? value = null)
     {
+        // Ensure UI updates happen on UI thread
+        if (!Dispatcher.UIThread.CheckAccess())
+        {
+            Dispatcher.UIThread.Post(() => UpdateProgress(status, value));
+            return;
+        }
+
         ProgressStatus = status;
         if (value.HasValue)
         {

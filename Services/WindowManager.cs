@@ -40,7 +40,7 @@ public class WindowManager
             {
                 Title = "Select Game Directory",
                 AllowMultiple = false
-            });
+            }).ConfigureAwait(false);
 
             return folders.Count > 0 ? folders[0].Path.LocalPath : null;
         }
@@ -78,7 +78,7 @@ public class WindowManager
                 FileTypeChoices = fileTypeChoices
             };
 
-            var file = await _storageProvider.SaveFilePickerAsync(options);
+            var file = await _storageProvider.SaveFilePickerAsync(options).ConfigureAwait(false);
             return file?.Path.LocalPath;
         }
         catch (Exception ex)
@@ -115,7 +115,7 @@ public class WindowManager
                 AllowMultiple = false
             };
 
-            var files = await _storageProvider.OpenFilePickerAsync(options);
+            var files = await _storageProvider.OpenFilePickerAsync(options).ConfigureAwait(false);
             return files.Count > 0 ? files[0].Path.LocalPath : null;
         }
         catch (Exception ex)

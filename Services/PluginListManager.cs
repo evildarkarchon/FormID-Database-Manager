@@ -58,9 +58,9 @@ public class PluginListManager(GameDetectionService gameDetectionService, MainWi
                 if (!showAdvanced && basePlugins.Contains(pluginFileName))
                     continue;
 
-                // Check if the plugin file exists asynchronously
+                // Check if the plugin file exists
                 var pluginPath = Path.Combine(dataPath, pluginFileName);
-                if (!await Task.Run(() => File.Exists(pluginPath)))
+                if (!File.Exists(pluginPath))
                     continue;
 
                 // Add the plugin to the list

@@ -41,7 +41,7 @@ public class FormIdTextProcessor(DatabaseService databaseService)
         IProgress<(string Message, double? Value)>? progress = null)
     {
         var processedPlugins = new HashSet<string>();
-        var batchInserter = new BatchInserter(conn, gameRelease, BatchSize);
+        using var batchInserter = new BatchInserter(conn, gameRelease, BatchSize);
         var currentPlugin = string.Empty;
         var recordCount = 0;
 
@@ -78,7 +78,7 @@ public class FormIdTextProcessor(DatabaseService databaseService)
             if (currentPlugin != pluginName)
             {
                 // Flush any existing batch for the previous plugin
-                await batchInserter.FlushBatchAsync(cancellationToken);
+                await batchInserter.FlushBatchAsync(cancellationToken).ConfigureAwait(false);
 
                 currentPlugin = pluginName;
 
@@ -87,7 +87,8 @@ public class FormIdTextProcessor(DatabaseService databaseService)
                     if (updateMode)
                     {
                         progress?.Report(($"Processing plugin: {pluginName}", null));
-                        await databaseService.ClearPluginEntries(conn, gameRelease, pluginName);
+                        await databaseService.ClearPluginEntries(conn, gameRelease, pluginName, cancellationToken)
+                            .ConfigureAwait(false);
                     }
 
                     processedPlugins.Add(pluginName);
@@ -95,11 +96,11 @@ public class FormIdTextProcessor(DatabaseService databaseService)
             }
 
             // Add record to batch
-            await batchInserter.AddRecordAsync(pluginName, formId, entry, cancellationToken);
+            await batchInserter.AddRecordAsync(pluginName, formId, entry, cancellationToken).ConfigureAwait(false);
         }
 
         // Handle any remaining batch items
-        await batchInserter.FlushBatchAsync(cancellationToken);
+        await batchInserter.FlushBatchAsync(cancellationToken).ConfigureAwait(false);
 
         progress?.Report(($"Completed processing {processedPlugins.Count} plugins ({recordCount:N0} total records)",
             100));
@@ -125,19 +126,30 @@ public class FormIdTextProcessor(DatabaseService databaseService)
     /// into a SQLite database. This class facilitates batching operations to reduce database overhead
     /// and supports asynchronous processing to enhance performance in bulk insertion scenarios.
     /// </summary>
-    private class BatchInserter(SQLiteConnection conn, GameRelease gameRelease, int batchSize)
+    private class BatchInserter : IDisposable
     {
-        private readonly List<(string plugin, string formId, string entry)> _batch = new(batchSize);
+        private readonly SQLiteConnection _conn;
+        private readonly GameRelease _gameRelease;
+        private readonly int _batchSize;
+        private readonly List<(string plugin, string formId, string entry)> _batch;
         private SQLiteCommand? _insertCommand;
+
+        public BatchInserter(SQLiteConnection conn, GameRelease gameRelease, int batchSize)
+        {
+            _conn = conn;
+            _gameRelease = gameRelease;
+            _batchSize = batchSize;
+            _batch = new List<(string plugin, string formId, string entry)>(batchSize);
+        }
 
         public async Task AddRecordAsync(string plugin, string formId, string entry,
             CancellationToken cancellationToken)
         {
             _batch.Add((plugin, formId, entry));
 
-            if (_batch.Count >= batchSize)
+            if (_batch.Count >= _batchSize)
             {
-                await FlushBatchAsync(cancellationToken);
+                await FlushBatchAsync(cancellationToken).ConfigureAwait(false);
             }
         }
 
@@ -153,15 +165,15 @@ public class FormIdTextProcessor(DatabaseService databaseService)
 
             if (_insertCommand == null)
             {
-                _insertCommand = new SQLiteCommand(conn);
-                _insertCommand.CommandText = $@"INSERT INTO {gameRelease} (plugin, formid, entry) 
+                _insertCommand = new SQLiteCommand(_conn);
+                _insertCommand.CommandText = $@"INSERT INTO {_gameRelease} (plugin, formid, entry) 
                                                VALUES (@plugin, @formid, @entry)";
                 _insertCommand.Parameters.Add(new SQLiteParameter("@plugin"));
                 _insertCommand.Parameters.Add(new SQLiteParameter("@formid"));
                 _insertCommand.Parameters.Add(new SQLiteParameter("@entry"));
             }
 
-            await using var transaction = conn.BeginTransaction();
+            await using var transaction = await _conn.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
             try
             {
                 foreach (var (plugin, formId, entry) in _batch)
@@ -172,17 +184,22 @@ public class FormIdTextProcessor(DatabaseService databaseService)
                     _insertCommand.Parameters["@formid"].Value = formId;
                     _insertCommand.Parameters["@entry"].Value = entry;
 
-                    await _insertCommand.ExecuteNonQueryAsync(cancellationToken);
+                    await _insertCommand.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
                 }
 
-                transaction.Commit();
+                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
                 _batch.Clear();
             }
             catch
             {
-                transaction.Rollback();
+                await transaction.RollbackAsync(cancellationToken).ConfigureAwait(false);
                 throw;
             }
+        }
+
+        public void Dispose()
+        {
+            _insertCommand?.Dispose();
         }
     }
 }

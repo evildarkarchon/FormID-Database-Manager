@@ -84,52 +84,39 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
             if (updateMode)
             {
                 errorCallback($"Deleting existing entries for {pluginItem.Name}");
-                await databaseService.ClearPluginEntries(conn, gameRelease, pluginItem.Name);
+                await databaseService.ClearPluginEntries(conn, gameRelease, pluginItem.Name, cancellationToken)
+                    .ConfigureAwait(false);
             }
 
             try
             {
-                bool success = false;
-                await Task.Run(() =>
+                // Direct execution without Task.Run to avoid cross-thread transaction issues
+                IModGetter mod = gameRelease switch
                 {
-                    try
-                    {
-                        IModGetter mod = gameRelease switch
-                        {
-                            GameRelease.Oblivion => OblivionMod.CreateFromBinaryOverlay(pluginPath,
-                                OblivionRelease.Oblivion),
-                            GameRelease.SkyrimSE => SkyrimMod.CreateFromBinaryOverlay(pluginPath,
-                                SkyrimRelease.SkyrimSE),
-                            GameRelease.SkyrimSEGog => SkyrimMod.CreateFromBinaryOverlay(pluginPath,
-                                SkyrimRelease.SkyrimSEGog),
-                            GameRelease.SkyrimVR => SkyrimMod.CreateFromBinaryOverlay(pluginPath,
-                                SkyrimRelease.SkyrimVR),
-                            GameRelease.Fallout4 => Fallout4Mod.CreateFromBinaryOverlay(pluginPath,
-                                Fallout4Release.Fallout4),
-                            GameRelease.Starfield => StarfieldMod.CreateFromBinaryOverlay(pluginPath,
-                                StarfieldRelease.Starfield),
-                            _ => throw new NotSupportedException($"Unsupported game release: {gameRelease}")
-                        };
+                    GameRelease.Oblivion => OblivionMod.CreateFromBinaryOverlay(pluginPath,
+                        OblivionRelease.Oblivion),
+                    GameRelease.SkyrimSE => SkyrimMod.CreateFromBinaryOverlay(pluginPath,
+                        SkyrimRelease.SkyrimSE),
+                    GameRelease.SkyrimSEGog => SkyrimMod.CreateFromBinaryOverlay(pluginPath,
+                        SkyrimRelease.SkyrimSEGog),
+                    GameRelease.SkyrimVR => SkyrimMod.CreateFromBinaryOverlay(pluginPath,
+                        SkyrimRelease.SkyrimVR),
+                    GameRelease.Fallout4 => Fallout4Mod.CreateFromBinaryOverlay(pluginPath,
+                        Fallout4Release.Fallout4),
+                    GameRelease.Starfield => StarfieldMod.CreateFromBinaryOverlay(pluginPath,
+                        StarfieldRelease.Starfield),
+                    _ => throw new NotSupportedException($"Unsupported game release: {gameRelease}")
+                };
 
-                        ProcessModRecords(conn, gameRelease, pluginItem.Name, mod, cancellationToken);
-                        success = true;
-                    }
-                    catch (Exception ex)
-                    {
-                        errorCallback($"Error processing {pluginItem.Name}: {ex.Message}");
-                        transaction?.Rollback();
-                        success = false;
-                    }
-                }, cancellationToken);
-
-                if (success)
-                {
-                    transaction?.Commit();
-                }
+                await ProcessModRecordsAsync(conn, gameRelease, pluginItem.Name, mod, cancellationToken)
+                    .ConfigureAwait(false);
+                transaction?.Commit();
             }
-            catch (Exception)
+            catch (Exception ex)
             {
+                errorCallback($"Error processing {pluginItem.Name}: {ex.Message}");
                 transaction?.Rollback();
+                throw;
             }
         }
         finally
@@ -147,7 +134,7 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
     /// <param name="pluginName">The name of the plugin being processed.</param>
     /// <param name="mod">The mod plugin containing the records to be processed.</param>
     /// <param name="cancellationToken">The cancellation token to handle termination of the processing operation.</param>
-    private void ProcessModRecords(
+    private async Task ProcessModRecordsAsync(
         SQLiteConnection conn,
         GameRelease gameRelease,
         string pluginName,
@@ -190,7 +177,8 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
                 {
                     try
                     {
-                        InsertBatch(conn, gameRelease, pluginName, batch);
+                        await InsertBatchAsync(conn, gameRelease, pluginName, batch, cancellationToken)
+                            .ConfigureAwait(false);
                         batch.Clear();
                     }
                     catch (Exception ex)
@@ -217,7 +205,8 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
         {
             try
             {
-                InsertBatch(conn, gameRelease, pluginName, batch);
+                await InsertBatchAsync(conn, gameRelease, pluginName, batch, cancellationToken)
+                    .ConfigureAwait(false);
             }
             catch (Exception ex)
             {
@@ -233,11 +222,12 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
     /// <param name="gameRelease">The specific game release that determines the target database table.</param>
     /// <param name="pluginName">The name of the plugin associated with the records being inserted.</param>
     /// <param name="batch">The list of form ID and entry pairs to be inserted into the database.</param>
-    private void InsertBatch(
+    private async Task InsertBatchAsync(
         SQLiteConnection conn,
         GameRelease gameRelease,
         string pluginName,
-        List<(string formId, string entry)> batch)
+        List<(string formId, string entry)> batch,
+        CancellationToken cancellationToken)
     {
         using var cmd = new SQLiteCommand(conn);
         cmd.CommandText = $@"INSERT INTO {gameRelease} (plugin, formid, entry) 
@@ -258,9 +248,11 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
 
         foreach (var (formId, entry) in batch)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+            
             formIdParam.Value = formId;
             entryParam.Value = entry;
-            cmd.ExecuteNonQuery();
+            await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
     }
 
