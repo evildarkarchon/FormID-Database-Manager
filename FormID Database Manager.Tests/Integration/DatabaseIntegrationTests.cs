@@ -85,7 +85,7 @@ public class DatabaseIntegrationTests : IDisposable
             using var queryCmd = new SQLiteCommand(
                 $"SELECT plugin, formid, entry FROM {gameRelease} WHERE plugin = @plugin", connection);
             queryCmd.Parameters.AddWithValue("@plugin", $"{gameRelease}_Plugin1.esp");
-            
+
             using var reader = queryCmd.ExecuteReader();
             var recordCount = 0;
             while (reader.Read())
@@ -111,7 +111,7 @@ public class DatabaseIntegrationTests : IDisposable
     {
         // Arrange
         await _databaseService.InitializeDatabase(_testDbPath, GameRelease.SkyrimSE, CancellationToken.None);
-        
+
         using var connection = new SQLiteConnection($"Data Source={_testDbPath};Version=3;");
         connection.Open();
 
@@ -125,7 +125,7 @@ public class DatabaseIntegrationTests : IDisposable
         // Act - Clear and insert new data
         await _databaseService.ClearPluginEntries(
             connection, GameRelease.SkyrimSE, plugin, CancellationToken.None);
-        
+
         await _databaseService.InsertRecord(
             connection, GameRelease.SkyrimSE, plugin, "000001", "NewEntry1", CancellationToken.None);
         await _databaseService.InsertRecord(
@@ -148,7 +148,7 @@ public class DatabaseIntegrationTests : IDisposable
     {
         // Arrange
         await _databaseService.InitializeDatabase(_testDbPath, GameRelease.SkyrimSE, CancellationToken.None);
-        
+
         using var connection = new SQLiteConnection($"Data Source={_testDbPath};Version=3;");
         connection.Open();
 
@@ -164,7 +164,7 @@ public class DatabaseIntegrationTests : IDisposable
             {
                 using var threadConnection = new SQLiteConnection($"Data Source={_testDbPath};Version=3;");
                 threadConnection.Open();
-                
+
                 for (int j = 0; j < recordsPerThread; j++)
                 {
                     await _databaseService.InsertRecord(
@@ -198,7 +198,7 @@ public class DatabaseIntegrationTests : IDisposable
     {
         // Arrange
         await _databaseService.InitializeDatabase(_testDbPath, GameRelease.SkyrimSE, CancellationToken.None);
-        
+
         using var connection = new SQLiteConnection($"Data Source={_testDbPath};Version=3;");
         connection.Open();
 
@@ -210,7 +210,7 @@ public class DatabaseIntegrationTests : IDisposable
         {
             using var writeConnection = new SQLiteConnection($"Data Source={_testDbPath};Version=3;");
             writeConnection.Open();
-            
+
             for (int i = 0; i < 1000; i++)
             {
                 await _databaseService.InsertRecord(
@@ -220,7 +220,7 @@ public class DatabaseIntegrationTests : IDisposable
                     $"{i:X6}",
                     $"Entry{i}",
                     CancellationToken.None);
-                
+
                 if (i % 100 == 0)
                 {
                     await Task.Delay(10); // Allow reads to happen
@@ -233,7 +233,7 @@ public class DatabaseIntegrationTests : IDisposable
         {
             using var readConnection = new SQLiteConnection($"Data Source={_testDbPath};Version=3;");
             readConnection.Open();
-            
+
             var previousCount = 0;
             while (!writeComplete)
             {
@@ -259,14 +259,14 @@ public class DatabaseIntegrationTests : IDisposable
     public async Task Database_RecoverFromCorruption_Successfully()
     {
         // This test simulates recovery from a corrupted database scenario
-        
+
         // Arrange - Create initial database
         await _databaseService.InitializeDatabase(_testDbPath, GameRelease.SkyrimSE, CancellationToken.None);
-        
+
         using (var connection = new SQLiteConnection($"Data Source={_testDbPath};Version=3;"))
         {
             connection.Open();
-            
+
             // Insert some data
             for (int i = 0; i < 10; i++)
             {
@@ -284,14 +284,14 @@ public class DatabaseIntegrationTests : IDisposable
         using (var newConnection = new SQLiteConnection($"Data Source={_testDbPath};Version=3;"))
         {
             newConnection.Open();
-            
+
             // Re-initialize should handle existing database gracefully
             await _databaseService.InitializeDatabase(_testDbPath, GameRelease.SkyrimSE, CancellationToken.None);
-            
+
             // Verify data is still there
             var count = GetRecordCount(newConnection, GameRelease.SkyrimSE);
             Assert.Equal(10, count);
-            
+
             // Should be able to continue inserting
             await _databaseService.InsertRecord(
                 newConnection,
@@ -300,7 +300,7 @@ public class DatabaseIntegrationTests : IDisposable
                 "00000A",
                 "Entry10",
                 CancellationToken.None);
-            
+
             var newCount = GetRecordCount(newConnection, GameRelease.SkyrimSE);
             Assert.Equal(11, newCount);
         }
@@ -315,7 +315,7 @@ public class DatabaseIntegrationTests : IDisposable
     {
         // Arrange
         await _databaseService.InitializeDatabase(_testDbPath, GameRelease.SkyrimSE, CancellationToken.None);
-        
+
         using var connection = new SQLiteConnection($"Data Source={_testDbPath};Version=3;");
         connection.Open();
 
@@ -327,7 +327,7 @@ public class DatabaseIntegrationTests : IDisposable
         using var cmd = new SQLiteCommand(connection);
         cmd.CommandText = $@"INSERT INTO {GameRelease.SkyrimSE} (plugin, formid, entry) 
                            VALUES (@plugin, @formid, @entry)";
-        
+
         var pluginParam = cmd.Parameters.Add("@plugin", System.Data.DbType.String);
         var formIdParam = cmd.Parameters.Add("@formid", System.Data.DbType.String);
         var entryParam = cmd.Parameters.Add("@entry", System.Data.DbType.String);
@@ -339,7 +339,7 @@ public class DatabaseIntegrationTests : IDisposable
             entryParam.Value = $"Entry{i}";
             await cmd.ExecuteNonQueryAsync();
         }
-        
+
         transaction.Commit();
         var insertTime = DateTime.UtcNow - startTime;
 
@@ -363,7 +363,7 @@ public class DatabaseIntegrationTests : IDisposable
     {
         // Arrange
         await _databaseService.InitializeDatabase(_testDbPath, GameRelease.SkyrimSE, CancellationToken.None);
-        
+
         using var connection = new SQLiteConnection($"Data Source={_testDbPath};Version=3;");
         connection.Open();
 
@@ -409,7 +409,7 @@ public class DatabaseIntegrationTests : IDisposable
         connection.Close();
         var fileInfo = new FileInfo(_testDbPath);
         Assert.True(fileInfo.Length > 0);
-        
+
         // Note: Performance improvement may not always be measurable in small test databases
         // but the optimization should complete without errors
     }
@@ -423,14 +423,14 @@ public class DatabaseIntegrationTests : IDisposable
     {
         // Arrange
         await _databaseService.InitializeDatabase(_testDbPath, GameRelease.SkyrimSE, CancellationToken.None);
-        
+
         using var connection = new SQLiteConnection($"Data Source={_testDbPath};Version=3;");
         connection.Open();
 
         // Insert initial data
         await _databaseService.InsertRecord(
             connection, GameRelease.SkyrimSE, "Initial.esp", "000001", "InitialEntry", CancellationToken.None);
-        
+
         var initialCount = GetRecordCount(connection, GameRelease.SkyrimSE);
 
         // Act - Start transaction, insert data, then rollback
@@ -440,7 +440,7 @@ public class DatabaseIntegrationTests : IDisposable
             cmd.Transaction = transaction;
             cmd.CommandText = $@"INSERT INTO {GameRelease.SkyrimSE} (plugin, formid, entry) 
                                VALUES (@plugin, @formid, @entry)";
-            
+
             for (int i = 0; i < 100; i++)
             {
                 cmd.Parameters.Clear();
@@ -449,7 +449,7 @@ public class DatabaseIntegrationTests : IDisposable
                 cmd.Parameters.AddWithValue("@entry", $"TransEntry{i}");
                 await cmd.ExecuteNonQueryAsync();
             }
-            
+
             // Rollback instead of commit
             transaction.Rollback();
         }
@@ -457,7 +457,7 @@ public class DatabaseIntegrationTests : IDisposable
         // Assert - Count should remain unchanged
         var finalCount = GetRecordCount(connection, GameRelease.SkyrimSE);
         Assert.Equal(initialCount, finalCount);
-        
+
         // Verify no transactional data exists
         var transactionalRecords = GetRecordsByPlugin(connection, GameRelease.SkyrimSE, "Transactional.esp");
         Assert.Empty(transactionalRecords);

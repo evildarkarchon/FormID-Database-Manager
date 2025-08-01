@@ -484,7 +484,7 @@ public class MainWindowViewModelTests
         };
 
         // Act - Force PropertyChanged with reflection
-        var method = typeof(MainWindowViewModel).GetMethod("OnPropertyChanged", 
+        var method = typeof(MainWindowViewModel).GetMethod("OnPropertyChanged",
             System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
         method?.Invoke(_viewModel, new object?[] { null });
 

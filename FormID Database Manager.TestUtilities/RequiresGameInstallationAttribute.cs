@@ -18,7 +18,7 @@ public sealed class RequiresGameInstallationFactAttribute : FactAttribute
     public RequiresGameInstallationFactAttribute(params GameRelease[] requiredGames)
     {
         _requiredGames = requiredGames ?? Array.Empty<GameRelease>();
-        
+
         if (_requiredGames.Length == 0)
         {
             // If no specific games specified, check for any common Bethesda game
@@ -73,7 +73,7 @@ public sealed class RequiresGameInstallationTheoryAttribute : TheoryAttribute
     public RequiresGameInstallationTheoryAttribute(params GameRelease[] requiredGames)
     {
         _requiredGames = requiredGames ?? Array.Empty<GameRelease>();
-        
+
         if (_requiredGames.Length == 0)
         {
             _requiredGames = new[]

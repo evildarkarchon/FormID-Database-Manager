@@ -18,11 +18,17 @@ public class MainWindowViewModel : INotifyPropertyChanged
     private bool _isProcessing;
     private double _progressValue;
     private string _progressStatus = string.Empty;
-    private ObservableCollection<PluginListItem> _plugins = [];
+    private ObservableCollection<PluginListItem> _plugins;
     private ObservableCollection<PluginListItem> _filteredPlugins = [];
     private string _pluginFilter = string.Empty;
     private ObservableCollection<string> _errorMessages = [];
     private ObservableCollection<string> _informationMessages = [];
+    
+    public MainWindowViewModel()
+    {
+        _plugins = [];
+        _plugins.CollectionChanged += (s, e) => ApplyFilter();
+    }
 
     public string GameDirectory
     {

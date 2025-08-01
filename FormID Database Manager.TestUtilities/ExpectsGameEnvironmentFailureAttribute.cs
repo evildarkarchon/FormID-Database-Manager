@@ -19,7 +19,7 @@ public sealed class ExpectsGameEnvironmentFailureFactAttribute : FactAttribute
     public ExpectsGameEnvironmentFailureFactAttribute(params GameRelease[] games)
     {
         _games = games ?? Array.Empty<GameRelease>();
-        
+
         if (_games.Length == 0)
         {
             _games = new[]

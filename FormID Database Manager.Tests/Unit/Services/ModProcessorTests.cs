@@ -58,7 +58,7 @@ public class ModProcessorTests : IDisposable
         var gameDir = Path.Combine(Path.GetTempPath(), "TestGame", "Data");
         Directory.CreateDirectory(gameDir);
         var pluginPath = Path.Combine(gameDir, "TestPlugin.esp");
-        
+
         // Create a mock plugin file (minimal ESP header - not valid for Mutagen)
         await CreateMinimalPluginFile(pluginPath);
 
@@ -67,7 +67,7 @@ public class ModProcessorTests : IDisposable
         var loadOrder = new List<IModListingGetter<IModGetter>> { mockModListing.Object };
 
         // Act & Assert - Should throw because plugin is not valid
-        await Assert.ThrowsAnyAsync<Exception>(async () => 
+        await Assert.ThrowsAnyAsync<Exception>(async () =>
             await _modProcessor.ProcessPlugin(
                 gameDir,
                 _connection,
@@ -167,7 +167,7 @@ public class ModProcessorTests : IDisposable
         var gameDir = Path.Combine(Path.GetTempPath(), "TestGame", "Data");
         Directory.CreateDirectory(gameDir);
         var pluginPath = Path.Combine(gameDir, "Corrupted.esp");
-        
+
         // Create corrupted plugin file
         await File.WriteAllBytesAsync(pluginPath, new byte[] { 0xFF, 0xFF, 0xFF, 0xFF });
 
@@ -195,7 +195,7 @@ public class ModProcessorTests : IDisposable
     {
         // Arrange
         var ignorablePatterns = new[] { "KSIZ", "KWDA", "Expected EDID", "List with a non zero counter" };
-        
+
         // This test verifies the error filtering logic in ProcessModRecordsAsync
         // Since we can't easily simulate these specific Mutagen errors, we test the pattern matching
         foreach (var pattern in ignorablePatterns)
@@ -204,7 +204,7 @@ public class ModProcessorTests : IDisposable
             var isIgnorable = testError.Message.Contains(pattern, StringComparison.OrdinalIgnoreCase);
             Assert.True(isIgnorable);
         }
-        
+
         await Task.CompletedTask;
     }
 
@@ -268,15 +268,15 @@ public class ModProcessorTests : IDisposable
     {
         // This test verifies batching logic is in place
         // The BatchSize constant is 1000 as defined in ModProcessor
-        
+
         // Verify the batch size constant exists and is reasonable
-        var batchSizeField = typeof(ModProcessor).GetField("BatchSize", 
+        var batchSizeField = typeof(ModProcessor).GetField("BatchSize",
             System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
         Assert.NotNull(batchSizeField);
-        
+
         var batchSize = (int)batchSizeField.GetValue(null);
         Assert.Equal(1000, batchSize);
-        
+
         await Task.CompletedTask;
     }
 
@@ -344,7 +344,7 @@ public class ModProcessorTests : IDisposable
         foreach (var gameDir in testCases)
         {
             _errorMessages.Clear();
-            
+
             // Arrange
             var dataPath = gameDir.EndsWith("Data") ? gameDir : Path.Combine(gameDir, "Data");
             Directory.CreateDirectory(dataPath);
@@ -382,7 +382,7 @@ public class ModProcessorTests : IDisposable
     {
         // Arrange
         var specialNames = new[] { "Test Plugin.esp", "Test-Plugin.esp", "Test_Plugin.esp", "Test+Plugin.esp" };
-        
+
         foreach (var pluginName in specialNames)
         {
             _errorMessages.Clear();
@@ -428,7 +428,7 @@ public class ModProcessorTests : IDisposable
         var gameDir = Path.Combine(Path.GetTempPath(), "TestGame", "Data");
         Directory.CreateDirectory(gameDir);
         var pluginPath = Path.Combine(gameDir, "TestPlugin.esp");
-        
+
         // Create corrupted plugin that will fail processing
         await File.WriteAllBytesAsync(pluginPath, new byte[] { 0xFF, 0xFF, 0xFF, 0xFF });
 
@@ -487,7 +487,17 @@ public class ModProcessorTests : IDisposable
     private Mock<IModListingGetter<IModGetter>> CreateMockModListing(string fileName)
     {
         var mock = new Mock<IModListingGetter<IModGetter>>();
-        var modKey = new ModKey(fileName, ModType.Plugin);
+        // Extract mod name without extension for ModKey constructor
+        var modName = Path.GetFileNameWithoutExtension(fileName);
+        var extension = Path.GetExtension(fileName).ToLowerInvariant();
+        var modType = extension switch
+        {
+            ".esm" => ModType.Master,
+            ".esl" => ModType.Light,
+            ".esp" => ModType.Plugin,
+            _ => ModType.Plugin
+        };
+        var modKey = new ModKey(modName, modType);
         mock.Setup(m => m.ModKey).Returns(modKey);
         return mock;
     }
@@ -507,7 +517,7 @@ public class ModProcessorTests : IDisposable
             0x00, 0x00, 0x00, 0x00, // Internal Version
             0x00, 0x00, 0x00, 0x00  // Unknown
         };
-        
+
         await File.WriteAllBytesAsync(path, header);
     }
 

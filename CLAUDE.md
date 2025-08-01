@@ -34,6 +34,41 @@ dotnet format
 dotnet publish -c Release
 ```
 
+## Code Coverage Commands
+
+```bash
+# Run tests with code coverage
+dotnet test /p:CollectCoverage=true /p:CoverletOutputFormat=cobertura
+
+# Run tests with coverage and generate report file
+dotnet test /p:CollectCoverage=true /p:CoverletOutput=./coverage.xml /p:CoverletOutputFormat=cobertura
+
+# Run tests with coverage showing results in console
+dotnet test /p:CollectCoverage=true /p:CoverletOutputFormat=lcov
+
+# Run specific test category with coverage
+dotnet test --filter "Category=Unit" /p:CollectCoverage=true
+
+# Exclude test files from coverage
+dotnet test /p:CollectCoverage=true /p:Exclude="[*Tests*]*"
+```
+
+## Performance Testing
+
+```bash
+# Run performance benchmarks
+dotnet run -c Release --project "FormID Database Manager.Tests/FormID Database Manager.Tests.csproj" -- --filter "*Benchmark*"
+
+# Run specific benchmark
+dotnet run -c Release --project "FormID Database Manager.Tests/FormID Database Manager.Tests.csproj" -- --filter "DatabaseBenchmarks"
+
+# Run load tests
+dotnet test --filter "Category=LoadTest"
+
+# Run stress tests  
+dotnet test --filter "Category=StressTest"
+```
+
 ## Architecture
 
 The application follows MVVM pattern with these key components:
@@ -76,10 +111,43 @@ CREATE TABLE {GameRelease} (
 
 ## Testing Strategy
 
+### Test Categories
 - **Unit Tests**: Located in `FormID Database Manager.Tests/Unit/`
+  - Service tests with mocked dependencies
+  - ViewModel tests for business logic
+  - Model tests for data validation
+  
 - **Integration Tests**: Located in `FormID Database Manager.Tests/Integration/`
-- **UI Tests**: Use Avalonia.Headless.XUnit for testing ViewModels and UI components
+  - End-to-end service tests with real dependencies
+  - Database integration tests
+  - Plugin processing workflow tests
+  
+- **UI Tests**: Located in `FormID Database Manager.Tests/UI/`
+  - Use Avalonia.Headless.XUnit for headless UI testing
+  - MainWindow initialization and control tests
+  - Data binding verification tests
+  - UI control behavior tests
+  
+- **Performance Tests**: Located in `FormID Database Manager.Tests/Performance/`
+  - **Benchmarks**: Using BenchmarkDotNet for micro-benchmarks
+    - DatabaseBenchmarks: Database operation performance
+    - PluginProcessingBenchmarks: Plugin processing speed
+    - MemoryBenchmarks: Memory usage analysis
+  - **Load Tests**: Testing under heavy load (Category=LoadTest)
+    - 100+ concurrent plugin processing
+    - Large plugin handling (100k+ FormIDs)
+    - Concurrent database operations
+  - **Stress Tests**: Testing extreme conditions (Category=StressTest)
+    - Rapid cancellation scenarios
+    - Maximum connection limits
+    - Memory pressure scenarios
+
 - **Test Utilities**: Shared test builders and mocks in `FormID Database Manager.TestUtilities/`
+
+### Coverage Goals
+- Target: 80% code coverage
+- Use coverlet for coverage analysis
+- Exclude test projects from coverage metrics
 
 ## Key Dependencies
 
@@ -87,3 +155,9 @@ CREATE TABLE {GameRelease} (
 - **Mutagen.Bethesda 0.51.0**: For parsing Bethesda game plugins
 - **System.Data.SQLite 1.0.119**: Database operations
 - **xUnit**: Testing framework with Moq for mocking
+
+## Development Notes
+
+### Mutagen API Documentation
+- There is no dedicated API documentation for Mutagen
+- Any API queries must be parsed from the source code available at `https://github.com/Mutagen-Modding/Mutagen/tree/0.51.0`

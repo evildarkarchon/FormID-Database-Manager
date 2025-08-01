@@ -24,7 +24,7 @@ public class FormIdTextProcessorTests : IDisposable
         _testDbPath = Path.Combine(Path.GetTempPath(), $"test_{Guid.NewGuid()}.db");
         _testFilesDir = Path.Combine(Path.GetTempPath(), $"test_files_{Guid.NewGuid()}");
         Directory.CreateDirectory(_testFilesDir);
-        
+
         _databaseService = new DatabaseService();
         _processor = new FormIdTextProcessor(_databaseService);
 
@@ -138,13 +138,13 @@ public class FormIdTextProcessorTests : IDisposable
         // Assert
         var records = GetAllRecords();
         Assert.Equal(6, records.Count);
-        
+
         var plugin1Records = records.Where(r => r.plugin == "Plugin1.esp").ToList();
         Assert.Equal(3, plugin1Records.Count);
-        
+
         var plugin2Records = records.Where(r => r.plugin == "Plugin2.esp").ToList();
         Assert.Equal(2, plugin2Records.Count);
-        
+
         var plugin3Records = records.Where(r => r.plugin == "Plugin3.esp").ToList();
         Assert.Single(plugin3Records);
     }
@@ -182,7 +182,7 @@ public class FormIdTextProcessorTests : IDisposable
         Assert.Contains(progressReports, r => r.Message.Contains("Counting records"));
         Assert.Contains(progressReports, r => r.Message.Contains("Processing:") && r.Value.HasValue);
         Assert.Contains(progressReports, r => r.Message.Contains("Completed processing"));
-        
+
         // Verify progress values are increasing
         var progressValues = progressReports.Where(r => r.Value.HasValue).Select(r => r.Value!.Value).ToList();
         for (int i = 1; i < progressValues.Count; i++)
@@ -229,7 +229,7 @@ public class FormIdTextProcessorTests : IDisposable
         const int batchSize = 10000; // As defined in FormIdTextProcessor
         var testFile = Path.Combine(_testFilesDir, "batch_test.txt");
         var totalRecords = batchSize + 100; // Slightly more than one batch
-        
+
         var lines = new List<string>();
         for (int i = 0; i < totalRecords; i++)
         {
@@ -256,7 +256,7 @@ public class FormIdTextProcessorTests : IDisposable
         // Arrange
         var testFile = Path.Combine(_testFilesDir, "large_file_test.txt");
         var totalRecords = 25000; // Large number to test efficiency
-        
+
         using (var writer = new StreamWriter(testFile))
         {
             for (int i = 0; i < totalRecords; i++)
@@ -356,9 +356,9 @@ public class FormIdTextProcessorTests : IDisposable
         // Act
         cts.CancelAfter(50); // Cancel after 50ms
 
-        // Assert
-        await Assert.ThrowsAsync<OperationCanceledException>(() => processTask);
-        
+        // Assert - TaskCanceledException inherits from OperationCanceledException
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => processTask);
+
         // Verify partial processing
         var records = GetAllRecords();
         Assert.True(records.Count < 10000); // Should not have processed all records
@@ -415,7 +415,7 @@ public class FormIdTextProcessorTests : IDisposable
         // Assert
         var records = GetAllRecords();
         Assert.Equal(10, records.Count);
-        
+
         // Verify special characters are preserved
         Assert.Contains(records, r => r.entry == "Entry with spaces");
         Assert.Contains(records, r => r.entry == "Entry-with-dashes");
@@ -491,13 +491,13 @@ public class FormIdTextProcessorTests : IDisposable
         // Assert
         var records = GetAllRecords();
         Assert.Equal(3, records.Count);
-        
+
         // Old Plugin1 entries should be replaced
         Assert.DoesNotContain(records, r => r.entry == "OldEntry1");
         Assert.DoesNotContain(records, r => r.entry == "OldEntry2");
         Assert.Contains(records, r => r.entry == "NewEntry1");
         Assert.Contains(records, r => r.entry == "NewEntry4");
-        
+
         // Plugin2 should be updated
         Assert.DoesNotContain(records, r => r.entry == "OldEntry3");
         Assert.Contains(records, r => r.entry == "UpdatedEntry3");

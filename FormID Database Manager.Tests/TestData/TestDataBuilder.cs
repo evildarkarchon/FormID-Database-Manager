@@ -13,7 +13,7 @@ namespace FormID_Database_Manager.Tests.TestData;
 public static class TestDataBuilder
 {
     private static readonly string TestDataRoot = Path.Combine(
-        AppDomain.CurrentDomain.BaseDirectory, 
+        AppDomain.CurrentDomain.BaseDirectory,
         "TestData");
 
     /// <summary>
@@ -43,7 +43,7 @@ public static class TestDataBuilder
     {
         var filePath = Path.Combine(directory, fileName);
         var isEsm = fileName.EndsWith(".esm", StringComparison.OrdinalIgnoreCase);
-        
+
         using var fs = new FileStream(filePath, FileMode.Create);
         using var writer = new BinaryWriter(fs);
 
@@ -55,7 +55,7 @@ public static class TestDataBuilder
         writer.Write(0x00000000); // Timestamp
         writer.Write(0x00000000); // Version control
         writer.Write(0x00000000); // Internal version
-        
+
         // Add some basic subrecords
         writer.Write(Encoding.ASCII.GetBytes("HEDR")); // Header subrecord
         writer.Write((short)12); // Size
@@ -93,7 +93,7 @@ public static class TestDataBuilder
     {
         var lines = new List<string>();
         var plugins = new[] { "TestPlugin1.esp", "TestPlugin2.esp", "TestPlugin3.esp" };
-        
+
         for (int i = 0; i < recordCount; i++)
         {
             var plugin = plugins[i % plugins.Length];
@@ -137,7 +137,7 @@ public static class TestDataBuilder
             // Bethesda plugin list format
             lines.Add(plugin.StartsWith("*") ? plugin : $"*{plugin}");
         }
-        
+
         await File.WriteAllLinesAsync(filePath, lines);
     }
 
@@ -169,9 +169,9 @@ public static class TestDataBuilder
         var tempDir = Path.Combine(Path.GetTempPath(), $"test_game_{Guid.NewGuid()}");
         var gameDir = Path.Combine(tempDir, gameName);
         var dataDir = Path.Combine(gameDir, "Data");
-        
+
         Directory.CreateDirectory(dataDir);
-        
+
         var env = new TestGameEnvironment
         {
             RootDirectory = tempDir,
@@ -190,20 +190,20 @@ public static class TestDataBuilder
                 CreateMinimalPlugin(dataDir, "Dawnguard.esm");
                 env.PluginFiles.AddRange(new[] { "Skyrim.esm", "Update.esm", "Dawnguard.esm" });
                 break;
-                
+
             case "fallout 4":
             case "fallout4":
                 CreateMinimalPlugin(dataDir, "Fallout4.esm");
                 CreateMinimalPlugin(dataDir, "DLCRobot.esm");
                 env.PluginFiles.AddRange(new[] { "Fallout4.esm", "DLCRobot.esm" });
                 break;
-                
+
             case "starfield":
                 CreateMinimalPlugin(dataDir, "Starfield.esm");
                 CreateMinimalPlugin(dataDir, "Constellation.esm");
                 env.PluginFiles.AddRange(new[] { "Starfield.esm", "Constellation.esm" });
                 break;
-                
+
             case "oblivion":
                 CreateMinimalPlugin(dataDir, "Oblivion.esm");
                 env.PluginFiles.Add("Oblivion.esm");
@@ -213,7 +213,7 @@ public static class TestDataBuilder
         // Create plugin list file
         var pluginListPath = Path.Combine(gameDir, "plugins.txt");
         await CreatePluginListFile(pluginListPath, env.PluginFiles.ToArray());
-        
+
         return env;
     }
 
@@ -237,7 +237,9 @@ public static class TestDataBuilder
         {
             if (Directory.Exists(RootDirectory))
             {
-                try { Directory.Delete(RootDirectory, true); } catch { }
+                try
+                { Directory.Delete(RootDirectory, true); }
+                catch { }
             }
         }
     }

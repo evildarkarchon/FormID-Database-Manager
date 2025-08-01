@@ -24,7 +24,7 @@ public class GameDetectionIntegrationTests : IDisposable
         _testRoot = Path.Combine(Path.GetTempPath(), $"gamedetection_{Guid.NewGuid()}");
         _testDirectories = new List<string>();
         _gameDetectionService = new GameDetectionService();
-        
+
         Directory.CreateDirectory(_testRoot);
     }
 
@@ -32,12 +32,16 @@ public class GameDetectionIntegrationTests : IDisposable
     {
         foreach (var dir in _testDirectories.Where(Directory.Exists))
         {
-            try { Directory.Delete(dir, true); } catch { }
+            try
+            { Directory.Delete(dir, true); }
+            catch { }
         }
-        
+
         if (Directory.Exists(_testRoot))
         {
-            try { Directory.Delete(_testRoot, true); } catch { }
+            try
+            { Directory.Delete(_testRoot, true); }
+            catch { }
         }
     }
 
@@ -105,7 +109,7 @@ public class GameDetectionIntegrationTests : IDisposable
             var gameDir = Path.GetDirectoryName(testCase.DataPath)!;
             _testDirectories.Add(gameDir);
             Directory.CreateDirectory(testCase.DataPath);
-            
+
             // Create required plugin files
             foreach (var file in testCase.RequiredFiles)
             {
@@ -183,14 +187,14 @@ public class GameDetectionIntegrationTests : IDisposable
         // Arrange
         var realDataPath = Path.Combine(_testRoot, "RealGame", "Data");
         var symlinkPath = Path.Combine(_testRoot, "SymlinkGame", "Data");
-        
+
         _testDirectories.Add(Path.GetDirectoryName(realDataPath)!);
         _testDirectories.Add(Path.GetDirectoryName(symlinkPath)!);
-        
+
         Directory.CreateDirectory(realDataPath);
         CreatePluginFile(realDataPath, "Skyrim.esm");
         CreatePluginFile(realDataPath, "Update.esm");
-        
+
         // Create symbolic link
         Directory.CreateDirectory(Path.GetDirectoryName(symlinkPath)!);
         try
@@ -237,11 +241,11 @@ public class GameDetectionIntegrationTests : IDisposable
         var largeDataPath = Path.Combine(_testRoot, "LargeGame", "Data");
         _testDirectories.Add(Path.GetDirectoryName(largeDataPath)!);
         Directory.CreateDirectory(largeDataPath);
-        
+
         // Create required game files
         CreatePluginFile(largeDataPath, "Skyrim.esm");
         CreatePluginFile(largeDataPath, "Update.esm");
-        
+
         // Create many additional files
         for (int i = 0; i < 1000; i++)
         {
@@ -252,7 +256,7 @@ public class GameDetectionIntegrationTests : IDisposable
 
         // Act
         var detectedGame = _gameDetectionService.DetectGame(largeDataPath);
-        
+
         var elapsed = DateTime.UtcNow - startTime;
 
         // Assert
@@ -299,7 +303,7 @@ public class GameDetectionIntegrationTests : IDisposable
         var ambiguousPath = Path.Combine(_testRoot, "Ambiguous", "Data");
         _testDirectories.Add(Path.GetDirectoryName(ambiguousPath)!);
         Directory.CreateDirectory(ambiguousPath);
-        
+
         // Mix of Skyrim and Fallout files
         CreatePluginFile(ambiguousPath, "Skyrim.esm");
         CreatePluginFile(ambiguousPath, "Fallout4.esm");
@@ -320,7 +324,7 @@ public class GameDetectionIntegrationTests : IDisposable
         _testDirectories.Add(Path.GetDirectoryName(readOnlyPath)!);
         Directory.CreateDirectory(readOnlyPath);
         CreatePluginFile(readOnlyPath, "Starfield.esm");
-        
+
         // Make directory read-only
         var dirInfo = new DirectoryInfo(readOnlyPath);
         dirInfo.Attributes |= FileAttributes.ReadOnly;
@@ -330,7 +334,7 @@ public class GameDetectionIntegrationTests : IDisposable
 
         // Assert
         Assert.Equal(GameRelease.Starfield, detectedGame);
-        
+
         // Cleanup
         dirInfo.Attributes &= ~FileAttributes.ReadOnly;
     }
@@ -429,13 +433,13 @@ public class GameDetectionIntegrationTests : IDisposable
             0x00, 0x00, 0x00, 0x00, // Flags (ESM flag for .esm files)
             0x00, 0x00, 0x00, 0x00  // FormID
         };
-        
+
         // Set ESM flag for .esm files
         if (fileName.EndsWith(".esm", StringComparison.OrdinalIgnoreCase))
         {
             header[8] = 0x01; // ESM flag
         }
-        
+
         File.WriteAllBytes(filePath, header);
     }
 

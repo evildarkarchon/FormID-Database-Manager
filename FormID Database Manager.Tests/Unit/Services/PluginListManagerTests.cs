@@ -33,7 +33,7 @@ public class PluginListManagerTests : IDisposable
         _pluginListManager = new PluginListManager(_mockGameDetectionService.Object, _viewModel);
         _testDirectory = Path.Combine(Path.GetTempPath(), $"test_{Guid.NewGuid()}");
         _plugins = new ObservableCollection<PluginListItem>();
-        
+
         Directory.CreateDirectory(_testDirectory);
         Directory.CreateDirectory(Path.Combine(_testDirectory, "Data"));
     }
@@ -73,7 +73,7 @@ public class PluginListManagerTests : IDisposable
         // Arrange
         var dataPath = Path.Combine(_testDirectory, "Data");
         CreateTestPluginFiles(dataPath, "Skyrim.esm", "Update.esm", "Dawnguard.esm", "UserMod.esp");
-        
+
         _mockGameDetectionService.Setup(x => x.GetBaseGamePlugins(GameRelease.SkyrimSE))
             .Returns(new HashSet<string> { "Skyrim.esm", "Update.esm", "Dawnguard.esm" });
 
@@ -118,7 +118,7 @@ public class PluginListManagerTests : IDisposable
         // Arrange - Pre-populate collections
         _plugins.Add(new PluginListItem { Name = "OldPlugin.esp" });
         _viewModel.FilteredPlugins.Add(new PluginListItem { Name = "OldPlugin.esp" });
-        
+
         var dataPath = Path.Combine(_testDirectory, "Data");
         CreateTestPluginFiles(dataPath, "NewPlugin.esp");
 
@@ -216,7 +216,7 @@ public class PluginListManagerTests : IDisposable
         _plugins.Clear();
         _viewModel.FilteredPlugins.Clear();
         _viewModel.ErrorMessages.Clear();
-        
+
         await _pluginListManager.RefreshPluginList(
             dataPath, // Direct data path
             GameRelease.SkyrimSE,
@@ -233,7 +233,7 @@ public class PluginListManagerTests : IDisposable
     {
         // Arrange - Create directory but no actual plugin files
         var dataPath = Path.Combine(_testDirectory, "Data");
-        
+
         // Act
         await _pluginListManager.RefreshPluginList(
             _testDirectory,
