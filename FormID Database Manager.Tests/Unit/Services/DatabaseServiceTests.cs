@@ -13,6 +13,7 @@ using Xunit;
 
 namespace FormID_Database_Manager.Tests.Unit.Services;
 
+[Collection("Database Tests")]
 public class DatabaseServiceTests : IClassFixture<DatabaseFixture>, IAsyncLifetime
 {
     private readonly DatabaseFixture _fixture;

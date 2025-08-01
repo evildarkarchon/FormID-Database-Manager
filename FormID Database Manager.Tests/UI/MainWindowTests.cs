@@ -14,6 +14,7 @@ using Xunit;
 
 namespace FormID_Database_Manager.Tests.UI
 {
+    [Collection("UI Tests")]
     public class MainWindowTests
     {
         [AvaloniaFact]

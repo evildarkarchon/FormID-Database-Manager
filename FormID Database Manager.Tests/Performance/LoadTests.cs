@@ -17,6 +17,7 @@ using Xunit.Abstractions;
 
 namespace FormID_Database_Manager.Tests.Performance
 {
+    [Collection("Performance Tests")]
     public class LoadTests : IDisposable
     {
         private readonly ITestOutputHelper _output;
