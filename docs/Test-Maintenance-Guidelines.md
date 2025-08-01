@@ -8,13 +8,13 @@ This document provides guidelines for maintaining the test suite of the FormID D
 
 ### Daily Tasks
 
-#### 1. CI/CD Pipeline Monitoring
-- **Check GitHub Actions**: Review the latest test runs at the project's Actions tab
+#### 1. Test Suite Monitoring
+- **Run Tests Locally**: Execute the full test suite
 - **Address Failures**: Any failing tests should be investigated immediately
 - **Platform-Specific Issues**: Pay attention to platform-specific failures (Windows/Linux/macOS)
 
 ```bash
-# Local verification of CI failures
+# Run full test suite
 dotnet test --configuration Release
 ```
 
@@ -310,10 +310,10 @@ Write-Host "Total Execution Time: XX seconds"
 3. Check for global test configuration issues
 4. Revert recent test infrastructure changes
 
-### CI/CD Pipeline Broken
+### Build Process Issues
 1. Check for environment-specific issues
 2. Review recent dependency updates
-3. Verify runner image versions
+3. Verify SDK and runtime versions
 4. Consider reverting to last known good state
 
 ### Performance Regression

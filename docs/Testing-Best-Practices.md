@@ -271,15 +271,7 @@ await TestOptimization.RunWithTimeoutAsync(
 );
 ```
 
-## Integration with CI/CD
-
-### GitHub Actions Configuration
-Tests are automatically run on:
-- Every push
-- Pull requests
-- Three platforms: Windows, Linux, macOS
-
-### Test Categories
+## Test Categories
 Use appropriate categories for conditional execution:
 - `Unit` - Fast, isolated tests
 - `Integration` - Tests with external dependencies
@@ -314,7 +306,7 @@ Failed UI tests may produce screenshots in:
 ## Maintenance Schedule
 
 ### Daily
-- Monitor CI/CD test results
+- Run tests locally
 - Address any failing tests
 
 ### Weekly
