@@ -273,7 +273,7 @@ namespace FormID_Database_Manager.Tests.Performance
 
         [Fact]
         [Trait("Category", "LoadTest")]
-        public async Task LoadTest_UIResponsivenessUnderLoad()
+        public Task LoadTest_UIResponsivenessUnderLoad()
         {
             // Arrange
             var viewModel = new MainWindowViewModel();
@@ -322,6 +322,8 @@ namespace FormID_Database_Manager.Tests.Performance
             // UI updates should be fast (< 1ms average, < 10ms max)
             Assert.True(avgMs < 1.0, $"Average UI update time too slow: {avgMs:F3} ms");
             Assert.True(maxMs < 10.0, $"Maximum UI update time too slow: {maxMs:F3} ms");
+
+            return Task.CompletedTask;
         }
 
         private async Task<List<string>> CreateTestPlugins(int count, int recordsPerPlugin)
