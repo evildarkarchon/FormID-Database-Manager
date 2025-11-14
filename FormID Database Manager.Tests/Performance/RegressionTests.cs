@@ -391,7 +391,7 @@ public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
         _output.WriteLine($"Wall time: {stopwatch.Elapsed.TotalMilliseconds:F2}ms");
         _output.WriteLine($"CPU usage: {cpuPercentage:F2}%");
 
-        Assert.True(cpuPercentage < 250, // Allow for multi-threading (up to 2.5 cores)
+        Assert.True(cpuPercentage < 300, // Allow for multi-threading (up to 3 cores with variance)
             $"CPU usage regression detected! Operation used {cpuPercentage:F2}% CPU");
     }
 

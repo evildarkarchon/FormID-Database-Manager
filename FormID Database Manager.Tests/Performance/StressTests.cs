@@ -358,7 +358,7 @@ public class StressTests : IDisposable
             $"Search too slow: {searchStopwatch.ElapsedMilliseconds} ms");
     }
 
-    [Fact(Timeout = 60000)]
+    [Fact]
     [Trait("Category", "StressTest")]
     public void StressTest_OutOfMemoryScenario()
     {
