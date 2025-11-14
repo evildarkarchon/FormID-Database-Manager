@@ -6,6 +6,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 FormID Database Manager is a cross-platform desktop application built with Avalonia UI that creates SQLite databases containing FormIDs and their associated EditorID/Name values from Bethesda game plugins. It supports Skyrim (SE/AE/VR/GOG), Fallout 4, Starfield, and Oblivion.
 
+**Technical Stack:**
+- C# 12.0 with .NET 8.0
+- Nullable reference types enabled
+- Compiled bindings for Avalonia
+- **Warning CS1998 treated as error**: Async methods without await operators will cause build failures
+
 ## Build Commands
 
 ```bash
@@ -102,12 +108,13 @@ CREATE TABLE {GameRelease} (
 
 ## Important Implementation Details
 
-1. **DLL Resolution**: Program.cs contains custom assembly resolver that loads DLLs from `libs` folder
+1. **DLL Resolution**: Program.cs contains custom assembly resolver that loads DLLs from `libs` folder. The PostPublish build target automatically organizes all dependency DLLs into the `libs` directory during `dotnet publish`.
 2. **Game Detection**: Uses directory name and plugin files to auto-detect game type
 3. **Batch Processing**: Database inserts are batched (1000 entries) for performance
 4. **Error Handling**: Ignorable errors are defined in GameDetectionService for known issues
 5. **UI Threading**: Heavy operations use Task.Run to avoid blocking UI
 6. **Acrylic Effect**: MainWindow uses platform-specific acrylic blur for modern appearance
+7. **Async Method Warning**: CS1998 warning (async without await) is configured as an error. Remove the `async` keyword from methods that don't use `await`.
 
 ## Testing Strategy
 
@@ -151,13 +158,17 @@ CREATE TABLE {GameRelease} (
 
 ## Key Dependencies
 
-- **Avalonia UI 11.3.1**: Cross-platform UI framework
-- **Mutagen.Bethesda 0.51.0**: For parsing Bethesda game plugins
-- **System.Data.SQLite 1.0.119**: Database operations
-- **xUnit**: Testing framework with Moq for mocking
+- **Avalonia UI 11.3.8**: Cross-platform UI framework
+- **Mutagen.Bethesda 0.51.3**: For parsing Bethesda game plugins
+- **System.Data.SQLite 2.0.2**: Database operations
+- **xUnit 2.9.3**: Testing framework with Moq for mocking
+- **BenchmarkDotNet 0.15.6**: Performance benchmarking
 
 ## Development Notes
 
 ### Mutagen API Documentation
 - There is no dedicated API documentation for Mutagen
-- Any API queries must be parsed from the source code available at `https://github.com/Mutagen-Modding/Mutagen/tree/0.51.0`
+- API queries must reference the source code at `https://github.com/Mutagen-Modding/Mutagen/tree/0.51.3` (match current version)
+
+### Project License
+- GPL-3.0 License - modifications and distributions must comply with GPL-3.0 terms
