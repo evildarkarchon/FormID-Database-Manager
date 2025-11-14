@@ -1,15 +1,15 @@
+#nullable enable
+
 using System;
 using System.Collections.Generic;
+using System.Data.SQLite;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
-using System.Data.SQLite;
 using FormID_Database_Manager.Services;
 using FormID_Database_Manager.TestUtilities.Fixtures;
 using Mutagen.Bethesda;
 using Xunit;
-
-#nullable enable
 
 namespace FormID_Database_Manager.Tests.Unit.Services;
 
@@ -157,8 +157,8 @@ public class DatabaseServiceTests : IClassFixture<DatabaseFixture>, IAsyncLifeti
             var cts = new CancellationTokenSource();
             cts.Cancel();
 
-            await Assert.ThrowsAsync<TaskCanceledException>(
-                () => _service.InitializeDatabase(tempDbPath, GameRelease.SkyrimSE, cts.Token));
+            await Assert.ThrowsAsync<TaskCanceledException>(() =>
+                _service.InitializeDatabase(tempDbPath, GameRelease.SkyrimSE, cts.Token));
         }
         finally
         {
@@ -250,7 +250,7 @@ public class DatabaseServiceTests : IClassFixture<DatabaseFixture>, IAsyncLifeti
         var gameRelease = GameRelease.SkyrimSE;
         await _fixture.InitializeSchemaAsync(_connection!, gameRelease.ToString());
 
-        for (int i = 0; i < 100; i++)
+        for (var i = 0; i < 100; i++)
         {
             await _service.InsertRecord(_connection!, gameRelease, "Plugin.esp", $"0x{i:X8}", $"Entry{i}");
         }
@@ -268,9 +268,10 @@ public class DatabaseServiceTests : IClassFixture<DatabaseFixture>, IAsyncLifeti
         await _fixture.InitializeSchemaAsync(_connection!, gameRelease.ToString());
 
         var tasks = new List<Task>();
-        for (int i = 0; i < batchSize; i++)
+        for (var i = 0; i < batchSize; i++)
         {
-            tasks.Add(_service.InsertRecord(_connection!, gameRelease, "BatchPlugin.esp", $"0x{i:X8}", $"BatchEntry{i}"));
+            tasks.Add(
+                _service.InsertRecord(_connection!, gameRelease, "BatchPlugin.esp", $"0x{i:X8}", $"BatchEntry{i}"));
         }
 
         await Task.WhenAll(tasks);
@@ -290,14 +291,15 @@ public class DatabaseServiceTests : IClassFixture<DatabaseFixture>, IAsyncLifeti
 
         var tasks = new List<Task>();
 
-        for (int i = 0; i < 5; i++)
+        for (var i = 0; i < 5; i++)
         {
             var pluginName = $"ConcurrentPlugin{i}.esp";
             tasks.Add(Task.Run(async () =>
             {
-                for (int j = 0; j < 20; j++)
+                for (var j = 0; j < 20; j++)
                 {
-                    await _service.InsertRecord(_connection!, gameRelease, pluginName, $"0x{i:X4}{j:X4}", $"Entry_{i}_{j}");
+                    await _service.InsertRecord(_connection!, gameRelease, pluginName, $"0x{i:X4}{j:X4}",
+                        $"Entry_{i}_{j}");
                 }
             }));
         }

@@ -1,14 +1,10 @@
 #nullable enable
 
-using System;
 using System.Collections.ObjectModel;
-using System.ComponentModel;
 using System.Linq;
-using System.Threading;
+using System.Reflection;
 using System.Threading.Tasks;
-using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
-using Avalonia.Threading;
 using FormID_Database_Manager.Models;
 using FormID_Database_Manager.ViewModels;
 using Xunit;
@@ -216,8 +212,7 @@ public class MainWindowViewModelTests
         // Arrange
         var newPlugins = new ObservableCollection<PluginListItem>
         {
-            new() { Name = "NewPlugin1.esp" },
-            new() { Name = "NewPlugin2.esp" }
+            new() { Name = "NewPlugin1.esp" }, new() { Name = "NewPlugin2.esp" }
         };
 
         // Act
@@ -253,7 +248,7 @@ public class MainWindowViewModelTests
         const int maxMessages = 5;
 
         // Act
-        for (int i = 0; i < 10; i++)
+        for (var i = 0; i < 10; i++)
         {
             _viewModel.AddErrorMessage($"Error {i}", maxMessages);
         }
@@ -285,7 +280,7 @@ public class MainWindowViewModelTests
         const int maxMessages = 5;
 
         // Act
-        for (int i = 0; i < 10; i++)
+        for (var i = 0; i < 10; i++)
         {
             _viewModel.AddInformationMessage($"Info {i}", maxMessages);
         }
@@ -365,7 +360,7 @@ public class MainWindowViewModelTests
         _viewModel.ProgressValue = 75;
 
         // Act
-        _viewModel.UpdateProgress("Still processing...", null);
+        _viewModel.UpdateProgress("Still processing...");
 
         // Assert
         Assert.Equal("Still processing...", _viewModel.ProgressStatus);
@@ -496,7 +491,7 @@ public class MainWindowViewModelTests
 
         // Act - Force PropertyChanged with reflection
         var method = typeof(MainWindowViewModel).GetMethod("OnPropertyChanged",
-            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            BindingFlags.NonPublic | BindingFlags.Instance);
         method?.Invoke(_viewModel, new object?[] { null });
 
         // Assert
@@ -507,7 +502,7 @@ public class MainWindowViewModelTests
     public void ApplyFilter_HandlesLargePluginList()
     {
         // Arrange - Add 1000 plugins
-        for (int i = 0; i < 1000; i++)
+        for (var i = 0; i < 1000; i++)
         {
             _viewModel.Plugins.Add(new PluginListItem { Name = $"Plugin{i}.esp" });
         }
@@ -524,10 +519,10 @@ public class MainWindowViewModelTests
     {
         // Act - Rapidly add many messages
         const int messageCount = 100;
-        for (int i = 0; i < messageCount; i++)
+        for (var i = 0; i < messageCount; i++)
         {
-            _viewModel.AddErrorMessage($"Error {i}", maxMessages: 50);
-            _viewModel.AddInformationMessage($"Info {i}", maxMessages: 50);
+            _viewModel.AddErrorMessage($"Error {i}", 50);
+            _viewModel.AddInformationMessage($"Info {i}", 50);
         }
 
         // Assert

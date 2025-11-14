@@ -1,8 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
-using System.Threading.Tasks;
+using System.Security.Principal;
 using FormID_Database_Manager.Services;
 using Mutagen.Bethesda;
 using Xunit;
@@ -10,14 +11,14 @@ using Xunit;
 namespace FormID_Database_Manager.Tests.Integration;
 
 /// <summary>
-/// Integration tests for game detection functionality,
-/// testing real file system interactions and directory structures.
+///     Integration tests for game detection functionality,
+///     testing real file system interactions and directory structures.
 /// </summary>
 public class GameDetectionIntegrationTests : IDisposable
 {
-    private readonly string _testRoot;
-    private readonly List<string> _testDirectories;
     private readonly GameDetectionService _gameDetectionService;
+    private readonly List<string> _testDirectories;
+    private readonly string _testRoot;
 
     public GameDetectionIntegrationTests()
     {
@@ -33,17 +34,189 @@ public class GameDetectionIntegrationTests : IDisposable
         foreach (var dir in _testDirectories.Where(Directory.Exists))
         {
             try
-            { Directory.Delete(dir, true); }
+            {
+                Directory.Delete(dir, true);
+            }
             catch { }
         }
 
         if (Directory.Exists(_testRoot))
         {
             try
-            { Directory.Delete(_testRoot, true); }
+            {
+                Directory.Delete(_testRoot, true);
+            }
             catch { }
         }
     }
+
+    #region Symbolic Link Tests
+
+    [Fact]
+    public void DetectGame_HandlesSymbolicLinks_Correctly()
+    {
+        // Skip if not running as administrator on Windows
+        if (Environment.OSVersion.Platform == PlatformID.Win32NT && !IsAdministrator())
+        {
+            return;
+        }
+
+        // Arrange
+        var realDataPath = Path.Combine(_testRoot, "RealGame", "Data");
+        var symlinkPath = Path.Combine(_testRoot, "SymlinkGame", "Data");
+
+        _testDirectories.Add(Path.GetDirectoryName(realDataPath)!);
+        _testDirectories.Add(Path.GetDirectoryName(symlinkPath)!);
+
+        Directory.CreateDirectory(realDataPath);
+        CreatePluginFile(realDataPath, "Skyrim.esm");
+        CreatePluginFile(realDataPath, "Update.esm");
+
+        // Create symbolic link
+        Directory.CreateDirectory(Path.GetDirectoryName(symlinkPath)!);
+        try
+        {
+            if (Environment.OSVersion.Platform == PlatformID.Win32NT)
+            {
+                // Windows symbolic link
+                var process = Process.Start(new ProcessStartInfo
+                {
+                    FileName = "cmd.exe",
+                    Arguments = $"/c mklink /D \"{symlinkPath}\" \"{realDataPath}\"",
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                });
+                process?.WaitForExit();
+            }
+            else
+            {
+                // Unix symbolic link
+                var process = Process.Start("ln", $"-s \"{realDataPath}\" \"{symlinkPath}\"");
+                process?.WaitForExit();
+            }
+
+            // Act
+            var detectedGame = _gameDetectionService.DetectGame(symlinkPath);
+
+            // Assert
+            Assert.Equal(GameRelease.SkyrimSE, detectedGame);
+        }
+        catch
+        {
+            // Skip test if symbolic link creation fails
+        }
+    }
+
+    #endregion
+
+    #region Performance Tests
+
+    [Fact]
+    public void DetectGame_PerformanceWithLargeDirectories()
+    {
+        // Arrange - Create directory with many files
+        var largeDataPath = Path.Combine(_testRoot, "LargeGame", "Data");
+        _testDirectories.Add(Path.GetDirectoryName(largeDataPath)!);
+        Directory.CreateDirectory(largeDataPath);
+
+        // Create required game files
+        CreatePluginFile(largeDataPath, "Skyrim.esm");
+        CreatePluginFile(largeDataPath, "Update.esm");
+
+        // Create many additional files
+        for (var i = 0; i < 1000; i++)
+        {
+            File.WriteAllText(Path.Combine(largeDataPath, $"Mod{i:D4}.esp"), "test");
+        }
+
+        var startTime = DateTime.UtcNow;
+
+        // Act
+        var detectedGame = _gameDetectionService.DetectGame(largeDataPath);
+
+        var elapsed = DateTime.UtcNow - startTime;
+
+        // Assert
+        Assert.Equal(GameRelease.SkyrimSE, detectedGame);
+        Assert.True(elapsed.TotalSeconds < 1, $"Detection took too long: {elapsed.TotalSeconds}s");
+    }
+
+    #endregion
+
+    #region Base Game Plugin Tests
+
+    [Fact]
+    public void GetBaseGamePlugins_ReturnsCorrectPlugins_ForAllGames()
+    {
+        var testCases = new[]
+        {
+            new
+            {
+                GameRelease = GameRelease.SkyrimSE,
+                ExpectedBase =
+                    new[] { "Skyrim.esm", "Update.esm", "Dawnguard.esm", "HearthFires.esm", "Dragonborn.esm" }
+            },
+            new
+            {
+                GameRelease = GameRelease.Fallout4,
+                ExpectedBase = new[] { "Fallout4.esm", "DLCRobot.esm", "DLCworkshop01.esm" }
+            },
+            new
+            {
+                GameRelease = GameRelease.Starfield,
+                ExpectedBase =
+                    new[]
+                    {
+                        "Starfield.esm", "Constellation.esm", "OldMars.esm", "BlueprintShips-Starfield.esm"
+                    }
+            },
+            new { GameRelease = GameRelease.Oblivion, ExpectedBase = new[] { "Oblivion.esm" } }
+        };
+
+        foreach (var testCase in testCases)
+        {
+            // Act
+            var basePlugins = _gameDetectionService.GetBaseGamePlugins(testCase.GameRelease);
+
+            // Assert
+            foreach (var expectedPlugin in testCase.ExpectedBase)
+            {
+                Assert.Contains(expectedPlugin, basePlugins);
+            }
+        }
+    }
+
+    #endregion
+
+    #region Directory Name Detection Tests
+
+    [Fact]
+    public void DetectGame_ByDirectoryName_ReturnsNull_WithoutGameFiles()
+    {
+        // GameDetectionService only detects games by .esm files, not directory names
+        var dirNameTests = new[]
+        {
+            "Skyrim Special Edition", "Skyrim Special Edition GOG", "SkyrimVR", "Fallout 4", "Fallout4",
+            "Starfield", "Oblivion"
+        };
+
+        foreach (var dirName in dirNameTests)
+        {
+            // Arrange
+            var testPath = Path.Combine(_testRoot, dirName, "Data");
+            _testDirectories.Add(Path.GetDirectoryName(testPath)!);
+            Directory.CreateDirectory(testPath);
+            // Don't create any files - service requires .esm files for detection
+
+            // Act
+            var detectedGame = _gameDetectionService.DetectGame(Path.GetDirectoryName(testPath)!);
+
+            // Assert - Should return null without game files
+            Assert.Null(detectedGame);
+        }
+    }
+
+    #endregion
 
     #region Real Directory Structure Tests
 
@@ -59,7 +232,10 @@ public class GameDetectionIntegrationTests : IDisposable
                 GameName = "Skyrim Special Edition",
                 GameRelease = GameRelease.SkyrimSE,
                 DataPath = Path.Combine(_testRoot, "Skyrim Special Edition", "Data"),
-                RequiredFiles = new[] { "Skyrim.esm", "Update.esm", "Dawnguard.esm", "HearthFires.esm", "Dragonborn.esm" }
+                RequiredFiles = new[]
+                {
+                    "Skyrim.esm", "Update.esm", "Dawnguard.esm", "HearthFires.esm", "Dragonborn.esm"
+                }
             },
             // Skyrim SE GOG
             new
@@ -67,7 +243,10 @@ public class GameDetectionIntegrationTests : IDisposable
                 GameName = "Skyrim Special Edition GOG",
                 GameRelease = GameRelease.SkyrimSEGog,
                 DataPath = Path.Combine(_testRoot, "Skyrim Special Edition GOG", "Data"),
-                RequiredFiles = new[] { "Skyrim.esm", "Update.esm", "Dawnguard.esm", "HearthFires.esm", "Dragonborn.esm" }
+                RequiredFiles = new[]
+                {
+                    "Skyrim.esm", "Update.esm", "Dawnguard.esm", "HearthFires.esm", "Dragonborn.esm"
+                }
             },
             // Skyrim VR
             new
@@ -75,7 +254,11 @@ public class GameDetectionIntegrationTests : IDisposable
                 GameName = "SkyrimVR",
                 GameRelease = GameRelease.SkyrimVR,
                 DataPath = Path.Combine(_testRoot, "SkyrimVR", "Data"),
-                RequiredFiles = new[] { "Skyrim.esm", "Update.esm", "Dawnguard.esm", "HearthFires.esm", "Dragonborn.esm", "SkyrimVR.esm" }
+                RequiredFiles = new[]
+                {
+                    "Skyrim.esm", "Update.esm", "Dawnguard.esm", "HearthFires.esm", "Dragonborn.esm",
+                    "SkyrimVR.esm"
+                }
             },
             // Fallout 4
             new
@@ -148,11 +331,23 @@ public class GameDetectionIntegrationTests : IDisposable
         var variations = new[]
         {
             // User selects game root directory
-            new { Path = Path.Combine(_testRoot, "Skyrim SE Root"), ExpectedData = Path.Combine(_testRoot, "Skyrim SE Root", "Data") },
+            new
+            {
+                Path = Path.Combine(_testRoot, "Skyrim SE Root"),
+                ExpectedData = Path.Combine(_testRoot, "Skyrim SE Root", "Data")
+            },
             // User selects Data directory directly
-            new { Path = Path.Combine(_testRoot, "Skyrim SE Data", "Data"), ExpectedData = Path.Combine(_testRoot, "Skyrim SE Data", "Data") },
+            new
+            {
+                Path = Path.Combine(_testRoot, "Skyrim SE Data", "Data"),
+                ExpectedData = Path.Combine(_testRoot, "Skyrim SE Data", "Data")
+            },
             // Mixed case
-            new { Path = Path.Combine(_testRoot, "Skyrim SE Mixed", "data"), ExpectedData = Path.Combine(_testRoot, "Skyrim SE Mixed", "data") }
+            new
+            {
+                Path = Path.Combine(_testRoot, "Skyrim SE Mixed", "data"),
+                ExpectedData = Path.Combine(_testRoot, "Skyrim SE Mixed", "data")
+            }
         };
 
         foreach (var variation in variations)
@@ -169,99 +364,6 @@ public class GameDetectionIntegrationTests : IDisposable
             // Assert
             Assert.Equal(GameRelease.SkyrimSE, detectedGame);
         }
-    }
-
-    #endregion
-
-    #region Symbolic Link Tests
-
-    [Fact]
-    public void DetectGame_HandlesSymbolicLinks_Correctly()
-    {
-        // Skip if not running as administrator on Windows
-        if (Environment.OSVersion.Platform == PlatformID.Win32NT && !IsAdministrator())
-        {
-            return;
-        }
-
-        // Arrange
-        var realDataPath = Path.Combine(_testRoot, "RealGame", "Data");
-        var symlinkPath = Path.Combine(_testRoot, "SymlinkGame", "Data");
-
-        _testDirectories.Add(Path.GetDirectoryName(realDataPath)!);
-        _testDirectories.Add(Path.GetDirectoryName(symlinkPath)!);
-
-        Directory.CreateDirectory(realDataPath);
-        CreatePluginFile(realDataPath, "Skyrim.esm");
-        CreatePluginFile(realDataPath, "Update.esm");
-
-        // Create symbolic link
-        Directory.CreateDirectory(Path.GetDirectoryName(symlinkPath)!);
-        try
-        {
-            if (Environment.OSVersion.Platform == PlatformID.Win32NT)
-            {
-                // Windows symbolic link
-                var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-                {
-                    FileName = "cmd.exe",
-                    Arguments = $"/c mklink /D \"{symlinkPath}\" \"{realDataPath}\"",
-                    UseShellExecute = false,
-                    CreateNoWindow = true
-                });
-                process?.WaitForExit();
-            }
-            else
-            {
-                // Unix symbolic link
-                var process = System.Diagnostics.Process.Start("ln", $"-s \"{realDataPath}\" \"{symlinkPath}\"");
-                process?.WaitForExit();
-            }
-
-            // Act
-            var detectedGame = _gameDetectionService.DetectGame(symlinkPath);
-
-            // Assert
-            Assert.Equal(GameRelease.SkyrimSE, detectedGame);
-        }
-        catch
-        {
-            // Skip test if symbolic link creation fails
-        }
-    }
-
-    #endregion
-
-    #region Performance Tests
-
-    [Fact]
-    public void DetectGame_PerformanceWithLargeDirectories()
-    {
-        // Arrange - Create directory with many files
-        var largeDataPath = Path.Combine(_testRoot, "LargeGame", "Data");
-        _testDirectories.Add(Path.GetDirectoryName(largeDataPath)!);
-        Directory.CreateDirectory(largeDataPath);
-
-        // Create required game files
-        CreatePluginFile(largeDataPath, "Skyrim.esm");
-        CreatePluginFile(largeDataPath, "Update.esm");
-
-        // Create many additional files
-        for (int i = 0; i < 1000; i++)
-        {
-            File.WriteAllText(Path.Combine(largeDataPath, $"Mod{i:D4}.esp"), "test");
-        }
-
-        var startTime = DateTime.UtcNow;
-
-        // Act
-        var detectedGame = _gameDetectionService.DetectGame(largeDataPath);
-
-        var elapsed = DateTime.UtcNow - startTime;
-
-        // Assert
-        Assert.Equal(GameRelease.SkyrimSE, detectedGame);
-        Assert.True(elapsed.TotalSeconds < 1, $"Detection took too long: {elapsed.TotalSeconds}s");
     }
 
     #endregion
@@ -341,85 +443,6 @@ public class GameDetectionIntegrationTests : IDisposable
 
     #endregion
 
-    #region Base Game Plugin Tests
-
-    [Fact]
-    public void GetBaseGamePlugins_ReturnsCorrectPlugins_ForAllGames()
-    {
-        var testCases = new[]
-        {
-            new
-            {
-                GameRelease = GameRelease.SkyrimSE,
-                ExpectedBase = new[] { "Skyrim.esm", "Update.esm", "Dawnguard.esm", "HearthFires.esm", "Dragonborn.esm" }
-            },
-            new
-            {
-                GameRelease = GameRelease.Fallout4,
-                ExpectedBase = new[] { "Fallout4.esm", "DLCRobot.esm", "DLCworkshop01.esm" }
-            },
-            new
-            {
-                GameRelease = GameRelease.Starfield,
-                ExpectedBase = new[] { "Starfield.esm", "Constellation.esm", "OldMars.esm", "BlueprintShips-Starfield.esm" }
-            },
-            new
-            {
-                GameRelease = GameRelease.Oblivion,
-                ExpectedBase = new[] { "Oblivion.esm" }
-            }
-        };
-
-        foreach (var testCase in testCases)
-        {
-            // Act
-            var basePlugins = _gameDetectionService.GetBaseGamePlugins(testCase.GameRelease);
-
-            // Assert
-            foreach (var expectedPlugin in testCase.ExpectedBase)
-            {
-                Assert.Contains(expectedPlugin, basePlugins);
-            }
-        }
-    }
-
-    #endregion
-
-    #region Directory Name Detection Tests
-
-    [Fact]
-    public void DetectGame_ByDirectoryName_ReturnsNull_WithoutGameFiles()
-    {
-        // GameDetectionService only detects games by .esm files, not directory names
-        var dirNameTests = new[]
-        {
-            "Skyrim Special Edition",
-            "Skyrim Special Edition GOG",
-            "SkyrimVR",
-            "Fallout 4",
-            "Fallout4",
-            "Starfield",
-            "Oblivion"
-        };
-
-        foreach (var dirName in dirNameTests)
-        {
-            // Arrange
-            var testPath = Path.Combine(_testRoot, dirName, "Data");
-            _testDirectories.Add(Path.GetDirectoryName(testPath)!);
-            Directory.CreateDirectory(testPath);
-            // Don't create any files - service requires .esm files for detection
-
-            // Act
-            var detectedGame = _gameDetectionService.DetectGame(Path.GetDirectoryName(testPath)!);
-
-            // Assert - Should return null without game files
-            Assert.Null(detectedGame);
-        }
-    }
-
-    #endregion
-
     #region Helper Methods
 
     private void CreatePluginFile(string directory, string fileName)
@@ -431,7 +454,7 @@ public class GameDetectionIntegrationTests : IDisposable
             0x54, 0x45, 0x53, 0x34, // "TES4"
             0x2B, 0x00, 0x00, 0x00, // Size
             0x00, 0x00, 0x00, 0x00, // Flags (ESM flag for .esm files)
-            0x00, 0x00, 0x00, 0x00  // FormID
+            0x00, 0x00, 0x00, 0x00 // FormID
         };
 
         // Set ESM flag for .esm files
@@ -450,9 +473,9 @@ public class GameDetectionIntegrationTests : IDisposable
 #pragma warning disable CA1416 // Validate platform compatibility
             if (Environment.OSVersion.Platform == PlatformID.Win32NT)
             {
-                var identity = System.Security.Principal.WindowsIdentity.GetCurrent();
-                var principal = new System.Security.Principal.WindowsPrincipal(identity);
-                return principal.IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator);
+                var identity = WindowsIdentity.GetCurrent();
+                var principal = new WindowsPrincipal(identity);
+                return principal.IsInRole(WindowsBuiltInRole.Administrator);
             }
 #pragma warning restore CA1416 // Validate platform compatibility
             return true; // Assume true for non-Windows

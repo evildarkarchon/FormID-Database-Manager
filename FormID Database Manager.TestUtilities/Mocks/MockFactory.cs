@@ -1,10 +1,13 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
+using System.Data.SQLite;
+using System.Threading;
 using System.Threading.Tasks;
-using Moq;
+using FormID_Database_Manager.Models;
 using FormID_Database_Manager.Services;
 using FormID_Database_Manager.ViewModels;
-using System.Threading;
+using Moq;
 using Mutagen.Bethesda;
 
 namespace FormID_Database_Manager.TestUtilities.Mocks;
@@ -38,31 +41,33 @@ public static class MockFactory
     {
         var mock = new Mock<DatabaseService>();
 
-        mock.Setup(x => x.InitializeDatabase(It.IsAny<string>(), It.IsAny<GameRelease>(), It.IsAny<CancellationToken>()))
+        mock.Setup(x =>
+                x.InitializeDatabase(It.IsAny<string>(), It.IsAny<GameRelease>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
-        mock.Setup(x => x.InsertRecord(It.IsAny<System.Data.SQLite.SQLiteConnection>(), It.IsAny<GameRelease>(),
+        mock.Setup(x => x.InsertRecord(It.IsAny<SQLiteConnection>(), It.IsAny<GameRelease>(),
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
-        mock.Setup(x => x.ClearPluginEntries(It.IsAny<System.Data.SQLite.SQLiteConnection>(), It.IsAny<GameRelease>(),
+        mock.Setup(x => x.ClearPluginEntries(It.IsAny<SQLiteConnection>(), It.IsAny<GameRelease>(),
                 It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
-        mock.Setup(x => x.OptimizeDatabase(It.IsAny<System.Data.SQLite.SQLiteConnection>(), It.IsAny<CancellationToken>()))
+        mock.Setup(x => x.OptimizeDatabase(It.IsAny<SQLiteConnection>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         return mock;
     }
 
-    public static Mock<PluginListManager> CreatePluginListManagerMock(GameDetectionService gameDetectionService, MainWindowViewModel viewModel)
+    public static Mock<PluginListManager> CreatePluginListManagerMock(GameDetectionService gameDetectionService,
+        MainWindowViewModel viewModel)
     {
         var mock = new Mock<PluginListManager>(gameDetectionService, viewModel);
 
         mock.Setup(x => x.RefreshPluginList(
                 It.IsAny<string>(),
                 It.IsAny<GameRelease>(),
-                It.IsAny<System.Collections.ObjectModel.ObservableCollection<FormID_Database_Manager.Models.PluginListItem>>(),
+                It.IsAny<ObservableCollection<PluginListItem>>(),
                 It.IsAny<bool>()))
             .Returns(Task.CompletedTask);
 
@@ -76,6 +81,7 @@ public static class MockFactory
         {
             cts.CancelAfter(delayMilliseconds.Value);
         }
+
         return cts;
     }
 }

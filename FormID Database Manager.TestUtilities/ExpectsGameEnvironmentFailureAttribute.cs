@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Linq;
 using Mutagen.Bethesda;
 using Mutagen.Bethesda.Environments;
 using Xunit;
@@ -9,8 +8,8 @@ using Xunit;
 namespace FormID_Database_Manager.TestUtilities;
 
 /// <summary>
-/// Skip tests that expect failures when games aren't installed, if the games ARE actually installed.
-/// These tests are designed to verify error handling when GameEnvironment fails.
+///     Skip tests that expect failures when games aren't installed, if the games ARE actually installed.
+///     These tests are designed to verify error handling when GameEnvironment fails.
 /// </summary>
 public sealed class ExpectsGameEnvironmentFailureFactAttribute : FactAttribute
 {
@@ -22,13 +21,7 @@ public sealed class ExpectsGameEnvironmentFailureFactAttribute : FactAttribute
 
         if (_games.Length == 0)
         {
-            _games = new[]
-            {
-                GameRelease.SkyrimSE,
-                GameRelease.Fallout4,
-                GameRelease.Starfield,
-                GameRelease.Oblivion
-            };
+            _games = new[] { GameRelease.SkyrimSE, GameRelease.Fallout4, GameRelease.Starfield, GameRelease.Oblivion };
         }
 
         // Check if any of the games are actually installed
@@ -43,7 +36,8 @@ public sealed class ExpectsGameEnvironmentFailureFactAttribute : FactAttribute
 
         if (installedGames.Count > 0)
         {
-            Skip = $"Test expects GameEnvironment failures but these games are installed: {string.Join(", ", installedGames)}";
+            Skip =
+                $"Test expects GameEnvironment failures but these games are installed: {string.Join(", ", installedGames)}";
         }
     }
 

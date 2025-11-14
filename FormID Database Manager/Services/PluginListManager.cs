@@ -12,17 +12,17 @@ using Mutagen.Bethesda.Environments;
 namespace FormID_Database_Manager.Services;
 
 /// <summary>
-/// Manages the list of plugins for a game environment, including operations
-/// such as loading plugin data, refreshing the displayed list, and managing
-/// plugin selection states.
+///     Manages the list of plugins for a game environment, including operations
+///     such as loading plugin data, refreshing the displayed list, and managing
+///     plugin selection states.
 /// </summary>
 public class PluginListManager(GameDetectionService gameDetectionService, MainWindowViewModel viewModel)
 {
     /// <summary>
-    /// Refreshes the list of plugins by loading data from the specified game directory and game release.
-    /// Clears the existing plugin lists, adds the updated plugin list, and updates the filtered plugin list.
-    /// Displays messages for the plugin load process and handles errors if the operation fails.
-    /// Offloads synchronous I/O operations to background thread to prevent UI freezing (1-10s for 1000+ plugins on HDD).
+    ///     Refreshes the list of plugins by loading data from the specified game directory and game release.
+    ///     Clears the existing plugin lists, adds the updated plugin list, and updates the filtered plugin list.
+    ///     Displays messages for the plugin load process and handles errors if the operation fails.
+    ///     Offloads synchronous I/O operations to background thread to prevent UI freezing (1-10s for 1000+ plugins on HDD).
     /// </summary>
     /// <param name="gameDirectory">The path to the game directory containing the "Data" folder.</param>
     /// <param name="gameRelease">The version of the game for which the plugins are being refreshed.</param>
@@ -73,11 +73,7 @@ public class PluginListManager(GameDetectionService gameDetectionService, MainWi
                     }
 
                     // Add the plugin to the list
-                    items.Add(new PluginListItem
-                    {
-                        Name = pluginFileName,
-                        IsSelected = false
-                    });
+                    items.Add(new PluginListItem { Name = pluginFileName, IsSelected = false });
                     count++;
                 }
 
@@ -119,7 +115,7 @@ public class PluginListManager(GameDetectionService gameDetectionService, MainWi
     }
 
     /// <summary>
-    /// Marks all plugins in the provided collection as selected by setting their IsSelected property to true.
+    ///     Marks all plugins in the provided collection as selected by setting their IsSelected property to true.
     /// </summary>
     /// <param name="plugins">The collection of plugins to be updated with selection state.</param>
     public void SelectAll(ObservableCollection<PluginListItem> plugins)
@@ -131,8 +127,8 @@ public class PluginListManager(GameDetectionService gameDetectionService, MainWi
     }
 
     /// <summary>
-    /// Deselects all plugins in the specified collection by setting their selection state to false.
-    /// This method ensures no plugins remain selected in the provided collection.
+    ///     Deselects all plugins in the specified collection by setting their selection state to false.
+    ///     This method ensures no plugins remain selected in the provided collection.
     /// </summary>
     /// <param name="plugins">The collection of plugins to modify, where each plugin's selection state will be cleared.</param>
     public void SelectNone(ObservableCollection<PluginListItem> plugins)

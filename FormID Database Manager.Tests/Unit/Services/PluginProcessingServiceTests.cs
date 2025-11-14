@@ -1,3 +1,5 @@
+#nullable enable
+
 using System;
 using System.Collections.Generic;
 using System.Data.SQLite;
@@ -7,13 +9,10 @@ using System.Threading;
 using System.Threading.Tasks;
 using FormID_Database_Manager.Models;
 using FormID_Database_Manager.Services;
-using FormID_Database_Manager.TestUtilities.Mocks;
 using FormID_Database_Manager.ViewModels;
 using Moq;
 using Mutagen.Bethesda;
 using Xunit;
-
-#nullable enable
 
 namespace FormID_Database_Manager.Tests.Unit.Services;
 
@@ -45,7 +44,10 @@ public class PluginProcessingServiceTests : IDisposable
                     File.Delete(file);
                 }
             }
-            catch { /* Ignore cleanup errors */ }
+            catch
+            {
+                /* Ignore cleanup errors */
+            }
         }
     }
 
@@ -83,13 +85,15 @@ public class PluginProcessingServiceTests : IDisposable
     [Fact]
     public async Task ProcessPlugins_DryRun_ReportsWhatWouldBeDone()
     {
-        var parameters = CreateTestParameters(dryRun: true);
+        var parameters = CreateTestParameters(true);
         var progressReports = new List<(string Message, double? Value)>();
         var progress = new Progress<(string Message, double? Value)>(report => progressReports.Add(report));
 
         await _service.ProcessPlugins(parameters, progress);
 
-        _mockDatabaseService.Verify(x => x.InitializeDatabase(It.IsAny<string>(), It.IsAny<GameRelease>(), It.IsAny<CancellationToken>()), Times.Never);
+        _mockDatabaseService.Verify(
+            x => x.InitializeDatabase(It.IsAny<string>(), It.IsAny<GameRelease>(), It.IsAny<CancellationToken>()),
+            Times.Never);
         Assert.Contains(progressReports, r => r.Message.Contains("Would process TestPlugin1.esp"));
         Assert.Contains(progressReports, r => r.Message.Contains("Would process TestPlugin2.esp"));
     }
@@ -97,13 +101,15 @@ public class PluginProcessingServiceTests : IDisposable
     [Fact]
     public async Task ProcessPlugins_DryRunWithFormIdList_ReportsFormIdProcessing()
     {
-        var parameters = CreateTestParameters(dryRun: true, formIdListPath: "C:\\Test\\formids.txt");
+        var parameters = CreateTestParameters(true, "C:\\Test\\formids.txt");
         var progressReports = new List<(string Message, double? Value)>();
         var progress = new Progress<(string Message, double? Value)>(report => progressReports.Add(report));
 
         await _service.ProcessPlugins(parameters, progress);
 
-        _mockDatabaseService.Verify(x => x.InitializeDatabase(It.IsAny<string>(), It.IsAny<GameRelease>(), It.IsAny<CancellationToken>()), Times.Never);
+        _mockDatabaseService.Verify(
+            x => x.InitializeDatabase(It.IsAny<string>(), It.IsAny<GameRelease>(), It.IsAny<CancellationToken>()),
+            Times.Never);
         Assert.Single(progressReports);
         Assert.Contains("Would process FormID list file", progressReports[0].Message);
     }
@@ -111,7 +117,7 @@ public class PluginProcessingServiceTests : IDisposable
     [Fact]
     public async Task ProcessPlugins_DryRunUpdateMode_ReportsDeleteOperations()
     {
-        var parameters = CreateTestParameters(dryRun: true);
+        var parameters = CreateTestParameters(true);
         parameters = new ProcessingParameters
         {
             GameDirectory = parameters.GameDirectory,
@@ -146,12 +152,13 @@ public class PluginProcessingServiceTests : IDisposable
             FormIdListPath = parameters.FormIdListPath
         };
 
-        _mockDatabaseService.Setup(x => x.InitializeDatabase(It.IsAny<string>(), It.IsAny<GameRelease>(), It.IsAny<CancellationToken>()))
+        _mockDatabaseService.Setup(x =>
+                x.InitializeDatabase(It.IsAny<string>(), It.IsAny<GameRelease>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
-        _mockDatabaseService.Setup(x => x.OptimizeDatabase(It.IsAny<System.Data.SQLite.SQLiteConnection>(), It.IsAny<CancellationToken>()))
+        _mockDatabaseService.Setup(x => x.OptimizeDatabase(It.IsAny<SQLiteConnection>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
-        await _service.ProcessPlugins(parameters, null);
+        await _service.ProcessPlugins(parameters);
 
         _mockDatabaseService.Verify(x => x.InitializeDatabase(
             parameters.DatabasePath,
@@ -174,15 +181,16 @@ public class PluginProcessingServiceTests : IDisposable
             FormIdListPath = parameters.FormIdListPath
         };
 
-        _mockDatabaseService.Setup(x => x.InitializeDatabase(It.IsAny<string>(), It.IsAny<GameRelease>(), It.IsAny<CancellationToken>()))
+        _mockDatabaseService.Setup(x =>
+                x.InitializeDatabase(It.IsAny<string>(), It.IsAny<GameRelease>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
-        _mockDatabaseService.Setup(x => x.OptimizeDatabase(It.IsAny<System.Data.SQLite.SQLiteConnection>(), It.IsAny<CancellationToken>()))
+        _mockDatabaseService.Setup(x => x.OptimizeDatabase(It.IsAny<SQLiteConnection>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
-        await _service.ProcessPlugins(parameters, null);
+        await _service.ProcessPlugins(parameters);
 
         _mockDatabaseService.Verify(x => x.OptimizeDatabase(
-            It.IsAny<System.Data.SQLite.SQLiteConnection>(),
+            It.IsAny<SQLiteConnection>(),
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
@@ -203,9 +211,10 @@ public class PluginProcessingServiceTests : IDisposable
         var progressReports = new List<(string Message, double? Value)>();
         var progress = new Progress<(string Message, double? Value)>(report => progressReports.Add(report));
 
-        _mockDatabaseService.Setup(x => x.InitializeDatabase(It.IsAny<string>(), It.IsAny<GameRelease>(), It.IsAny<CancellationToken>()))
+        _mockDatabaseService.Setup(x =>
+                x.InitializeDatabase(It.IsAny<string>(), It.IsAny<GameRelease>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
-        _mockDatabaseService.Setup(x => x.OptimizeDatabase(It.IsAny<System.Data.SQLite.SQLiteConnection>(), It.IsAny<CancellationToken>()))
+        _mockDatabaseService.Setup(x => x.OptimizeDatabase(It.IsAny<SQLiteConnection>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         await _service.ProcessPlugins(parameters, progress);
@@ -224,7 +233,8 @@ public class PluginProcessingServiceTests : IDisposable
         var progressReports = new List<(string Message, double? Value)>();
         var progress = new Progress<(string Message, double? Value)>(report => progressReports.Add(report));
 
-        _mockDatabaseService.Setup(x => x.InitializeDatabase(It.IsAny<string>(), It.IsAny<GameRelease>(), It.IsAny<CancellationToken>()))
+        _mockDatabaseService.Setup(x =>
+                x.InitializeDatabase(It.IsAny<string>(), It.IsAny<GameRelease>(), It.IsAny<CancellationToken>()))
             .Returns(async (string path, GameRelease game, CancellationToken ct) =>
             {
                 tcs.SetResult(true);
@@ -256,7 +266,8 @@ public class PluginProcessingServiceTests : IDisposable
         var parameters = CreateTestParameters();
         var expectedError = "Database initialization failed";
 
-        _mockDatabaseService.Setup(x => x.InitializeDatabase(It.IsAny<string>(), It.IsAny<GameRelease>(), It.IsAny<CancellationToken>()))
+        _mockDatabaseService.Setup(x =>
+                x.InitializeDatabase(It.IsAny<string>(), It.IsAny<GameRelease>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException(expectedError));
 
         var progressReports = new List<(string Message, double? Value)>();
@@ -279,9 +290,10 @@ public class PluginProcessingServiceTests : IDisposable
         var progressReports = new List<(string Message, double? Value)>();
         var progress = new Progress<(string Message, double? Value)>(report => progressReports.Add(report));
 
-        _mockDatabaseService.Setup(x => x.InitializeDatabase(It.IsAny<string>(), It.IsAny<GameRelease>(), It.IsAny<CancellationToken>()))
+        _mockDatabaseService.Setup(x =>
+                x.InitializeDatabase(It.IsAny<string>(), It.IsAny<GameRelease>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
-        _mockDatabaseService.Setup(x => x.OptimizeDatabase(It.IsAny<System.Data.SQLite.SQLiteConnection>(), It.IsAny<CancellationToken>()))
+        _mockDatabaseService.Setup(x => x.OptimizeDatabase(It.IsAny<SQLiteConnection>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         try
@@ -313,17 +325,18 @@ public class PluginProcessingServiceTests : IDisposable
         var firstStarted = new TaskCompletionSource<bool>();
         var allowFirstToComplete = new TaskCompletionSource<bool>();
 
-        _mockDatabaseService.Setup(x => x.InitializeDatabase(It.IsAny<string>(), It.IsAny<GameRelease>(), It.IsAny<CancellationToken>()))
+        _mockDatabaseService.Setup(x =>
+                x.InitializeDatabase(It.IsAny<string>(), It.IsAny<GameRelease>(), It.IsAny<CancellationToken>()))
             .Returns(async (string path, GameRelease game, CancellationToken ct) =>
             {
                 firstStarted.SetResult(true);
                 await allowFirstToComplete.Task;
             });
 
-        var firstTask = _service.ProcessPlugins(parameters, null);
+        var firstTask = _service.ProcessPlugins(parameters);
         await firstStarted.Task;
 
-        var secondTask = _service.ProcessPlugins(parameters, null);
+        var secondTask = _service.ProcessPlugins(parameters);
 
         allowFirstToComplete.SetResult(true);
 
@@ -350,22 +363,23 @@ public class PluginProcessingServiceTests : IDisposable
         _mockViewModel.Setup(x => x.AddErrorMessage(It.IsAny<string>(), It.IsAny<int>()))
             .Callback<string, int>((msg, maxMessages) => errorMessages.Add(msg));
 
-        _mockDatabaseService.Setup(x => x.InitializeDatabase(It.IsAny<string>(), It.IsAny<GameRelease>(), It.IsAny<CancellationToken>()))
+        _mockDatabaseService.Setup(x =>
+                x.InitializeDatabase(It.IsAny<string>(), It.IsAny<GameRelease>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         // Setup database to handle operations that might be called
         _mockDatabaseService.Setup(x => x.InsertRecord(
-            It.IsAny<SQLiteConnection>(),
-            It.IsAny<GameRelease>(),
-            It.IsAny<string>(),
-            It.IsAny<string>(),
-            It.IsAny<string>(),
-            It.IsAny<CancellationToken>()))
+                It.IsAny<SQLiteConnection>(),
+                It.IsAny<GameRelease>(),
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         try
         {
-            await _service.ProcessPlugins(parameters, null);
+            await _service.ProcessPlugins(parameters);
         }
         catch (Exception ex) when (ex.Message.Contains("Could not find") || ex.Message.Contains("not found"))
         {

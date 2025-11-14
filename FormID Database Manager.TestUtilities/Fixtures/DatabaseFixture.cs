@@ -1,9 +1,8 @@
-using System;
-using System.Threading.Tasks;
-using System.Data.SQLite;
-using Xunit;
-
 #nullable enable
+
+using System.Data.SQLite;
+using System.Threading.Tasks;
+using Xunit;
 
 namespace FormID_Database_Manager.TestUtilities.Fixtures;
 
@@ -60,7 +59,7 @@ public class DatabaseFixture : IAsyncLifetime
     {
         using var transaction = connection.BeginTransaction();
 
-        for (int i = 0; i < recordCount; i++)
+        for (var i = 0; i < recordCount; i++)
         {
             var command = connection.CreateCommand();
             command.CommandText = $@"

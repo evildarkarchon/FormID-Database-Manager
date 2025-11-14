@@ -6,29 +6,26 @@ using System.Linq;
 using System.Threading.Tasks;
 using FormID_Database_Manager.Models;
 using FormID_Database_Manager.Services;
-using FormID_Database_Manager.ViewModels;
 using FormID_Database_Manager.TestUtilities;
-using FormID_Database_Manager.TestUtilities.Mocks;
+using FormID_Database_Manager.ViewModels;
 using Moq;
 using Mutagen.Bethesda;
-using Mutagen.Bethesda.Environments;
-using Mutagen.Bethesda.Plugins;
-using Mutagen.Bethesda.Plugins.Order;
 using Xunit;
+using MockFactory = FormID_Database_Manager.TestUtilities.Mocks.MockFactory;
 
 namespace FormID_Database_Manager.Tests.Unit.Services;
 
 public class PluginListManagerTests : IDisposable
 {
     private readonly Mock<GameDetectionService> _mockGameDetectionService;
-    private readonly MainWindowViewModel _viewModel;
     private readonly PluginListManager _pluginListManager;
-    private readonly string _testDirectory;
     private readonly ObservableCollection<PluginListItem> _plugins;
+    private readonly string _testDirectory;
+    private readonly MainWindowViewModel _viewModel;
 
     public PluginListManagerTests()
     {
-        _mockGameDetectionService = FormID_Database_Manager.TestUtilities.Mocks.MockFactory.CreateGameDetectionServiceMock();
+        _mockGameDetectionService = MockFactory.CreateGameDetectionServiceMock();
         _viewModel = new MainWindowViewModel();
         _pluginListManager = new PluginListManager(_mockGameDetectionService.Object, _viewModel);
         _testDirectory = Path.Combine(Path.GetTempPath(), $"test_{Guid.NewGuid()}");
@@ -46,6 +43,27 @@ public class PluginListManagerTests : IDisposable
         }
     }
 
+    #region Helper Methods
+
+    private void CreateTestPluginFiles(string directory, params string[] fileNames)
+    {
+        foreach (var fileName in fileNames)
+        {
+            var filePath = Path.Combine(directory, fileName);
+            // Create minimal ESP/ESM file header
+            var header = new byte[]
+            {
+                0x54, 0x45, 0x53, 0x34, // "TES4"
+                0x2B, 0x00, 0x00, 0x00, // Size
+                0x00, 0x00, 0x00, 0x00, // Flags
+                0x00, 0x00, 0x00, 0x00 // FormID
+            };
+            File.WriteAllBytes(filePath, header);
+        }
+    }
+
+    #endregion
+
     #region Core Functionality Tests
 
     [ExpectsGameEnvironmentFailureFact]
@@ -60,7 +78,7 @@ public class PluginListManagerTests : IDisposable
             _testDirectory,
             GameRelease.SkyrimSE,
             _plugins,
-            showAdvanced: false);
+            false);
 
         // Assert - GameEnvironment will fail without real game, so expect error
         Assert.Empty(_plugins);
@@ -82,7 +100,7 @@ public class PluginListManagerTests : IDisposable
             _testDirectory,
             GameRelease.SkyrimSE,
             _plugins,
-            showAdvanced: false);
+            false);
 
         // Assert - GameEnvironment will fail, so we just verify error handling
         Assert.Empty(_plugins);
@@ -101,7 +119,7 @@ public class PluginListManagerTests : IDisposable
             _testDirectory,
             GameRelease.SkyrimSE,
             _plugins,
-            showAdvanced: true);
+            true);
 
         // Assert - GameEnvironment will fail without real game
         Assert.Empty(_plugins);
@@ -127,7 +145,7 @@ public class PluginListManagerTests : IDisposable
             _testDirectory,
             GameRelease.SkyrimSE,
             _plugins,
-            showAdvanced: false);
+            false);
 
         // Assert - Collections should be cleared even on error
         Assert.Empty(_plugins);
@@ -147,7 +165,7 @@ public class PluginListManagerTests : IDisposable
             _testDirectory,
             GameRelease.SkyrimSE,
             _plugins,
-            showAdvanced: false);
+            false);
 
         // Assert - GameEnvironment will fail, both collections should be empty
         Assert.Empty(_plugins);
@@ -171,7 +189,7 @@ public class PluginListManagerTests : IDisposable
             emptyDataPath,
             GameRelease.SkyrimSE,
             _plugins,
-            showAdvanced: false);
+            false);
 
         // Assert
         Assert.Empty(_plugins);
@@ -190,12 +208,13 @@ public class PluginListManagerTests : IDisposable
             _testDirectory,
             invalidGameRelease,
             _plugins,
-            showAdvanced: false);
+            false);
 
         // Assert
         Assert.Empty(_plugins);
         Assert.Contains(_viewModel.ErrorMessages, msg => msg.Contains("Failed to load plugins"));
-        Assert.Contains(_viewModel.ErrorMessages, msg => msg.Contains("Ensure you selected the correct game Data directory"));
+        Assert.Contains(_viewModel.ErrorMessages,
+            msg => msg.Contains("Ensure you selected the correct game Data directory"));
     }
 
     [ExpectsGameEnvironmentFailureFact]
@@ -210,7 +229,7 @@ public class PluginListManagerTests : IDisposable
             gameDir,
             GameRelease.SkyrimSE,
             _plugins,
-            showAdvanced: false);
+            false);
 
         // Test 2: Direct Data directory path
         _plugins.Clear();
@@ -221,7 +240,7 @@ public class PluginListManagerTests : IDisposable
             dataPath, // Direct data path
             GameRelease.SkyrimSE,
             _plugins,
-            showAdvanced: false);
+            false);
 
         // Both should fail with GameEnvironment error
         Assert.Empty(_plugins);
@@ -239,7 +258,7 @@ public class PluginListManagerTests : IDisposable
             _testDirectory,
             GameRelease.SkyrimSE,
             _plugins,
-            showAdvanced: false);
+            false);
 
         // Assert - Should handle gracefully
         Assert.Empty(_plugins);
@@ -257,7 +276,7 @@ public class PluginListManagerTests : IDisposable
             nonExistentDir,
             GameRelease.SkyrimSE,
             _plugins,
-            showAdvanced: false);
+            false);
 
         // Assert
         Assert.Empty(_plugins);
@@ -366,7 +385,7 @@ public class PluginListManagerTests : IDisposable
             _testDirectory,
             GameRelease.SkyrimSE,
             _plugins,
-            showAdvanced: false);
+            false);
 
         // Assert - GameEnvironment will fail without real game
         Assert.Empty(_plugins);
@@ -390,7 +409,7 @@ public class PluginListManagerTests : IDisposable
             _testDirectory,
             GameRelease.SkyrimSE,
             _plugins,
-            showAdvanced: false);
+            false);
 
         // Assert - GameEnvironment will fail, so expect error messages instead
         Assert.Empty(_viewModel.InformationMessages);
@@ -410,7 +429,7 @@ public class PluginListManagerTests : IDisposable
             _testDirectory,
             invalidGameRelease,
             _plugins,
-            showAdvanced: false);
+            false);
 
         // Assert
         Assert.NotEmpty(_viewModel.ErrorMessages);
@@ -428,9 +447,7 @@ public class PluginListManagerTests : IDisposable
         var dataPath = Path.Combine(_testDirectory, "Data");
         var specialNames = new[]
         {
-            "Plugin with spaces.esp",
-            "Plugin-with-dashes.esp",
-            "Plugin_with_underscores.esp",
+            "Plugin with spaces.esp", "Plugin-with-dashes.esp", "Plugin_with_underscores.esp",
             "Plugin.with.dots.esp"
         };
         CreateTestPluginFiles(dataPath, specialNames);
@@ -440,7 +457,7 @@ public class PluginListManagerTests : IDisposable
             _testDirectory,
             GameRelease.SkyrimSE,
             _plugins,
-            showAdvanced: false);
+            false);
 
         // Assert - GameEnvironment will fail without real game
         Assert.Empty(_plugins);
@@ -467,27 +484,6 @@ public class PluginListManagerTests : IDisposable
 
         _pluginListManager.SelectNone(pluginsWithNull);
         Assert.All(pluginsWithNull.Where(p => p != null), plugin => Assert.False(plugin.IsSelected));
-    }
-
-    #endregion
-
-    #region Helper Methods
-
-    private void CreateTestPluginFiles(string directory, params string[] fileNames)
-    {
-        foreach (var fileName in fileNames)
-        {
-            var filePath = Path.Combine(directory, fileName);
-            // Create minimal ESP/ESM file header
-            var header = new byte[]
-            {
-                0x54, 0x45, 0x53, 0x34, // "TES4"
-                0x2B, 0x00, 0x00, 0x00, // Size
-                0x00, 0x00, 0x00, 0x00, // Flags
-                0x00, 0x00, 0x00, 0x00  // FormID
-            };
-            File.WriteAllBytes(filePath, header);
-        }
     }
 
     #endregion

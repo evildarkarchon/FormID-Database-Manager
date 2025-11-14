@@ -8,7 +8,7 @@ using System.Threading.Tasks;
 namespace FormID_Database_Manager.Tests.TestData;
 
 /// <summary>
-/// Builder class for creating test data files and structures used across various tests.
+///     Builder class for creating test data files and structures used across various tests.
 /// </summary>
 public static class TestDataBuilder
 {
@@ -17,7 +17,7 @@ public static class TestDataBuilder
         "TestData");
 
     /// <summary>
-    /// Ensures all test data directories exist.
+    ///     Ensures all test data directories exist.
     /// </summary>
     public static void EnsureTestDataStructure()
     {
@@ -37,7 +37,7 @@ public static class TestDataBuilder
     }
 
     /// <summary>
-    /// Creates a minimal valid ESP/ESM plugin file.
+    ///     Creates a minimal valid ESP/ESM plugin file.
     /// </summary>
     public static void CreateMinimalPlugin(string directory, string fileName, int formIdCount = 10)
     {
@@ -64,7 +64,7 @@ public static class TestDataBuilder
         writer.Write(0x00000800); // Next available FormID
 
         // Add fake records for testing
-        for (int i = 0; i < formIdCount; i++)
+        for (var i = 0; i < formIdCount; i++)
         {
             AddFakeRecord(writer, i + 1);
         }
@@ -87,14 +87,14 @@ public static class TestDataBuilder
     }
 
     /// <summary>
-    /// Creates a valid FormID list file.
+    ///     Creates a valid FormID list file.
     /// </summary>
     public static async Task CreateFormIdListFile(string filePath, int recordCount = 100)
     {
         var lines = new List<string>();
         var plugins = new[] { "TestPlugin1.esp", "TestPlugin2.esp", "TestPlugin3.esp" };
 
-        for (int i = 0; i < recordCount; i++)
+        for (var i = 0; i < recordCount; i++)
         {
             var plugin = plugins[i % plugins.Length];
             var formId = $"{i:X6}";
@@ -106,7 +106,7 @@ public static class TestDataBuilder
     }
 
     /// <summary>
-    /// Creates an invalid FormID list file with various formatting issues.
+    ///     Creates an invalid FormID list file with various formatting issues.
     /// </summary>
     public static async Task CreateInvalidFormIdListFile(string filePath)
     {
@@ -127,7 +127,7 @@ public static class TestDataBuilder
     }
 
     /// <summary>
-    /// Creates a plugin list file (plugins.txt format).
+    ///     Creates a plugin list file (plugins.txt format).
     /// </summary>
     public static async Task CreatePluginListFile(string filePath, params string[] plugins)
     {
@@ -142,17 +142,7 @@ public static class TestDataBuilder
     }
 
     /// <summary>
-    /// Creates test plugins of various sizes.
-    /// </summary>
-    public static class PluginSizes
-    {
-        public const int Small = 10;      // 10 FormIDs
-        public const int Medium = 1000;   // 1,000 FormIDs
-        public const int Large = 10000;   // 10,000 FormIDs
-    }
-
-    /// <summary>
-    /// Gets the path to a test data file.
+    ///     Gets the path to a test data file.
     /// </summary>
     public static string GetTestDataPath(params string[] pathParts)
     {
@@ -162,7 +152,7 @@ public static class TestDataBuilder
     }
 
     /// <summary>
-    /// Creates a complete test environment for a specific game.
+    ///     Creates a complete test environment for a specific game.
     /// </summary>
     public static async Task<TestGameEnvironment> CreateTestGameEnvironment(string gameName)
     {
@@ -218,7 +208,17 @@ public static class TestDataBuilder
     }
 
     /// <summary>
-    /// Represents a test game environment.
+    ///     Creates test plugins of various sizes.
+    /// </summary>
+    public static class PluginSizes
+    {
+        public const int Small = 10; // 10 FormIDs
+        public const int Medium = 1000; // 1,000 FormIDs
+        public const int Large = 10000; // 10,000 FormIDs
+    }
+
+    /// <summary>
+    ///     Represents a test game environment.
     /// </summary>
     public class TestGameEnvironment : IDisposable
     {
@@ -227,32 +227,34 @@ public static class TestDataBuilder
         public string DataDirectory { get; init; } = string.Empty;
         public List<string> PluginFiles { get; init; } = new();
 
-        public void AddPlugin(string pluginName, int formIdCount = 10)
-        {
-            CreateMinimalPlugin(DataDirectory, pluginName, formIdCount);
-            PluginFiles.Add(pluginName);
-        }
-
         public void Dispose()
         {
             if (Directory.Exists(RootDirectory))
             {
                 try
-                { Directory.Delete(RootDirectory, true); }
+                {
+                    Directory.Delete(RootDirectory, true);
+                }
                 catch { }
             }
+        }
+
+        public void AddPlugin(string pluginName, int formIdCount = 10)
+        {
+            CreateMinimalPlugin(DataDirectory, pluginName, formIdCount);
+            PluginFiles.Add(pluginName);
         }
     }
 
     /// <summary>
-    /// Creates edge case test data for stress testing.
+    ///     Creates edge case test data for stress testing.
     /// </summary>
     public static class EdgeCases
     {
         public static async Task CreateLargeFormIdList(string filePath, int recordCount = 1000000)
         {
             using var writer = new StreamWriter(filePath);
-            for (int i = 0; i < recordCount; i++)
+            for (var i = 0; i < recordCount; i++)
             {
                 await writer.WriteLineAsync($"LargePlugin.esp|{i:X6}|LargeEntry_{i}");
             }

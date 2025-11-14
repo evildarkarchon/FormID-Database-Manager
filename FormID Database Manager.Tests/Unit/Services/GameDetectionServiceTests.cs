@@ -1,8 +1,6 @@
 using System;
 using System.IO;
-using System.Linq;
 using FormID_Database_Manager.Services;
-using FormID_Database_Manager.TestUtilities.Builders;
 using Mutagen.Bethesda;
 using Xunit;
 

@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Data.SQLite;
 using System.IO;
-using System.Linq;
+using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using FormID_Database_Manager.Models;
@@ -13,18 +13,17 @@ using Mutagen.Bethesda;
 using Mutagen.Bethesda.Plugins;
 using Mutagen.Bethesda.Plugins.Order;
 using Mutagen.Bethesda.Plugins.Records;
-using Mutagen.Bethesda.Skyrim;
 using Xunit;
 
 namespace FormID_Database_Manager.Tests.Unit.Services;
 
 public class ModProcessorTests : IDisposable
 {
+    private readonly SQLiteConnection _connection;
     private readonly DatabaseService _databaseService;
     private readonly List<string> _errorMessages;
     private readonly ModProcessor _modProcessor;
     private readonly string _testDbPath;
-    private readonly SQLiteConnection _connection;
 
     public ModProcessorTests()
     {
@@ -48,6 +47,50 @@ public class ModProcessorTests : IDisposable
             File.Delete(_testDbPath);
         }
     }
+
+    #region Transaction and Database Tests
+
+    [Fact]
+    public async Task ProcessPlugin_RollsBackTransaction_OnError()
+    {
+        // Arrange
+        var gameDir = Path.Combine(Path.GetTempPath(), "TestGame", "Data");
+        Directory.CreateDirectory(gameDir);
+        var pluginPath = Path.Combine(gameDir, "TestPlugin.esp");
+
+        // Create corrupted plugin that will fail processing
+        await File.WriteAllBytesAsync(pluginPath, new byte[] { 0xFF, 0xFF, 0xFF, 0xFF });
+
+        var pluginItem = new PluginListItem { Name = "TestPlugin.esp", IsSelected = true };
+        var mockModListing = CreateMockModListing("TestPlugin.esp");
+        var loadOrder = new List<IModListingGetter<IModGetter>> { mockModListing.Object };
+
+        // Get initial count
+        var initialCount = GetRecordCount();
+
+        // Act
+        try
+        {
+            await _modProcessor.ProcessPlugin(
+                gameDir,
+                _connection,
+                GameRelease.SkyrimSE,
+                pluginItem,
+                loadOrder,
+                false,
+                CancellationToken.None);
+        }
+        catch
+        {
+            // Expected to throw
+        }
+
+        // Assert - Database should remain unchanged
+        var finalCount = GetRecordCount();
+        Assert.Equal(initialCount, finalCount);
+    }
+
+    #endregion
 
     #region Basic Functionality Tests
 
@@ -87,10 +130,7 @@ public class ModProcessorTests : IDisposable
         // Arrange
         var gameReleases = new[]
         {
-            GameRelease.SkyrimSE,
-            GameRelease.Fallout4,
-            GameRelease.Starfield,
-            GameRelease.Oblivion
+            GameRelease.SkyrimSE, GameRelease.Fallout4, GameRelease.Starfield, GameRelease.Oblivion
         };
 
         foreach (var gameRelease in gameReleases)
@@ -271,7 +311,7 @@ public class ModProcessorTests : IDisposable
 
         // Verify the batch size constant exists and is reasonable
         var batchSizeField = typeof(ModProcessor).GetField("BatchSize",
-            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+            BindingFlags.NonPublic | BindingFlags.Static);
         Assert.NotNull(batchSizeField);
 
         var batchSize = (int)batchSizeField.GetValue(null);
@@ -337,8 +377,7 @@ public class ModProcessorTests : IDisposable
         // Test both "GameDir" and "GameDir/Data" paths
         var testCases = new[]
         {
-            Path.Combine(Path.GetTempPath(), "TestGame"),
-            Path.Combine(Path.GetTempPath(), "TestGame", "Data")
+            Path.Combine(Path.GetTempPath(), "TestGame"), Path.Combine(Path.GetTempPath(), "TestGame", "Data")
         };
 
         foreach (var gameDir in testCases)
@@ -419,50 +458,6 @@ public class ModProcessorTests : IDisposable
 
     #endregion
 
-    #region Transaction and Database Tests
-
-    [Fact]
-    public async Task ProcessPlugin_RollsBackTransaction_OnError()
-    {
-        // Arrange
-        var gameDir = Path.Combine(Path.GetTempPath(), "TestGame", "Data");
-        Directory.CreateDirectory(gameDir);
-        var pluginPath = Path.Combine(gameDir, "TestPlugin.esp");
-
-        // Create corrupted plugin that will fail processing
-        await File.WriteAllBytesAsync(pluginPath, new byte[] { 0xFF, 0xFF, 0xFF, 0xFF });
-
-        var pluginItem = new PluginListItem { Name = "TestPlugin.esp", IsSelected = true };
-        var mockModListing = CreateMockModListing("TestPlugin.esp");
-        var loadOrder = new List<IModListingGetter<IModGetter>> { mockModListing.Object };
-
-        // Get initial count
-        var initialCount = GetRecordCount();
-
-        // Act
-        try
-        {
-            await _modProcessor.ProcessPlugin(
-                gameDir,
-                _connection,
-                GameRelease.SkyrimSE,
-                pluginItem,
-                loadOrder,
-                false,
-                CancellationToken.None);
-        }
-        catch
-        {
-            // Expected to throw
-        }
-
-        // Assert - Database should remain unchanged
-        var finalCount = GetRecordCount();
-        Assert.Equal(initialCount, finalCount);
-    }
-
-    #endregion
-
     #region Helper Methods
 
     private void InitializeDatabase(SQLiteConnection connection, GameRelease gameRelease)
@@ -515,7 +510,7 @@ public class ModProcessorTests : IDisposable
             0x00, 0x00, 0x00, 0x00, // Timestamp
             0x00, 0x00, 0x00, 0x00, // Version Control
             0x00, 0x00, 0x00, 0x00, // Internal Version
-            0x00, 0x00, 0x00, 0x00  // Unknown
+            0x00, 0x00, 0x00, 0x00 // Unknown
         };
 
         await File.WriteAllBytesAsync(path, header);

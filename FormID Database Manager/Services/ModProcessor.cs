@@ -9,17 +9,18 @@ using System.Threading;
 using System.Threading.Tasks;
 using FormID_Database_Manager.Models;
 using Mutagen.Bethesda;
-using Mutagen.Bethesda.Plugins.Records;
 using Mutagen.Bethesda.Fallout4;
 using Mutagen.Bethesda.Oblivion;
 using Mutagen.Bethesda.Plugins.Order;
+using Mutagen.Bethesda.Plugins.Records;
 using Mutagen.Bethesda.Skyrim;
 using Mutagen.Bethesda.Starfield;
 
 namespace FormID_Database_Manager.Services;
 
 /// <summary>
-/// Provides functionality to process mod plugin files, updating them in a database while handling errors and supporting cancellation.
+///     Provides functionality to process mod plugin files, updating them in a database while handling errors and
+///     supporting cancellation.
 /// </summary>
 public class ModProcessor(DatabaseService databaseService, Action<string> errorCallback)
 {
@@ -42,8 +43,8 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
     private static readonly ConcurrentDictionary<Type, Func<IMajorRecordGetter, string?>> NameExtractorCache = new();
 
     /// <summary>
-    /// Processes the specified plugin file, updates the database with its entries,
-    /// and provides error handling during processing.
+    ///     Processes the specified plugin file, updates the database with its entries,
+    ///     and provides error handling during processing.
     /// </summary>
     /// <param name="gameDir">The root directory of the game where the plugin resides.</param>
     /// <param name="conn">The SQLite database connection used for processing.</param>
@@ -132,8 +133,8 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
     }
 
     /// <summary>
-    /// Processes the records from the provided mod plugin, extracts relevant data,
-    /// batches the results, and inserts them into the database while supporting cancellation and error handling.
+    ///     Processes the records from the provided mod plugin, extracts relevant data,
+    ///     batches the results, and inserts them into the database while supporting cancellation and error handling.
     /// </summary>
     /// <param name="conn">The active SQLite database connection used for data insertion.</param>
     /// <param name="gameRelease">The game release version associated with the mod plugin.</param>
@@ -221,8 +222,8 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
     }
 
     /// <summary>
-    /// Inserts a batch of form ID and entry pairs into the specified database table for the given game release and plugin.
-    /// Uses a single multi-value INSERT statement for optimal performance (10-100x faster than individual INSERTs).
+    ///     Inserts a batch of form ID and entry pairs into the specified database table for the given game release and plugin.
+    ///     Uses a single multi-value INSERT statement for optimal performance (10-100x faster than individual INSERTs).
     /// </summary>
     /// <param name="conn">The SQLite database connection used to execute the insertion commands.</param>
     /// <param name="gameRelease">The specific game release that determines the target database table.</param>
@@ -236,7 +237,10 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
         List<(string formId, string entry)> batch,
         CancellationToken cancellationToken)
     {
-        if (batch.Count == 0) return;
+        if (batch.Count == 0)
+        {
+            return;
+        }
 
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -247,9 +251,13 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
         sb.Append($"INSERT INTO {gameRelease} (plugin, formid, entry) VALUES ");
 
         // Build the VALUES clause with parameterized values for each batch item
-        for (int i = 0; i < batch.Count; i++)
+        for (var i = 0; i < batch.Count; i++)
         {
-            if (i > 0) sb.Append(", ");
+            if (i > 0)
+            {
+                sb.Append(", ");
+            }
+
             sb.Append($"(@plugin, @formid{i}, @entry{i})");
         }
 
@@ -259,7 +267,7 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
         cmd.Parameters.AddWithValue("@plugin", pluginName);
 
         // Add parameters for each batch item
-        for (int i = 0; i < batch.Count; i++)
+        for (var i = 0; i < batch.Count; i++)
         {
             cmd.Parameters.AddWithValue($"@formid{i}", batch[i].formId);
             cmd.Parameters.AddWithValue($"@entry{i}", batch[i].entry);
@@ -270,9 +278,9 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
     }
 
     /// <summary>
-    /// Retrieves a human-readable name for a given major record, prioritizing the editor ID,
-    /// or extracting the name from the record type using cached reflection. Caching improves
-    /// performance by 10-20x for records without EditorIDs.
+    ///     Retrieves a human-readable name for a given major record, prioritizing the editor ID,
+    ///     or extracting the name from the record type using cached reflection. Caching improves
+    ///     performance by 10-20x for records without EditorIDs.
     /// </summary>
     /// <param name="record">The major record for which the name is to be retrieved.</param>
     /// <returns>A string representing the name of the record, or a formatted fallback string if no name or editor ID is found.</returns>
@@ -291,15 +299,21 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
                 .FirstOrDefault(i => i.Name.Contains("INamedGetter"));
 
             if (namedInterface == null)
+            {
                 return _ => null;
+            }
 
             var nameProperty = namedInterface.GetProperty("Name");
             if (nameProperty == null)
+            {
                 return _ => null;
+            }
 
             var stringProperty = nameProperty.PropertyType.GetProperty("String");
             if (stringProperty == null)
+            {
                 return _ => null;
+            }
 
             // Return a compiled delegate for fast access
             return rec =>

@@ -1,14 +1,13 @@
 using System;
 using System.Collections.Generic;
+using System.Data.SQLite;
 using System.Diagnostics;
 using System.IO;
-using System.Linq;
 using System.Threading.Tasks;
-using FormID_Database_Manager.Models;
 using FormID_Database_Manager.Services;
-using FormID_Database_Manager.ViewModels;
-using FormID_Database_Manager.TestUtilities.Builders;
 using FormID_Database_Manager.TestUtilities.Fixtures;
+using FormID_Database_Manager.ViewModels;
+using Moq;
 using Mutagen.Bethesda;
 using Xunit;
 using Xunit.Abstractions;
@@ -16,15 +15,15 @@ using Xunit.Abstractions;
 namespace FormID_Database_Manager.Tests.Performance;
 
 /// <summary>
-/// Performance regression tests to ensure operations stay within acceptable time bounds
+///     Performance regression tests to ensure operations stay within acceptable time bounds
 /// </summary>
 [Collection("Performance Tests")]
 public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
 {
-    private readonly ITestOutputHelper _output;
     private readonly DatabaseFixture _fixture;
-    private readonly string _testDirectory;
+    private readonly ITestOutputHelper _output;
     private readonly Dictionary<string, TimeSpan> _performanceBaselines;
+    private readonly string _testDirectory;
 
     public RegressionTests(ITestOutputHelper output, DatabaseFixture fixture)
     {
@@ -49,6 +48,21 @@ public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
         };
     }
 
+    public void Dispose()
+    {
+        try
+        {
+            if (Directory.Exists(_testDirectory))
+            {
+                Directory.Delete(_testDirectory, true);
+            }
+        }
+        catch
+        {
+            // Best effort cleanup
+        }
+    }
+
     [Fact]
     [Trait("Category", "PerformanceRegression")]
     public async Task DatabaseInitialization_SingleGame_StaysWithinBaseline()
@@ -66,8 +80,8 @@ public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
         // Assert
         _output.WriteLine($"Database initialization (single game) took: {stopwatch.Elapsed.TotalMilliseconds:F2}ms");
         _output.WriteLine($"Baseline: {baseline.TotalMilliseconds:F2}ms");
-        
-        Assert.True(stopwatch.Elapsed < baseline.Add(TimeSpan.FromMilliseconds(baseline.TotalMilliseconds * 0.2)), 
+
+        Assert.True(stopwatch.Elapsed < baseline.Add(TimeSpan.FromMilliseconds(baseline.TotalMilliseconds * 0.2)),
             $"Performance regression detected! Operation took {stopwatch.Elapsed.TotalMilliseconds:F2}ms, baseline is {baseline.TotalMilliseconds:F2}ms (20% tolerance)");
     }
 
@@ -78,12 +92,9 @@ public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
         // Arrange
         var service = new DatabaseService();
         var baseline = _performanceBaselines["DatabaseInit_AllGames"];
-        var games = new[] 
-        { 
-            GameRelease.SkyrimSE, 
-            GameRelease.Fallout4, 
-            GameRelease.Starfield,
-            GameRelease.SkyrimVR,
+        var games = new[]
+        {
+            GameRelease.SkyrimSE, GameRelease.Fallout4, GameRelease.Starfield, GameRelease.SkyrimVR,
             GameRelease.Oblivion
         };
 
@@ -94,13 +105,14 @@ public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
             var dbPath = Path.Combine(_testDirectory, $"test_{game}.db");
             await service.InitializeDatabase(dbPath, game);
         }
+
         stopwatch.Stop();
 
         // Assert
         _output.WriteLine($"Database initialization (all games) took: {stopwatch.Elapsed.TotalMilliseconds:F2}ms");
         _output.WriteLine($"Baseline: {baseline.TotalMilliseconds:F2}ms");
-        
-        Assert.True(stopwatch.Elapsed < baseline.Add(TimeSpan.FromMilliseconds(baseline.TotalMilliseconds * 0.2)), 
+
+        Assert.True(stopwatch.Elapsed < baseline.Add(TimeSpan.FromMilliseconds(baseline.TotalMilliseconds * 0.2)),
             $"Performance regression detected! Operation took {stopwatch.Elapsed.TotalMilliseconds:F2}ms, baseline is {baseline.TotalMilliseconds:F2}ms (20% tolerance)");
     }
 
@@ -114,13 +126,13 @@ public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
         var service = new DatabaseService();
         var dbPath = Path.Combine(_testDirectory, $"test_batch_{recordCount}.db");
         await service.InitializeDatabase(dbPath, GameRelease.SkyrimSE);
-        
+
         var baseline = _performanceBaselines[baselineKey];
         var records = GenerateTestRecords(recordCount);
 
         // Act
         var stopwatch = Stopwatch.StartNew();
-        using (var connection = new System.Data.SQLite.SQLiteConnection($"Data Source={dbPath}"))
+        using (var connection = new SQLiteConnection($"Data Source={dbPath}"))
         {
             await connection.OpenAsync();
             // Simulate batch insert by inserting records in a transaction
@@ -128,19 +140,22 @@ public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
             {
                 foreach (var record in records)
                 {
-                    await service.InsertRecord(connection, GameRelease.SkyrimSE, record.plugin, record.formId, record.editorId);
+                    await service.InsertRecord(connection, GameRelease.SkyrimSE, record.plugin, record.formId,
+                        record.editorId);
                 }
+
                 transaction.Commit();
             }
         }
+
         stopwatch.Stop();
 
         // Assert
         _output.WriteLine($"Batch insert ({recordCount} records) took: {stopwatch.Elapsed.TotalMilliseconds:F2}ms");
         _output.WriteLine($"Baseline: {baseline.TotalMilliseconds:F2}ms");
         _output.WriteLine($"Records per second: {recordCount / stopwatch.Elapsed.TotalSeconds:F0}");
-        
-        Assert.True(stopwatch.Elapsed < baseline.Add(TimeSpan.FromMilliseconds(baseline.TotalMilliseconds * 0.2)), 
+
+        Assert.True(stopwatch.Elapsed < baseline.Add(TimeSpan.FromMilliseconds(baseline.TotalMilliseconds * 0.2)),
             $"Performance regression detected! Operation took {stopwatch.Elapsed.TotalMilliseconds:F2}ms, baseline is {baseline.TotalMilliseconds:F2}ms (20% tolerance)");
     }
 
@@ -153,7 +168,7 @@ public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
         var testDir = Path.Combine(_testDirectory, "Skyrim Special Edition");
         Directory.CreateDirectory(testDir);
         File.WriteAllText(Path.Combine(testDir, "SkyrimSE.exe"), "dummy");
-        
+
         var baseline = _performanceBaselines["GameDetection_SimpleDirectory"];
 
         // Act
@@ -164,8 +179,8 @@ public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
         // Assert
         _output.WriteLine($"Game detection (simple) took: {stopwatch.Elapsed.TotalMilliseconds:F2}ms");
         _output.WriteLine($"Baseline: {baseline.TotalMilliseconds:F2}ms");
-        
-        Assert.True(stopwatch.Elapsed < baseline.Add(TimeSpan.FromMilliseconds(baseline.TotalMilliseconds * 0.3)), 
+
+        Assert.True(stopwatch.Elapsed < baseline.Add(TimeSpan.FromMilliseconds(baseline.TotalMilliseconds * 0.3)),
             $"Performance regression detected! Operation took {stopwatch.Elapsed.TotalMilliseconds:F2}ms, baseline is {baseline.TotalMilliseconds:F2}ms (30% tolerance)");
     }
 
@@ -178,13 +193,13 @@ public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
         var testDir = Path.Combine(_testDirectory, "ComplexGame");
         var dataDir = Path.Combine(testDir, "Data");
         Directory.CreateDirectory(dataDir);
-        
+
         // Create many files to simulate complex directory
-        for (int i = 0; i < 100; i++)
+        for (var i = 0; i < 100; i++)
         {
             File.WriteAllText(Path.Combine(dataDir, $"file{i}.esm"), "dummy");
         }
-        
+
         var baseline = _performanceBaselines["GameDetection_ComplexDirectory"];
 
         // Act
@@ -195,8 +210,8 @@ public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
         // Assert
         _output.WriteLine($"Game detection (complex) took: {stopwatch.Elapsed.TotalMilliseconds:F2}ms");
         _output.WriteLine($"Baseline: {baseline.TotalMilliseconds:F2}ms");
-        
-        Assert.True(stopwatch.Elapsed < baseline.Add(TimeSpan.FromMilliseconds(baseline.TotalMilliseconds * 0.3)), 
+
+        Assert.True(stopwatch.Elapsed < baseline.Add(TimeSpan.FromMilliseconds(baseline.TotalMilliseconds * 0.3)),
             $"Performance regression detected! Operation took {stopwatch.Elapsed.TotalMilliseconds:F2}ms, baseline is {baseline.TotalMilliseconds:F2}ms (30% tolerance)");
     }
 
@@ -208,19 +223,20 @@ public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
     {
         // Arrange
         // Create mock dependencies for PluginListManager
-        var mockGameDetection = new Moq.Mock<GameDetectionService>();
-        var mockViewModel = new Moq.Mock<MainWindowViewModel>();
+        var mockGameDetection = new Mock<GameDetectionService>();
+        var mockViewModel = new Mock<MainWindowViewModel>();
         var service = new PluginListManager(mockGameDetection.Object, mockViewModel.Object);
-        
+
         var listPath = Path.Combine(_testDirectory, "plugins.txt");
-        
+
         var plugins = new List<string>();
-        for (int i = 0; i < pluginCount; i++)
+        for (var i = 0; i < pluginCount; i++)
         {
             plugins.Add($"*Plugin{i:D3}.esp");
         }
+
         await File.WriteAllLinesAsync(listPath, plugins);
-        
+
         var baseline = _performanceBaselines[baselineKey];
 
         // Act
@@ -232,8 +248,8 @@ public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
         // Assert
         _output.WriteLine($"Plugin list load ({pluginCount} plugins) took: {stopwatch.Elapsed.TotalMilliseconds:F2}ms");
         _output.WriteLine($"Baseline: {baseline.TotalMilliseconds:F2}ms");
-        
-        Assert.True(stopwatch.Elapsed < baseline.Add(TimeSpan.FromMilliseconds(baseline.TotalMilliseconds * 0.2)), 
+
+        Assert.True(stopwatch.Elapsed < baseline.Add(TimeSpan.FromMilliseconds(baseline.TotalMilliseconds * 0.2)),
             $"Performance regression detected! Operation took {stopwatch.Elapsed.TotalMilliseconds:F2}ms, baseline is {baseline.TotalMilliseconds:F2}ms (20% tolerance)");
     }
 
@@ -244,48 +260,49 @@ public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
     public async Task FormIdTextProcessing_StaysWithinBaseline(int lineCount, string baselineKey)
     {
         // Arrange
-        var mockDatabaseService = new Moq.Mock<DatabaseService>();
+        var mockDatabaseService = new Mock<DatabaseService>();
         var processor = new FormIdTextProcessor(mockDatabaseService.Object);
         var formIdFile = Path.Combine(_testDirectory, "formids.txt");
         var dbPath = Path.Combine(_testDirectory, "test.db");
-        
+
         // Create test FormID file
         var lines = new List<string>();
-        for (int i = 0; i < lineCount; i++)
+        for (var i = 0; i < lineCount; i++)
         {
             lines.Add($"TestPlugin.esp|{i:X8}|TestItem{i}");
         }
+
         await File.WriteAllLinesAsync(formIdFile, lines);
-        
+
         // Setup database
         var dbService = new DatabaseService();
         await dbService.InitializeDatabase(dbPath, GameRelease.SkyrimSE);
-        
+
         var baseline = _performanceBaselines[baselineKey];
 
         // Act
         var stopwatch = Stopwatch.StartNew();
         // Open connection and process the file
-        using (var connection = new System.Data.SQLite.SQLiteConnection($"Data Source={dbPath}"))
+        using (var connection = new SQLiteConnection($"Data Source={dbPath}"))
         {
             await connection.OpenAsync();
             await processor.ProcessFormIdListFile(
                 formIdFile,
                 connection,
                 GameRelease.SkyrimSE,
-                updateMode: false,
-                cancellationToken: default,
-                progress: null
+                false,
+                default
             );
         }
+
         stopwatch.Stop();
 
         // Assert
         _output.WriteLine($"FormID processing ({lineCount} lines) took: {stopwatch.Elapsed.TotalMilliseconds:F2}ms");
         _output.WriteLine($"Baseline: {baseline.TotalMilliseconds:F2}ms");
         _output.WriteLine($"Lines per second: {lineCount / stopwatch.Elapsed.TotalSeconds:F0}");
-        
-        Assert.True(stopwatch.Elapsed < baseline.Add(TimeSpan.FromMilliseconds(baseline.TotalMilliseconds * 0.3)), 
+
+        Assert.True(stopwatch.Elapsed < baseline.Add(TimeSpan.FromMilliseconds(baseline.TotalMilliseconds * 0.3)),
             $"Performance regression detected! Operation took {stopwatch.Elapsed.TotalMilliseconds:F2}ms, baseline is {baseline.TotalMilliseconds:F2}ms (30% tolerance)");
     }
 
@@ -297,18 +314,18 @@ public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
         var service = new DatabaseService();
         var dbPath = Path.Combine(_testDirectory, "memory_test.db");
         await service.InitializeDatabase(dbPath, GameRelease.SkyrimSE);
-        
+
         var records = GenerateTestRecords(50000);
-        
+
         // Force garbage collection to get baseline
         GC.Collect();
         GC.WaitForPendingFinalizers();
         GC.Collect();
-        
+
         var memoryBefore = GC.GetTotalMemory(false);
 
         // Act
-        using (var connection = new System.Data.SQLite.SQLiteConnection($"Data Source={dbPath}"))
+        using (var connection = new SQLiteConnection($"Data Source={dbPath}"))
         {
             await connection.OpenAsync();
             // Simulate batch insert by inserting records in a transaction
@@ -316,12 +333,14 @@ public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
             {
                 foreach (var record in records)
                 {
-                    await service.InsertRecord(connection, GameRelease.SkyrimSE, record.plugin, record.formId, record.editorId);
+                    await service.InsertRecord(connection, GameRelease.SkyrimSE, record.plugin, record.formId,
+                        record.editorId);
                 }
+
                 transaction.Commit();
             }
         }
-        
+
         var memoryAfter = GC.GetTotalMemory(false);
         var memoryIncrease = memoryAfter - memoryBefore;
 
@@ -329,7 +348,7 @@ public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
         _output.WriteLine($"Memory before: {memoryBefore:N0} bytes");
         _output.WriteLine($"Memory after: {memoryAfter:N0} bytes");
         _output.WriteLine($"Memory increase: {memoryIncrease:N0} bytes ({memoryIncrease / 1024.0 / 1024.0:F2} MB)");
-        
+
         Assert.True(memoryIncrease < 100_000_000, // 100MB limit
             $"Memory usage regression detected! Operation used {memoryIncrease:N0} bytes");
     }
@@ -343,9 +362,9 @@ public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
         var testDir = Path.Combine(_testDirectory, "CPU_Test");
         var dataDir = Path.Combine(testDir, "Data");
         Directory.CreateDirectory(dataDir);
-        
+
         // Create many files
-        for (int i = 0; i < 1000; i++)
+        for (var i = 0; i < 1000; i++)
         {
             File.WriteAllText(Path.Combine(dataDir, $"file{i}.esm"), "dummy");
         }
@@ -355,22 +374,23 @@ public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
 
         // Act
         var stopwatch = Stopwatch.StartNew();
-        for (int i = 0; i < 100; i++)
+        for (var i = 0; i < 100; i++)
         {
             service.DetectGame(testDir);
         }
+
         stopwatch.Stop();
 
         var processAfter = Process.GetCurrentProcess();
         var cpuAfter = processAfter.TotalProcessorTime;
         var cpuUsed = cpuAfter - cpuBefore;
-        var cpuPercentage = (cpuUsed.TotalMilliseconds / stopwatch.Elapsed.TotalMilliseconds) * 100;
+        var cpuPercentage = cpuUsed.TotalMilliseconds / stopwatch.Elapsed.TotalMilliseconds * 100;
 
         // Assert
         _output.WriteLine($"CPU time used: {cpuUsed.TotalMilliseconds:F2}ms");
         _output.WriteLine($"Wall time: {stopwatch.Elapsed.TotalMilliseconds:F2}ms");
         _output.WriteLine($"CPU usage: {cpuPercentage:F2}%");
-        
+
         Assert.True(cpuPercentage < 250, // Allow for multi-threading (up to 2.5 cores)
             $"CPU usage regression detected! Operation used {cpuPercentage:F2}% CPU");
     }
@@ -379,8 +399,8 @@ public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
     {
         var records = new List<(string, string, string)>();
         var random = new Random(42); // Fixed seed for consistency
-        
-        for (int i = 0; i < count; i++)
+
+        for (var i = 0; i < count; i++)
         {
             records.Add((
                 $"TestPlugin{random.Next(10)}.esp",
@@ -388,22 +408,7 @@ public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
                 $"TestItem_{i}"
             ));
         }
-        
-        return records;
-    }
 
-    public void Dispose()
-    {
-        try
-        {
-            if (Directory.Exists(_testDirectory))
-            {
-                Directory.Delete(_testDirectory, true);
-            }
-        }
-        catch
-        {
-            // Best effort cleanup
-        }
+        return records;
     }
 }

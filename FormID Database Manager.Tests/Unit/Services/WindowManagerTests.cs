@@ -1,3 +1,5 @@
+#nullable enable
+
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
@@ -6,8 +8,6 @@ using FormID_Database_Manager.Services;
 using FormID_Database_Manager.ViewModels;
 using Moq;
 using Xunit;
-
-#nullable enable
 
 namespace FormID_Database_Manager.Tests.Unit.Services;
 
@@ -30,7 +30,7 @@ public class WindowManagerTests
         // Arrange
         var mockFolder = new Mock<IStorageFolder>();
         mockFolder.Setup(f => f.Path).Returns(new Uri("file:///C:/Games/Skyrim"));
-        
+
         _mockStorageProvider
             .Setup(sp => sp.OpenFolderPickerAsync(It.IsAny<FolderPickerOpenOptions>()))
             .ReturnsAsync(new List<IStorageFolder> { mockFolder.Object });
@@ -41,7 +41,7 @@ public class WindowManagerTests
         // Assert
         Assert.Equal(@"C:\Games\Skyrim", result);
         _mockStorageProvider.Verify(sp => sp.OpenFolderPickerAsync(
-            It.IsAny<FolderPickerOpenOptions>()), 
+                It.IsAny<FolderPickerOpenOptions>()),
             Times.Once);
     }
 
@@ -83,7 +83,7 @@ public class WindowManagerTests
         // Arrange
         var mockFile = new Mock<IStorageFile>();
         mockFile.Setup(f => f.Path).Returns(new Uri("file:///C:/Data/FormIDs.db"));
-        
+
         _mockStorageProvider
             .Setup(sp => sp.SaveFilePickerAsync(It.IsAny<FilePickerSaveOptions>()))
             .ReturnsAsync(mockFile.Object);
@@ -94,7 +94,7 @@ public class WindowManagerTests
         // Assert
         Assert.Equal(@"C:\Data\FormIDs.db", result);
         _mockStorageProvider.Verify(sp => sp.SaveFilePickerAsync(
-            It.IsAny<FilePickerSaveOptions>()), 
+                It.IsAny<FilePickerSaveOptions>()),
             Times.Once);
     }
 
@@ -147,7 +147,7 @@ public class WindowManagerTests
         Assert.NotNull(capturedOptions);
         Assert.NotNull(capturedOptions.FileTypeChoices);
         Assert.Single(capturedOptions.FileTypeChoices);
-        
+
         var fileType = capturedOptions.FileTypeChoices[0];
         Assert.Equal("Database Files", fileType.Name);
         Assert.Contains("*.db", fileType.Patterns!);
@@ -159,7 +159,7 @@ public class WindowManagerTests
         // Arrange
         var mockFile = new Mock<IStorageFile>();
         mockFile.Setup(f => f.Path).Returns(new Uri("file:///C:/Data/formids.txt"));
-        
+
         _mockStorageProvider
             .Setup(sp => sp.OpenFilePickerAsync(It.IsAny<FilePickerOpenOptions>()))
             .ReturnsAsync(new List<IStorageFile> { mockFile.Object });
@@ -170,7 +170,7 @@ public class WindowManagerTests
         // Assert
         Assert.Equal(@"C:\Data\formids.txt", result);
         _mockStorageProvider.Verify(sp => sp.OpenFilePickerAsync(
-            It.IsAny<FilePickerOpenOptions>()), 
+                It.IsAny<FilePickerOpenOptions>()),
             Times.Once);
     }
 
@@ -223,7 +223,7 @@ public class WindowManagerTests
         Assert.NotNull(capturedOptions);
         Assert.NotNull(capturedOptions.FileTypeFilter);
         Assert.Single(capturedOptions.FileTypeFilter);
-        
+
         var fileType = capturedOptions.FileTypeFilter[0];
         Assert.Equal("Text Files", fileType.Name);
         Assert.Contains("*.txt", fileType.Patterns!);
@@ -234,7 +234,7 @@ public class WindowManagerTests
     {
         // This test verifies that all async methods properly use ConfigureAwait(false)
         // by checking that they don't capture the synchronization context
-        
+
         // Arrange
         _mockStorageProvider
             .Setup(sp => sp.OpenFolderPickerAsync(It.IsAny<FolderPickerOpenOptions>()))
@@ -252,7 +252,7 @@ public class WindowManagerTests
         var task3 = Task.Run(() => _windowManager.SelectFormIdListFile());
 
         await Task.WhenAll(task1, task2, task3);
-        
+
         // If we get here without deadlock, ConfigureAwait(false) is properly used
         Assert.True(task1.IsCompletedSuccessfully);
         Assert.True(task2.IsCompletedSuccessfully);
@@ -268,7 +268,7 @@ public class WindowManagerTests
         // Arrange
         var mockFolder = new Mock<IStorageFolder>();
         mockFolder.Setup(f => f.Path).Returns(new Uri(uriPath));
-        
+
         _mockStorageProvider
             .Setup(sp => sp.OpenFolderPickerAsync(It.IsAny<FolderPickerOpenOptions>()))
             .ReturnsAsync(new List<IStorageFolder> { mockFolder.Object });

@@ -4,27 +4,27 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Linq;
 using System.Runtime.CompilerServices;
-using FormID_Database_Manager.Models;
 using Avalonia.Threading;
+using FormID_Database_Manager.Models;
 
 namespace FormID_Database_Manager.ViewModels;
 
 public class MainWindowViewModel : INotifyPropertyChanged
 {
-    private string _gameDirectory = string.Empty;
+    private readonly object _pluginsLock = new();
     private string _databasePath = string.Empty;
-    private string _formIdListPath = string.Empty;
     private string _detectedGame = string.Empty;
-    private bool _isProcessing;
-    private double _progressValue;
-    private string _progressStatus = string.Empty;
-    private ObservableCollection<PluginListItem> _plugins;
-    private ObservableCollection<PluginListItem> _filteredPlugins = [];
-    private string _pluginFilter = string.Empty;
     private ObservableCollection<string> _errorMessages = [];
+    private ObservableCollection<PluginListItem> _filteredPlugins = [];
+    private string _formIdListPath = string.Empty;
+    private string _gameDirectory = string.Empty;
     private ObservableCollection<string> _informationMessages = [];
     private bool _isApplyingFilter;
-    private readonly object _pluginsLock = new object();
+    private bool _isProcessing;
+    private string _pluginFilter = string.Empty;
+    private ObservableCollection<PluginListItem> _plugins;
+    private string _progressStatus = string.Empty;
+    private double _progressValue;
 
     public MainWindowViewModel()
     {
@@ -147,28 +147,28 @@ public class MainWindowViewModel : INotifyPropertyChanged
                     : _plugins.Where(p => p.Name.Contains(_pluginFilter, StringComparison.OrdinalIgnoreCase)).ToList();
             }
 
-        // Use HashSet for O(1) lookup performance
-        var filteredSet = new HashSet<PluginListItem>(filtered);
+            // Use HashSet for O(1) lookup performance
+            var filteredSet = new HashSet<PluginListItem>(filtered);
 
-        // Remove items not in filtered set (iterate backwards to avoid index issues)
-        for (int i = _filteredPlugins.Count - 1; i >= 0; i--)
-        {
-            if (!filteredSet.Contains(_filteredPlugins[i]))
+            // Remove items not in filtered set (iterate backwards to avoid index issues)
+            for (var i = _filteredPlugins.Count - 1; i >= 0; i--)
             {
-                _filteredPlugins.RemoveAt(i);
+                if (!filteredSet.Contains(_filteredPlugins[i]))
+                {
+                    _filteredPlugins.RemoveAt(i);
+                }
             }
-        }
 
-        // Add new items that aren't already in the collection
-        // Create a snapshot to avoid collection modified exception during enumeration
-        var existingSet = new HashSet<PluginListItem>(_filteredPlugins.ToList());
-        foreach (var item in filtered)
-        {
-            if (!existingSet.Contains(item))
+            // Add new items that aren't already in the collection
+            // Create a snapshot to avoid collection modified exception during enumeration
+            var existingSet = new HashSet<PluginListItem>(_filteredPlugins.ToList());
+            foreach (var item in filtered)
             {
-                _filteredPlugins.Add(item);
+                if (!existingSet.Contains(item))
+                {
+                    _filteredPlugins.Add(item);
+                }
             }
-        }
         }
         finally
         {

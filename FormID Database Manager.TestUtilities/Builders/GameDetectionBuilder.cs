@@ -1,13 +1,12 @@
 using System.Collections.Generic;
-using FormID_Database_Manager.Services;
 using Mutagen.Bethesda;
 
 namespace FormID_Database_Manager.TestUtilities.Builders;
 
 public class GameDetectionBuilder
 {
-    private string _directoryPath = "C:\\Games\\TestGame";
     private readonly List<string> _pluginFiles = new();
+    private string _directoryPath = "C:\\Games\\TestGame";
     private GameRelease _expectedGame = GameRelease.SkyrimSE;
 
     public GameDetectionBuilder WithDirectory(string path)
@@ -38,7 +37,8 @@ public class GameDetectionBuilder
     {
         _expectedGame = GameRelease.SkyrimSE;
         _pluginFiles.Clear();
-        _pluginFiles.AddRange(new[] { "Skyrim.esm", "Update.esm", "Dawnguard.esm", "HearthFires.esm", "Dragonborn.esm" });
+        _pluginFiles.AddRange(
+            new[] { "Skyrim.esm", "Update.esm", "Dawnguard.esm", "HearthFires.esm", "Dragonborn.esm" });
         return this;
     }
 

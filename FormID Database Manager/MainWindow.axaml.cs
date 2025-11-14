@@ -1,24 +1,24 @@
-using Avalonia.Controls;
-using Avalonia.Interactivity;
-using Avalonia.Threading;
-using FormID_Database_Manager.Services;
-using FormID_Database_Manager.ViewModels;
-using FormID_Database_Manager.Models;
-using Mutagen.Bethesda;
 using System;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
+using Avalonia.Controls;
+using Avalonia.Interactivity;
+using FormID_Database_Manager.Models;
+using FormID_Database_Manager.Services;
+using FormID_Database_Manager.ViewModels;
+using Mutagen.Bethesda;
 
 namespace FormID_Database_Manager;
 
 public partial class MainWindow : Window, IDisposable
 {
-    private readonly MainWindowViewModel _viewModel;
-    private readonly WindowManager _windowManager;
     private readonly GameDetectionService _gameDetectionService;
     private readonly PluginListManager _pluginListManager;
     private readonly PluginProcessingService _pluginProcessingService;
+    private readonly MainWindowViewModel _viewModel;
+    private readonly WindowManager _windowManager;
 
     public MainWindow()
     {
@@ -26,7 +26,7 @@ public partial class MainWindow : Window, IDisposable
         {
             InitializeComponent();
         }
-        catch (System.InvalidOperationException)
+        catch (InvalidOperationException)
         {
             // InitializeComponent might fail in test scenarios
             // This is expected when running headless tests
@@ -51,6 +51,23 @@ public partial class MainWindow : Window, IDisposable
         _pluginListManager = new PluginListManager(_gameDetectionService, _viewModel);
         var databaseService = new DatabaseService();
         _pluginProcessingService = new PluginProcessingService(databaseService, _viewModel);
+    }
+
+    public void Dispose()
+    {
+        // Ensure any ongoing processing is cancelled before disposal
+        // This prevents resource leaks from uncanceled async operations
+        _pluginProcessingService.CancelProcessing();
+
+        // Give a brief moment for cancellation to propagate
+        // This is a synchronous delay which is acceptable in Dispose
+        Thread.Sleep(100);
+
+        // Dispose managed resources
+        if (_pluginProcessingService is IDisposable disposableService)
+        {
+            disposableService.Dispose();
+        }
     }
 
     private async void SelectGameDirectory_Click(object sender, RoutedEventArgs e)
@@ -302,23 +319,6 @@ public partial class MainWindow : Window, IDisposable
             {
                 processButton.Content = "Process FormIDs";
             }
-        }
-    }
-
-    public void Dispose()
-    {
-        // Ensure any ongoing processing is cancelled before disposal
-        // This prevents resource leaks from uncanceled async operations
-        _pluginProcessingService.CancelProcessing();
-
-        // Give a brief moment for cancellation to propagate
-        // This is a synchronous delay which is acceptable in Dispose
-        System.Threading.Thread.Sleep(100);
-
-        // Dispose managed resources
-        if (_pluginProcessingService is IDisposable disposableService)
-        {
-            disposableService.Dispose();
         }
     }
 }

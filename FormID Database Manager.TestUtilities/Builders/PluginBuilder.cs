@@ -1,14 +1,13 @@
 using System.Collections.Generic;
-using FormID_Database_Manager.Services;
 using Mutagen.Bethesda;
 
 namespace FormID_Database_Manager.TestUtilities.Builders;
 
 public class PluginBuilder
 {
-    private string _name = "TestPlugin.esp";
     private readonly List<(string FormId, string EditorId)> _entries = new();
     private GameRelease _gameRelease = GameRelease.SkyrimSE;
+    private string _name = "TestPlugin.esp";
 
     public PluginBuilder WithName(string name)
     {
@@ -30,10 +29,11 @@ public class PluginBuilder
 
     public PluginBuilder AddEntries(int count, string prefix = "Test")
     {
-        for (int i = 0; i < count; i++)
+        for (var i = 0; i < count; i++)
         {
             _entries.Add(($"0x{i:X8}", $"{prefix}{i:D4}"));
         }
+
         return this;
     }
 
@@ -65,9 +65,7 @@ public class PluginBuilder
     {
         return new PluginData
         {
-            Name = _name,
-            GameRelease = _gameRelease,
-            Entries = new List<(string FormId, string EditorId)>(_entries)
+            Name = _name, GameRelease = _gameRelease, Entries = new List<(string FormId, string EditorId)>(_entries)
         };
     }
 }

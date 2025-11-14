@@ -13,10 +13,10 @@ namespace FormID_Database_Manager.Tests.Unit.Services;
 
 public class FormIdTextProcessorTests : IDisposable
 {
+    private readonly SQLiteConnection _connection;
     private readonly DatabaseService _databaseService;
     private readonly FormIdTextProcessor _processor;
     private readonly string _testDbPath;
-    private readonly SQLiteConnection _connection;
     private readonly string _testFilesDir;
 
     public FormIdTextProcessorTests()
@@ -42,11 +42,85 @@ public class FormIdTextProcessorTests : IDisposable
         {
             File.Delete(_testDbPath);
         }
+
         if (Directory.Exists(_testFilesDir))
         {
             Directory.Delete(_testFilesDir, true);
         }
     }
+
+    #region Update Mode Tests
+
+    [Fact]
+    public async Task ProcessFormIdListFile_ClearsExistingEntries_InUpdateMode()
+    {
+        // Arrange - Pre-populate database
+        await InsertTestRecord("Plugin1.esp", "000001", "OldEntry1");
+        await InsertTestRecord("Plugin1.esp", "000002", "OldEntry2");
+        await InsertTestRecord("Plugin2.esp", "000003", "OldEntry3");
+
+        var testFile = Path.Combine(_testFilesDir, "update_mode.txt");
+        var content = new[]
+        {
+            "Plugin1.esp|000001|NewEntry1", "Plugin1.esp|000004|NewEntry4", // New record
+            "Plugin2.esp|000003|UpdatedEntry3"
+        };
+        await File.WriteAllLinesAsync(testFile, content);
+
+        // Act
+        await _processor.ProcessFormIdListFile(
+            testFile,
+            _connection,
+            GameRelease.SkyrimSE,
+            true, // Update mode
+            CancellationToken.None);
+
+        // Assert
+        var records = GetAllRecords();
+        Assert.Equal(3, records.Count);
+
+        // Old Plugin1 entries should be replaced
+        Assert.DoesNotContain(records, r => r.entry == "OldEntry1");
+        Assert.DoesNotContain(records, r => r.entry == "OldEntry2");
+        Assert.Contains(records, r => r.entry == "NewEntry1");
+        Assert.Contains(records, r => r.entry == "NewEntry4");
+
+        // Plugin2 should be updated
+        Assert.DoesNotContain(records, r => r.entry == "OldEntry3");
+        Assert.Contains(records, r => r.entry == "UpdatedEntry3");
+    }
+
+    #endregion
+
+    #region Transaction Tests
+
+    [Fact]
+    public async Task ProcessFormIdListFile_RollsBackOnError_MaintainsDataIntegrity()
+    {
+        // Arrange
+        var testFile = Path.Combine(_testFilesDir, "transaction_test.txt");
+        var content = new[] { "Plugin1.esp|000001|Entry1", "Plugin1.esp|000002|Entry2" };
+        await File.WriteAllLinesAsync(testFile, content);
+
+        // Close connection to simulate database error
+        _connection.Close();
+
+        // Act & Assert
+        await Assert.ThrowsAnyAsync<Exception>(() =>
+            _processor.ProcessFormIdListFile(
+                testFile,
+                _connection,
+                GameRelease.SkyrimSE,
+                false,
+                CancellationToken.None));
+
+        // Re-open and verify no partial data
+        _connection.Open();
+        var records = GetAllRecords();
+        Assert.Empty(records);
+    }
+
+    #endregion
 
     #region Core Functionality Tests
 
@@ -57,8 +131,7 @@ public class FormIdTextProcessorTests : IDisposable
         var testFile = Path.Combine(_testFilesDir, "valid_formids.txt");
         var content = new[]
         {
-            "TestPlugin.esp|000001|TestWeapon",
-            "TestPlugin.esp|000002|TestArmor",
+            "TestPlugin.esp|000001|TestWeapon", "TestPlugin.esp|000002|TestArmor",
             "TestPlugin2.esp|000003|TestSpell"
         };
         await File.WriteAllLinesAsync(testFile, content);
@@ -86,13 +159,12 @@ public class FormIdTextProcessorTests : IDisposable
         var testFile = Path.Combine(_testFilesDir, "varied_format.txt");
         var content = new[]
         {
-            "Plugin1.esp|000001|Entry1",
-            "  Plugin2.esp  |  000002  |  Entry2  ", // Extra spaces
+            "Plugin1.esp|000001|Entry1", "  Plugin2.esp  |  000002  |  Entry2  ", // Extra spaces
             "Plugin3.esp|000003|Entry3|ExtraData", // Extra pipe (should be ignored)
-            "",  // Empty line
-            "   ",  // Whitespace only
+            "", // Empty line
+            "   ", // Whitespace only
             "InvalidLine", // No pipes
-            "Plugin4.esp|000004", // Missing entry
+            "Plugin4.esp|000004" // Missing entry
         };
         await File.WriteAllLinesAsync(testFile, content);
 
@@ -118,11 +190,8 @@ public class FormIdTextProcessorTests : IDisposable
         var testFile = Path.Combine(_testFilesDir, "multiple_plugins.txt");
         var content = new[]
         {
-            "Plugin1.esp|000001|Entry1",
-            "Plugin1.esp|000002|Entry2",
-            "Plugin2.esp|000003|Entry3",
-            "Plugin2.esp|000004|Entry4",
-            "Plugin1.esp|000005|Entry5", // Back to Plugin1
+            "Plugin1.esp|000001|Entry1", "Plugin1.esp|000002|Entry2", "Plugin2.esp|000003|Entry3",
+            "Plugin2.esp|000004|Entry4", "Plugin1.esp|000005|Entry5", // Back to Plugin1
             "Plugin3.esp|000006|Entry6"
         };
         await File.WriteAllLinesAsync(testFile, content);
@@ -159,10 +228,11 @@ public class FormIdTextProcessorTests : IDisposable
         // Arrange
         var testFile = Path.Combine(_testFilesDir, "progress_test.txt");
         var lines = new List<string>();
-        for (int i = 0; i < 2500; i++) // More than UiUpdateInterval (1000)
+        for (var i = 0; i < 2500; i++) // More than UiUpdateInterval (1000)
         {
             lines.Add($"Plugin.esp|{i:X6}|Entry{i}");
         }
+
         await File.WriteAllLinesAsync(testFile, lines);
 
         var progressReports = new List<(string Message, double? Value)>();
@@ -185,7 +255,7 @@ public class FormIdTextProcessorTests : IDisposable
 
         // Verify progress values are increasing
         var progressValues = progressReports.Where(r => r.Value.HasValue).Select(r => r.Value!.Value).ToList();
-        for (int i = 1; i < progressValues.Count; i++)
+        for (var i = 1; i < progressValues.Count; i++)
         {
             Assert.True(progressValues[i] >= progressValues[i - 1]);
         }
@@ -231,10 +301,11 @@ public class FormIdTextProcessorTests : IDisposable
         var totalRecords = batchSize + 100; // Slightly more than one batch
 
         var lines = new List<string>();
-        for (int i = 0; i < totalRecords; i++)
+        for (var i = 0; i < totalRecords; i++)
         {
             lines.Add($"Plugin.esp|{i:X6}|Entry{i}");
         }
+
         await File.WriteAllLinesAsync(testFile, lines);
 
         // Act
@@ -259,7 +330,7 @@ public class FormIdTextProcessorTests : IDisposable
 
         using (var writer = new StreamWriter(testFile))
         {
-            for (int i = 0; i < totalRecords; i++)
+            for (var i = 0; i < totalRecords; i++)
             {
                 await writer.WriteLineAsync($"Plugin{i % 5}.esp|{i:X6}|Entry{i}");
             }
@@ -280,7 +351,8 @@ public class FormIdTextProcessorTests : IDisposable
         // Assert
         var records = GetAllRecords();
         Assert.Equal(totalRecords, records.Count);
-        Assert.True(elapsed.TotalSeconds < 60, $"Processing took too long: {elapsed.TotalSeconds} seconds"); // Increased threshold for CI environments
+        Assert.True(elapsed.TotalSeconds < 60,
+            $"Processing took too long: {elapsed.TotalSeconds} seconds"); // Increased threshold for CI environments
     }
 
     #endregion
@@ -313,11 +385,9 @@ public class FormIdTextProcessorTests : IDisposable
         var testFile = Path.Combine(_testFilesDir, "invalid_format.txt");
         var content = new[]
         {
-            "This is not a valid format",
-            "Neither|is|this|one|with|too|many|pipes",
-            "OrThis|WithTooFew",
+            "This is not a valid format", "Neither|is|this|one|with|too|many|pipes", "OrThis|WithTooFew",
             null!, // Null line
-            "||||", // Empty fields
+            "||||" // Empty fields
         };
         await File.WriteAllLinesAsync(testFile, content.Where(c => c != null));
 
@@ -341,10 +411,11 @@ public class FormIdTextProcessorTests : IDisposable
         // (optimized code now processes 10k records in <50ms)
         var testFile = Path.Combine(_testFilesDir, "cancellation_test.txt");
         var lines = new List<string>();
-        for (int i = 0; i < 100000; i++) // Increased from 10,000 to 100,000
+        for (var i = 0; i < 100000; i++) // Increased from 10,000 to 100,000
         {
             lines.Add($"Plugin.esp|{i:X6}|Entry{i}");
         }
+
         await File.WriteAllLinesAsync(testFile, lines);
 
         var cts = new CancellationTokenSource();
@@ -393,16 +464,11 @@ public class FormIdTextProcessorTests : IDisposable
         var testFile = Path.Combine(_testFilesDir, "special_chars.txt");
         var content = new[]
         {
-            "Plugin.esp|FF0001|Entry with spaces",
-            "Plugin.esp|000002|Entry-with-dashes",
-            "Plugin.esp|000003|Entry_with_underscores",
-            "Plugin.esp|000004|Entry.with.dots",
-            "Plugin.esp|000005|Entry'with'quotes",
-            @"Plugin.esp|000006|Entry\with\backslashes",
-            "Plugin.esp|000007|Entry/with/forward/slashes",
-            "Plugin.esp|000008|Entry(with)parentheses",
-            "Plugin.esp|000009|Entry[with]brackets",
-            "Plugin.esp|00000A|Entry{with}braces"
+            "Plugin.esp|FF0001|Entry with spaces", "Plugin.esp|000002|Entry-with-dashes",
+            "Plugin.esp|000003|Entry_with_underscores", "Plugin.esp|000004|Entry.with.dots",
+            "Plugin.esp|000005|Entry'with'quotes", @"Plugin.esp|000006|Entry\with\backslashes",
+            "Plugin.esp|000007|Entry/with/forward/slashes", "Plugin.esp|000008|Entry(with)parentheses",
+            "Plugin.esp|000009|Entry[with]brackets", "Plugin.esp|00000A|Entry{with}braces"
         };
         await File.WriteAllLinesAsync(testFile, content);
 
@@ -432,12 +498,9 @@ public class FormIdTextProcessorTests : IDisposable
         var testFile = Path.Combine(_testFilesDir, "plugin_tracking.txt");
         var content = new[]
         {
-            "Plugin1.esp|000001|Entry1",
-            "Plugin1.esp|000002|Entry2",
-            "Plugin2.esp|000003|Entry3",
+            "Plugin1.esp|000001|Entry1", "Plugin1.esp|000002|Entry2", "Plugin2.esp|000003|Entry3",
             "Plugin1.esp|000004|Entry4", // Same plugin again
-            "Plugin3.esp|000005|Entry5",
-            "Plugin2.esp|000006|Entry6"  // Same plugin again
+            "Plugin3.esp|000005|Entry5", "Plugin2.esp|000006|Entry6" // Same plugin again
         };
         await File.WriteAllLinesAsync(testFile, content);
 
@@ -458,85 +521,9 @@ public class FormIdTextProcessorTests : IDisposable
 
         // Assert
         Assert.NotEmpty(progressReports);
-        Assert.Contains(progressReports, r => r.Message.Contains("Completed processing 3 plugins") && r.Message.Contains("total records")); // Should track 3 unique plugins
-    }
-
-    #endregion
-
-    #region Update Mode Tests
-
-    [Fact]
-    public async Task ProcessFormIdListFile_ClearsExistingEntries_InUpdateMode()
-    {
-        // Arrange - Pre-populate database
-        await InsertTestRecord("Plugin1.esp", "000001", "OldEntry1");
-        await InsertTestRecord("Plugin1.esp", "000002", "OldEntry2");
-        await InsertTestRecord("Plugin2.esp", "000003", "OldEntry3");
-
-        var testFile = Path.Combine(_testFilesDir, "update_mode.txt");
-        var content = new[]
-        {
-            "Plugin1.esp|000001|NewEntry1",
-            "Plugin1.esp|000004|NewEntry4", // New record
-            "Plugin2.esp|000003|UpdatedEntry3"
-        };
-        await File.WriteAllLinesAsync(testFile, content);
-
-        // Act
-        await _processor.ProcessFormIdListFile(
-            testFile,
-            _connection,
-            GameRelease.SkyrimSE,
-            true, // Update mode
-            CancellationToken.None);
-
-        // Assert
-        var records = GetAllRecords();
-        Assert.Equal(3, records.Count);
-
-        // Old Plugin1 entries should be replaced
-        Assert.DoesNotContain(records, r => r.entry == "OldEntry1");
-        Assert.DoesNotContain(records, r => r.entry == "OldEntry2");
-        Assert.Contains(records, r => r.entry == "NewEntry1");
-        Assert.Contains(records, r => r.entry == "NewEntry4");
-
-        // Plugin2 should be updated
-        Assert.DoesNotContain(records, r => r.entry == "OldEntry3");
-        Assert.Contains(records, r => r.entry == "UpdatedEntry3");
-    }
-
-    #endregion
-
-    #region Transaction Tests
-
-    [Fact]
-    public async Task ProcessFormIdListFile_RollsBackOnError_MaintainsDataIntegrity()
-    {
-        // Arrange
-        var testFile = Path.Combine(_testFilesDir, "transaction_test.txt");
-        var content = new[]
-        {
-            "Plugin1.esp|000001|Entry1",
-            "Plugin1.esp|000002|Entry2"
-        };
-        await File.WriteAllLinesAsync(testFile, content);
-
-        // Close connection to simulate database error
-        _connection.Close();
-
-        // Act & Assert
-        await Assert.ThrowsAnyAsync<Exception>(() =>
-            _processor.ProcessFormIdListFile(
-                testFile,
-                _connection,
-                GameRelease.SkyrimSE,
-                false,
-                CancellationToken.None));
-
-        // Re-open and verify no partial data
-        _connection.Open();
-        var records = GetAllRecords();
-        Assert.Empty(records);
+        Assert.Contains(progressReports,
+            r => r.Message.Contains("Completed processing 3 plugins") &&
+                 r.Message.Contains("total records")); // Should track 3 unique plugins
     }
 
     #endregion
@@ -575,6 +562,7 @@ public class FormIdTextProcessorTests : IDisposable
                 reader.GetString(2)
             ));
         }
+
         return records;
     }
 

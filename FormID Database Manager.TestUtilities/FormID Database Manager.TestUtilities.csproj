@@ -8,14 +8,14 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="xunit" Version="2.9.3" />
-    <PackageReference Include="Moq" Version="4.20.72" />
-    <PackageReference Include="System.Data.SQLite" Version="2.0.2" />
-    <PackageReference Include="Mutagen.Bethesda" Version="0.51.3" />
+    <PackageReference Include="xunit" Version="2.9.3"/>
+    <PackageReference Include="Moq" Version="4.20.72"/>
+    <PackageReference Include="System.Data.SQLite" Version="2.0.2"/>
+    <PackageReference Include="Mutagen.Bethesda" Version="0.51.3"/>
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\FormID Database Manager\FormID Database Manager.csproj" />
+    <ProjectReference Include="..\FormID Database Manager\FormID Database Manager.csproj"/>
   </ItemGroup>
 
 </Project>

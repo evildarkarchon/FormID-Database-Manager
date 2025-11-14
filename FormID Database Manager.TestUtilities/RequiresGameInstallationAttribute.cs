@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Linq;
 using Mutagen.Bethesda;
 using Mutagen.Bethesda.Environments;
 using Xunit;
@@ -9,7 +8,7 @@ using Xunit;
 namespace FormID_Database_Manager.TestUtilities;
 
 /// <summary>
-/// Skip tests that require actual game installations when the games are not present.
+///     Skip tests that require actual game installations when the games are not present.
 /// </summary>
 public sealed class RequiresGameInstallationFactAttribute : FactAttribute
 {
@@ -24,10 +23,7 @@ public sealed class RequiresGameInstallationFactAttribute : FactAttribute
             // If no specific games specified, check for any common Bethesda game
             _requiredGames = new[]
             {
-                GameRelease.SkyrimSE,
-                GameRelease.SkyrimVR,
-                GameRelease.Fallout4,
-                GameRelease.Starfield,
+                GameRelease.SkyrimSE, GameRelease.SkyrimVR, GameRelease.Fallout4, GameRelease.Starfield,
                 GameRelease.Oblivion
             };
         }
@@ -64,7 +60,7 @@ public sealed class RequiresGameInstallationFactAttribute : FactAttribute
 }
 
 /// <summary>
-/// Skip theory tests that require actual game installations when the games are not present.
+///     Skip theory tests that require actual game installations when the games are not present.
 /// </summary>
 public sealed class RequiresGameInstallationTheoryAttribute : TheoryAttribute
 {
@@ -78,10 +74,7 @@ public sealed class RequiresGameInstallationTheoryAttribute : TheoryAttribute
         {
             _requiredGames = new[]
             {
-                GameRelease.SkyrimSE,
-                GameRelease.SkyrimVR,
-                GameRelease.Fallout4,
-                GameRelease.Starfield,
+                GameRelease.SkyrimSE, GameRelease.SkyrimVR, GameRelease.Fallout4, GameRelease.Starfield,
                 GameRelease.Oblivion
             };
         }

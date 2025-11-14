@@ -7,17 +7,17 @@ using FormID_Database_Manager.ViewModels;
 namespace FormID_Database_Manager.Services;
 
 /// <summary>
-/// Handles various window-based operations such as file and folder selection
-/// for the application using the provided IStorageProvider.
+///     Handles various window-based operations such as file and folder selection
+///     for the application using the provided IStorageProvider.
 /// </summary>
 public class WindowManager
 {
-    private readonly MainWindowViewModel _viewModel;
     private readonly IStorageProvider _storageProvider;
+    private readonly MainWindowViewModel _viewModel;
 
     /// <summary>
-    /// Manages window-related operations for the application, including file and directory selection.
-    /// Acts as a bridge between the UI and the backend services, utilizing Avalonia's IStorageProvider.
+    ///     Manages window-related operations for the application, including file and directory selection.
+    ///     Acts as a bridge between the UI and the backend services, utilizing Avalonia's IStorageProvider.
     /// </summary>
     public WindowManager(IStorageProvider storageProvider, MainWindowViewModel viewModel)
     {
@@ -26,11 +26,11 @@ public class WindowManager
     }
 
     /// <summary>
-    /// Allows the user to select a game directory through a folder picker dialog.
-    /// Returns the selected directory path or null if no selection is made or an error occurs.
+    ///     Allows the user to select a game directory through a folder picker dialog.
+    ///     Returns the selected directory path or null if no selection is made or an error occurs.
     /// </summary>
     /// <returns>
-    /// A string representing the selected game's directory path or null if no folder is selected or an error occurs.
+    ///     A string representing the selected game's directory path or null if no folder is selected or an error occurs.
     /// </returns>
     public async Task<string?> SelectGameDirectory()
     {
@@ -38,8 +38,7 @@ public class WindowManager
         {
             var folders = await _storageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
             {
-                Title = "Select Game Directory",
-                AllowMultiple = false
+                Title = "Select Game Directory", AllowMultiple = false
             }).ConfigureAwait(false);
 
             return folders.Count > 0 ? folders[0].Path.LocalPath : null;
@@ -52,11 +51,11 @@ public class WindowManager
     }
 
     /// <summary>
-    /// Opens a file save dialog for the user to select or create a database file.
-    /// Allows saving with a default name, extension, and file type filtering for database files.
+    ///     Opens a file save dialog for the user to select or create a database file.
+    ///     Allows saving with a default name, extension, and file type filtering for database files.
     /// </summary>
     /// <returns>
-    /// The local file system path of the selected database file, or null if the action is canceled or an error occurs.
+    ///     The local file system path of the selected database file, or null if the action is canceled or an error occurs.
     /// </returns>
     public async Task<string?> SelectDatabaseFile()
     {
@@ -64,10 +63,7 @@ public class WindowManager
         {
             var fileTypeChoices = new List<FilePickerFileType>
             {
-                new("Database Files")
-                {
-                    Patterns = new[] { "*.db" }
-                }
+                new("Database Files") { Patterns = new[] { "*.db" } }
             };
 
             var options = new FilePickerSaveOptions
@@ -89,30 +85,22 @@ public class WindowManager
     }
 
     /// <summary>
-    /// Opens a file picker dialog to allow the user to select a FormID list file.
-    /// Filters the files to display only text files with a .txt extension.
-    /// Returns the local path of the selected file or null if no file was selected.
+    ///     Opens a file picker dialog to allow the user to select a FormID list file.
+    ///     Filters the files to display only text files with a .txt extension.
+    ///     Returns the local path of the selected file or null if no file was selected.
     /// </summary>
     /// <returns>
-    /// A string containing the local path of the selected FormID list file, or null if no file was selected.
+    ///     A string containing the local path of the selected FormID list file, or null if no file was selected.
     /// </returns>
     public async Task<string?> SelectFormIdListFile()
     {
         try
         {
-            var fileTypeChoices = new List<FilePickerFileType>
-            {
-                new("Text Files")
-                {
-                    Patterns = new[] { "*.txt" }
-                }
-            };
+            var fileTypeChoices = new List<FilePickerFileType> { new("Text Files") { Patterns = new[] { "*.txt" } } };
 
             var options = new FilePickerOpenOptions
             {
-                Title = "Select FormID List File",
-                FileTypeFilter = fileTypeChoices,
-                AllowMultiple = false
+                Title = "Select FormID List File", FileTypeFilter = fileTypeChoices, AllowMultiple = false
             };
 
             var files = await _storageProvider.OpenFilePickerAsync(options).ConfigureAwait(false);

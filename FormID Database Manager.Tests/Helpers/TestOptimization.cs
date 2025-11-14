@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Data.SQLite;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
@@ -8,7 +9,7 @@ using System.Threading.Tasks;
 namespace FormID_Database_Manager.Tests.Helpers;
 
 /// <summary>
-/// Provides optimization utilities for test execution
+///     Provides optimization utilities for test execution
 /// </summary>
 public static class TestOptimization
 {
@@ -16,10 +17,10 @@ public static class TestOptimization
     private static readonly SemaphoreSlim ResourceLock = new(1, 1);
 
     /// <summary>
-    /// Gets or creates a shared resource for use across multiple tests
+    ///     Gets or creates a shared resource for use across multiple tests
     /// </summary>
     public static async Task<T> GetOrCreateSharedResourceAsync<T>(
-        string key, 
+        string key,
         Func<Task<T>> factory) where T : class
     {
         if (SharedResources.TryGetValue(key, out var existing))
@@ -46,7 +47,7 @@ public static class TestOptimization
     }
 
     /// <summary>
-    /// Creates a temporary directory that will be cleaned up when disposed
+    ///     Creates a temporary directory that will be cleaned up when disposed
     /// </summary>
     public static TempDirectory CreateTempDirectory()
     {
@@ -54,16 +55,16 @@ public static class TestOptimization
     }
 
     /// <summary>
-    /// Runs a test with a timeout to prevent hanging tests
+    ///     Runs a test with a timeout to prevent hanging tests
     /// </summary>
     public static async Task RunWithTimeoutAsync(
-        Func<Task> testAction, 
+        Func<Task> testAction,
         TimeSpan timeout)
     {
         using var cts = new CancellationTokenSource(timeout);
         var testTask = testAction();
         var completedTask = await Task.WhenAny(testTask, Task.Delay(timeout, cts.Token));
-        
+
         if (completedTask != testTask)
         {
             throw new TimeoutException($"Test exceeded timeout of {timeout}");
@@ -73,19 +74,19 @@ public static class TestOptimization
     }
 
     /// <summary>
-    /// Manages temporary directories for tests
+    ///     Manages temporary directories for tests
     /// </summary>
     public class TempDirectory : IDisposable
     {
-        public string Path { get; }
-
         public TempDirectory()
         {
             Path = System.IO.Path.Combine(
-                System.IO.Path.GetTempPath(), 
+                System.IO.Path.GetTempPath(),
                 $"FormIDTest_{Guid.NewGuid():N}");
             Directory.CreateDirectory(Path);
         }
+
+        public string Path { get; }
 
         public void Dispose()
         {
@@ -104,7 +105,7 @@ public static class TestOptimization
     }
 
     /// <summary>
-    /// Provides a pool of reusable test databases
+    ///     Provides a pool of reusable test databases
     /// </summary>
     public static class DatabasePool
     {
@@ -121,8 +122,8 @@ public static class TestOptimization
 
             lock (Lock)
             {
-                var dbPath = System.IO.Path.Combine(
-                    System.IO.Path.GetTempPath(),
+                var dbPath = Path.Combine(
+                    Path.GetTempPath(),
                     $"TestDB_{Guid.NewGuid():N}.db");
                 AllDatabases.Add(dbPath);
                 return dbPath;
@@ -134,14 +135,14 @@ public static class TestOptimization
             // Reset the database for reuse
             if (File.Exists(dbPath))
             {
-                using var connection = new System.Data.SQLite.SQLiteConnection($"Data Source={dbPath}");
+                using var connection = new SQLiteConnection($"Data Source={dbPath}");
                 connection.Open();
-                
+
                 // Get all tables and truncate them
                 using var cmd = connection.CreateCommand();
                 cmd.CommandText = "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'";
                 var tables = new List<string>();
-                
+
                 using (var reader = cmd.ExecuteReader())
                 {
                     while (reader.Read())
@@ -178,6 +179,7 @@ public static class TestOptimization
                         // Best effort
                     }
                 }
+
                 AllDatabases.Clear();
             }
         }

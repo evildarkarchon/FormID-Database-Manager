@@ -1,11 +1,11 @@
-using Avalonia;
 using System;
 using System.IO;
 using System.Reflection;
+using Avalonia;
 
 namespace FormID_Database_Manager;
 
-class Program
+internal class Program
 {
     /// The entry point for the application. Prepares the application context, sets up assembly resolution,
     /// and starts the Avalonia application with a classic desktop lifetime.
@@ -28,7 +28,9 @@ class Program
     /// Returns:
     /// An instance of AppBuilder configured with application-specific settings.
     private static AppBuilder BuildAvaloniaApp()
-        => AppBuilder.Configure<App>()
+    {
+        return AppBuilder.Configure<App>()
             .UsePlatformDetect()
             .LogToTrace();
+    }
 }

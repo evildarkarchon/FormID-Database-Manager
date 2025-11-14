@@ -5,8 +5,8 @@ namespace FormID_Database_Manager.Models;
 
 public class PluginListItem : INotifyPropertyChanged, IDataErrorInfo
 {
-    private string _name = string.Empty;
     private bool _isSelected;
+    private string _name = string.Empty;
 
     public string Name
     {

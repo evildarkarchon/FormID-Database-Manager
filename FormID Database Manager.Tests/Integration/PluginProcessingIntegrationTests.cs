@@ -3,29 +3,27 @@ using System.Collections.Generic;
 using System.Data.SQLite;
 using System.IO;
 using System.Linq;
-using System.Threading;
 using System.Threading.Tasks;
 using FormID_Database_Manager.Models;
 using FormID_Database_Manager.Services;
-using FormID_Database_Manager.ViewModels;
 using FormID_Database_Manager.TestUtilities;
-using FormID_Database_Manager.TestUtilities.Mocks;
+using FormID_Database_Manager.ViewModels;
 using Mutagen.Bethesda;
 using Xunit;
 
 namespace FormID_Database_Manager.Tests.Integration;
 
 /// <summary>
-/// Integration tests for the complete plugin processing workflow,
-/// testing the interaction between PluginProcessingService and its dependencies.
+///     Integration tests for the complete plugin processing workflow,
+///     testing the interaction between PluginProcessingService and its dependencies.
 /// </summary>
 public class PluginProcessingIntegrationTests : IDisposable
 {
-    private readonly string _testDirectory;
-    private readonly List<string> _tempFiles;
-    private readonly MainWindowViewModel _viewModel;
     private readonly DatabaseService _databaseService;
     private readonly PluginProcessingService _processingService;
+    private readonly List<string> _tempFiles;
+    private readonly string _testDirectory;
+    private readonly MainWindowViewModel _viewModel;
 
     public PluginProcessingIntegrationTests()
     {
@@ -46,17 +44,152 @@ public class PluginProcessingIntegrationTests : IDisposable
         foreach (var file in _tempFiles.Where(File.Exists))
         {
             try
-            { File.Delete(file); }
+            {
+                File.Delete(file);
+            }
             catch { }
         }
 
         if (Directory.Exists(_testDirectory))
         {
             try
-            { Directory.Delete(_testDirectory, true); }
+            {
+                Directory.Delete(_testDirectory, true);
+            }
             catch { }
         }
     }
+
+    #region FormID List Processing Tests
+
+    [Fact(Skip = "Causes test host crash")]
+    public async Task ProcessPlugins_FormIdListProcessing_Integration()
+    {
+        // Arrange
+        var dbPath = Path.Combine(_testDirectory, "formid_test.db");
+        var formIdListPath = Path.Combine(_testDirectory, "formids.txt");
+        _tempFiles.Add(dbPath);
+        _tempFiles.Add(formIdListPath);
+
+        // Create FormID list file
+        var formIdContent = new[]
+        {
+            "TestPlugin.esp|000001|TestWeapon", "TestPlugin.esp|000002|TestArmor",
+            "AnotherPlugin.esp|000003|TestSpell"
+        };
+        await File.WriteAllLinesAsync(formIdListPath, formIdContent);
+
+        var parameters = new ProcessingParameters
+        {
+            GameDirectory = _testDirectory,
+            DatabasePath = dbPath,
+            GameRelease = GameRelease.SkyrimSE,
+            FormIdListPath = formIdListPath,
+            UpdateMode = false,
+            DryRun = false
+        };
+
+        var progressReports = new List<(string Message, double? Value)>();
+        var progress = new Progress<(string Message, double? Value)>(report => progressReports.Add(report));
+
+        // Act
+        await _processingService.ProcessPlugins(parameters, progress);
+
+        // Assert
+        Assert.Contains(progressReports, r => r.Message.Contains("Processing completed successfully"));
+
+        // Verify database contains FormID list data
+        using var connection = new SQLiteConnection($"Data Source={dbPath};Version=3;");
+        connection.Open();
+        using var cmd = new SQLiteCommand($"SELECT COUNT(*) FROM {GameRelease.SkyrimSE}", connection);
+        var count = Convert.ToInt32(cmd.ExecuteScalar());
+        Assert.Equal(3, count);
+    }
+
+    #endregion
+
+    #region Progress Reporting Tests
+
+    [ExpectsGameEnvironmentFailureFact]
+    public async Task ProcessPlugins_ReportsDetailedProgress_InDryRun()
+    {
+        // Arrange
+        var dbPath = Path.Combine(_testDirectory, "progress_test.db");
+
+        var dataPath = Path.Combine(_testDirectory, "Data");
+        var pluginNames = new[] { "Plugin1.esp", "Plugin2.esp", "Plugin3.esp" };
+        foreach (var name in pluginNames)
+        {
+            CreateTestPlugin(dataPath, name);
+        }
+
+        var parameters = new ProcessingParameters
+        {
+            GameDirectory = _testDirectory,
+            DatabasePath = dbPath,
+            GameRelease = GameRelease.SkyrimSE,
+            SelectedPlugins = pluginNames.Select(n => new PluginListItem { Name = n, IsSelected = true }).ToList(),
+            UpdateMode = false,
+            DryRun = true // Use dry run to avoid GameEnvironment issues
+        };
+
+        var progressReports = new List<(string Message, double? Value)>();
+        var progress = new Progress<(string Message, double? Value)>(report => progressReports.Add(report));
+
+        // Act
+        await _processingService.ProcessPlugins(parameters, progress);
+
+        // Assert - In dry run mode
+        Assert.Contains(progressReports, r => r.Message.Contains("Would process Plugin1.esp"));
+        Assert.Contains(progressReports, r => r.Message.Contains("Would process Plugin2.esp"));
+        Assert.Contains(progressReports, r => r.Message.Contains("Would process Plugin3.esp"));
+        Assert.Equal(3, progressReports.Count);
+    }
+
+    #endregion
+
+    #region Database Optimization Tests
+
+    [Fact]
+    public async Task ProcessPlugins_CreatesDatabase_WithFormIdList()
+    {
+        // Arrange
+        var dbPath = Path.Combine(_testDirectory, "optimize_test.db");
+        var formIdListPath = Path.Combine(_testDirectory, "formids.txt");
+        _tempFiles.Add(dbPath);
+        _tempFiles.Add(formIdListPath);
+
+        // Create FormID list file instead of plugins to avoid GameEnvironment
+        var formIdContent = new[] { "TestPlugin.esp|000001|TestItem" };
+        await File.WriteAllLinesAsync(formIdListPath, formIdContent);
+
+        var parameters = new ProcessingParameters
+        {
+            GameDirectory = _testDirectory,
+            DatabasePath = dbPath,
+            GameRelease = GameRelease.SkyrimSE,
+            FormIdListPath = formIdListPath,
+            UpdateMode = false,
+            DryRun = false
+        };
+
+        // Act
+        await _processingService.ProcessPlugins(parameters);
+
+        // Assert - Database should exist and be optimized
+        Assert.True(File.Exists(dbPath));
+        var fileInfo = new FileInfo(dbPath);
+        Assert.True(fileInfo.Length > 0);
+
+        // Verify database is in good state
+        using var connection = new SQLiteConnection($"Data Source={dbPath};Version=3;");
+        connection.Open();
+        using var cmd = new SQLiteCommand("PRAGMA integrity_check", connection);
+        var result = cmd.ExecuteScalar() as string;
+        Assert.Equal("ok", result);
+    }
+
+    #endregion
 
     #region Complete Workflow Tests
 
@@ -141,10 +274,7 @@ public class PluginProcessingIntegrationTests : IDisposable
             GameDirectory = _testDirectory,
             DatabasePath = dbPath,
             GameRelease = GameRelease.SkyrimSE,
-            SelectedPlugins = new List<PluginListItem>
-            {
-                new() { Name = "UpdateTest.esp", IsSelected = true }
-            },
+            SelectedPlugins = new List<PluginListItem> { new() { Name = "UpdateTest.esp", IsSelected = true } },
             UpdateMode = false,
             DryRun = false
         };
@@ -152,55 +282,6 @@ public class PluginProcessingIntegrationTests : IDisposable
         // Act & Assert - GameEnvironment will fail without real game
         await Assert.ThrowsAnyAsync<Exception>(async () =>
             await _processingService.ProcessPlugins(parameters));
-    }
-
-    #endregion
-
-    #region FormID List Processing Tests
-
-    [Fact(Skip = "Causes test host crash")]
-    public async Task ProcessPlugins_FormIdListProcessing_Integration()
-    {
-        // Arrange
-        var dbPath = Path.Combine(_testDirectory, "formid_test.db");
-        var formIdListPath = Path.Combine(_testDirectory, "formids.txt");
-        _tempFiles.Add(dbPath);
-        _tempFiles.Add(formIdListPath);
-
-        // Create FormID list file
-        var formIdContent = new[]
-        {
-            "TestPlugin.esp|000001|TestWeapon",
-            "TestPlugin.esp|000002|TestArmor",
-            "AnotherPlugin.esp|000003|TestSpell"
-        };
-        await File.WriteAllLinesAsync(formIdListPath, formIdContent);
-
-        var parameters = new ProcessingParameters
-        {
-            GameDirectory = _testDirectory,
-            DatabasePath = dbPath,
-            GameRelease = GameRelease.SkyrimSE,
-            FormIdListPath = formIdListPath,
-            UpdateMode = false,
-            DryRun = false
-        };
-
-        var progressReports = new List<(string Message, double? Value)>();
-        var progress = new Progress<(string Message, double? Value)>(report => progressReports.Add(report));
-
-        // Act
-        await _processingService.ProcessPlugins(parameters, progress);
-
-        // Assert
-        Assert.Contains(progressReports, r => r.Message.Contains("Processing completed successfully"));
-
-        // Verify database contains FormID list data
-        using var connection = new SQLiteConnection($"Data Source={dbPath};Version=3;");
-        connection.Open();
-        using var cmd = new SQLiteCommand($"SELECT COUNT(*) FROM {GameRelease.SkyrimSE}", connection);
-        var count = Convert.ToInt32(cmd.ExecuteScalar());
-        Assert.Equal(3, count);
     }
 
     #endregion
@@ -222,10 +303,7 @@ public class PluginProcessingIntegrationTests : IDisposable
             GameDirectory = _testDirectory,
             DatabasePath = dbPath,
             GameRelease = GameRelease.SkyrimSE,
-            SelectedPlugins = new List<PluginListItem>
-            {
-                new() { Name = "DryRunTest.esp", IsSelected = true }
-            },
+            SelectedPlugins = new List<PluginListItem> { new() { Name = "DryRunTest.esp", IsSelected = true } },
             UpdateMode = false,
             DryRun = true // Dry run mode
         };
@@ -318,7 +396,8 @@ public class PluginProcessingIntegrationTests : IDisposable
 
         // Assert
         Assert.Contains(progressReports, r => r.Message.Contains("Error processing plugin BadPlugin.esp"));
-        Assert.Contains(progressReports, r => r.Message.Contains("Processing completed with") && r.Message.Contains("failed"));
+        Assert.Contains(progressReports,
+            r => r.Message.Contains("Processing completed with") && r.Message.Contains("failed"));
         Assert.NotEmpty(_viewModel.ErrorMessages);
         Assert.Contains(_viewModel.ErrorMessages, msg => msg.Contains("Failed to process plugin BadPlugin.esp"));
     }
@@ -334,10 +413,7 @@ public class PluginProcessingIntegrationTests : IDisposable
             GameDirectory = _testDirectory,
             DatabasePath = invalidDbPath,
             GameRelease = GameRelease.SkyrimSE,
-            SelectedPlugins = new List<PluginListItem>
-            {
-                new() { Name = "Test.esp", IsSelected = true }
-            },
+            SelectedPlugins = new List<PluginListItem> { new() { Name = "Test.esp", IsSelected = true } },
             UpdateMode = false,
             DryRun = false
         };
@@ -363,10 +439,7 @@ public class PluginProcessingIntegrationTests : IDisposable
             GameDirectory = _testDirectory,
             DatabasePath = dbPath,
             GameRelease = GameRelease.SkyrimSE,
-            SelectedPlugins = new List<PluginListItem>
-            {
-                new() { Name = "Test.esp", IsSelected = true }
-            },
+            SelectedPlugins = new List<PluginListItem> { new() { Name = "Test.esp", IsSelected = true } },
             UpdateMode = false,
             DryRun = false
         };
@@ -408,92 +481,6 @@ public class PluginProcessingIntegrationTests : IDisposable
 
     #endregion
 
-    #region Progress Reporting Tests
-
-    [ExpectsGameEnvironmentFailureFact]
-    public async Task ProcessPlugins_ReportsDetailedProgress_InDryRun()
-    {
-        // Arrange
-        var dbPath = Path.Combine(_testDirectory, "progress_test.db");
-
-        var dataPath = Path.Combine(_testDirectory, "Data");
-        var pluginNames = new[] { "Plugin1.esp", "Plugin2.esp", "Plugin3.esp" };
-        foreach (var name in pluginNames)
-        {
-            CreateTestPlugin(dataPath, name);
-        }
-
-        var parameters = new ProcessingParameters
-        {
-            GameDirectory = _testDirectory,
-            DatabasePath = dbPath,
-            GameRelease = GameRelease.SkyrimSE,
-            SelectedPlugins = pluginNames.Select(n => new PluginListItem { Name = n, IsSelected = true }).ToList(),
-            UpdateMode = false,
-            DryRun = true // Use dry run to avoid GameEnvironment issues
-        };
-
-        var progressReports = new List<(string Message, double? Value)>();
-        var progress = new Progress<(string Message, double? Value)>(report => progressReports.Add(report));
-
-        // Act
-        await _processingService.ProcessPlugins(parameters, progress);
-
-        // Assert - In dry run mode
-        Assert.Contains(progressReports, r => r.Message.Contains("Would process Plugin1.esp"));
-        Assert.Contains(progressReports, r => r.Message.Contains("Would process Plugin2.esp"));
-        Assert.Contains(progressReports, r => r.Message.Contains("Would process Plugin3.esp"));
-        Assert.Equal(3, progressReports.Count);
-    }
-
-    #endregion
-
-    #region Database Optimization Tests
-
-    [Fact]
-    public async Task ProcessPlugins_CreatesDatabase_WithFormIdList()
-    {
-        // Arrange
-        var dbPath = Path.Combine(_testDirectory, "optimize_test.db");
-        var formIdListPath = Path.Combine(_testDirectory, "formids.txt");
-        _tempFiles.Add(dbPath);
-        _tempFiles.Add(formIdListPath);
-
-        // Create FormID list file instead of plugins to avoid GameEnvironment
-        var formIdContent = new[]
-        {
-            "TestPlugin.esp|000001|TestItem"
-        };
-        await File.WriteAllLinesAsync(formIdListPath, formIdContent);
-
-        var parameters = new ProcessingParameters
-        {
-            GameDirectory = _testDirectory,
-            DatabasePath = dbPath,
-            GameRelease = GameRelease.SkyrimSE,
-            FormIdListPath = formIdListPath,
-            UpdateMode = false,
-            DryRun = false
-        };
-
-        // Act
-        await _processingService.ProcessPlugins(parameters);
-
-        // Assert - Database should exist and be optimized
-        Assert.True(File.Exists(dbPath));
-        var fileInfo = new FileInfo(dbPath);
-        Assert.True(fileInfo.Length > 0);
-
-        // Verify database is in good state
-        using var connection = new SQLiteConnection($"Data Source={dbPath};Version=3;");
-        connection.Open();
-        using var cmd = new SQLiteCommand("PRAGMA integrity_check", connection);
-        var result = cmd.ExecuteScalar() as string;
-        Assert.Equal("ok", result);
-    }
-
-    #endregion
-
     #region Helper Methods
 
     private void CreateTestPlugin(string directory, string fileName)
@@ -507,7 +494,7 @@ public class PluginProcessingIntegrationTests : IDisposable
             0x00, 0x00, 0x00, 0x00, // Flags
             0x00, 0x00, 0x00, 0x00, // FormID
             0x00, 0x00, 0x00, 0x00, // Timestamp
-            0x00, 0x00, 0x00, 0x00  // Version info
+            0x00, 0x00, 0x00, 0x00 // Version info
         };
         File.WriteAllBytes(filePath, header);
     }

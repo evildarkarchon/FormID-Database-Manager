@@ -11,8 +11,8 @@ using Mutagen.Bethesda;
 namespace FormID_Database_Manager.Services;
 
 /// <summary>
-/// Provides functionality for processing FormID list files and managing their insertion into a SQLite database.
-/// This class is designed to handle parsing and batching of FormID records for efficient database operations.
+///     Provides functionality for processing FormID list files and managing their insertion into a SQLite database.
+///     This class is designed to handle parsing and batching of FormID records for efficient database operations.
 /// </summary>
 public class FormIdTextProcessor(DatabaseService databaseService)
 {
@@ -23,8 +23,8 @@ public class FormIdTextProcessor(DatabaseService databaseService)
     private const int UiUpdateInterval = 1000; // Update UI every 1000 records
 
     /// <summary>
-    /// Processes a FormID list file by reading records, organizing them by the associated plugin,
-    /// and batching them for insertion into a SQLite database.
+    ///     Processes a FormID list file by reading records, organizing them by the associated plugin,
+    ///     and batching them for insertion into a SQLite database.
     /// </summary>
     /// <param name="formIdListPath">The file path of the FormID list to process.</param>
     /// <param name="conn">The SQLite connection to the database where records will be inserted.</param>
@@ -55,7 +55,7 @@ public class FormIdTextProcessor(DatabaseService databaseService)
         progress?.Report(("Starting processing...", 0));
 
         // Read the file line by line with byte-based progress tracking
-        using var stream = new FileStream(formIdListPath, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 81920);
+        using var stream = new FileStream(formIdListPath, FileMode.Open, FileAccess.Read, FileShare.Read, 81920);
         using var reader = new StreamReader(stream, Encoding.UTF8);
 
         while (!reader.EndOfStream)
@@ -63,7 +63,10 @@ public class FormIdTextProcessor(DatabaseService databaseService)
             cancellationToken.ThrowIfCancellationRequested();
 
             var line = await reader.ReadLineAsync(cancellationToken).ConfigureAwait(false);
-            if (line == null) break;
+            if (line == null)
+            {
+                break;
+            }
 
             // Track bytes read for progress estimation
             bytesRead += Encoding.UTF8.GetByteCount(line) + Environment.NewLine.Length;
@@ -127,16 +130,16 @@ public class FormIdTextProcessor(DatabaseService databaseService)
 
     // Optimized batch inserter to handle large numbers of records efficiently
     /// <summary>
-    /// Optimized batch inserter designed to handle efficient insertion of large numbers of records
-    /// into a SQLite database. This class facilitates batching operations to reduce database overhead
-    /// and supports asynchronous processing to enhance performance in bulk insertion scenarios.
+    ///     Optimized batch inserter designed to handle efficient insertion of large numbers of records
+    ///     into a SQLite database. This class facilitates batching operations to reduce database overhead
+    ///     and supports asynchronous processing to enhance performance in bulk insertion scenarios.
     /// </summary>
     private class BatchInserter : IDisposable
     {
+        private readonly List<(string plugin, string formId, string entry)> _batch;
+        private readonly int _batchSize;
         private readonly SQLiteConnection _conn;
         private readonly GameRelease _gameRelease;
-        private readonly int _batchSize;
-        private readonly List<(string plugin, string formId, string entry)> _batch;
         private SQLiteCommand? _insertCommand;
 
         public BatchInserter(SQLiteConnection conn, GameRelease gameRelease, int batchSize)
@@ -145,6 +148,11 @@ public class FormIdTextProcessor(DatabaseService databaseService)
             _gameRelease = gameRelease;
             _batchSize = batchSize;
             _batch = new List<(string plugin, string formId, string entry)>(batchSize);
+        }
+
+        public void Dispose()
+        {
+            _insertCommand?.Dispose();
         }
 
         public async Task AddRecordAsync(string plugin, string formId, string entry,
@@ -159,8 +167,9 @@ public class FormIdTextProcessor(DatabaseService databaseService)
         }
 
         /// <summary>
-        /// Flushes the current batch of records to the database, committing them in a single transaction.
-        /// This method ensures the batched records are inserted and any associated resources, such as transactions, are properly handled.
+        ///     Flushes the current batch of records to the database, committing them in a single transaction.
+        ///     This method ensures the batched records are inserted and any associated resources, such as transactions, are
+        ///     properly handled.
         /// </summary>
         /// <param name="cancellationToken">The token to monitor for cancellation requests during the flushing process.</param>
         /// <returns>A task representing the asynchronous operation of flushing the batch to the database.</returns>
@@ -203,11 +212,6 @@ public class FormIdTextProcessor(DatabaseService databaseService)
                 await transaction.RollbackAsync(cancellationToken).ConfigureAwait(false);
                 throw;
             }
-        }
-
-        public void Dispose()
-        {
-            _insertCommand?.Dispose();
         }
     }
 }
