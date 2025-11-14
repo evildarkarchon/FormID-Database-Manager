@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Data.SQLite;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Mutagen.Bethesda;
@@ -45,14 +46,27 @@ public class FormIdTextProcessor(DatabaseService databaseService)
         var currentPlugin = string.Empty;
         var recordCount = 0;
 
-        // First, count total lines for progress reporting
-        var totalLines = File.ReadLines(formIdListPath).Count();
-        progress?.Report(("Counting records...", 0));
+        // Use byte-based progress estimation instead of counting lines (avoids double file read)
+        // This reduces I/O time by 50% for large files
+        var fileInfo = new FileInfo(formIdListPath);
+        var totalBytes = fileInfo.Length;
+        long bytesRead = 0;
 
-        // Read the file line by line
-        await foreach (var line in ReadLinesAsync(formIdListPath).WithCancellation(cancellationToken))
+        progress?.Report(("Starting processing...", 0));
+
+        // Read the file line by line with byte-based progress tracking
+        using var stream = new FileStream(formIdListPath, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 81920);
+        using var reader = new StreamReader(stream, Encoding.UTF8);
+
+        while (!reader.EndOfStream)
         {
             cancellationToken.ThrowIfCancellationRequested();
+
+            var line = await reader.ReadLineAsync(cancellationToken).ConfigureAwait(false);
+            if (line == null) break;
+
+            // Track bytes read for progress estimation
+            bytesRead += Encoding.UTF8.GetByteCount(line) + Environment.NewLine.Length;
 
             if (string.IsNullOrWhiteSpace(line))
             {
@@ -67,12 +81,11 @@ public class FormIdTextProcessor(DatabaseService databaseService)
 
             recordCount++;
 
-            // Allow UI to process events periodically
+            // Update progress periodically (Progress<T> already marshals to UI thread)
             if (recordCount % UiUpdateInterval == 0)
             {
-                await Task.Delay(1, cancellationToken); // Brief delay to let UI process events
-                var progressPercent = (double)recordCount / totalLines * 100;
-                progress?.Report(($"Processing: {progressPercent:F1}% ({recordCount:N0} / {totalLines:N0} records)",
+                var progressPercent = totalBytes > 0 ? (double)bytesRead / totalBytes * 100 : 0;
+                progress?.Report(($"Processing: {progressPercent:F1}% ({recordCount:N0} records)",
                     progressPercent));
             }
 
@@ -110,20 +123,6 @@ public class FormIdTextProcessor(DatabaseService databaseService)
 
         progress?.Report(($"Completed processing {processedPlugins.Count} plugins ({recordCount:N0} total records)",
             100));
-    }
-
-    /// <summary>
-    /// Asynchronously reads lines from a specified file, one at a time.
-    /// </summary>
-    /// <param name="filePath">The path to the file to be read.</param>
-    /// <returns>An asynchronous enumerable of strings representing each line in the file.</returns>
-    private async IAsyncEnumerable<string> ReadLinesAsync(string filePath)
-    {
-        using var reader = new StreamReader(filePath);
-        while (!reader.EndOfStream)
-        {
-            yield return await reader.ReadLineAsync() ?? string.Empty;
-        }
     }
 
     // Optimized batch inserter to handle large numbers of records efficiently

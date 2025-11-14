@@ -9,5 +9,5 @@
   "internalDiagnosticMessages": false,
   "methodDisplay": "method",
   "methodDisplayOptions": "all",
-  "longRunningTestSeconds": 10
+  "longRunningTestSeconds": 60
 }

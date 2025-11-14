@@ -23,7 +23,9 @@ public class MainWindowViewModel : INotifyPropertyChanged
     private string _pluginFilter = string.Empty;
     private ObservableCollection<string> _errorMessages = [];
     private ObservableCollection<string> _informationMessages = [];
-    
+    private bool _isApplyingFilter;
+    private readonly object _pluginsLock = new object();
+
     public MainWindowViewModel()
     {
         _plugins = [];
@@ -118,6 +120,12 @@ public class MainWindowViewModel : INotifyPropertyChanged
 
     private void ApplyFilter()
     {
+        // Prevent recursive calls
+        if (_isApplyingFilter)
+        {
+            return;
+        }
+
         // Ensure filter operations happen on UI thread
         if (!Dispatcher.UIThread.CheckAccess())
         {
@@ -125,16 +133,46 @@ public class MainWindowViewModel : INotifyPropertyChanged
             return;
         }
 
-        if (string.IsNullOrWhiteSpace(_pluginFilter))
+        try
         {
-            FilteredPlugins = new ObservableCollection<PluginListItem>(_plugins);
+            _isApplyingFilter = true;
+
+            // Incremental update approach: modify existing collection instead of recreating
+            // This prevents O(n) allocations and excessive UI notifications on every filter change
+            List<PluginListItem> filtered;
+            lock (_pluginsLock)
+            {
+                filtered = string.IsNullOrWhiteSpace(_pluginFilter)
+                    ? _plugins.ToList()
+                    : _plugins.Where(p => p.Name.Contains(_pluginFilter, StringComparison.OrdinalIgnoreCase)).ToList();
+            }
+
+        // Use HashSet for O(1) lookup performance
+        var filteredSet = new HashSet<PluginListItem>(filtered);
+
+        // Remove items not in filtered set (iterate backwards to avoid index issues)
+        for (int i = _filteredPlugins.Count - 1; i >= 0; i--)
+        {
+            if (!filteredSet.Contains(_filteredPlugins[i]))
+            {
+                _filteredPlugins.RemoveAt(i);
+            }
         }
-        else
+
+        // Add new items that aren't already in the collection
+        // Create a snapshot to avoid collection modified exception during enumeration
+        var existingSet = new HashSet<PluginListItem>(_filteredPlugins.ToList());
+        foreach (var item in filtered)
         {
-            var filteredList = _plugins
-                .Where(p => p.Name.Contains(_pluginFilter, StringComparison.OrdinalIgnoreCase))
-                .ToList();
-            FilteredPlugins = new ObservableCollection<PluginListItem>(filteredList);
+            if (!existingSet.Contains(item))
+            {
+                _filteredPlugins.Add(item);
+            }
+        }
+        }
+        finally
+        {
+            _isApplyingFilter = false;
         }
     }
 

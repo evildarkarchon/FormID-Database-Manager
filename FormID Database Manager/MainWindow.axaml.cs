@@ -35,7 +35,18 @@ public partial class MainWindow : Window, IDisposable
         _viewModel = new MainWindowViewModel();
         DataContext = _viewModel;
 
-        _windowManager = new WindowManager(StorageProvider, _viewModel);
+        // Only initialize services if StorageProvider is available (not in test mode)
+        // In test scenarios, StorageProvider may be null
+        if (StorageProvider != null)
+        {
+            _windowManager = new WindowManager(StorageProvider, _viewModel);
+        }
+        else
+        {
+            // Create a null WindowManager for test scenarios
+            _windowManager = null!;
+        }
+
         _gameDetectionService = new GameDetectionService();
         _pluginListManager = new PluginListManager(_gameDetectionService, _viewModel);
         var databaseService = new DatabaseService();
@@ -56,6 +67,11 @@ public partial class MainWindow : Window, IDisposable
 
     private async Task SelectGameDirectoryAsync()
     {
+        if (_windowManager == null)
+        {
+            return;
+        }
+
         var path = await _windowManager.SelectGameDirectory();
         if (string.IsNullOrEmpty(path))
         {
@@ -95,6 +111,11 @@ public partial class MainWindow : Window, IDisposable
 
     private async Task SelectDatabaseAsync()
     {
+        if (_windowManager == null)
+        {
+            return;
+        }
+
         var path = await _windowManager.SelectDatabaseFile();
         if (string.IsNullOrEmpty(path))
         {
@@ -118,6 +139,11 @@ public partial class MainWindow : Window, IDisposable
 
     private async Task SelectFormIdListAsync()
     {
+        if (_windowManager == null)
+        {
+            return;
+        }
+
         var path = await _windowManager.SelectFormIdListFile();
         if (string.IsNullOrEmpty(path))
         {
@@ -281,6 +307,14 @@ public partial class MainWindow : Window, IDisposable
 
     public void Dispose()
     {
+        // Ensure any ongoing processing is cancelled before disposal
+        // This prevents resource leaks from uncanceled async operations
+        _pluginProcessingService.CancelProcessing();
+
+        // Give a brief moment for cancellation to propagate
+        // This is a synchronous delay which is acceptable in Dispose
+        System.Threading.Thread.Sleep(100);
+
         // Dispose managed resources
         if (_pluginProcessingService is IDisposable disposableService)
         {

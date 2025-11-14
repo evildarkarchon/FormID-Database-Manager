@@ -108,7 +108,7 @@ public class PluginProcessingService : IDisposable
 
         await _databaseService.InitializeDatabase(parameters.DatabasePath, parameters.GameRelease, cancellationTokenSource.Token)
             .ConfigureAwait(false);
-        await using var conn = new SQLiteConnection($"Data Source={parameters.DatabasePath};Version=3;");
+        await using var conn = new SQLiteConnection(DatabaseService.GetOptimizedConnectionString(parameters.DatabasePath));
         await conn.OpenAsync(cancellationTokenSource.Token).ConfigureAwait(false);
 
         try
@@ -137,6 +137,7 @@ public class PluginProcessingService : IDisposable
             // Process plugins
             progress?.Report(("Initializing plugin processing...", 0));
             var env = GameEnvironment.Typical.Construct(parameters.GameRelease);
+            // Note: ToList() is required here because ModProcessor.ProcessPlugin expects IList
             var loadOrder = env.LoadOrder.ListedOrder.ToList();
             var pluginList = new List<PluginListItem>(parameters.SelectedPlugins);
             var successfulPlugins = 0;

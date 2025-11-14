@@ -1,3 +1,5 @@
+#nullable enable
+
 using System;
 using System.Collections.Generic;
 using System.Data.SQLite;
@@ -28,7 +30,7 @@ namespace FormID_Database_Manager.Tests.Performance
             Directory.CreateDirectory(_testDirectory);
         }
 
-        [Fact]
+        [Fact(Timeout = 120000)]
         [Trait("Category", "StressTest")]
         public async Task StressTest_RapidCancellations()
         {
@@ -97,7 +99,7 @@ namespace FormID_Database_Manager.Tests.Performance
             Assert.True(cancelledCount > 0, "No operations were cancelled");
         }
 
-        [Fact]
+        [Fact(Timeout = 120000)]
         [Trait("Category", "StressTest")]
         public async Task StressTest_MaximumDatabaseConnections()
         {
@@ -176,7 +178,7 @@ namespace FormID_Database_Manager.Tests.Performance
                 $"Too many connection failures: {errors.Count}/{maxConnections}");
         }
 
-        [Fact(Skip = "Requires UI thread synchronization")]
+        [Fact(Skip = "Requires UI thread synchronization", Timeout = 60000)]
         [Trait("Category", "StressTest")]
         public async Task StressTest_RapidUIUpdates()
         {
@@ -253,7 +255,7 @@ namespace FormID_Database_Manager.Tests.Performance
             Assert.Empty(errors);
         }
 
-        [Fact]
+        [Fact(Timeout = 300000)]
         [Trait("Category", "StressTest")]
         public async Task StressTest_LargeDatabaseFile()
         {
@@ -331,42 +333,29 @@ namespace FormID_Database_Manager.Tests.Performance
                 $"Search too slow: {searchStopwatch.ElapsedMilliseconds} ms");
         }
 
-        [Fact]
+        [Fact(Timeout = 60000)]
         [Trait("Category", "StressTest")]
         public async Task StressTest_OutOfMemoryScenario()
         {
             // Arrange
             var viewModel = new MainWindowViewModel();
-            const int pluginCount = 100_000;
+            const int pluginCount = 4_096; // Realistic maximum - game plugin limit
 
             _output.WriteLine($"Testing memory stress with {pluginCount:N0} plugins...");
 
             // Monitor memory
             var initialMemory = GC.GetTotalMemory(true);
             var peakMemory = initialMemory;
-            var memoryCheckTask = Task.Run(async () =>
-            {
-                while (viewModel.Plugins.Count < pluginCount)
-                {
-                    var currentMemory = GC.GetTotalMemory(false);
-                    if (currentMemory > peakMemory)
-                    {
-                        peakMemory = currentMemory;
-                    }
-
-                    await Task.Delay(100);
-                }
-            });
 
             // Act
-            Exception caughtException = null;
+            Exception? caughtException = null;
             try
             {
                 for (int i = 0; i < pluginCount; i++)
                 {
                     viewModel.Plugins.Add(new PluginListItem
                     {
-                        Name = $"VeryLongPluginNameToIncreaseMmemoryUsage_ThisIsIntentionallyLongToStressTestMemory_{i:D8}.esp"
+                        Name = $"VeryLongPluginNameToIncreaseMemoryUsage_ThisIsIntentionallyLongToStressTestMemory_{i:D8}.esp"
                     });
 
                     // Also add error messages
@@ -376,6 +365,16 @@ namespace FormID_Database_Manager.Tests.Performance
                                                 $"Error number {i} with additional details and stack trace information " +
                                                 $"that would typically be included in a real error scenario.");
                     }
+
+                    // Monitor memory inline (every 512 plugins)
+                    if (i % 512 == 0)
+                    {
+                        var currentMemory = GC.GetTotalMemory(false);
+                        if (currentMemory > peakMemory)
+                        {
+                            peakMemory = currentMemory;
+                        }
+                    }
                 }
             }
             catch (OutOfMemoryException ex)
@@ -383,7 +382,12 @@ namespace FormID_Database_Manager.Tests.Performance
                 caughtException = ex;
             }
 
-            await memoryCheckTask;
+            // Final memory check
+            var currentMem = GC.GetTotalMemory(false);
+            if (currentMem > peakMemory)
+            {
+                peakMemory = currentMem;
+            }
 
             // Force cleanup
             viewModel.Plugins.Clear();

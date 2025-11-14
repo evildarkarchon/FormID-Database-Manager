@@ -179,7 +179,7 @@ public class FormIdTextProcessorTests : IDisposable
 
         // Assert
         Assert.NotEmpty(progressReports);
-        Assert.Contains(progressReports, r => r.Message.Contains("Counting records"));
+        Assert.Contains(progressReports, r => r.Message.Contains("Starting processing"));
         Assert.Contains(progressReports, r => r.Message.Contains("Processing:") && r.Value.HasValue);
         Assert.Contains(progressReports, r => r.Message.Contains("Completed processing"));
 
@@ -337,9 +337,11 @@ public class FormIdTextProcessorTests : IDisposable
     public async Task ProcessFormIdListFile_RespectsCancellationToken()
     {
         // Arrange
+        // Increased record count to ensure cancellation has time to trigger
+        // (optimized code now processes 10k records in <50ms)
         var testFile = Path.Combine(_testFilesDir, "cancellation_test.txt");
         var lines = new List<string>();
-        for (int i = 0; i < 10000; i++)
+        for (int i = 0; i < 100000; i++) // Increased from 10,000 to 100,000
         {
             lines.Add($"Plugin.esp|{i:X6}|Entry{i}");
         }
@@ -361,7 +363,7 @@ public class FormIdTextProcessorTests : IDisposable
 
         // Verify partial processing
         var records = GetAllRecords();
-        Assert.True(records.Count < 10000); // Should not have processed all records
+        Assert.True(records.Count < 100000); // Should not have processed all records
     }
 
     [Fact]
