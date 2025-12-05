@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Data.SQLite;
 using System.IO;
 using System.Reflection;
 using System.Threading;
@@ -8,6 +7,7 @@ using System.Threading.Tasks;
 using FormID_Database_Manager.Models;
 using FormID_Database_Manager.Services;
 using FormID_Database_Manager.TestUtilities;
+using Microsoft.Data.Sqlite;
 using Moq;
 using Mutagen.Bethesda;
 using Mutagen.Bethesda.Plugins;
@@ -19,7 +19,7 @@ namespace FormID_Database_Manager.Tests.Unit.Services;
 
 public class ModProcessorTests : IDisposable
 {
-    private readonly SQLiteConnection _connection;
+    private readonly SqliteConnection _connection;
     private readonly DatabaseService _databaseService;
     private readonly List<string> _errorMessages;
     private readonly ModProcessor _modProcessor;
@@ -33,7 +33,7 @@ public class ModProcessorTests : IDisposable
         _modProcessor = new ModProcessor(_databaseService, error => _errorMessages.Add(error));
 
         // Create and open connection for tests
-        _connection = new SQLiteConnection($"Data Source={_testDbPath};Version=3;");
+        _connection = new SqliteConnection($"Data Source={_testDbPath}");
         _connection.Open();
         InitializeDatabase(_connection, GameRelease.SkyrimSE);
     }
@@ -44,7 +44,9 @@ public class ModProcessorTests : IDisposable
         _connection?.Dispose();
         if (File.Exists(_testDbPath))
         {
-            File.Delete(_testDbPath);
+            try
+            { File.Delete(_testDbPath); }
+            catch { /* Ignore */ }
         }
     }
 
@@ -460,9 +462,9 @@ public class ModProcessorTests : IDisposable
 
     #region Helper Methods
 
-    private void InitializeDatabase(SQLiteConnection connection, GameRelease gameRelease)
+    private void InitializeDatabase(SqliteConnection connection, GameRelease gameRelease)
     {
-        using var command = new SQLiteCommand(connection);
+        using var command = connection.CreateCommand();
         command.CommandText = $@"
             CREATE TABLE IF NOT EXISTS {gameRelease} (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -518,7 +520,7 @@ public class ModProcessorTests : IDisposable
 
     private int GetRecordCount()
     {
-        using var cmd = new SQLiteCommand($"SELECT COUNT(*) FROM {GameRelease.SkyrimSE}", _connection);
+        using var cmd = new SqliteCommand($"SELECT COUNT(*) FROM {GameRelease.SkyrimSE}", _connection);
         return Convert.ToInt32(cmd.ExecuteScalar());
     }
 

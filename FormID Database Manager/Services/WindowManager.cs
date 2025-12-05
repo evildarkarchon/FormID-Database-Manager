@@ -38,7 +38,8 @@ public class WindowManager
         {
             var folders = await _storageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
             {
-                Title = "Select Game Directory", AllowMultiple = false
+                Title = "Select Game Directory",
+                AllowMultiple = false
             }).ConfigureAwait(false);
 
             return folders.Count > 0 ? folders[0].Path.LocalPath : null;
@@ -100,7 +101,9 @@ public class WindowManager
 
             var options = new FilePickerOpenOptions
             {
-                Title = "Select FormID List File", FileTypeFilter = fileTypeChoices, AllowMultiple = false
+                Title = "Select FormID List File",
+                FileTypeFilter = fileTypeChoices,
+                AllowMultiple = false
             };
 
             var files = await _storageProvider.OpenFilePickerAsync(options).ConfigureAwait(false);

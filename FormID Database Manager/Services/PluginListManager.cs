@@ -16,7 +16,10 @@ namespace FormID_Database_Manager.Services;
 ///     such as loading plugin data, refreshing the displayed list, and managing
 ///     plugin selection states.
 /// </summary>
-public class PluginListManager(GameDetectionService gameDetectionService, MainWindowViewModel viewModel)
+public class PluginListManager(
+    GameDetectionService gameDetectionService,
+    MainWindowViewModel viewModel,
+    IThreadDispatcher dispatcher)
 {
     /// <summary>
     ///     Refreshes the list of plugins by loading data from the specified game directory and game release.
@@ -41,23 +44,33 @@ public class PluginListManager(GameDetectionService gameDetectionService, MainWi
             // For 1000+ plugins on HDD, this prevents 1-10 second UI freeze
             var (pluginItems, nonBaseCount) = await Task.Run(() =>
             {
-                // Prepare environment
-                var env = GameEnvironment.Typical.Construct(gameRelease);
-                var loadOrder = env.LoadOrder.ListedOrder;
-                var basePlugins = gameDetectionService.GetBaseGamePlugins(gameRelease);
-
                 // Determine the data path
                 var dataPath = Path.GetFileName(gameDirectory).Equals("Data", StringComparison.OrdinalIgnoreCase)
                     ? gameDirectory
                     : Path.Combine(gameDirectory, "Data");
 
+                // Prepare environment scoped to the target directory
+                var env = GameEnvironment.Typical.Builder(gameRelease)
+                    .WithTargetDataFolder(dataPath)
+                    .Build();
+
+                var loadOrder = env.LoadOrder.ListedOrder;
+                var basePlugins = gameDetectionService.GetBaseGamePlugins(gameRelease);
+
                 var items = new List<PluginListItem>();
+                var addedPlugins = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 var count = 0;
 
                 // Process plugins - File.Exists calls now on background thread
                 foreach (var plugin in loadOrder)
                 {
                     var pluginFileName = plugin.ModKey.FileName;
+
+                    // Deduplication check
+                    if (addedPlugins.Contains(pluginFileName))
+                    {
+                        continue;
+                    }
 
                     // Skip base plugins if not in advanced mode
                     if (!showAdvanced && basePlugins.Contains(pluginFileName))
@@ -74,6 +87,7 @@ public class PluginListManager(GameDetectionService gameDetectionService, MainWi
 
                     // Add the plugin to the list
                     items.Add(new PluginListItem { Name = pluginFileName, IsSelected = false });
+                    addedPlugins.Add(pluginFileName);
                     count++;
                 }
 
@@ -81,7 +95,7 @@ public class PluginListManager(GameDetectionService gameDetectionService, MainWi
             }).ConfigureAwait(false);
 
             // Update UI on UI thread
-            await Dispatcher.UIThread.InvokeAsync(() =>
+            await dispatcher.InvokeAsync(() =>
             {
                 // Clear plugin lists
                 plugins.Clear();
@@ -101,7 +115,7 @@ public class PluginListManager(GameDetectionService gameDetectionService, MainWi
         catch (Exception ex)
         {
             // Update UI on UI thread in case of error
-            await Dispatcher.UIThread.InvokeAsync(() =>
+            await dispatcher.InvokeAsync(() =>
             {
                 // Clear both collections in case of error
                 plugins.Clear();

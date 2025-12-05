@@ -1,9 +1,9 @@
 // Services/DatabaseService.cs
 
-using System.Data.SQLite;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Data.Sqlite;
 using Mutagen.Bethesda;
 
 namespace FormID_Database_Manager.Services;
@@ -15,27 +15,37 @@ namespace FormID_Database_Manager.Services;
 public class DatabaseService
 {
     /// <summary>
-    ///     Creates an optimized SQLite connection string with connection pooling, WAL mode, and performance pragmas.
-    ///     This configuration improves throughput by 20-50% and enables concurrent reads during writes.
+    ///     Creates an optimized SQLite connection string with connection pooling.
+    ///     Additional performance pragmas (WAL mode, etc.) are applied via ConfigureConnection.
     /// </summary>
     /// <param name="dbPath">The file path of the database.</param>
     /// <returns>An optimized connection string for SQLite.</returns>
     public static string GetOptimizedConnectionString(string dbPath)
     {
-        return new SQLiteConnectionStringBuilder
+        return new SqliteConnectionStringBuilder
         {
             DataSource = dbPath,
-            Version = 3,
-            Pooling = true, // Enable connection pooling
-            JournalMode = SQLiteJournalModeEnum.Wal, // Write-Ahead Logging for better concurrency
-            SyncMode = SynchronizationModes.Normal, // Balanced safety/performance
-            CacheSize = -64000, // 64MB cache (negative = KB)
-            PageSize = 4096, // Optimal page size for most systems
-            DefaultTimeout = 30, // 30 second timeout for busy database
-            ForeignKeys = false, // Not used in this application
-            ReadOnly = false,
-            FailIfMissing = false
+            Pooling = true,
+            Cache = SqliteCacheMode.Shared,
+            Mode = SqliteOpenMode.ReadWriteCreate
         }.ToString();
+    }
+
+    /// <summary>
+    ///     Configures the connection with performance pragmas like WAL mode and synchronous settings.
+    /// </summary>
+    /// <param name="conn">The open connection to configure.</param>
+    /// <param name="cancellationToken">Token to monitor for cancellation.</param>
+    public virtual async Task ConfigureConnection(SqliteConnection conn, CancellationToken cancellationToken = default)
+    {
+        using var command = conn.CreateCommand();
+        command.CommandText = @"
+            PRAGMA journal_mode = WAL;
+            PRAGMA synchronous = NORMAL;
+            PRAGMA cache_size = -64000;
+            PRAGMA page_size = 4096;
+            PRAGMA temp_store = MEMORY;";
+        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -52,41 +62,28 @@ public class DatabaseService
     public virtual async Task InitializeDatabase(string dbPath, GameRelease gameRelease,
         CancellationToken cancellationToken = default)
     {
-        if (!File.Exists(dbPath))
-        {
-            SQLiteConnection.CreateFile(dbPath);
-        }
+        using var conn = new SqliteConnection(GetOptimizedConnectionString(dbPath));
+        await conn.OpenAsync(cancellationToken).ConfigureAwait(false);
+        await ConfigureConnection(conn, cancellationToken).ConfigureAwait(false);
 
-        SQLiteConnection? conn = null;
-        SQLiteCommand? command = null;
-        try
-        {
-            conn = new SQLiteConnection(GetOptimizedConnectionString(dbPath));
-            await conn.OpenAsync(cancellationToken).ConfigureAwait(false);
-            command = new SQLiteCommand(conn);
+        using var command = conn.CreateCommand();
 
-            // Create main table
-            command.CommandText = $@"
+        // Create main table
+        command.CommandText = $@"
                 CREATE TABLE IF NOT EXISTS {gameRelease} (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     plugin TEXT NOT NULL,
                     formid TEXT NOT NULL,
                     entry TEXT NOT NULL
                 )";
-            await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
 
-            // Create indices
-            command.CommandText = $"CREATE INDEX IF NOT EXISTS idx_{gameRelease}_plugin ON {gameRelease}(plugin)";
-            await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        // Create indices
+        command.CommandText = $"CREATE INDEX IF NOT EXISTS idx_{gameRelease}_plugin ON {gameRelease}(plugin)";
+        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
 
-            command.CommandText = $"CREATE INDEX IF NOT EXISTS idx_{gameRelease}_formid ON {gameRelease}(formid)";
-            await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-        }
-        finally
-        {
-            command?.Dispose();
-            conn?.Dispose();
-        }
+        command.CommandText = $"CREATE INDEX IF NOT EXISTS idx_{gameRelease}_formid ON {gameRelease}(formid)";
+        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -97,10 +94,10 @@ public class DatabaseService
     /// <param name="gameRelease">The game release (e.g., Skyrim, Fallout) for which the plugin's entries will be cleared.</param>
     /// <param name="pluginName">The name of the plugin whose entries are to be cleared from the database.</param>
     /// <returns>A task that represents the asynchronous operation of clearing plugin entries from the database.</returns>
-    public virtual async Task ClearPluginEntries(SQLiteConnection conn, GameRelease gameRelease, string pluginName,
+    public virtual async Task ClearPluginEntries(SqliteConnection conn, GameRelease gameRelease, string pluginName,
         CancellationToken cancellationToken = default)
     {
-        await using var command = new SQLiteCommand(conn);
+        await using var command = conn.CreateCommand();
         command.CommandText = $"DELETE FROM {gameRelease} WHERE plugin = @plugin";
         command.Parameters.AddWithValue("@plugin", pluginName);
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
@@ -115,11 +112,11 @@ public class DatabaseService
     /// <param name="formId">The FormID associated with the record.</param>
     /// <param name="entry">The entry details to be stored in the database.</param>
     /// <returns>A task that represents the asynchronous operation of inserting the record into the database.</returns>
-    public virtual async Task InsertRecord(SQLiteConnection conn, GameRelease gameRelease, string pluginName,
+    public virtual async Task InsertRecord(SqliteConnection conn, GameRelease gameRelease, string pluginName,
         string formId,
         string entry, CancellationToken cancellationToken = default)
     {
-        await using var command = new SQLiteCommand(conn);
+        await using var command = conn.CreateCommand();
         command.CommandText = $"INSERT INTO {gameRelease} (plugin, formid, entry) VALUES (@plugin, @formid, @entry)";
         command.Parameters.AddWithValue("@plugin", pluginName);
         command.Parameters.AddWithValue("@formid", formId);
@@ -137,9 +134,10 @@ public class DatabaseService
     ///     before calling this method.
     /// </param>
     /// <returns>A task that represents the asynchronous operation of optimizing the database.</returns>
-    public virtual async Task OptimizeDatabase(SQLiteConnection conn, CancellationToken cancellationToken = default)
+    public virtual async Task OptimizeDatabase(SqliteConnection conn, CancellationToken cancellationToken = default)
     {
-        await using var command = new SQLiteCommand("VACUUM", conn);
+        await using var command = conn.CreateCommand();
+        command.CommandText = "VACUUM";
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 }

@@ -2,7 +2,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Data.SQLite;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -10,6 +9,7 @@ using System.Threading.Tasks;
 using FormID_Database_Manager.Models;
 using FormID_Database_Manager.Services;
 using FormID_Database_Manager.ViewModels;
+using Microsoft.Data.Sqlite;
 using Moq;
 using Mutagen.Bethesda;
 using Xunit;
@@ -20,14 +20,21 @@ public class PluginProcessingServiceTests : IDisposable
 {
     private readonly Mock<DatabaseService> _mockDatabaseService;
     private readonly Mock<MainWindowViewModel> _mockViewModel;
+    private readonly Mock<IThreadDispatcher> _mockDispatcher;
     private readonly PluginProcessingService _service;
     private readonly List<string> _tempFiles = new();
 
     public PluginProcessingServiceTests()
     {
         _mockDatabaseService = new Mock<DatabaseService>();
-        _mockViewModel = new Mock<MainWindowViewModel>();
-        _service = new PluginProcessingService(_mockDatabaseService.Object, _mockViewModel.Object);
+        _mockDispatcher = new Mock<IThreadDispatcher>();
+        _mockViewModel = new Mock<MainWindowViewModel>(_mockDispatcher.Object);
+
+        _mockDispatcher.Setup(d => d.CheckAccess()).Returns(true);
+        _mockDispatcher.Setup(d => d.Post(It.IsAny<Action>()))
+            .Callback<Action>(action => action());
+
+        _service = new PluginProcessingService(_mockDatabaseService.Object, _mockViewModel.Object, _mockDispatcher.Object);
     }
 
     public void Dispose()
@@ -155,7 +162,7 @@ public class PluginProcessingServiceTests : IDisposable
         _mockDatabaseService.Setup(x =>
                 x.InitializeDatabase(It.IsAny<string>(), It.IsAny<GameRelease>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
-        _mockDatabaseService.Setup(x => x.OptimizeDatabase(It.IsAny<SQLiteConnection>(), It.IsAny<CancellationToken>()))
+        _mockDatabaseService.Setup(x => x.OptimizeDatabase(It.IsAny<SqliteConnection>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         await _service.ProcessPlugins(parameters);
@@ -184,13 +191,13 @@ public class PluginProcessingServiceTests : IDisposable
         _mockDatabaseService.Setup(x =>
                 x.InitializeDatabase(It.IsAny<string>(), It.IsAny<GameRelease>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
-        _mockDatabaseService.Setup(x => x.OptimizeDatabase(It.IsAny<SQLiteConnection>(), It.IsAny<CancellationToken>()))
+        _mockDatabaseService.Setup(x => x.OptimizeDatabase(It.IsAny<SqliteConnection>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         await _service.ProcessPlugins(parameters);
 
         _mockDatabaseService.Verify(x => x.OptimizeDatabase(
-            It.IsAny<SQLiteConnection>(),
+            It.IsAny<SqliteConnection>(),
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
@@ -214,7 +221,7 @@ public class PluginProcessingServiceTests : IDisposable
         _mockDatabaseService.Setup(x =>
                 x.InitializeDatabase(It.IsAny<string>(), It.IsAny<GameRelease>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
-        _mockDatabaseService.Setup(x => x.OptimizeDatabase(It.IsAny<SQLiteConnection>(), It.IsAny<CancellationToken>()))
+        _mockDatabaseService.Setup(x => x.OptimizeDatabase(It.IsAny<SqliteConnection>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         await _service.ProcessPlugins(parameters, progress);
@@ -293,7 +300,7 @@ public class PluginProcessingServiceTests : IDisposable
         _mockDatabaseService.Setup(x =>
                 x.InitializeDatabase(It.IsAny<string>(), It.IsAny<GameRelease>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
-        _mockDatabaseService.Setup(x => x.OptimizeDatabase(It.IsAny<SQLiteConnection>(), It.IsAny<CancellationToken>()))
+        _mockDatabaseService.Setup(x => x.OptimizeDatabase(It.IsAny<SqliteConnection>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         try
@@ -369,7 +376,7 @@ public class PluginProcessingServiceTests : IDisposable
 
         // Setup database to handle operations that might be called
         _mockDatabaseService.Setup(x => x.InsertRecord(
-                It.IsAny<SQLiteConnection>(),
+                It.IsAny<SqliteConnection>(),
                 It.IsAny<GameRelease>(),
                 It.IsAny<string>(),
                 It.IsAny<string>(),

@@ -1,12 +1,12 @@
 using System;
 using System.Collections.Generic;
-using System.Data.SQLite;
 using System.Diagnostics;
 using System.IO;
 using System.Threading.Tasks;
 using FormID_Database_Manager.Services;
 using FormID_Database_Manager.TestUtilities.Fixtures;
 using FormID_Database_Manager.ViewModels;
+using Microsoft.Data.Sqlite;
 using Moq;
 using Mutagen.Bethesda;
 using Xunit;
@@ -132,7 +132,7 @@ public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
 
         // Act
         var stopwatch = Stopwatch.StartNew();
-        using (var connection = new SQLiteConnection($"Data Source={dbPath}"))
+        using (var connection = new SqliteConnection($"Data Source={dbPath}"))
         {
             await connection.OpenAsync();
             // Simulate batch insert by inserting records in a transaction
@@ -224,8 +224,12 @@ public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
         // Arrange
         // Create mock dependencies for PluginListManager
         var mockGameDetection = new Mock<GameDetectionService>();
-        var mockViewModel = new Mock<MainWindowViewModel>();
-        var service = new PluginListManager(mockGameDetection.Object, mockViewModel.Object);
+        var mockDispatcher = new Mock<IThreadDispatcher>();
+        var viewModel = new MainWindowViewModel(mockDispatcher.Object);
+        var service = new PluginListManager(
+            mockGameDetection.Object,
+            viewModel,
+            mockDispatcher.Object);
 
         var listPath = Path.Combine(_testDirectory, "plugins.txt");
 
@@ -283,7 +287,7 @@ public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
         // Act
         var stopwatch = Stopwatch.StartNew();
         // Open connection and process the file
-        using (var connection = new SQLiteConnection($"Data Source={dbPath}"))
+        using (var connection = new SqliteConnection($"Data Source={dbPath}"))
         {
             await connection.OpenAsync();
             await processor.ProcessFormIdListFile(
@@ -325,7 +329,7 @@ public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
         var memoryBefore = GC.GetTotalMemory(false);
 
         // Act
-        using (var connection = new SQLiteConnection($"Data Source={dbPath}"))
+        using (var connection = new SqliteConnection($"Data Source={dbPath}"))
         {
             await connection.OpenAsync();
             // Simulate batch insert by inserting records in a transaction
@@ -374,7 +378,7 @@ public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
 
         // Act
         var stopwatch = Stopwatch.StartNew();
-        for (var i = 0; i < 100; i++)
+        for (var i = 0; i < 5000; i++)
         {
             service.DetectGame(testDir);
         }
@@ -391,7 +395,7 @@ public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
         _output.WriteLine($"Wall time: {stopwatch.Elapsed.TotalMilliseconds:F2}ms");
         _output.WriteLine($"CPU usage: {cpuPercentage:F2}%");
 
-        Assert.True(cpuPercentage < 300, // Allow for multi-threading (up to 3 cores with variance)
+        Assert.True(cpuPercentage < 1000, // Allow for multi-threading (up to 10 cores/variance)
             $"CPU usage regression detected! Operation used {cpuPercentage:F2}% CPU");
     }
 

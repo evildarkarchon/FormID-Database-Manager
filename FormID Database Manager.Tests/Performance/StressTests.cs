@@ -1,9 +1,7 @@
 #nullable enable
-
 using System;
 using System.Collections.Generic;
 using System.Data;
-using System.Data.SQLite;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -12,6 +10,7 @@ using System.Threading.Tasks;
 using FormID_Database_Manager.Models;
 using FormID_Database_Manager.Services;
 using FormID_Database_Manager.ViewModels;
+using Microsoft.Data.Sqlite;
 using Mutagen.Bethesda;
 using Xunit;
 using Xunit.Abstractions;
@@ -138,7 +137,7 @@ public class StressTests : IDisposable
         var databaseService = new DatabaseService();
         await databaseService.InitializeDatabase(dbPath, GameRelease.SkyrimSE);
 
-        var connections = new List<SQLiteConnection>();
+        var connections = new List<SqliteConnection>();
         var tasks = new List<Task>();
         var errors = new List<Exception>();
 
@@ -148,7 +147,7 @@ public class StressTests : IDisposable
             // Open many connections
             for (var i = 0; i < maxConnections; i++)
             {
-                var conn = new SQLiteConnection($"Data Source={dbPath};Version=3;");
+                var conn = new SqliteConnection($"Data Source={dbPath}");
                 connections.Add(conn);
 
                 var connIndex = i;
@@ -297,18 +296,22 @@ public class StressTests : IDisposable
 
         // Act
         var stopwatch = Stopwatch.StartNew();
-        using var conn = new SQLiteConnection($"Data Source={dbPath};Version=3;");
+        using var conn = new SqliteConnection($"Data Source={dbPath}");
         await conn.OpenAsync();
 
         var transaction = conn.BeginTransaction();
-        using var command = new SQLiteCommand(conn);
+        using var command = conn.CreateCommand();
         command.CommandText =
             $"INSERT INTO {GameRelease.SkyrimSE} (plugin, formid, entry) VALUES (@plugin, @formid, @entry)";
         command.Transaction = transaction;
 
-        var pluginParam = command.Parameters.Add("@plugin", DbType.String);
-        var formidParam = command.Parameters.Add("@formid", DbType.String);
-        var entryParam = command.Parameters.Add("@entry", DbType.String);
+        var pluginParam = new SqliteParameter("@plugin", SqliteType.Text);
+        var formidParam = new SqliteParameter("@formid", SqliteType.Text);
+        var entryParam = new SqliteParameter("@entry", SqliteType.Text);
+
+        command.Parameters.Add(pluginParam);
+        command.Parameters.Add(formidParam);
+        command.Parameters.Add(entryParam);
 
         for (var i = 0; i < recordCount; i++)
         {
@@ -330,6 +333,7 @@ public class StressTests : IDisposable
 
         transaction?.Commit();
         transaction?.Dispose();
+        command.Transaction = null;
         stopwatch.Stop();
 
         // Test database performance with large file

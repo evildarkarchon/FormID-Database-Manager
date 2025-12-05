@@ -1,12 +1,12 @@
 using System;
 using System.Collections.Generic;
 using System.Data;
-using System.Data.SQLite;
 using System.IO;
 using System.Threading.Tasks;
 using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Engines;
 using FormID_Database_Manager.Services;
+using Microsoft.Data.Sqlite;
 using Mutagen.Bethesda;
 
 namespace FormID_Database_Manager.Tests.Performance;
@@ -55,7 +55,7 @@ public class DatabaseBenchmarks : IDisposable
     [Benchmark(Baseline = true)]
     public async Task SingleInsert()
     {
-        using var conn = new SQLiteConnection($"Data Source={_databasePath};Version=3;");
+        using var conn = new SqliteConnection($"Data Source={_databasePath}");
         await conn.OpenAsync();
 
         // Clear existing data
@@ -71,7 +71,7 @@ public class DatabaseBenchmarks : IDisposable
     [Benchmark]
     public async Task BatchInsert_WithTransaction()
     {
-        using var conn = new SQLiteConnection($"Data Source={_databasePath};Version=3;");
+        using var conn = new SqliteConnection($"Data Source={_databasePath}");
         await conn.OpenAsync();
 
         // Clear existing data
@@ -98,7 +98,7 @@ public class DatabaseBenchmarks : IDisposable
     [Benchmark]
     public async Task BatchInsert_PreparedStatement()
     {
-        using var conn = new SQLiteConnection($"Data Source={_databasePath};Version=3;");
+        using var conn = new SqliteConnection($"Data Source={_databasePath}");
         await conn.OpenAsync();
 
         // Clear existing data
@@ -106,14 +106,19 @@ public class DatabaseBenchmarks : IDisposable
 
         // Use prepared statement for better performance
         using var transaction = conn.BeginTransaction();
-        using var command = new SQLiteCommand(conn);
+        using var command = conn.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText =
             $"INSERT INTO {GameRelease.SkyrimSE} (plugin, formid, entry) VALUES (@plugin, @formid, @entry)";
 
         // Create parameters once
-        var pluginParam = command.Parameters.Add("@plugin", DbType.String);
-        var formidParam = command.Parameters.Add("@formid", DbType.String);
-        var entryParam = command.Parameters.Add("@entry", DbType.String);
+        var pluginParam = new SqliteParameter("@plugin", SqliteType.Text);
+        var formidParam = new SqliteParameter("@formid", SqliteType.Text);
+        var entryParam = new SqliteParameter("@entry", SqliteType.Text);
+
+        command.Parameters.Add(pluginParam);
+        command.Parameters.Add(formidParam);
+        command.Parameters.Add(entryParam);
 
         try
         {
@@ -137,7 +142,7 @@ public class DatabaseBenchmarks : IDisposable
     [Benchmark]
     public async Task ClearPluginEntries()
     {
-        using var conn = new SQLiteConnection($"Data Source={_databasePath};Version=3;");
+        using var conn = new SqliteConnection($"Data Source={_databasePath}");
         await conn.OpenAsync();
 
         // Ensure data exists
@@ -157,7 +162,7 @@ public class DatabaseBenchmarks : IDisposable
     [Benchmark]
     public async Task SearchFormId()
     {
-        using var conn = new SQLiteConnection($"Data Source={_databasePath};Version=3;");
+        using var conn = new SqliteConnection($"Data Source={_databasePath}");
         await conn.OpenAsync();
 
         // Ensure data exists
@@ -168,9 +173,10 @@ public class DatabaseBenchmarks : IDisposable
 
         // Search for random FormIDs
         var random = new Random(42);
-        using var command = new SQLiteCommand(conn);
+        using var command = conn.CreateCommand();
         command.CommandText = $"SELECT * FROM {GameRelease.SkyrimSE} WHERE formid = @formid";
-        var formidParam = command.Parameters.Add("@formid", DbType.String);
+        var formidParam = new SqliteParameter("@formid", SqliteType.Text);
+        command.Parameters.Add(formidParam);
 
         for (var i = 0; i < 100; i++)
         {
@@ -186,7 +192,7 @@ public class DatabaseBenchmarks : IDisposable
     [Benchmark]
     public async Task OptimizeDatabase()
     {
-        using var conn = new SQLiteConnection($"Data Source={_databasePath};Version=3;");
+        using var conn = new SqliteConnection($"Data Source={_databasePath}");
         await conn.OpenAsync();
 
         // Ensure data exists
@@ -198,20 +204,22 @@ public class DatabaseBenchmarks : IDisposable
         await _databaseService.OptimizeDatabase(conn);
     }
 
-    private async Task<long> GetRecordCount(SQLiteConnection conn, GameRelease gameRelease)
+    private async Task<long> GetRecordCount(SqliteConnection conn, GameRelease gameRelease)
     {
-        using var command = new SQLiteCommand($"SELECT COUNT(*) FROM {gameRelease}", conn);
+        using var command = conn.CreateCommand();
+        command.CommandText = $"SELECT COUNT(*) FROM {gameRelease}";
         var result = await command.ExecuteScalarAsync();
         return Convert.ToInt64(result);
     }
 
-    private async Task ClearAllData(SQLiteConnection conn, GameRelease gameRelease)
+    private async Task ClearAllData(SqliteConnection conn, GameRelease gameRelease)
     {
-        using var command = new SQLiteCommand($"DELETE FROM {gameRelease}", conn);
+        using var command = conn.CreateCommand();
+        command.CommandText = $"DELETE FROM {gameRelease}";
         await command.ExecuteNonQueryAsync();
     }
 
-    private async Task InsertTestData(SQLiteConnection conn)
+    private async Task InsertTestData(SqliteConnection conn)
     {
         using var transaction = conn.BeginTransaction();
         foreach (var (plugin, formid, entry) in _testData)

@@ -4,13 +4,14 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Linq;
 using System.Runtime.CompilerServices;
-using Avalonia.Threading;
 using FormID_Database_Manager.Models;
+using FormID_Database_Manager.Services;
 
 namespace FormID_Database_Manager.ViewModels;
 
 public class MainWindowViewModel : INotifyPropertyChanged
 {
+    private readonly IThreadDispatcher _dispatcher;
     private readonly object _pluginsLock = new();
     private string _databasePath = string.Empty;
     private string _detectedGame = string.Empty;
@@ -26,8 +27,9 @@ public class MainWindowViewModel : INotifyPropertyChanged
     private string _progressStatus = string.Empty;
     private double _progressValue;
 
-    public MainWindowViewModel()
+    public MainWindowViewModel(IThreadDispatcher? dispatcher = null)
     {
+        _dispatcher = dispatcher ?? new AvaloniaThreadDispatcher();
         _plugins = [];
         _plugins.CollectionChanged += (s, e) => ApplyFilter();
     }
@@ -127,9 +129,9 @@ public class MainWindowViewModel : INotifyPropertyChanged
         }
 
         // Ensure filter operations happen on UI thread
-        if (!Dispatcher.UIThread.CheckAccess())
+        if (!_dispatcher.CheckAccess())
         {
-            Dispatcher.UIThread.Post(() => ApplyFilter());
+            _dispatcher.Post(() => ApplyFilter());
             return;
         }
 
@@ -179,9 +181,9 @@ public class MainWindowViewModel : INotifyPropertyChanged
     public virtual void AddErrorMessage(string message, int maxMessages = 10)
     {
         // Ensure collection operations happen on UI thread
-        if (!Dispatcher.UIThread.CheckAccess())
+        if (!_dispatcher.CheckAccess())
         {
-            Dispatcher.UIThread.Post(() => AddErrorMessage(message, maxMessages));
+            _dispatcher.Post(() => AddErrorMessage(message, maxMessages));
             return;
         }
 
@@ -196,9 +198,9 @@ public class MainWindowViewModel : INotifyPropertyChanged
     public virtual void AddInformationMessage(string message, int maxMessages = 10)
     {
         // Ensure collection operations happen on UI thread
-        if (!Dispatcher.UIThread.CheckAccess())
+        if (!_dispatcher.CheckAccess())
         {
-            Dispatcher.UIThread.Post(() => AddInformationMessage(message, maxMessages));
+            _dispatcher.Post(() => AddInformationMessage(message, maxMessages));
             return;
         }
 
@@ -230,9 +232,9 @@ public class MainWindowViewModel : INotifyPropertyChanged
     public void ResetProgress()
     {
         // Ensure collection operations happen on UI thread
-        if (!Dispatcher.UIThread.CheckAccess())
+        if (!_dispatcher.CheckAccess())
         {
-            Dispatcher.UIThread.Post(() => ResetProgress());
+            _dispatcher.Post(() => ResetProgress());
             return;
         }
 
@@ -246,9 +248,9 @@ public class MainWindowViewModel : INotifyPropertyChanged
     public void UpdateProgress(string status, double? value = null)
     {
         // Ensure UI updates happen on UI thread
-        if (!Dispatcher.UIThread.CheckAccess())
+        if (!_dispatcher.CheckAccess())
         {
-            Dispatcher.UIThread.Post(() => UpdateProgress(status, value));
+            _dispatcher.Post(() => UpdateProgress(status, value));
             return;
         }
 

@@ -1,11 +1,11 @@
 using System;
 using System.Collections.Generic;
-using System.Data.SQLite;
 using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Data.Sqlite;
 using Mutagen.Bethesda;
 
 namespace FormID_Database_Manager.Services;
@@ -35,7 +35,7 @@ public class FormIdTextProcessor(DatabaseService databaseService)
     /// <returns>A task that represents the asynchronous operation of processing the FormID list file.</returns>
     public async Task ProcessFormIdListFile(
         string formIdListPath,
-        SQLiteConnection conn,
+        SqliteConnection conn,
         GameRelease gameRelease,
         bool updateMode,
         CancellationToken cancellationToken,
@@ -58,7 +58,7 @@ public class FormIdTextProcessor(DatabaseService databaseService)
         using var stream = new FileStream(formIdListPath, FileMode.Open, FileAccess.Read, FileShare.Read, 81920);
         using var reader = new StreamReader(stream, Encoding.UTF8);
 
-        while (!reader.EndOfStream)
+        while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
@@ -138,11 +138,11 @@ public class FormIdTextProcessor(DatabaseService databaseService)
     {
         private readonly List<(string plugin, string formId, string entry)> _batch;
         private readonly int _batchSize;
-        private readonly SQLiteConnection _conn;
+        private readonly SqliteConnection _conn;
         private readonly GameRelease _gameRelease;
-        private SQLiteCommand? _insertCommand;
+        private SqliteCommand? _insertCommand;
 
-        public BatchInserter(SQLiteConnection conn, GameRelease gameRelease, int batchSize)
+        public BatchInserter(SqliteConnection conn, GameRelease gameRelease, int batchSize)
         {
             _conn = conn;
             _gameRelease = gameRelease;
@@ -182,15 +182,17 @@ public class FormIdTextProcessor(DatabaseService databaseService)
 
             if (_insertCommand == null)
             {
-                _insertCommand = new SQLiteCommand(_conn);
+                _insertCommand = _conn.CreateCommand();
                 _insertCommand.CommandText = $@"INSERT INTO {_gameRelease} (plugin, formid, entry) 
                                                VALUES (@plugin, @formid, @entry)";
-                _insertCommand.Parameters.Add(new SQLiteParameter("@plugin"));
-                _insertCommand.Parameters.Add(new SQLiteParameter("@formid"));
-                _insertCommand.Parameters.Add(new SQLiteParameter("@entry"));
+                _insertCommand.Parameters.Add(new SqliteParameter { ParameterName = "@plugin" });
+                _insertCommand.Parameters.Add(new SqliteParameter { ParameterName = "@formid" });
+                _insertCommand.Parameters.Add(new SqliteParameter { ParameterName = "@entry" });
             }
 
             await using var transaction = await _conn.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+            _insertCommand.Transaction = transaction as SqliteTransaction;
+
             try
             {
                 foreach (var (plugin, formId, entry) in _batch)

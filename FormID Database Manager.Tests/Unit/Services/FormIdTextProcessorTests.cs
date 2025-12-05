@@ -1,11 +1,11 @@
 using System;
 using System.Collections.Generic;
-using System.Data.SQLite;
 using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using FormID_Database_Manager.Services;
+using Microsoft.Data.Sqlite;
 using Mutagen.Bethesda;
 using Xunit;
 
@@ -13,7 +13,7 @@ namespace FormID_Database_Manager.Tests.Unit.Services;
 
 public class FormIdTextProcessorTests : IDisposable
 {
-    private readonly SQLiteConnection _connection;
+    private readonly SqliteConnection _connection;
     private readonly DatabaseService _databaseService;
     private readonly FormIdTextProcessor _processor;
     private readonly string _testDbPath;
@@ -29,7 +29,7 @@ public class FormIdTextProcessorTests : IDisposable
         _processor = new FormIdTextProcessor(_databaseService);
 
         // Create and open connection for tests
-        _connection = new SQLiteConnection($"Data Source={_testDbPath};Version=3;");
+        _connection = new SqliteConnection($"Data Source={_testDbPath}");
         _connection.Open();
         InitializeDatabase(_connection, GameRelease.SkyrimSE);
     }
@@ -40,12 +40,16 @@ public class FormIdTextProcessorTests : IDisposable
         _connection?.Dispose();
         if (File.Exists(_testDbPath))
         {
-            File.Delete(_testDbPath);
+            try
+            { File.Delete(_testDbPath); }
+            catch { /* Ignore */ }
         }
 
         if (Directory.Exists(_testFilesDir))
         {
-            Directory.Delete(_testFilesDir, true);
+            try
+            { Directory.Delete(_testFilesDir, true); }
+            catch { /* Ignore */ }
         }
     }
 
@@ -530,9 +534,9 @@ public class FormIdTextProcessorTests : IDisposable
 
     #region Helper Methods
 
-    private void InitializeDatabase(SQLiteConnection connection, GameRelease gameRelease)
+    private void InitializeDatabase(SqliteConnection connection, GameRelease gameRelease)
     {
-        using var command = new SQLiteCommand(connection);
+        using var command = connection.CreateCommand();
         command.CommandText = $@"
             CREATE TABLE IF NOT EXISTS {gameRelease} (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -552,7 +556,7 @@ public class FormIdTextProcessorTests : IDisposable
     private List<(string plugin, string formid, string entry)> GetAllRecords()
     {
         var records = new List<(string plugin, string formid, string entry)>();
-        using var cmd = new SQLiteCommand($"SELECT plugin, formid, entry FROM {GameRelease.SkyrimSE}", _connection);
+        using var cmd = new SqliteCommand($"SELECT plugin, formid, entry FROM {GameRelease.SkyrimSE}", _connection);
         using var reader = cmd.ExecuteReader();
         while (reader.Read())
         {
@@ -568,7 +572,7 @@ public class FormIdTextProcessorTests : IDisposable
 
     private async Task InsertTestRecord(string plugin, string formId, string entry)
     {
-        using var cmd = new SQLiteCommand(
+        using var cmd = new SqliteCommand(
             $"INSERT INTO {GameRelease.SkyrimSE} (plugin, formid, entry) VALUES (@plugin, @formid, @entry)",
             _connection);
         cmd.Parameters.AddWithValue("@plugin", plugin);

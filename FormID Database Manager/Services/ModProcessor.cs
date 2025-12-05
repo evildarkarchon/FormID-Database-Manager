@@ -1,13 +1,13 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.Data.SQLite;
 using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using FormID_Database_Manager.Models;
+using Microsoft.Data.Sqlite;
 using Mutagen.Bethesda;
 using Mutagen.Bethesda.Fallout4;
 using Mutagen.Bethesda.Oblivion;
@@ -56,14 +56,14 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
     /// <returns>A task that processes the plugin asynchronously and manages its database entries accordingly.</returns>
     public async Task ProcessPlugin(
         string gameDir,
-        SQLiteConnection conn,
+        SqliteConnection conn,
         GameRelease gameRelease,
         PluginListItem pluginItem,
         IList<IModListingGetter<IModGetter>> loadOrder,
         bool updateMode,
         CancellationToken cancellationToken)
     {
-        SQLiteTransaction? transaction = null;
+        SqliteTransaction? transaction = null;
         try
         {
             transaction = conn.BeginTransaction();
@@ -142,7 +142,7 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
     /// <param name="mod">The mod plugin containing the records to be processed.</param>
     /// <param name="cancellationToken">The cancellation token to handle termination of the processing operation.</param>
     private async Task ProcessModRecordsAsync(
-        SQLiteConnection conn,
+        SqliteConnection conn,
         GameRelease gameRelease,
         string pluginName,
         IModGetter mod,
@@ -231,7 +231,7 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
     /// <param name="batch">The list of form ID and entry pairs to be inserted into the database.</param>
     /// <param name="cancellationToken">The cancellation token to handle termination of the insertion operation.</param>
     private async Task InsertBatchAsync(
-        SQLiteConnection conn,
+        SqliteConnection conn,
         GameRelease gameRelease,
         string pluginName,
         List<(string formId, string entry)> batch,
@@ -246,7 +246,7 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
 
         // Build multi-value INSERT statement: INSERT INTO table VALUES (...), (...), (...)
         // This reduces database round-trips from O(n) to O(1), improving performance by 10-100x
-        using var cmd = new SQLiteCommand(conn);
+        using var cmd = conn.CreateCommand();
         var sb = new StringBuilder();
         sb.Append($"INSERT INTO {gameRelease} (plugin, formid, entry) VALUES ");
 

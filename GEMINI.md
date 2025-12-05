@@ -94,3 +94,6 @@ CREATE TABLE {GameRelease} (
 - `FormID Database Manager.Tests/`: Comprehensive test suite.
 - `docs/`: Detailed documentation (`Testing-Best-Practices.md`).
 - `AGENTS.md`: Reference for build/test commands and context.
+  
+## API Information
+- `Mutagen` does not have official API documentation, you will have to scan the source code from `https://github.com/Mutagen-Modding/Mutagen/tree/0.51.5`

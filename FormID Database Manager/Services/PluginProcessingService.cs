@@ -1,12 +1,12 @@
 using System;
 using System.Collections.Generic;
-using System.Data.SQLite;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Avalonia.Threading;
 using FormID_Database_Manager.Models;
 using FormID_Database_Manager.ViewModels;
+using Microsoft.Data.Sqlite;
 using Mutagen.Bethesda.Environments;
 
 namespace FormID_Database_Manager.Services;
@@ -22,6 +22,7 @@ public class PluginProcessingService : IDisposable
     private readonly FormIdTextProcessor _textProcessor;
     private readonly MainWindowViewModel _viewModel;
     private CancellationTokenSource? _cancellationTokenSource;
+    private readonly IThreadDispatcher _dispatcher;
 
     /// <summary>
     ///     Service responsible for processing game plugins, utilizing various modules such as
@@ -33,10 +34,12 @@ public class PluginProcessingService : IDisposable
     /// </remarks>
     public PluginProcessingService(
         DatabaseService databaseService,
-        MainWindowViewModel viewModel)
+        MainWindowViewModel viewModel,
+        IThreadDispatcher? dispatcher = null)
     {
         _databaseService = databaseService;
         _viewModel = viewModel;
+        _dispatcher = dispatcher ?? new AvaloniaThreadDispatcher();
         _textProcessor = new FormIdTextProcessor(databaseService);
         _modProcessor = new ModProcessor(databaseService, AddErrorMessage);
     }
@@ -60,9 +63,9 @@ public class PluginProcessingService : IDisposable
     private void AddErrorMessage(string message)
     {
         // Use Dispatcher to ensure UI thread update
-        if (!Dispatcher.UIThread.CheckAccess())
+        if (!_dispatcher.CheckAccess())
         {
-            Dispatcher.UIThread.Post(() => _viewModel.AddErrorMessage(message));
+            _dispatcher.Post(() => _viewModel.AddErrorMessage(message));
         }
         else
         {
@@ -122,8 +125,9 @@ public class PluginProcessingService : IDisposable
             .InitializeDatabase(parameters.DatabasePath, parameters.GameRelease, cancellationTokenSource.Token)
             .ConfigureAwait(false);
         await using var conn =
-            new SQLiteConnection(DatabaseService.GetOptimizedConnectionString(parameters.DatabasePath));
+            new SqliteConnection(DatabaseService.GetOptimizedConnectionString(parameters.DatabasePath));
         await conn.OpenAsync(cancellationTokenSource.Token).ConfigureAwait(false);
+        await _databaseService.ConfigureConnection(conn, cancellationTokenSource.Token).ConfigureAwait(false);
 
         try
         {

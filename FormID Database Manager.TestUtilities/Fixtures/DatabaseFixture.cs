@@ -1,21 +1,21 @@
 #nullable enable
 
-using System.Data.SQLite;
 using System.Threading.Tasks;
+using Microsoft.Data.Sqlite;
 using Xunit;
 
 namespace FormID_Database_Manager.TestUtilities.Fixtures;
 
 public class DatabaseFixture : IAsyncLifetime
 {
-    private SQLiteConnection? _connection;
+    private SqliteConnection? _connection;
 
     public string ConnectionString { get; private set; } = string.Empty;
 
     public async Task InitializeAsync()
     {
         ConnectionString = "Data Source=:memory:";
-        _connection = new SQLiteConnection(ConnectionString);
+        _connection = new SqliteConnection(ConnectionString);
         await _connection.OpenAsync();
     }
 
@@ -28,21 +28,21 @@ public class DatabaseFixture : IAsyncLifetime
         }
     }
 
-    public SQLiteConnection CreateConnection()
+    public SqliteConnection CreateConnection()
     {
-        var connection = new SQLiteConnection(ConnectionString);
+        var connection = new SqliteConnection(ConnectionString);
         connection.Open();
         return connection;
     }
 
-    public async Task<SQLiteConnection> CreateConnectionAsync()
+    public async Task<SqliteConnection> CreateConnectionAsync()
     {
-        var connection = new SQLiteConnection(ConnectionString);
+        var connection = new SqliteConnection(ConnectionString);
         await connection.OpenAsync();
         return connection;
     }
 
-    public async Task InitializeSchemaAsync(SQLiteConnection connection, string tableName)
+    public async Task InitializeSchemaAsync(SqliteConnection connection, string tableName)
     {
         var createTableCommand = connection.CreateCommand();
         createTableCommand.CommandText = $@"
@@ -55,13 +55,14 @@ public class DatabaseFixture : IAsyncLifetime
         await createTableCommand.ExecuteNonQueryAsync();
     }
 
-    public async Task SeedDataAsync(SQLiteConnection connection, string tableName, int recordCount = 10)
+    public async Task SeedDataAsync(SqliteConnection connection, string tableName, int recordCount = 10)
     {
         using var transaction = connection.BeginTransaction();
 
         for (var i = 0; i < recordCount; i++)
         {
             var command = connection.CreateCommand();
+            command.Transaction = transaction;
             command.CommandText = $@"
                 INSERT INTO {tableName} (plugin, formid, entry)
                 VALUES (@plugin, @formid, @entry)";

@@ -48,9 +48,9 @@ public partial class MainWindow : Window, IDisposable
         }
 
         _gameDetectionService = new GameDetectionService();
-        _pluginListManager = new PluginListManager(_gameDetectionService, _viewModel);
+        _pluginListManager = new PluginListManager(_gameDetectionService, _viewModel, new AvaloniaThreadDispatcher());
         var databaseService = new DatabaseService();
-        _pluginProcessingService = new PluginProcessingService(databaseService, _viewModel);
+        _pluginProcessingService = new PluginProcessingService(databaseService, _viewModel, new AvaloniaThreadDispatcher());
     }
 
     public void Dispose()

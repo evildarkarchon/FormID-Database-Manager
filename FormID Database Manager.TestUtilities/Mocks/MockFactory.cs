@@ -1,12 +1,12 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
-using System.Data.SQLite;
 using System.Threading;
 using System.Threading.Tasks;
 using FormID_Database_Manager.Models;
 using FormID_Database_Manager.Services;
 using FormID_Database_Manager.ViewModels;
+using Microsoft.Data.Sqlite;
 using Moq;
 using Mutagen.Bethesda;
 
@@ -45,24 +45,33 @@ public static class MockFactory
                 x.InitializeDatabase(It.IsAny<string>(), It.IsAny<GameRelease>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
-        mock.Setup(x => x.InsertRecord(It.IsAny<SQLiteConnection>(), It.IsAny<GameRelease>(),
+        mock.Setup(x => x.InsertRecord(It.IsAny<SqliteConnection>(), It.IsAny<GameRelease>(),
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
-        mock.Setup(x => x.ClearPluginEntries(It.IsAny<SQLiteConnection>(), It.IsAny<GameRelease>(),
+        mock.Setup(x => x.ClearPluginEntries(It.IsAny<SqliteConnection>(), It.IsAny<GameRelease>(),
                 It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
-        mock.Setup(x => x.OptimizeDatabase(It.IsAny<SQLiteConnection>(), It.IsAny<CancellationToken>()))
+        mock.Setup(x => x.OptimizeDatabase(It.IsAny<SqliteConnection>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         return mock;
     }
 
     public static Mock<PluginListManager> CreatePluginListManagerMock(GameDetectionService gameDetectionService,
-        MainWindowViewModel viewModel)
+        MainWindowViewModel viewModel, IThreadDispatcher? dispatcher = null)
     {
-        var mock = new Mock<PluginListManager>(gameDetectionService, viewModel);
+        if (dispatcher == null)
+        {
+            var mockDispatcher = new Mock<IThreadDispatcher>();
+            mockDispatcher.Setup(d => d.InvokeAsync(It.IsAny<Action>()))
+                .Callback<Action>(a => a())
+                .Returns(Task.CompletedTask);
+            dispatcher = mockDispatcher.Object;
+        }
+
+        var mock = new Mock<PluginListManager>(gameDetectionService, viewModel, dispatcher);
 
         mock.Setup(x => x.RefreshPluginList(
                 It.IsAny<string>(),

@@ -2,12 +2,12 @@
 
 using System;
 using System.Collections.Generic;
-using System.Data.SQLite;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using FormID_Database_Manager.Services;
 using FormID_Database_Manager.TestUtilities.Fixtures;
+using Microsoft.Data.Sqlite;
 using Mutagen.Bethesda;
 using Xunit;
 
@@ -18,7 +18,7 @@ public class DatabaseServiceTests : IClassFixture<DatabaseFixture>, IAsyncLifeti
 {
     private readonly DatabaseFixture _fixture;
     private readonly DatabaseService _service;
-    private SQLiteConnection? _connection;
+    private SqliteConnection? _connection;
 
     public DatabaseServiceTests(DatabaseFixture fixture)
     {
@@ -53,7 +53,7 @@ public class DatabaseServiceTests : IClassFixture<DatabaseFixture>, IAsyncLifeti
         {
             await _service.InitializeDatabase(tempDbPath, gameRelease);
 
-            using (var conn = new SQLiteConnection($"Data Source={tempDbPath}"))
+            using (var conn = new SqliteConnection($"Data Source={tempDbPath}"))
             {
                 await conn.OpenAsync();
 
@@ -72,6 +72,7 @@ public class DatabaseServiceTests : IClassFixture<DatabaseFixture>, IAsyncLifeti
         }
         finally
         {
+            SqliteConnection.ClearAllPools();
             if (File.Exists(tempDbPath))
             {
                 File.Delete(tempDbPath);
@@ -89,7 +90,7 @@ public class DatabaseServiceTests : IClassFixture<DatabaseFixture>, IAsyncLifeti
         {
             await _service.InitializeDatabase(tempDbPath, gameRelease);
 
-            using (var conn = new SQLiteConnection($"Data Source={tempDbPath}"))
+            using (var conn = new SqliteConnection($"Data Source={tempDbPath}"))
             {
                 await conn.OpenAsync();
 
@@ -114,6 +115,7 @@ public class DatabaseServiceTests : IClassFixture<DatabaseFixture>, IAsyncLifeti
         }
         finally
         {
+            SqliteConnection.ClearAllPools();
             if (File.Exists(tempDbPath))
             {
                 File.Delete(tempDbPath);
@@ -141,6 +143,7 @@ public class DatabaseServiceTests : IClassFixture<DatabaseFixture>, IAsyncLifeti
             GC.Collect();
             GC.WaitForPendingFinalizers();
 
+            SqliteConnection.ClearAllPools();
             if (File.Exists(tempDbPath))
             {
                 File.Delete(tempDbPath);
@@ -166,6 +169,7 @@ public class DatabaseServiceTests : IClassFixture<DatabaseFixture>, IAsyncLifeti
             GC.Collect();
             GC.WaitForPendingFinalizers();
 
+            SqliteConnection.ClearAllPools();
             if (File.Exists(tempDbPath))
             {
                 File.Delete(tempDbPath);
@@ -287,29 +291,46 @@ public class DatabaseServiceTests : IClassFixture<DatabaseFixture>, IAsyncLifeti
     public async Task DatabaseOperations_HandleConcurrentAccess()
     {
         var gameRelease = GameRelease.SkyrimSE;
-        await _fixture.InitializeSchemaAsync(_connection!, gameRelease.ToString());
+        var tempDbPath = Path.Combine(Path.GetTempPath(), $"concurrent_{Guid.NewGuid()}.db");
 
-        var tasks = new List<Task>();
-
-        for (var i = 0; i < 5; i++)
+        try
         {
-            var pluginName = $"ConcurrentPlugin{i}.esp";
-            tasks.Add(Task.Run(async () =>
+            await _service.InitializeDatabase(tempDbPath, gameRelease);
+
+            var tasks = new List<Task>();
+
+            for (var i = 0; i < 5; i++)
             {
-                for (var j = 0; j < 20; j++)
+                var pluginName = $"ConcurrentPlugin{i}.esp";
+                tasks.Add(Task.Run(async () =>
                 {
-                    await _service.InsertRecord(_connection!, gameRelease, pluginName, $"0x{i:X4}{j:X4}",
-                        $"Entry_{i}_{j}");
-                }
-            }));
+                    using var conn = new SqliteConnection($"Data Source={tempDbPath}");
+                    await conn.OpenAsync();
+                    for (var j = 0; j < 20; j++)
+                    {
+                        await _service.InsertRecord(conn, gameRelease, pluginName, $"0x{i:X4}{j:X4}",
+                            $"Entry_{i}_{j}");
+                    }
+                }));
+            }
+
+            await Task.WhenAll(tasks);
+
+            using var verifyConn = new SqliteConnection($"Data Source={tempDbPath}");
+            await verifyConn.OpenAsync();
+            var command = verifyConn.CreateCommand();
+            command.CommandText = $"SELECT COUNT(*) FROM {gameRelease}";
+            var count = Convert.ToInt32(await command.ExecuteScalarAsync());
+
+            Assert.Equal(100, count);
         }
-
-        await Task.WhenAll(tasks);
-
-        var command = _connection!.CreateCommand();
-        command.CommandText = $"SELECT COUNT(*) FROM {gameRelease}";
-        var count = Convert.ToInt32(await command.ExecuteScalarAsync());
-
-        Assert.Equal(100, count);
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (File.Exists(tempDbPath))
+            {
+                File.Delete(tempDbPath);
+            }
+        }
     }
 }

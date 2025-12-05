@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Data.SQLite;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -9,6 +8,7 @@ using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Engines;
 using FormID_Database_Manager.Models;
 using FormID_Database_Manager.Services;
+using Microsoft.Data.Sqlite;
 using Moq;
 using Mutagen.Bethesda;
 using Mutagen.Bethesda.Plugins;
@@ -22,7 +22,7 @@ namespace FormID_Database_Manager.Tests.Performance;
 [MemoryDiagnoser]
 public class PluginProcessingBenchmarks : IDisposable
 {
-    private SQLiteConnection _connection = null!;
+    private SqliteConnection _connection = null!;
     private string _databasePath = null!;
     private DatabaseService _databaseService = null!;
     private ModProcessor _modProcessor = null!;
@@ -55,7 +55,7 @@ public class PluginProcessingBenchmarks : IDisposable
         _testPlugins = CreateTestPlugins(PluginCount);
 
         // Setup connection
-        _connection = new SQLiteConnection($"Data Source={_databasePath};Version=3;");
+        _connection = new SqliteConnection($"Data Source={_databasePath}");
         _connection.Open();
     }
 
@@ -258,7 +258,7 @@ public class PluginProcessingBenchmarks : IDisposable
             var mockListing = new Mock<IModListingGetter<IModGetter>>();
             mockListing.Setup(x => x.ModKey).Returns(modKey);
             mockListing.Setup(x => x.Enabled).Returns(true);
-            mockListing.Setup(x => x.ExistsOnDisk).Returns(true);
+            mockListing.Setup(x => x.ModExists).Returns(true);
 
             loadOrder.Add(mockListing.Object);
         }

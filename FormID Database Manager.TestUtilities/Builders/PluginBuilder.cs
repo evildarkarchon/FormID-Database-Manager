@@ -65,7 +65,9 @@ public class PluginBuilder
     {
         return new PluginData
         {
-            Name = _name, GameRelease = _gameRelease, Entries = new List<(string FormId, string EditorId)>(_entries)
+            Name = _name,
+            GameRelease = _gameRelease,
+            Entries = new List<(string FormId, string EditorId)>(_entries)
         };
     }
 }

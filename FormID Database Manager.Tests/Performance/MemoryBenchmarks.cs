@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
-using System.Data.SQLite;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
@@ -13,6 +12,7 @@ using BenchmarkDotNet.Engines;
 using FormID_Database_Manager.Models;
 using FormID_Database_Manager.Services;
 using FormID_Database_Manager.ViewModels;
+using Microsoft.Data.Sqlite;
 using Mutagen.Bethesda;
 
 namespace FormID_Database_Manager.Tests.Performance;
@@ -56,7 +56,8 @@ public class MemoryBenchmarks
         {
             plugins.Add(new PluginListItem
             {
-                Name = $"Plugin_{i:D6}.esp", IsSelected = i % 2 == 0
+                Name = $"Plugin_{i:D6}.esp",
+                IsSelected = i % 2 == 0
                 // LoadIndex not available
             });
         }
@@ -76,7 +77,8 @@ public class MemoryBenchmarks
         {
             viewModel.Plugins.Add(new PluginListItem
             {
-                Name = $"Plugin_{i:D6}.esp", IsSelected = i % 2 == 0
+                Name = $"Plugin_{i:D6}.esp",
+                IsSelected = i % 2 == 0
                 // LoadIndex not available
             });
         }
@@ -119,7 +121,7 @@ public class MemoryBenchmarks
 
         await databaseService.InitializeDatabase(dbPath, GameRelease.SkyrimSE);
 
-        using var conn = new SQLiteConnection($"Data Source={dbPath};Version=3;");
+        using var conn = new SqliteConnection($"Data Source={dbPath}");
         await conn.OpenAsync();
 
         // Simulate large batch insert
@@ -187,7 +189,8 @@ public class MemoryBenchmarks
         {
             parameters.SelectedPlugins.Add(new PluginListItem
             {
-                Name = $"Plugin_{i:D6}.esp", IsSelected = true
+                Name = $"Plugin_{i:D6}.esp",
+                IsSelected = true
                 // LoadIndex not available
             });
         }

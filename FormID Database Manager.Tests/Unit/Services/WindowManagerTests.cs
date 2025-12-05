@@ -20,7 +20,7 @@ public class WindowManagerTests
     public WindowManagerTests()
     {
         _mockStorageProvider = new Mock<IStorageProvider>();
-        _mockViewModel = new Mock<MainWindowViewModel>();
+        _mockViewModel = new Mock<MainWindowViewModel>(new Mock<IThreadDispatcher>().Object);
         _windowManager = new WindowManager(_mockStorageProvider.Object, _mockViewModel.Object);
     }
 

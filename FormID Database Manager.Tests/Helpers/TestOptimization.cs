@@ -1,10 +1,10 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.Data.SQLite;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Data.Sqlite;
 
 namespace FormID_Database_Manager.Tests.Helpers;
 
@@ -135,7 +135,7 @@ public static class TestOptimization
             // Reset the database for reuse
             if (File.Exists(dbPath))
             {
-                using var connection = new SQLiteConnection($"Data Source={dbPath}");
+                using var connection = new SqliteConnection($"Data Source={dbPath}");
                 connection.Open();
 
                 // Get all tables and truncate them

@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Data.SQLite;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
@@ -8,6 +7,7 @@ using FormID_Database_Manager.Models;
 using FormID_Database_Manager.Services;
 using FormID_Database_Manager.TestUtilities;
 using FormID_Database_Manager.ViewModels;
+using Microsoft.Data.Sqlite;
 using Mutagen.Bethesda;
 using Xunit;
 
@@ -99,9 +99,9 @@ public class PluginProcessingIntegrationTests : IDisposable
         Assert.Contains(progressReports, r => r.Message.Contains("Processing completed successfully"));
 
         // Verify database contains FormID list data
-        using var connection = new SQLiteConnection($"Data Source={dbPath};Version=3;");
+        using var connection = new SqliteConnection($"Data Source={dbPath}");
         connection.Open();
-        using var cmd = new SQLiteCommand($"SELECT COUNT(*) FROM {GameRelease.SkyrimSE}", connection);
+        using var cmd = new SqliteCommand($"SELECT COUNT(*) FROM {GameRelease.SkyrimSE}", connection);
         var count = Convert.ToInt32(cmd.ExecuteScalar());
         Assert.Equal(3, count);
     }
@@ -182,9 +182,9 @@ public class PluginProcessingIntegrationTests : IDisposable
         Assert.True(fileInfo.Length > 0);
 
         // Verify database is in good state
-        using var connection = new SQLiteConnection($"Data Source={dbPath};Version=3;");
+        using var connection = new SqliteConnection($"Data Source={dbPath}");
         connection.Open();
-        using var cmd = new SQLiteCommand("PRAGMA integrity_check", connection);
+        using var cmd = new SqliteCommand("PRAGMA integrity_check", connection);
         var result = cmd.ExecuteScalar() as string;
         Assert.Equal("ok", result);
     }

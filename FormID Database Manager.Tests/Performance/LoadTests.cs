@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Data.SQLite;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -9,6 +8,7 @@ using System.Threading.Tasks;
 using FormID_Database_Manager.Models;
 using FormID_Database_Manager.Services;
 using FormID_Database_Manager.ViewModels;
+using Microsoft.Data.Sqlite;
 using Mutagen.Bethesda;
 using Mutagen.Bethesda.Plugins;
 using Mutagen.Bethesda.Plugins.Order;
@@ -102,9 +102,9 @@ public class LoadTests : IDisposable
         _output.WriteLine($"Average time per plugin: {stopwatch.Elapsed.TotalMilliseconds / pluginCount:F2} ms");
 
         // Verify all plugins were processed
-        using var conn = new SQLiteConnection($"Data Source={dbPath};Version=3;");
+        using var conn = new SqliteConnection($"Data Source={dbPath}");
         await conn.OpenAsync();
-        using var cmd = new SQLiteCommand($"SELECT COUNT(DISTINCT plugin) FROM {GameRelease.SkyrimSE}", conn);
+        using var cmd = new SqliteCommand($"SELECT COUNT(DISTINCT plugin) FROM {GameRelease.SkyrimSE}", conn);
         var processedCount = Convert.ToInt64(await cmd.ExecuteScalarAsync());
 
         Assert.Equal(pluginCount, processedCount);
@@ -129,7 +129,7 @@ public class LoadTests : IDisposable
 
         // Act
         var stopwatch = Stopwatch.StartNew();
-        using var conn = new SQLiteConnection($"Data Source={dbPath};Version=3;");
+        using var conn = new SqliteConnection($"Data Source={dbPath}");
         await conn.OpenAsync();
 
         var modProcessor = new ModProcessor(_databaseService, msg => _output.WriteLine($"Error: {msg}"));
@@ -149,7 +149,7 @@ public class LoadTests : IDisposable
         _output.WriteLine($"Processed {formIdCount} FormIDs in {stopwatch.Elapsed.TotalSeconds:F2} seconds");
         _output.WriteLine($"Processing rate: {formIdCount / stopwatch.Elapsed.TotalSeconds:F0} FormIDs/second");
 
-        using var countCmd = new SQLiteCommand($"SELECT COUNT(*) FROM {GameRelease.SkyrimSE}", conn);
+        using var countCmd = new SqliteCommand($"SELECT COUNT(*) FROM {GameRelease.SkyrimSE}", conn);
         var actualCount = Convert.ToInt64(await countCmd.ExecuteScalarAsync());
 
         Assert.True(actualCount > 0, "No records were inserted");
@@ -181,7 +181,7 @@ public class LoadTests : IDisposable
             {
                 try
                 {
-                    using var conn = new SQLiteConnection($"Data Source={dbPath};Version=3;");
+                    using var conn = new SqliteConnection($"Data Source={dbPath}");
                     await conn.OpenAsync();
 
                     for (var j = 0; j < operationsPerThread; j++)
@@ -226,9 +226,9 @@ public class LoadTests : IDisposable
             // since SQLite's locking behavior is expected
         }
 
-        using var conn = new SQLiteConnection($"Data Source={dbPath};Version=3;");
+        using var conn = new SqliteConnection($"Data Source={dbPath}");
         await conn.OpenAsync();
-        using var cmd = new SQLiteCommand($"SELECT COUNT(*) FROM {GameRelease.SkyrimSE}", conn);
+        using var cmd = new SqliteCommand($"SELECT COUNT(*) FROM {GameRelease.SkyrimSE}", conn);
         var totalRecords = Convert.ToInt64(await cmd.ExecuteScalarAsync());
 
         // Due to SQLite locking, we may not get all records inserted
