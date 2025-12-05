@@ -101,11 +101,10 @@ public class PluginListManager(
                 plugins.Clear();
                 viewModel.FilteredPlugins.Clear();
 
-                // Populate both plugin lists
+                // Populate plugin list - FilteredPlugins is auto-synced via CollectionChanged -> ApplyFilter()
                 foreach (var plugin in pluginItems)
                 {
                     plugins.Add(plugin);
-                    viewModel.FilteredPlugins.Add(plugin);
                 }
 
                 // Add a standard informational message

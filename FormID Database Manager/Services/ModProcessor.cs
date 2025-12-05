@@ -90,7 +90,6 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
 
             if (updateMode)
             {
-                errorCallback($"Deleting existing entries for {pluginItem.Name}");
                 await databaseService.ClearPluginEntries(conn, gameRelease, pluginItem.Name, cancellationToken)
                     .ConfigureAwait(false);
             }

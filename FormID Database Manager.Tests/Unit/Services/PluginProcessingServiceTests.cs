@@ -122,7 +122,7 @@ public class PluginProcessingServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task ProcessPlugins_DryRunUpdateMode_ReportsDeleteOperations()
+    public async Task ProcessPlugins_DryRunUpdateMode_DoesNotReportDeleteOperations()
     {
         var parameters = CreateTestParameters(true);
         parameters = new ProcessingParameters
@@ -140,8 +140,13 @@ public class PluginProcessingServiceTests : IDisposable
 
         await _service.ProcessPlugins(parameters, progress);
 
-        Assert.Contains(progressReports, r => r.Message.Contains("Would delete existing entries for TestPlugin1.esp"));
-        Assert.Contains(progressReports, r => r.Message.Contains("Would delete existing entries for TestPlugin2.esp"));
+        // Allow Progress<T> to flush its async callbacks
+        await Task.Delay(100);
+
+        // Delete operations are no longer reported in dry run mode
+        // Note: Progress<T> uses SynchronizationContext.Post which is async,
+        // so we verify delete messages aren't present (works even if collection is empty)
+        Assert.DoesNotContain(progressReports, r => r.Message.Contains("Would delete existing entries"));
     }
 
     [Fact]

@@ -110,11 +110,6 @@ public class PluginProcessingService : IDisposable
 
             foreach (var plugin in parameters.SelectedPlugins)
             {
-                if (parameters.UpdateMode)
-                {
-                    progress?.Report(($"Would delete existing entries for {plugin.Name}", null));
-                }
-
                 progress?.Report(($"Would process {plugin.Name}", null));
             }
 
