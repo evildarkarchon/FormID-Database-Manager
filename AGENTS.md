@@ -1,9 +1,13 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
 ## Project Overview
 
 FormID Database Manager is a cross-platform desktop application built with Avalonia UI that creates SQLite databases containing FormIDs and their associated EditorID/Name values from Bethesda game plugins. It supports Skyrim (SE/AE/VR/GOG), Fallout 4, Starfield, and Oblivion.
 
 **Technical Stack:**
-- C# 12.0 with .NET 8.0
+- C# 12.0 with .NET 10.0
 - Nullable reference types enabled
 - Compiled bindings for Avalonia
 - **Warning CS1998 treated as error**: Async methods without await operators will cause build failures
@@ -90,6 +94,7 @@ The application follows MVVM pattern with these key components:
 - Error callbacks with ignorable error patterns
 - Batch database operations for performance
 - Custom assembly resolver for DLL loading from libs folder
+- IThreadDispatcher abstraction for UI thread access (enables testability)
 
 ### Database Schema
 Each game gets its own table:
@@ -154,17 +159,17 @@ CREATE TABLE {GameRelease} (
 
 ## Key Dependencies
 
-- **Avalonia UI 11.3.8**: Cross-platform UI framework
-- **Mutagen.Bethesda 0.51.3**: For parsing Bethesda game plugins
-- **System.Data.SQLite 2.0.2**: Database operations
+- **Avalonia UI 11.3.9**: Cross-platform UI framework
+- **Mutagen.Bethesda 0.51.5**: For parsing Bethesda game plugins
+- **Microsoft.Data.Sqlite 10.0.0**: Database operations (lightweight, modern SQLite provider)
 - **xUnit 2.9.3**: Testing framework with Moq for mocking
-- **BenchmarkDotNet 0.15.6**: Performance benchmarking
+- **BenchmarkDotNet 0.15.8**: Performance benchmarking
 
 ## Development Notes
 
 ### Mutagen API Documentation
 - There is no dedicated API documentation for Mutagen
-- API queries must reference the source code at `https://github.com/Mutagen-Modding/Mutagen/tree/0.51.3` (match current version)
+- API queries must reference the source code at `https://github.com/Mutagen-Modding/Mutagen/tree/0.51.5` (match current version)
 
 ### Project License
 - GPL-3.0 License - modifications and distributions must comply with GPL-3.0 terms
