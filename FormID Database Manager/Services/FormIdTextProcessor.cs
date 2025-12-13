@@ -19,7 +19,13 @@ public class FormIdTextProcessor(DatabaseService databaseService)
     /*
         private readonly Action<string> _errorCallback = errorCallback;
     */
-    private const int BatchSize = 10000; // Increased batch size for better performance
+    /// <summary>
+    ///     Number of records to batch before inserting to the database.
+    ///     10000 is optimized for pure text I/O workloads without Mutagen processing overhead.
+    ///     Compare with ModProcessor.BatchSize (1000) which handles mixed INSERT + record processing
+    ///     and needs smaller batches to manage memory during heavy object instantiation.
+    /// </summary>
+    private const int BatchSize = 10000;
     private const int UiUpdateInterval = 1000; // Update UI every 1000 records
 
     /// <summary>
@@ -42,7 +48,7 @@ public class FormIdTextProcessor(DatabaseService databaseService)
         IProgress<(string Message, double? Value)>? progress = null)
     {
         var processedPlugins = new HashSet<string>();
-        using var batchInserter = new BatchInserter(conn, gameRelease, BatchSize);
+        await using var batchInserter = new BatchInserter(conn, gameRelease, BatchSize);
         var currentPlugin = string.Empty;
         var recordCount = 0;
 
@@ -134,25 +140,54 @@ public class FormIdTextProcessor(DatabaseService databaseService)
     ///     into a SQLite database. This class facilitates batching operations to reduce database overhead
     ///     and supports asynchronous processing to enhance performance in bulk insertion scenarios.
     /// </summary>
-    private class BatchInserter : IDisposable
+    private sealed class BatchInserter : IAsyncDisposable, IDisposable
     {
         private readonly List<(string plugin, string formId, string entry)> _batch;
         private readonly int _batchSize;
         private readonly SqliteConnection _conn;
-        private readonly GameRelease _gameRelease;
+        private readonly string _tableName;
         private SqliteCommand? _insertCommand;
 
         public BatchInserter(SqliteConnection conn, GameRelease gameRelease, int batchSize)
         {
             _conn = conn;
-            _gameRelease = gameRelease;
+            _tableName = GetSafeTableName(gameRelease);
             _batchSize = batchSize;
             _batch = new List<(string plugin, string formId, string entry)>(batchSize);
+        }
+
+        /// <summary>
+        ///     Gets a validated table name for the specified game release.
+        ///     Uses explicit whitelist mapping to prevent SQL injection even though GameRelease is an enum.
+        /// </summary>
+        private static string GetSafeTableName(GameRelease release) => release switch
+        {
+            GameRelease.SkyrimSE => "SkyrimSE",
+            GameRelease.SkyrimSEGog => "SkyrimSEGog",
+            GameRelease.SkyrimVR => "SkyrimVR",
+            GameRelease.SkyrimLE => "SkyrimLE",
+            GameRelease.Fallout4 => "Fallout4",
+            GameRelease.Fallout4VR => "Fallout4VR",
+            GameRelease.Starfield => "Starfield",
+            GameRelease.Oblivion => "Oblivion",
+            GameRelease.EnderalLE => "EnderalLE",
+            GameRelease.EnderalSE => "EnderalSE",
+            _ => throw new ArgumentException($"Unsupported game release: {release}", nameof(release))
+        };
+
+        public async ValueTask DisposeAsync()
+        {
+            if (_insertCommand != null)
+            {
+                await _insertCommand.DisposeAsync().ConfigureAwait(false);
+                _insertCommand = null;
+            }
         }
 
         public void Dispose()
         {
             _insertCommand?.Dispose();
+            _insertCommand = null;
         }
 
         public async Task AddRecordAsync(string plugin, string formId, string entry,
@@ -183,7 +218,7 @@ public class FormIdTextProcessor(DatabaseService databaseService)
             if (_insertCommand == null)
             {
                 _insertCommand = _conn.CreateCommand();
-                _insertCommand.CommandText = $@"INSERT INTO {_gameRelease} (plugin, formid, entry) 
+                _insertCommand.CommandText = $@"INSERT INTO {_tableName} (plugin, formid, entry)
                                                VALUES (@plugin, @formid, @entry)";
                 _insertCommand.Parameters.Add(new SqliteParameter { ParameterName = "@plugin" });
                 _insertCommand.Parameters.Add(new SqliteParameter { ParameterName = "@formid" });

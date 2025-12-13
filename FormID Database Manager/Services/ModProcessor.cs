@@ -24,6 +24,13 @@ namespace FormID_Database_Manager.Services;
 /// </summary>
 public class ModProcessor(DatabaseService databaseService, Action<string> errorCallback)
 {
+    /// <summary>
+    ///     Number of records to batch before inserting to the database.
+    ///     1000 is optimized for mixed INSERT + processing workloads. Larger batches
+    ///     reduce transaction overhead but increase memory usage per batch.
+    ///     Compare with FormIdTextProcessor.BatchSize (10000) which handles pure text I/O
+    ///     without Mutagen processing overhead.
+    /// </summary>
     private const int BatchSize = 1000;
 
     // HashSet for O(1) lookups of error patterns to ignore
@@ -36,6 +43,25 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
         "Unexpected record type",
         "Failed to parse record header",
         "Object reference not set to an instance"
+    };
+
+    /// <summary>
+    ///     Gets a validated table name for the specified game release.
+    ///     Uses explicit whitelist mapping to prevent SQL injection even though GameRelease is an enum.
+    /// </summary>
+    private static string GetSafeTableName(GameRelease release) => release switch
+    {
+        GameRelease.SkyrimSE => "SkyrimSE",
+        GameRelease.SkyrimSEGog => "SkyrimSEGog",
+        GameRelease.SkyrimVR => "SkyrimVR",
+        GameRelease.SkyrimLE => "SkyrimLE",
+        GameRelease.Fallout4 => "Fallout4",
+        GameRelease.Fallout4VR => "Fallout4VR",
+        GameRelease.Starfield => "Starfield",
+        GameRelease.Oblivion => "Oblivion",
+        GameRelease.EnderalLE => "EnderalLE",
+        GameRelease.EnderalSE => "EnderalSE",
+        _ => throw new ArgumentException($"Unsupported game release: {release}", nameof(release))
     };
 
     // Cache reflection lookups to avoid O(n×m) complexity
@@ -97,6 +123,9 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
             try
             {
                 // Direct execution without Task.Run to avoid cross-thread transaction issues
+                // Note: Mutagen's CreateFromBinaryOverlay methods are synchronous and do not accept
+                // cancellation tokens. For large plugins (100MB+), this may cause several seconds
+                // of uninterruptible loading. Cancellation will be checked after loading completes.
                 IModGetter mod = gameRelease switch
                 {
                     GameRelease.Oblivion => OblivionMod.CreateFromBinaryOverlay(pluginPath,
@@ -246,8 +275,9 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
         // Build multi-value INSERT statement: INSERT INTO table VALUES (...), (...), (...)
         // This reduces database round-trips from O(n) to O(1), improving performance by 10-100x
         using var cmd = conn.CreateCommand();
+        var tableName = GetSafeTableName(gameRelease);
         var sb = new StringBuilder();
-        sb.Append($"INSERT INTO {gameRelease} (plugin, formid, entry) VALUES ");
+        sb.Append($"INSERT INTO {tableName} (plugin, formid, entry) VALUES ");
 
         // Build the VALUES clause with parameterized values for each batch item
         for (var i = 0; i < batch.Count; i++)
@@ -315,6 +345,8 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
             }
 
             // Return a compiled delegate for fast access
+            // Note: Exceptions during reflection access are caught and logged for diagnostics.
+            // This is expected for records with corrupted or incompatible name properties.
             return rec =>
             {
                 try
@@ -322,8 +354,10 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
                     var nameValue = nameProperty.GetValue(rec);
                     return nameValue != null ? stringProperty.GetValue(nameValue) as string : null;
                 }
-                catch
+                catch (Exception ex)
                 {
+                    // Log for diagnostics but don't propagate - returning null triggers fallback naming
+                    System.Diagnostics.Debug.WriteLine($"Name extraction failed for {rec.GetType().Name}: {ex.Message}");
                     return null;
                 }
             };

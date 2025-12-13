@@ -1,5 +1,6 @@
 // Services/DatabaseService.cs
 
+using System;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
@@ -14,6 +15,28 @@ namespace FormID_Database_Manager.Services;
 /// </summary>
 public class DatabaseService
 {
+    /// <summary>
+    ///     Gets a validated table name for the specified game release.
+    ///     Uses explicit whitelist mapping to prevent SQL injection even though GameRelease is an enum.
+    /// </summary>
+    /// <param name="release">The game release to get the table name for.</param>
+    /// <returns>A safe table name string.</returns>
+    /// <exception cref="ArgumentException">Thrown if the game release is not supported.</exception>
+    private static string GetSafeTableName(GameRelease release) => release switch
+    {
+        GameRelease.SkyrimSE => "SkyrimSE",
+        GameRelease.SkyrimSEGog => "SkyrimSEGog",
+        GameRelease.SkyrimVR => "SkyrimVR",
+        GameRelease.SkyrimLE => "SkyrimLE",
+        GameRelease.Fallout4 => "Fallout4",
+        GameRelease.Fallout4VR => "Fallout4VR",
+        GameRelease.Starfield => "Starfield",
+        GameRelease.Oblivion => "Oblivion",
+        GameRelease.EnderalLE => "EnderalLE",
+        GameRelease.EnderalSE => "EnderalSE",
+        _ => throw new ArgumentException($"Unsupported game release: {release}", nameof(release))
+    };
+
     /// <summary>
     ///     Creates an optimized SQLite connection string with connection pooling.
     ///     Additional performance pragmas (WAL mode, etc.) are applied via ConfigureConnection.
@@ -67,10 +90,11 @@ public class DatabaseService
         await ConfigureConnection(conn, cancellationToken).ConfigureAwait(false);
 
         using var command = conn.CreateCommand();
+        var tableName = GetSafeTableName(gameRelease);
 
         // Create main table
         command.CommandText = $@"
-                CREATE TABLE IF NOT EXISTS {gameRelease} (
+                CREATE TABLE IF NOT EXISTS {tableName} (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     plugin TEXT NOT NULL,
                     formid TEXT NOT NULL,
@@ -79,10 +103,10 @@ public class DatabaseService
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
 
         // Create indices
-        command.CommandText = $"CREATE INDEX IF NOT EXISTS idx_{gameRelease}_plugin ON {gameRelease}(plugin)";
+        command.CommandText = $"CREATE INDEX IF NOT EXISTS idx_{tableName}_plugin ON {tableName}(plugin)";
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
 
-        command.CommandText = $"CREATE INDEX IF NOT EXISTS idx_{gameRelease}_formid ON {gameRelease}(formid)";
+        command.CommandText = $"CREATE INDEX IF NOT EXISTS idx_{tableName}_formid ON {tableName}(formid)";
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
@@ -98,7 +122,8 @@ public class DatabaseService
         CancellationToken cancellationToken = default)
     {
         await using var command = conn.CreateCommand();
-        command.CommandText = $"DELETE FROM {gameRelease} WHERE plugin = @plugin";
+        var tableName = GetSafeTableName(gameRelease);
+        command.CommandText = $"DELETE FROM {tableName} WHERE plugin = @plugin";
         command.Parameters.AddWithValue("@plugin", pluginName);
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
@@ -117,7 +142,8 @@ public class DatabaseService
         string entry, CancellationToken cancellationToken = default)
     {
         await using var command = conn.CreateCommand();
-        command.CommandText = $"INSERT INTO {gameRelease} (plugin, formid, entry) VALUES (@plugin, @formid, @entry)";
+        var tableName = GetSafeTableName(gameRelease);
+        command.CommandText = $"INSERT INTO {tableName} (plugin, formid, entry) VALUES (@plugin, @formid, @entry)";
         command.Parameters.AddWithValue("@plugin", pluginName);
         command.Parameters.AddWithValue("@formid", formId);
         command.Parameters.AddWithValue("@entry", entry);

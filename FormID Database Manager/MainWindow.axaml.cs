@@ -1,7 +1,6 @@
 using System;
 using System.IO;
 using System.Linq;
-using System.Threading;
 using System.Threading.Tasks;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
@@ -14,11 +13,12 @@ namespace FormID_Database_Manager;
 
 public partial class MainWindow : Window, IDisposable
 {
+    private readonly DatabaseService _databaseService;
     private readonly GameDetectionService _gameDetectionService;
     private readonly PluginListManager _pluginListManager;
     private readonly PluginProcessingService _pluginProcessingService;
     private readonly MainWindowViewModel _viewModel;
-    private readonly WindowManager _windowManager;
+    private readonly WindowManager? _windowManager;
 
     public MainWindow()
     {
@@ -37,31 +37,21 @@ public partial class MainWindow : Window, IDisposable
 
         // Only initialize services if StorageProvider is available (not in test mode)
         // In test scenarios, StorageProvider may be null
-        if (StorageProvider != null)
-        {
-            _windowManager = new WindowManager(StorageProvider, _viewModel);
-        }
-        else
-        {
-            // Create a null WindowManager for test scenarios
-            _windowManager = null!;
-        }
+        _windowManager = StorageProvider != null
+            ? new WindowManager(StorageProvider, _viewModel)
+            : null;
 
         _gameDetectionService = new GameDetectionService();
         _pluginListManager = new PluginListManager(_gameDetectionService, _viewModel, new AvaloniaThreadDispatcher());
-        var databaseService = new DatabaseService();
-        _pluginProcessingService = new PluginProcessingService(databaseService, _viewModel, new AvaloniaThreadDispatcher());
+        _databaseService = new DatabaseService();
+        _pluginProcessingService = new PluginProcessingService(_databaseService, _viewModel, new AvaloniaThreadDispatcher());
     }
 
     public void Dispose()
     {
-        // Ensure any ongoing processing is cancelled before disposal
-        // This prevents resource leaks from uncanceled async operations
+        // Signal cancellation for any ongoing processing
+        // The cancellation token will interrupt async operations
         _pluginProcessingService.CancelProcessing();
-
-        // Give a brief moment for cancellation to propagate
-        // This is a synchronous delay which is acceptable in Dispose
-        Thread.Sleep(100);
 
         // Dispose managed resources
         if (_pluginProcessingService is IDisposable disposableService)
@@ -262,7 +252,7 @@ public partial class MainWindow : Window, IDisposable
                 GameDirectory = _viewModel.GameDirectory,
                 DatabasePath = _viewModel.DatabasePath,
                 GameRelease = gameRelease,
-                SelectedPlugins = _viewModel.Plugins.Where(p => p.IsSelected).ToList(),
+                SelectedPlugins = _viewModel.GetSelectedPlugins(),
                 UpdateMode = UpdateModeCheckBox.IsChecked ?? false,
                 FormIdListPath = _viewModel.FormIdListPath
             };

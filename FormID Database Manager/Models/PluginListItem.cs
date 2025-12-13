@@ -35,19 +35,19 @@ public class PluginListItem : INotifyPropertyChanged, IDataErrorInfo
     }
 
     // IDataErrorInfo implementation to prevent error states
-    public string Error => null!;
+    // Note: IDataErrorInfo predates nullable reference types and expects null/"" for no error.
+    // Using string.Empty for modern nullable semantics consistency.
+    public string Error => string.Empty;
 
     public string this[string columnName]
     {
         get
         {
-            switch (columnName)
+            return columnName switch
             {
-                case nameof(Name):
-                    return (string.IsNullOrWhiteSpace(Name) ? "Name cannot be empty" : null) ?? string.Empty;
-                default:
-                    return null!;
-            }
+                nameof(Name) => string.IsNullOrWhiteSpace(Name) ? "Name cannot be empty" : string.Empty,
+                _ => string.Empty
+            };
         }
     }
 

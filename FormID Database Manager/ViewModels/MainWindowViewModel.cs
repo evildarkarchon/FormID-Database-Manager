@@ -4,6 +4,7 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Threading;
 using FormID_Database_Manager.Models;
 using FormID_Database_Manager.Services;
 
@@ -20,7 +21,7 @@ public class MainWindowViewModel : INotifyPropertyChanged
     private string _formIdListPath = string.Empty;
     private string _gameDirectory = string.Empty;
     private ObservableCollection<string> _informationMessages = [];
-    private bool _isApplyingFilter;
+    private int _isApplyingFilter;
     private bool _isProcessing;
     private string _pluginFilter = string.Empty;
     private ObservableCollection<PluginListItem> _plugins;
@@ -122,8 +123,8 @@ public class MainWindowViewModel : INotifyPropertyChanged
 
     private void ApplyFilter()
     {
-        // Prevent recursive calls
-        if (_isApplyingFilter)
+        // Prevent recursive calls using atomic compare-exchange for thread safety
+        if (Interlocked.CompareExchange(ref _isApplyingFilter, 1, 0) != 0)
         {
             return;
         }
@@ -132,15 +133,16 @@ public class MainWindowViewModel : INotifyPropertyChanged
         if (!_dispatcher.CheckAccess())
         {
             _dispatcher.Post(() => ApplyFilter());
+            Interlocked.Exchange(ref _isApplyingFilter, 0);
             return;
         }
 
         try
         {
-            _isApplyingFilter = true;
-
             // Incremental update approach: modify existing collection instead of recreating
             // This prevents O(n) allocations and excessive UI notifications on every filter change
+            // Note: All operations below run on the UI thread, providing implicit synchronization
+            // for _filteredPlugins. The lock only protects the _plugins snapshot.
             List<PluginListItem> filtered;
             lock (_pluginsLock)
             {
@@ -174,7 +176,7 @@ public class MainWindowViewModel : INotifyPropertyChanged
         }
         finally
         {
-            _isApplyingFilter = false;
+            Interlocked.Exchange(ref _isApplyingFilter, 0);
         }
     }
 
@@ -243,6 +245,18 @@ public class MainWindowViewModel : INotifyPropertyChanged
         IsProcessing = false;
         ErrorMessages.Clear();
         InformationMessages.Clear();
+    }
+
+    /// <summary>
+    /// Gets a thread-safe snapshot of selected plugins.
+    /// </summary>
+    /// <returns>A list of selected plugins at the time of the call.</returns>
+    public List<PluginListItem> GetSelectedPlugins()
+    {
+        lock (_pluginsLock)
+        {
+            return _plugins.Where(p => p.IsSelected).ToList();
+        }
     }
 
     public void UpdateProgress(string status, double? value = null)
