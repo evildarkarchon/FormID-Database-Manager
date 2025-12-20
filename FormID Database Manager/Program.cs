@@ -14,12 +14,6 @@ internal class Program
     public static void Main(string[] args)
     {
         AppContext.SetData("APP_CONTEXT_BASE_DIRECTORY", AppDomain.CurrentDomain.BaseDirectory);
-        AppDomain.CurrentDomain.AssemblyResolve += (_, resolveEventArgs) =>
-        {
-            var assemblyPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "libs",
-                new AssemblyName(resolveEventArgs.Name).Name + ".dll");
-            return File.Exists(assemblyPath) ? Assembly.LoadFrom(assemblyPath) : null;
-        };
         BuildAvaloniaApp()
             .StartWithClassicDesktopLifetime(args);
     }

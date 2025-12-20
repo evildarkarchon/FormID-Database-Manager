@@ -3,10 +3,17 @@
         <OutputType>WinExe</OutputType>
         <TargetFramework>net10.0</TargetFramework>
         <Nullable>enable</Nullable>
-        <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
+        <BuiltInComInteropSupport>false</BuiltInComInteropSupport>
         <ApplicationManifest>app.manifest</ApplicationManifest>
         <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
         <WarningsAsErrors>CS1998</WarningsAsErrors>
+
+        <!-- Trimming and Single File Configuration -->
+        <PublishTrimmed>true</PublishTrimmed>
+        <TrimMode>partial</TrimMode>
+        <PublishSingleFile>true</PublishSingleFile>
+        <SelfContained>true</SelfContained>
+        <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     </PropertyGroup>
 
     <ItemGroup>
@@ -31,16 +38,11 @@
         <PackageReference Include="Mutagen.Bethesda" Version="0.51.5" />
         <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.0" />
     </ItemGroup>
-    <Target Name="PostPublish" AfterTargets="Publish">
-        <!-- Define the folder where the DLLs will be moved -->
-        <ItemGroup>
-            <DllFiles Include="$(PublishDir)**\*.dll" Exclude="$(PublishDir)\$(AssemblyName).dll" />
-        </ItemGroup>
-
-        <!-- Create a target folder -->
-        <MakeDir Directories="$(PublishDir)/libs" />
-
-        <!-- Move DLLs to the 'libs' folder -->
-        <Move SourceFiles="@(DllFiles)" DestinationFolder="$(PublishDir)/libs" />
-    </Target>
+    <ItemGroup>
+        <TrimmerRootAssembly Include="Mutagen.Bethesda" />
+        <TrimmerRootAssembly Include="Mutagen.Bethesda.Skyrim" />
+        <TrimmerRootAssembly Include="Mutagen.Bethesda.Fallout4" />
+        <TrimmerRootAssembly Include="Mutagen.Bethesda.Starfield" />
+        <TrimmerRootAssembly Include="Mutagen.Bethesda.Oblivion" />
+    </ItemGroup>
 </Project>
