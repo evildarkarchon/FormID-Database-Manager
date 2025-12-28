@@ -19,7 +19,7 @@ namespace FormID_Database_Manager.Tests.Performance;
 
 public class StressTests : IDisposable
 {
-    private readonly List<string> _createdFiles = new();
+    private readonly List<string> _createdFiles = [];
     private readonly ITestOutputHelper _output;
     private readonly string _testDirectory;
 
@@ -84,7 +84,7 @@ public class StressTests : IDisposable
                 GameDirectory = _testDirectory,
                 DatabasePath = dbPath,
                 GameRelease = GameRelease.SkyrimSE,
-                SelectedPlugins = new List<PluginListItem> { new() { Name = $"Test_{i}.esp" } },
+                SelectedPlugins = [new() { Name = $"Test_{i}.esp" }],
                 UpdateMode = false
             };
 

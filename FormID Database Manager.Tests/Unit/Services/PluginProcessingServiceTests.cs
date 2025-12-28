@@ -22,7 +22,7 @@ public class PluginProcessingServiceTests : IDisposable
     private readonly Mock<MainWindowViewModel> _mockViewModel;
     private readonly Mock<IThreadDispatcher> _mockDispatcher;
     private readonly PluginProcessingService _service;
-    private readonly List<string> _tempFiles = new();
+    private readonly List<string> _tempFiles = [];
 
     public PluginProcessingServiceTests()
     {
@@ -78,11 +78,11 @@ public class PluginProcessingServiceTests : IDisposable
             GameDirectory = "C:\\Games\\TestGame",
             DatabasePath = dbPath,
             GameRelease = GameRelease.SkyrimSE,
-            SelectedPlugins = selectedPlugins ?? new List<PluginListItem>
-            {
+            SelectedPlugins = selectedPlugins ??
+            [
                 new() { Name = "TestPlugin1.esp", IsSelected = true },
                 new() { Name = "TestPlugin2.esp", IsSelected = true }
-            },
+            ],
             UpdateMode = false,
             DryRun = dryRun,
             FormIdListPath = formIdListPath
@@ -158,7 +158,7 @@ public class PluginProcessingServiceTests : IDisposable
             GameDirectory = parameters.GameDirectory,
             DatabasePath = parameters.DatabasePath,
             GameRelease = parameters.GameRelease,
-            SelectedPlugins = new List<PluginListItem>(),
+            SelectedPlugins = [],
             UpdateMode = parameters.UpdateMode,
             DryRun = parameters.DryRun,
             FormIdListPath = parameters.FormIdListPath
@@ -187,7 +187,7 @@ public class PluginProcessingServiceTests : IDisposable
             GameDirectory = parameters.GameDirectory,
             DatabasePath = parameters.DatabasePath,
             GameRelease = parameters.GameRelease,
-            SelectedPlugins = new List<PluginListItem>(),
+            SelectedPlugins = [],
             UpdateMode = parameters.UpdateMode,
             DryRun = parameters.DryRun,
             FormIdListPath = parameters.FormIdListPath
@@ -215,13 +215,15 @@ public class PluginProcessingServiceTests : IDisposable
             GameDirectory = parameters.GameDirectory,
             DatabasePath = parameters.DatabasePath,
             GameRelease = parameters.GameRelease,
-            SelectedPlugins = new List<PluginListItem>(),
+            SelectedPlugins = [],
             UpdateMode = parameters.UpdateMode,
             DryRun = parameters.DryRun,
             FormIdListPath = parameters.FormIdListPath
         };
         var progressReports = new List<(string Message, double? Value)>();
-        var progress = new Progress<(string Message, double? Value)>(report => progressReports.Add(report));
+        // Use a synchronous IProgress implementation to avoid Progress<T>'s async callbacks
+        // which can cause race conditions in unit tests
+        var progress = new SynchronousProgress<(string Message, double? Value)>(report => progressReports.Add(report));
 
         _mockDatabaseService.Setup(x =>
                 x.InitializeDatabase(It.IsAny<string>(), It.IsAny<GameRelease>(), It.IsAny<CancellationToken>()))
@@ -235,6 +237,25 @@ public class PluginProcessingServiceTests : IDisposable
         Assert.Contains(progressReports, r => r.Message.Contains("Initializing plugin processing"));
         Assert.Contains(progressReports, r => r.Message.Contains("Processing completed successfully"));
         Assert.Equal(100, progressReports.Last().Value);
+    }
+
+    /// <summary>
+    /// A synchronous IProgress implementation that invokes callbacks immediately on the calling thread,
+    /// avoiding the async callback behavior of Progress&lt;T&gt; that can cause race conditions in tests.
+    /// </summary>
+    private class SynchronousProgress<T> : IProgress<T>
+    {
+        private readonly Action<T> _handler;
+
+        public SynchronousProgress(Action<T> handler)
+        {
+            _handler = handler;
+        }
+
+        public void Report(T value)
+        {
+            _handler(value);
+        }
     }
 
     [Fact]

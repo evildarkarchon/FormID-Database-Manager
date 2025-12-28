@@ -180,7 +180,7 @@ public class MemoryBenchmarks
             GameDirectory = @"C:\Games\Skyrim",
             DatabasePath = @"C:\Games\test.db",
             GameRelease = GameRelease.SkyrimSE,
-            SelectedPlugins = new List<PluginListItem>(),
+            SelectedPlugins = [],
             UpdateMode = false
         };
 

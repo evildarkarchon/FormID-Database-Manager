@@ -26,7 +26,7 @@ public class DatabaseIntegrationTests : IDisposable
     {
         _testDbPath = Path.Combine(Path.GetTempPath(), $"integration_test_{Guid.NewGuid()}.db");
         _databaseService = new DatabaseService();
-        _tempFiles = new List<string> { _testDbPath };
+        _tempFiles = [_testDbPath];
     }
 
     public void Dispose()

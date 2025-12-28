@@ -5,7 +5,7 @@ namespace FormID_Database_Manager.TestUtilities.Builders;
 
 public class GameDetectionBuilder
 {
-    private readonly List<string> _pluginFiles = new();
+    private readonly List<string> _pluginFiles = [];
     private string _directoryPath = "C:\\Games\\TestGame";
     private GameRelease _expectedGame = GameRelease.SkyrimSE;
 
@@ -88,6 +88,6 @@ public class GameDetectionBuilder
 public class GameDetectionData
 {
     public string DirectoryPath { get; set; } = string.Empty;
-    public List<string> PluginFiles { get; set; } = new();
+    public List<string> PluginFiles { get; set; } = [];
     public GameRelease ExpectedGame { get; set; }
 }

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -88,6 +89,7 @@ public class PluginProcessingService : IDisposable
     ///     A task representing the asynchronous operation of processing plugins, allowing cancellation or exception handling
     ///     when required.
     /// </returns>
+    [RequiresUnreferencedCode("Uses reflection-based name extraction for Mutagen records via ModProcessor.ProcessPlugin.")]
     public async Task ProcessPlugins(
         ProcessingParameters parameters,
         IProgress<(string Message, double? Value)>? progress = null)

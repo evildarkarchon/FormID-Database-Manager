@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -80,6 +81,7 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
     /// <param name="updateMode">Indicates if the plugin entries should be updated in the database.</param>
     /// <param name="cancellationToken">The cancellation token to handle processing termination requests.</param>
     /// <returns>A task that processes the plugin asynchronously and manages its database entries accordingly.</returns>
+    [RequiresUnreferencedCode("Uses reflection to discover INamedGetter interface and Name/String properties on Mutagen record types for name extraction.")]
     public async Task ProcessPlugin(
         string gameDir,
         SqliteConnection conn,
@@ -169,6 +171,7 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
     /// <param name="pluginName">The name of the plugin being processed.</param>
     /// <param name="mod">The mod plugin containing the records to be processed.</param>
     /// <param name="cancellationToken">The cancellation token to handle termination of the processing operation.</param>
+    [RequiresUnreferencedCode("Uses reflection-based name extraction for Mutagen records via GetRecordName.")]
     private async Task ProcessModRecordsAsync(
         SqliteConnection conn,
         GameRelease gameRelease,
@@ -313,6 +316,7 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
     /// </summary>
     /// <param name="record">The major record for which the name is to be retrieved.</param>
     /// <returns>A string representing the name of the record, or a formatted fallback string if no name or editor ID is found.</returns>
+    [RequiresUnreferencedCode("Uses reflection to discover INamedGetter interface and Name/String properties on Mutagen record types.")]
     private string GetRecordName(IMajorRecordGetter record)
     {
         if (!string.IsNullOrEmpty(record.EditorID))

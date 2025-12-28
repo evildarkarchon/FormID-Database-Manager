@@ -109,8 +109,8 @@ public static class TestOptimization
     /// </summary>
     public static class DatabasePool
     {
-        private static readonly ConcurrentBag<string> AvailableDatabases = new();
-        private static readonly HashSet<string> AllDatabases = new();
+        private static readonly ConcurrentBag<string> AvailableDatabases = [];
+        private static readonly HashSet<string> AllDatabases = [];
         private static readonly object Lock = new();
 
         public static string GetDatabase()

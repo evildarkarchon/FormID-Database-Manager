@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
@@ -201,6 +202,7 @@ public partial class MainWindow : Window, IDisposable
         }
     }
 
+    [RequiresUnreferencedCode("Uses reflection-based name extraction for Mutagen records.")]
     private async void ProcessFormIds_Click(object sender, RoutedEventArgs e)
     {
         try
@@ -213,6 +215,7 @@ public partial class MainWindow : Window, IDisposable
         }
     }
 
+    [RequiresUnreferencedCode("Uses reflection-based name extraction for Mutagen records.")]
     private async Task ProcessFormIdsAsync(Button? processButton)
     {
         if (_viewModel.IsProcessing)

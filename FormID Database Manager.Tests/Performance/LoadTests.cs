@@ -22,7 +22,7 @@ namespace FormID_Database_Manager.Tests.Performance;
 [Collection("Performance Tests")]
 public class LoadTests : IDisposable
 {
-    private readonly List<string> _createdFiles = new();
+    private readonly List<string> _createdFiles = [];
     private readonly DatabaseService _databaseService;
     private readonly ITestOutputHelper _output;
     private readonly string _testDirectory;
@@ -139,7 +139,7 @@ public class LoadTests : IDisposable
             conn,
             GameRelease.SkyrimSE,
             new PluginListItem { Name = pluginName },
-            new List<IModListingGetter<IModGetter>>(),
+            [],
             false,
             CancellationToken.None);
 

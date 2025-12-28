@@ -5,7 +5,7 @@ namespace FormID_Database_Manager.TestUtilities.Builders;
 
 public class PluginBuilder
 {
-    private readonly List<(string FormId, string EditorId)> _entries = new();
+    private readonly List<(string FormId, string EditorId)> _entries = [];
     private GameRelease _gameRelease = GameRelease.SkyrimSE;
     private string _name = "TestPlugin.esp";
 
@@ -76,5 +76,5 @@ public class PluginData
 {
     public string Name { get; set; } = string.Empty;
     public GameRelease GameRelease { get; set; }
-    public List<(string FormId, string EditorId)> Entries { get; set; } = new();
+    public List<(string FormId, string EditorId)> Entries { get; set; } = [];
 }

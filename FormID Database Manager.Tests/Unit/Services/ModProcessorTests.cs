@@ -28,7 +28,7 @@ public class ModProcessorTests : IDisposable
     public ModProcessorTests()
     {
         _testDbPath = Path.Combine(Path.GetTempPath(), $"test_{Guid.NewGuid()}.db");
-        _errorMessages = new List<string>();
+        _errorMessages = [];
         _databaseService = new DatabaseService();
         _modProcessor = new ModProcessor(_databaseService, error => _errorMessages.Add(error));
 

@@ -23,7 +23,7 @@ public class GameDetectionIntegrationTests : IDisposable
     public GameDetectionIntegrationTests()
     {
         _testRoot = Path.Combine(Path.GetTempPath(), $"gamedetection_{Guid.NewGuid()}");
-        _testDirectories = new List<string>();
+        _testDirectories = [];
         _gameDetectionService = new GameDetectionService();
 
         Directory.CreateDirectory(_testRoot);

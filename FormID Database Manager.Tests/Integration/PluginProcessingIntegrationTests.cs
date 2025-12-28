@@ -28,7 +28,7 @@ public class PluginProcessingIntegrationTests : IDisposable
     public PluginProcessingIntegrationTests()
     {
         _testDirectory = Path.Combine(Path.GetTempPath(), $"plugin_integration_{Guid.NewGuid()}");
-        _tempFiles = new List<string>();
+        _tempFiles = [];
         _viewModel = new MainWindowViewModel();
         _databaseService = new DatabaseService();
         _processingService = new PluginProcessingService(_databaseService, _viewModel);
@@ -209,11 +209,11 @@ public class PluginProcessingIntegrationTests : IDisposable
             GameDirectory = _testDirectory,
             DatabasePath = dbPath,
             GameRelease = GameRelease.SkyrimSE,
-            SelectedPlugins = new List<PluginListItem>
-            {
+            SelectedPlugins =
+            [
                 new() { Name = "TestPlugin1.esp", IsSelected = true },
                 new() { Name = "TestPlugin2.esp", IsSelected = true }
-            },
+            ],
             UpdateMode = false,
             DryRun = false
         };
@@ -245,10 +245,10 @@ public class PluginProcessingIntegrationTests : IDisposable
                 GameDirectory = _testDirectory,
                 DatabasePath = dbPath,
                 GameRelease = gameRelease,
-                SelectedPlugins = new List<PluginListItem>
-                {
+                SelectedPlugins =
+                [
                     new() { Name = $"{gameRelease}_Test.esp", IsSelected = true }
-                },
+                ],
                 UpdateMode = false,
                 DryRun = false
             };
@@ -274,7 +274,7 @@ public class PluginProcessingIntegrationTests : IDisposable
             GameDirectory = _testDirectory,
             DatabasePath = dbPath,
             GameRelease = GameRelease.SkyrimSE,
-            SelectedPlugins = new List<PluginListItem> { new() { Name = "UpdateTest.esp", IsSelected = true } },
+            SelectedPlugins = [new() { Name = "UpdateTest.esp", IsSelected = true }],
             UpdateMode = false,
             DryRun = false
         };
@@ -303,7 +303,7 @@ public class PluginProcessingIntegrationTests : IDisposable
             GameDirectory = _testDirectory,
             DatabasePath = dbPath,
             GameRelease = GameRelease.SkyrimSE,
-            SelectedPlugins = new List<PluginListItem> { new() { Name = "DryRunTest.esp", IsSelected = true } },
+            SelectedPlugins = [new() { Name = "DryRunTest.esp", IsSelected = true }],
             UpdateMode = false,
             DryRun = true // Dry run mode
         };
@@ -378,12 +378,12 @@ public class PluginProcessingIntegrationTests : IDisposable
             GameDirectory = _testDirectory,
             DatabasePath = dbPath,
             GameRelease = GameRelease.SkyrimSE,
-            SelectedPlugins = new List<PluginListItem>
-            {
+            SelectedPlugins =
+            [
                 new() { Name = "GoodPlugin.esp", IsSelected = true },
                 new() { Name = "BadPlugin.esp", IsSelected = true },
                 new() { Name = "AnotherGoodPlugin.esp", IsSelected = true }
-            },
+            ],
             UpdateMode = false,
             DryRun = false
         };
@@ -413,7 +413,7 @@ public class PluginProcessingIntegrationTests : IDisposable
             GameDirectory = _testDirectory,
             DatabasePath = invalidDbPath,
             GameRelease = GameRelease.SkyrimSE,
-            SelectedPlugins = new List<PluginListItem> { new() { Name = "Test.esp", IsSelected = true } },
+            SelectedPlugins = [new() { Name = "Test.esp", IsSelected = true }],
             UpdateMode = false,
             DryRun = false
         };
@@ -439,7 +439,7 @@ public class PluginProcessingIntegrationTests : IDisposable
             GameDirectory = _testDirectory,
             DatabasePath = dbPath,
             GameRelease = GameRelease.SkyrimSE,
-            SelectedPlugins = new List<PluginListItem> { new() { Name = "Test.esp", IsSelected = true } },
+            SelectedPlugins = [new() { Name = "Test.esp", IsSelected = true }],
             UpdateMode = false,
             DryRun = false
         };
@@ -463,7 +463,7 @@ public class PluginProcessingIntegrationTests : IDisposable
             GameDirectory = _testDirectory,
             DatabasePath = dbPath,
             GameRelease = GameRelease.SkyrimSE,
-            SelectedPlugins = new List<PluginListItem>(),
+            SelectedPlugins = [],
             UpdateMode = false,
             DryRun = false
         };

@@ -32,7 +32,7 @@ public static class MockFactory
             .Returns(GameRelease.SkyrimSE);
 
         mock.Setup(x => x.GetBaseGamePlugins(It.IsAny<GameRelease>()))
-            .Returns(new HashSet<string> { "Skyrim.esm", "Update.esm", "Dawnguard.esm" });
+            .Returns(["Skyrim.esm", "Update.esm", "Dawnguard.esm"]);
 
         return mock;
     }

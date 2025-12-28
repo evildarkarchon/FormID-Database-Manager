@@ -167,7 +167,7 @@ public static class TestDataBuilder
             RootDirectory = tempDir,
             GameDirectory = gameDir,
             DataDirectory = dataDir,
-            PluginFiles = new List<string>()
+            PluginFiles = []
         };
 
         // Create base game plugins based on game type
@@ -225,7 +225,7 @@ public static class TestDataBuilder
         public string RootDirectory { get; init; } = string.Empty;
         public string GameDirectory { get; init; } = string.Empty;
         public string DataDirectory { get; init; } = string.Empty;
-        public List<string> PluginFiles { get; init; } = new();
+        public List<string> PluginFiles { get; init; } = [];
 
         public void Dispose()
         {

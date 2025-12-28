@@ -45,7 +45,7 @@ public class PluginListManagerTests : IDisposable
             _mockDispatcher.Object);
 
         _testDirectory = Path.Combine(Path.GetTempPath(), $"test_{Guid.NewGuid()}");
-        _plugins = new ObservableCollection<PluginListItem>();
+        _plugins = [];
 
         Directory.CreateDirectory(_testDirectory);
         Directory.CreateDirectory(Path.Combine(_testDirectory, "Data"));
@@ -110,7 +110,7 @@ public class PluginListManagerTests : IDisposable
         CreateTestPluginFiles(dataPath, "Skyrim.esm", "Update.esm", "Dawnguard.esm", "UserMod.esp");
 
         _mockGameDetectionService.Setup(x => x.GetBaseGamePlugins(GameRelease.SkyrimSE))
-            .Returns(new HashSet<string> { "Skyrim.esm", "Update.esm", "Dawnguard.esm" });
+            .Returns(["Skyrim.esm", "Update.esm", "Dawnguard.esm"]);
 
         // Act
         await _pluginListManager.RefreshPluginList(
