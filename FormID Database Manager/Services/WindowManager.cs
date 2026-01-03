@@ -72,7 +72,8 @@ public class WindowManager
                 Title = "Select Database Location",
                 DefaultExtension = "db",
                 SuggestedFileName = "FormIDs.db",
-                FileTypeChoices = fileTypeChoices
+                FileTypeChoices = fileTypeChoices,
+                ShowOverwritePrompt = false
             };
 
             var file = await _storageProvider.SaveFilePickerAsync(options).ConfigureAwait(false);
