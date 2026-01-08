@@ -151,6 +151,16 @@ CREATE TABLE {GameRelease} (
     - Memory pressure scenarios
 
 - **Test Utilities**: Shared test builders and mocks in `FormID Database Manager.TestUtilities/`
+  - `SynchronousThreadDispatcher`: Test-friendly dispatcher that executes actions immediately (avoids UI thread deadlocks)
+  - `SynchronousProgress<T>`: Synchronous IProgress implementation for reliable test assertions
+
+### Known Test Runner Quirk
+**Running integration tests in isolation via `--filter` may hang**, but the full test suite runs successfully. This appears to be an environmental/test runner behavior rather than a code issue:
+- `dotnet test` (full suite): Works correctly, all tests pass
+- `dotnet test --filter "FullyQualifiedName~IntegrationTests"`: May hang indefinitely
+- Individual tests via filter work: `dotnet test --filter "FullyQualifiedName~DatabaseIntegrationTests.Database_RecoverFromCorruption_Successfully"`
+
+**Workaround**: Run the full test suite instead of filtering to integration test classes.
 
 ### Coverage Goals
 - Target: 80% code coverage

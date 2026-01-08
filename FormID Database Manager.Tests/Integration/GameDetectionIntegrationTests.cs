@@ -14,6 +14,7 @@ namespace FormID_Database_Manager.Tests.Integration;
 ///     Integration tests for game detection functionality,
 ///     testing real file system interactions and directory structures.
 /// </summary>
+[Collection("Integration Tests")]
 public class GameDetectionIntegrationTests : IDisposable
 {
     private readonly GameDetectionService _gameDetectionService;

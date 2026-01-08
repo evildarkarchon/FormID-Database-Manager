@@ -1,7 +1,6 @@
 // Services/DatabaseService.cs
 
 using System;
-using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Data.Sqlite;
@@ -32,6 +31,7 @@ public class DatabaseService
         GameRelease.Fallout4VR => "Fallout4VR",
         GameRelease.Starfield => "Starfield",
         GameRelease.Oblivion => "Oblivion",
+        GameRelease.OblivionRE => "OblivionRE",
         GameRelease.EnderalLE => "EnderalLE",
         GameRelease.EnderalSE => "EnderalSE",
         _ => throw new ArgumentException($"Unsupported game release: {release}", nameof(release))
@@ -92,21 +92,21 @@ public class DatabaseService
         using var command = conn.CreateCommand();
         var tableName = GetSafeTableName(gameRelease);
 
-        // Create main table
+        // Create main table (CLASSIC schema - no NOT NULL constraints)
         command.CommandText = $@"
                 CREATE TABLE IF NOT EXISTS {tableName} (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    plugin TEXT NOT NULL,
-                    formid TEXT NOT NULL,
-                    entry TEXT NOT NULL
+                    plugin TEXT,
+                    formid TEXT,
+                    entry TEXT
                 )";
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
 
-        // Create indices
-        command.CommandText = $"CREATE INDEX IF NOT EXISTS idx_{tableName}_plugin ON {tableName}(plugin)";
+        // Create indices (CLASSIC pattern)
+        command.CommandText = $"CREATE INDEX IF NOT EXISTS {tableName}_index ON {tableName}(formid, plugin COLLATE nocase)";
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
 
-        command.CommandText = $"CREATE INDEX IF NOT EXISTS idx_{tableName}_formid ON {tableName}(formid)";
+        command.CommandText = $"CREATE INDEX IF NOT EXISTS {tableName}_covering_idx ON {tableName}(formid, plugin COLLATE nocase, entry)";
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 

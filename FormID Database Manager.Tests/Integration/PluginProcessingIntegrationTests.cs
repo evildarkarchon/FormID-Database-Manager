@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using FormID_Database_Manager.Models;
 using FormID_Database_Manager.Services;
 using FormID_Database_Manager.TestUtilities;
+using FormID_Database_Manager.TestUtilities.Mocks;
 using FormID_Database_Manager.ViewModels;
 using Microsoft.Data.Sqlite;
 using Mutagen.Bethesda;
@@ -17,6 +18,7 @@ namespace FormID_Database_Manager.Tests.Integration;
 ///     Integration tests for the complete plugin processing workflow,
 ///     testing the interaction between PluginProcessingService and its dependencies.
 /// </summary>
+[Collection("Integration Tests")]
 public class PluginProcessingIntegrationTests : IDisposable
 {
     private readonly DatabaseService _databaseService;
@@ -24,14 +26,20 @@ public class PluginProcessingIntegrationTests : IDisposable
     private readonly List<string> _tempFiles;
     private readonly string _testDirectory;
     private readonly MainWindowViewModel _viewModel;
+    private readonly SynchronousThreadDispatcher _dispatcher;
 
     public PluginProcessingIntegrationTests()
     {
         _testDirectory = Path.Combine(Path.GetTempPath(), $"plugin_integration_{Guid.NewGuid()}");
         _tempFiles = [];
-        _viewModel = new MainWindowViewModel();
+        
+        // Use SynchronousThreadDispatcher to avoid deadlocks in non-[AvaloniaFact] tests.
+        // The AvaloniaThreadDispatcher tries to post to the UI thread which isn't being pumped
+        // in regular xUnit tests, causing deadlocks.
+        _dispatcher = new SynchronousThreadDispatcher();
+        _viewModel = new MainWindowViewModel(_dispatcher);
         _databaseService = new DatabaseService();
-        _processingService = new PluginProcessingService(_databaseService, _viewModel);
+        _processingService = new PluginProcessingService(_databaseService, _viewModel, _dispatcher);
 
         Directory.CreateDirectory(_testDirectory);
         Directory.CreateDirectory(Path.Combine(_testDirectory, "Data"));
@@ -90,7 +98,7 @@ public class PluginProcessingIntegrationTests : IDisposable
         };
 
         var progressReports = new List<(string Message, double? Value)>();
-        var progress = new Progress<(string Message, double? Value)>(report => progressReports.Add(report));
+        var progress = new SynchronousProgress<(string Message, double? Value)>(report => progressReports.Add(report));
 
         // Act
         await _processingService.ProcessPlugins(parameters, progress);
@@ -134,7 +142,7 @@ public class PluginProcessingIntegrationTests : IDisposable
         };
 
         var progressReports = new List<(string Message, double? Value)>();
-        var progress = new Progress<(string Message, double? Value)>(report => progressReports.Add(report));
+        var progress = new SynchronousProgress<(string Message, double? Value)>(report => progressReports.Add(report));
 
         // Act
         await _processingService.ProcessPlugins(parameters, progress);
@@ -219,7 +227,7 @@ public class PluginProcessingIntegrationTests : IDisposable
         };
 
         var progressReports = new List<(string Message, double? Value)>();
-        var progress = new Progress<(string Message, double? Value)>(report => progressReports.Add(report));
+        var progress = new SynchronousProgress<(string Message, double? Value)>(report => progressReports.Add(report));
 
         // Act & Assert - GameEnvironment will fail without real game
         await Assert.ThrowsAnyAsync<Exception>(async () =>
@@ -309,15 +317,12 @@ public class PluginProcessingIntegrationTests : IDisposable
         };
 
         var progressReports = new List<(string Message, double? Value)>();
-        var progress = new Progress<(string Message, double? Value)>(report => progressReports.Add(report));
+        var progress = new SynchronousProgress<(string Message, double? Value)>(report => progressReports.Add(report));
 
         // Act
         await _processingService.ProcessPlugins(parameters, progress);
 
-        // Give time for progress reports to be captured
-        await Task.Delay(100);
-
-        // Assert
+        // Assert - No delay needed since we use SynchronousProgress
         Assert.NotEmpty(progressReports);
         Assert.Contains(progressReports, r => r.Message.Contains("Would process"));
         Assert.False(File.Exists(dbPath)); // Database should not be created
@@ -343,15 +348,12 @@ public class PluginProcessingIntegrationTests : IDisposable
         };
 
         var progressReports = new List<(string Message, double? Value)>();
-        var progress = new Progress<(string Message, double? Value)>(report => progressReports.Add(report));
+        var progress = new SynchronousProgress<(string Message, double? Value)>(report => progressReports.Add(report));
 
         // Act
         await _processingService.ProcessPlugins(parameters, progress);
 
-        // Give time for progress reports to be captured
-        await Task.Delay(100);
-
-        // Assert
+        // Assert - No delay needed since we use SynchronousProgress
         Assert.NotEmpty(progressReports);
         Assert.Contains(progressReports, r => r.Message.Contains("Would process FormID list file"));
         Assert.False(File.Exists(dbPath));
@@ -389,7 +391,7 @@ public class PluginProcessingIntegrationTests : IDisposable
         };
 
         var progressReports = new List<(string Message, double? Value)>();
-        var progress = new Progress<(string Message, double? Value)>(report => progressReports.Add(report));
+        var progress = new SynchronousProgress<(string Message, double? Value)>(report => progressReports.Add(report));
 
         // Act
         await _processingService.ProcessPlugins(parameters, progress);

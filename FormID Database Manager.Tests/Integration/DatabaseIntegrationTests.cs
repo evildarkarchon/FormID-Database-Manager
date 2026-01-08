@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Data;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -16,6 +15,7 @@ namespace FormID_Database_Manager.Tests.Integration;
 ///     Integration tests for database operations, testing the full database workflow
 ///     including creation, insertion, querying, and optimization.
 /// </summary>
+[Collection("Integration Tests")]
 public class DatabaseIntegrationTests : IDisposable
 {
     private readonly DatabaseService _databaseService;
@@ -303,7 +303,6 @@ public class DatabaseIntegrationTests : IDisposable
         connection.Open();
 
         var writeComplete = false;
-        var cts = new CancellationTokenSource();
 
         // Act - Concurrent writing and reading
         var writeTask = Task.Run(async () =>
@@ -437,26 +436,20 @@ public class DatabaseIntegrationTests : IDisposable
             deleteCmd.ExecuteNonQuery();
         }
 
-        // Measure query performance before optimization
-        var beforeOptimize = DateTime.UtcNow;
+        // Verify database is accessible before optimization
         using (var cmd = new SqliteCommand($"SELECT COUNT(*) FROM {GameRelease.SkyrimSE}", connection))
         {
             cmd.ExecuteScalar();
         }
-
-        var beforeTime = DateTime.UtcNow - beforeOptimize;
 
         // Act - Optimize database
         await _databaseService.OptimizeDatabase(connection, CancellationToken.None);
 
-        // Measure query performance after optimization
-        var afterOptimize = DateTime.UtcNow;
+        // Verify database is accessible after optimization
         using (var cmd = new SqliteCommand($"SELECT COUNT(*) FROM {GameRelease.SkyrimSE}", connection))
         {
             cmd.ExecuteScalar();
         }
-
-        var afterTime = DateTime.UtcNow - afterOptimize;
 
         // Assert - File size should be smaller after optimization
         connection.Close();

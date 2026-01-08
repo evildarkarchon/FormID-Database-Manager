@@ -80,10 +80,14 @@ CREATE TABLE {GameRelease} (
 - **Unit Tests:** In-memory SQLite, mocked services.
 - **Integration Tests:** Real dependencies, end-to-end flows.
 - **UI Tests:** Headless Avalonia testing (`Avalonia.Headless.XUnit`).
+- **Test Utilities:**
+  - `SynchronousThreadDispatcher`: Test-friendly dispatcher that avoids UI thread deadlocks.
+  - `SynchronousProgress<T>`: Synchronous IProgress implementation for reliable assertions.
 - **Attributes:**
   - `[RequiresGameInstallationFact]`: Skips tests if the actual game is not installed.
   - `[ExpectsGameEnvironmentFailureFact]`: Validates failure modes when games *are* installed.
   - `[AvaloniaFact]`: Required for UI tests.
+- **Known Quirk:** Running integration tests in isolation via `--filter` may hang. Run the full test suite (`dotnet test`) instead.
 
 ## Key Files & Directories
 - `FormID Database Manager/`: Main application source.

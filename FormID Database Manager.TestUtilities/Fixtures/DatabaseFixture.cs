@@ -45,12 +45,13 @@ public class DatabaseFixture : IAsyncLifetime
     public async Task InitializeSchemaAsync(SqliteConnection connection, string tableName)
     {
         var createTableCommand = connection.CreateCommand();
+        // CLASSIC schema - no NOT NULL constraints
         createTableCommand.CommandText = $@"
             CREATE TABLE IF NOT EXISTS {tableName} (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                plugin TEXT NOT NULL,
-                formid TEXT NOT NULL,
-                entry TEXT NOT NULL
+                plugin TEXT,
+                formid TEXT,
+                entry TEXT
             )";
         await createTableCommand.ExecuteNonQueryAsync();
     }
