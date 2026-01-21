@@ -61,7 +61,7 @@ public class DatabaseService
     /// <param name="cancellationToken">Token to monitor for cancellation.</param>
     public virtual async Task ConfigureConnection(SqliteConnection conn, CancellationToken cancellationToken = default)
     {
-        using var command = conn.CreateCommand();
+        await using var command = conn.CreateCommand();
         command.CommandText = @"
             PRAGMA journal_mode = WAL;
             PRAGMA synchronous = NORMAL;
@@ -81,15 +81,16 @@ public class DatabaseService
     ///     The specific game release (e.g., Skyrim, Fallout) for which the database is being
     ///     initialized.
     /// </param>
+    /// <param name="cancellationToken"></param>
     /// <returns>A task that represents the asynchronous operation of initializing the database.</returns>
     public virtual async Task InitializeDatabase(string dbPath, GameRelease gameRelease,
         CancellationToken cancellationToken = default)
     {
-        using var conn = new SqliteConnection(GetOptimizedConnectionString(dbPath));
+        await using var conn = new SqliteConnection(GetOptimizedConnectionString(dbPath));
         await conn.OpenAsync(cancellationToken).ConfigureAwait(false);
         await ConfigureConnection(conn, cancellationToken).ConfigureAwait(false);
 
-        using var command = conn.CreateCommand();
+        await using var command = conn.CreateCommand();
         var tableName = GetSafeTableName(gameRelease);
 
         // Create main table (CLASSIC schema - no NOT NULL constraints)
@@ -117,6 +118,7 @@ public class DatabaseService
     /// <param name="conn">The SQLite database connection used to execute the operation.</param>
     /// <param name="gameRelease">The game release (e.g., Skyrim, Fallout) for which the plugin's entries will be cleared.</param>
     /// <param name="pluginName">The name of the plugin whose entries are to be cleared from the database.</param>
+    /// <param name="cancellationToken"></param>
     /// <returns>A task that represents the asynchronous operation of clearing plugin entries from the database.</returns>
     public virtual async Task ClearPluginEntries(SqliteConnection conn, GameRelease gameRelease, string pluginName,
         CancellationToken cancellationToken = default)
@@ -136,6 +138,7 @@ public class DatabaseService
     /// <param name="pluginName">The name of the plugin associated with the record.</param>
     /// <param name="formId">The FormID associated with the record.</param>
     /// <param name="entry">The entry details to be stored in the database.</param>
+    /// <param name="cancellationToken"></param>
     /// <returns>A task that represents the asynchronous operation of inserting the record into the database.</returns>
     public virtual async Task InsertRecord(SqliteConnection conn, GameRelease gameRelease, string pluginName,
         string formId,
@@ -159,6 +162,7 @@ public class DatabaseService
     ///     The SQLite database connection used to execute the optimization command. The connection must be open
     ///     before calling this method.
     /// </param>
+    /// <param name="cancellationToken"></param>
     /// <returns>A task that represents the asynchronous operation of optimizing the database.</returns>
     public virtual async Task OptimizeDatabase(SqliteConnection conn, CancellationToken cancellationToken = default)
     {
