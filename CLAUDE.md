@@ -183,3 +183,65 @@ CREATE TABLE {GameRelease} (
 
 ### Project License
 - GPL-3.0 License - modifications and distributions must comply with GPL-3.0 terms
+
+## Mandatory: Test-Driven Development (TDD)
+
+**All code changes MUST follow TDD using the Red-Green-Refactor cycle.**
+
+### TDD Workflow
+
+1. **RED**: Write a failing test first. Run it to confirm it fails.
+2. **GREEN**: Write the minimum code to make the test pass. Run the test.
+3. **REFACTOR**: Clean up the code. Run all tests to verify nothing broke.
+
+### Requirements
+
+- Never write implementation code without a failing test first
+- Run tests at each step to verify the cycle
+- Use test naming: `MethodName_Scenario_ExpectedBehavior`
+- One assertion per test when possible
+
+For detailed guidance, see [`skills/test-driven-development/SKILL.md`](skills/test-driven-development/SKILL.md).
+
+### Quick TDD Commands
+
+```bash
+# Run specific test class during development
+dotnet test --filter "FullyQualifiedName~DatabaseServiceTests"
+
+# Run tests continuously in watch mode
+dotnet watch test --project "FormID Database Manager.Tests"
+
+# Run tests with coverage for the class under development
+dotnet test /p:CollectCoverage=true /p:CoverletOutputFormat=lcov
+```
+
+### TDD Commit Strategy
+
+```bash
+# RED phase - commit failing tests
+git commit -m "RED: Add tests for [feature name]
+
+- Test scenario 1
+- Test scenario 2
+- Edge cases covered
+
+Tests failing as expected"
+
+# GREEN phase - commit passing implementation
+git commit -m "GREEN: Implement [feature name]
+
+- Minimal implementation to pass tests
+- All tests passing
+
+Implements: [TestClassName]"
+
+# REFACTOR phase - commit improvements
+git commit -m "REFACTOR: Improve [component] quality
+
+- Extracted methods for clarity
+- Improved naming
+- Reduced complexity
+
+Behavior unchanged - all tests passing"
+```

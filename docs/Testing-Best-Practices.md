@@ -4,6 +4,22 @@
 
 This document outlines the testing best practices specific to the FormID Database Manager project. These guidelines ensure consistent, maintainable, and efficient tests across the codebase.
 
+> **Important**: This project follows **strict Test-Driven Development (TDD)**. See [`skills/test-driven-development/SKILL.md`](../skills/test-driven-development/SKILL.md) for the complete TDD lifecycle guide.
+
+### TDD Quick Reference
+
+1. **RED**: Write comprehensive failing tests first
+2. **GREEN**: Write minimal implementation to pass tests
+3. **REFACTOR**: Improve code while keeping tests green
+
+```bash
+# Run specific test class during TDD cycle
+dotnet test --filter "FullyQualifiedName~YourServiceTests"
+
+# Run with coverage
+dotnet test /p:CollectCoverage=true /p:CoverletOutputFormat=lcov
+```
+
 ## Project-Specific Testing Guidelines
 
 ### 1. Game Installation Dependencies

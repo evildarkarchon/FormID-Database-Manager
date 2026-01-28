@@ -201,4 +201,47 @@ CREATE TABLE {GameRelease} (
 - Use test naming: `MethodName_Scenario_ExpectedBehavior`
 - One assertion per test when possible
 
-For detailed guidance, use the `test-driven-development` skill.
+For detailed guidance, see [`skills/test-driven-development/SKILL.md`](skills/test-driven-development/SKILL.md).
+
+### Quick TDD Commands
+
+```bash
+# Run specific test class during development
+dotnet test --filter "FullyQualifiedName~DatabaseServiceTests"
+
+# Run tests continuously in watch mode
+dotnet watch test --project "FormID Database Manager.Tests"
+
+# Run tests with coverage for the class under development
+dotnet test /p:CollectCoverage=true /p:CoverletOutputFormat=lcov
+```
+
+### TDD Commit Strategy
+
+```bash
+# RED phase - commit failing tests
+git commit -m "RED: Add tests for [feature name]
+
+- Test scenario 1
+- Test scenario 2
+- Edge cases covered
+
+Tests failing as expected"
+
+# GREEN phase - commit passing implementation
+git commit -m "GREEN: Implement [feature name]
+
+- Minimal implementation to pass tests
+- All tests passing
+
+Implements: [TestClassName]"
+
+# REFACTOR phase - commit improvements
+git commit -m "REFACTOR: Improve [component] quality
+
+- Extracted methods for clarity
+- Improved naming
+- Reduced complexity
+
+Behavior unchanged - all tests passing"
+```
