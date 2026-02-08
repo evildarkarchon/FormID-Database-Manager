@@ -91,6 +91,12 @@ public class PluginListManager(
                         continue;
                     }
 
+                    // Skip empty (header-only) plugins with no FormIDs
+                    if (!HasRecords(pluginPath, gameRelease))
+                    {
+                        continue;
+                    }
+
                     // Add the plugin to the list
                     items.Add(new PluginListItem { Name = pluginFileName, IsSelected = false });
                     addedPlugins.Add(pluginFileName);
