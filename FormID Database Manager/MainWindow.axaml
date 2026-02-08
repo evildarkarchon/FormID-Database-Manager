@@ -86,21 +86,23 @@
                 <!-- Plugin Selection -->
                 <Grid Grid.Row="5" Grid.RowSpan="2" ColumnDefinitions="*,Auto" Margin="0,5,0,0">
                     <Border Grid.Column="0" BorderBrush="Gray" BorderThickness="1" Margin="0,0,5,0">
-                        <ItemsControl x:Name="PluginList"
-                                      ItemsSource="{Binding FilteredPlugins}">
-                            <ItemsControl.ItemsPanel>
-                                <ItemsPanelTemplate>
-                                    <VirtualizingStackPanel />
-                                </ItemsPanelTemplate>
-                            </ItemsControl.ItemsPanel>
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate DataType="{x:Type models:PluginListItem}">
-                                    <CheckBox Content="{Binding Path=Name}"
-                                              IsChecked="{Binding Path=IsSelected}"
-                                              Margin="5,2" />
-                                </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
+                        <ScrollViewer VerticalScrollBarVisibility="Auto">
+                            <ItemsControl x:Name="PluginList"
+                                          ItemsSource="{Binding FilteredPlugins}">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <VirtualizingStackPanel />
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate DataType="{x:Type models:PluginListItem}">
+                                        <CheckBox Content="{Binding Path=Name}"
+                                                  IsChecked="{Binding Path=IsSelected}"
+                                                  Margin="5,2" />
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </ScrollViewer>
                     </Border>
                     <StackPanel Grid.Column="1" Margin="0,0,0,0">
                         <Button Content="Select All"
