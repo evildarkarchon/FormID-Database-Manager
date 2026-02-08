@@ -160,7 +160,7 @@
                 <!-- Progress and Process Button Section -->
                 <Grid Grid.Row="10" RowDefinitions="Auto,Auto" VerticalAlignment="Bottom">
                     <!-- Progress Section -->
-                    <Grid Grid.Row="0" Margin="0,10" IsVisible="{Binding IsProcessing}">
+                    <Grid Grid.Row="0" Margin="0,10" IsVisible="{Binding IsProgressVisible}">
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />

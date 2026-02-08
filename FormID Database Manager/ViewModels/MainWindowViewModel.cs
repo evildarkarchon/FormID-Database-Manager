@@ -23,6 +23,7 @@ public class MainWindowViewModel : INotifyPropertyChanged
     private ObservableCollection<string> _informationMessages = [];
     private int _isApplyingFilter;
     private bool _isProcessing;
+    private bool _isScanning;
     private string _pluginFilter = string.Empty;
     private ObservableCollection<PluginListItem> _plugins;
     private string _progressStatus = string.Empty;
@@ -62,8 +63,28 @@ public class MainWindowViewModel : INotifyPropertyChanged
     public bool IsProcessing
     {
         get => _isProcessing;
-        set => SetProperty(ref _isProcessing, value);
+        set
+        {
+            if (SetProperty(ref _isProcessing, value))
+            {
+                OnPropertyChanged(nameof(IsProgressVisible));
+            }
+        }
     }
+
+    public bool IsScanning
+    {
+        get => _isScanning;
+        set
+        {
+            if (SetProperty(ref _isScanning, value))
+            {
+                OnPropertyChanged(nameof(IsProgressVisible));
+            }
+        }
+    }
+
+    public bool IsProgressVisible => IsProcessing || IsScanning;
 
     public double ProgressValue
     {

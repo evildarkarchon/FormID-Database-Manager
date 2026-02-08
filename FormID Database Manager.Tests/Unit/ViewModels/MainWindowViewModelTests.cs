@@ -86,14 +86,20 @@ public class MainWindowViewModelTests
     public void IsProcessing_RaisesPropertyChanged_WhenSet()
     {
         // Arrange
-        var propertyName = string.Empty;
-        _viewModel.PropertyChanged += (sender, args) => propertyName = args.PropertyName;
+        var notifiedProperties = new System.Collections.Generic.List<string>();
+        _viewModel.PropertyChanged += (sender, args) =>
+        {
+            if (args.PropertyName != null)
+            {
+                notifiedProperties.Add(args.PropertyName);
+            }
+        };
 
         // Act
         _viewModel.IsProcessing = true;
 
         // Assert
-        Assert.Equal(nameof(MainWindowViewModel.IsProcessing), propertyName);
+        Assert.Contains(nameof(MainWindowViewModel.IsProcessing), notifiedProperties);
         Assert.True(_viewModel.IsProcessing);
     }
 
@@ -562,6 +568,81 @@ public class MainWindowViewModelTests
         // Assert
         Assert.False(eventRaised);
         Assert.Equal("TestPath", _viewModel.GameDirectory);
+    }
+
+    #endregion
+
+    #region IsProgressVisible and IsScanning Tests
+
+    [AvaloniaFact]
+    public void IsProgressVisible_True_WhenIsProcessingTrue()
+    {
+        // Arrange & Act
+        _viewModel.IsProcessing = true;
+
+        // Assert
+        Assert.True(_viewModel.IsProgressVisible);
+    }
+
+    [AvaloniaFact]
+    public void IsProgressVisible_True_WhenIsScanningTrue()
+    {
+        // Arrange & Act
+        _viewModel.IsScanning = true;
+
+        // Assert
+        Assert.True(_viewModel.IsProgressVisible);
+    }
+
+    [AvaloniaFact]
+    public void IsProgressVisible_False_WhenBothFalse()
+    {
+        // Arrange - defaults are false, but be explicit
+        _viewModel.IsProcessing = false;
+        _viewModel.IsScanning = false;
+
+        // Assert
+        Assert.False(_viewModel.IsProgressVisible);
+    }
+
+    [AvaloniaFact]
+    public void IsScanning_PropertyChanged_NotifiesIsProgressVisible()
+    {
+        // Arrange
+        var notifiedProperties = new System.Collections.Generic.List<string>();
+        _viewModel.PropertyChanged += (sender, args) =>
+        {
+            if (args.PropertyName != null)
+            {
+                notifiedProperties.Add(args.PropertyName);
+            }
+        };
+
+        // Act
+        _viewModel.IsScanning = true;
+
+        // Assert
+        Assert.Contains(nameof(MainWindowViewModel.IsProgressVisible), notifiedProperties);
+    }
+
+    [AvaloniaFact]
+    public void IsProcessing_PropertyChanged_NotifiesIsProgressVisible()
+    {
+        // Arrange
+        var notifiedProperties = new System.Collections.Generic.List<string>();
+        _viewModel.PropertyChanged += (sender, args) =>
+        {
+            if (args.PropertyName != null)
+            {
+                notifiedProperties.Add(args.PropertyName);
+            }
+        };
+
+        // Act
+        _viewModel.IsProcessing = true;
+
+        // Assert
+        Assert.Contains(nameof(MainWindowViewModel.IsProgressVisible), notifiedProperties);
     }
 
     #endregion

@@ -60,17 +60,36 @@ public class PluginListManager(
                     .WithTargetDataFolder(dataPath)
                     .Build();
 
-                var loadOrder = env.LoadOrder.ListedOrder;
+                var loadOrder = env.LoadOrder.ListedOrder.ToList();
                 var basePlugins = gameDetectionService.GetBaseGamePlugins(gameRelease);
 
                 var items = new List<PluginListItem>();
                 var addedPlugins = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 var count = 0;
 
+                var totalPlugins = loadOrder.Count;
+                var scannedCount = 0;
+
+                // Show scanning progress on UI thread
+                dispatcher.Post(() =>
+                {
+                    viewModel.IsScanning = true;
+                    viewModel.UpdateProgress("Scanning plugins...", 0);
+                });
+
                 // Process plugins - File.Exists calls now on background thread
                 foreach (var plugin in loadOrder)
                 {
                     var pluginFileName = plugin.ModKey.FileName;
+
+                    // Report scanning progress
+                    scannedCount++;
+                    var currentCount = scannedCount;
+                    var total = totalPlugins;
+                    dispatcher.Post(() =>
+                    {
+                        viewModel.UpdateProgress($"Scanning plugins... ({currentCount}/{total})", (double)currentCount / total * 100);
+                    });
 
                     // Deduplication check
                     if (addedPlugins.Contains(pluginFileName))
@@ -103,6 +122,14 @@ public class PluginListManager(
                     count++;
                 }
 
+                // Clear scanning state
+                dispatcher.Post(() =>
+                {
+                    viewModel.IsScanning = false;
+                    viewModel.ProgressValue = 0;
+                    viewModel.ProgressStatus = string.Empty;
+                });
+
                 return (items, count);
             }).ConfigureAwait(false);
 
@@ -128,6 +155,11 @@ public class PluginListManager(
             // Update UI on UI thread in case of error
             await dispatcher.InvokeAsync(() =>
             {
+                // Clear scanning state
+                viewModel.IsScanning = false;
+                viewModel.ProgressValue = 0;
+                viewModel.ProgressStatus = string.Empty;
+
                 // Clear both collections in case of error
                 plugins.Clear();
                 viewModel.FilteredPlugins.Clear();
