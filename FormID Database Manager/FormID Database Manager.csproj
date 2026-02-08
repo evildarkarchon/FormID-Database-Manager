@@ -45,4 +45,7 @@
         <TrimmerRootAssembly Include="Mutagen.Bethesda.Starfield" />
         <TrimmerRootAssembly Include="Mutagen.Bethesda.Oblivion" />
     </ItemGroup>
+    <ItemGroup>
+        <InternalsVisibleTo Include="FormID Database Manager.Tests" />
+    </ItemGroup>
 </Project>

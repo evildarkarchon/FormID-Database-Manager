@@ -2,12 +2,18 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
+using System.Linq;
 using System.Threading.Tasks;
 using Avalonia.Threading;
 using FormID_Database_Manager.Models;
 using FormID_Database_Manager.ViewModels;
 using Mutagen.Bethesda;
 using Mutagen.Bethesda.Environments;
+using Mutagen.Bethesda.Fallout4;
+using Mutagen.Bethesda.Oblivion;
+using Mutagen.Bethesda.Plugins.Records;
+using Mutagen.Bethesda.Skyrim;
+using Mutagen.Bethesda.Starfield;
 
 namespace FormID_Database_Manager.Services;
 
@@ -149,6 +155,48 @@ public class PluginListManager(
         foreach (var plugin in plugins)
         {
             plugin.IsSelected = false;
+        }
+    }
+
+    /// <summary>
+    ///     Checks whether a plugin file contains any major records (FormIDs).
+    ///     Used to filter out header-only plugins that would clutter the plugin list.
+    ///     Returns true on any error (fail-open) so unreadable plugins still appear.
+    /// </summary>
+    /// <param name="pluginPath">Full path to the plugin file.</param>
+    /// <param name="gameRelease">The game release to parse the plugin as.</param>
+    /// <returns>True if the plugin has records or cannot be read; false if header-only.</returns>
+    internal static bool HasRecords(string pluginPath, GameRelease gameRelease)
+    {
+        try
+        {
+            IModGetter? mod = gameRelease switch
+            {
+                GameRelease.Oblivion => OblivionMod.CreateFromBinaryOverlay(pluginPath,
+                    OblivionRelease.Oblivion),
+                GameRelease.SkyrimSE => SkyrimMod.CreateFromBinaryOverlay(pluginPath,
+                    SkyrimRelease.SkyrimSE),
+                GameRelease.SkyrimSEGog => SkyrimMod.CreateFromBinaryOverlay(pluginPath,
+                    SkyrimRelease.SkyrimSEGog),
+                GameRelease.SkyrimVR => SkyrimMod.CreateFromBinaryOverlay(pluginPath,
+                    SkyrimRelease.SkyrimVR),
+                GameRelease.Fallout4 => Fallout4Mod.CreateFromBinaryOverlay(pluginPath,
+                    Fallout4Release.Fallout4),
+                GameRelease.Starfield => StarfieldMod.CreateFromBinaryOverlay(pluginPath,
+                    StarfieldRelease.Starfield),
+                _ => null
+            };
+
+            if (mod == null)
+            {
+                return true; // Unsupported game - fail-open
+            }
+
+            return mod.EnumerateMajorRecords().Any();
+        }
+        catch
+        {
+            return true; // Fail-open: show plugin if we can't read it
         }
     }
 }
