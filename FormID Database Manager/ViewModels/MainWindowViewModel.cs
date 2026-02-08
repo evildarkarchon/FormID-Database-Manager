@@ -5,6 +5,7 @@ using System.ComponentModel;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Threading;
+using System.Threading.Tasks;
 using FormID_Database_Manager.Models;
 using FormID_Database_Manager.Services;
 
@@ -12,8 +13,10 @@ namespace FormID_Database_Manager.ViewModels;
 
 public class MainWindowViewModel : INotifyPropertyChanged
 {
+    private readonly int _debounceMs;
     private readonly IThreadDispatcher _dispatcher;
     private readonly object _pluginsLock = new();
+    private CancellationTokenSource? _debounceCts;
     private string _databasePath = string.Empty;
     private string _detectedGame = string.Empty;
     private ObservableCollection<string> _errorMessages = [];
@@ -21,6 +24,7 @@ public class MainWindowViewModel : INotifyPropertyChanged
     private string _formIdListPath = string.Empty;
     private string _gameDirectory = string.Empty;
     private ObservableCollection<string> _informationMessages = [];
+    private bool _filterSuspended;
     private int _isApplyingFilter;
     private bool _isProcessing;
     private bool _isScanning;
@@ -29,9 +33,14 @@ public class MainWindowViewModel : INotifyPropertyChanged
     private string _progressStatus = string.Empty;
     private double _progressValue;
 
-    public MainWindowViewModel(IThreadDispatcher? dispatcher = null)
+    public MainWindowViewModel(IThreadDispatcher? dispatcher = null) : this(dispatcher, 0)
+    {
+    }
+
+    public MainWindowViewModel(IThreadDispatcher? dispatcher, int debounceMs)
     {
         _dispatcher = dispatcher ?? new AvaloniaThreadDispatcher();
+        _debounceMs = debounceMs;
         _plugins = [];
         _plugins.CollectionChanged += (s, e) => ApplyFilter();
     }
@@ -123,7 +132,14 @@ public class MainWindowViewModel : INotifyPropertyChanged
         {
             if (SetProperty(ref _pluginFilter, value))
             {
-                ApplyFilter();
+                if (_debounceMs <= 0)
+                {
+                    ApplyFilter();
+                }
+                else
+                {
+                    DebounceApplyFilter();
+                }
             }
         }
     }
@@ -142,8 +158,40 @@ public class MainWindowViewModel : INotifyPropertyChanged
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
+    private void DebounceApplyFilter()
+    {
+        _debounceCts?.Cancel();
+        _debounceCts = new CancellationTokenSource();
+        var token = _debounceCts.Token;
+
+        Task.Delay(_debounceMs, token).ContinueWith(_ =>
+        {
+            if (!token.IsCancellationRequested)
+            {
+                _dispatcher.Post(() => ApplyFilter());
+            }
+        }, token, TaskContinuationOptions.OnlyOnRanToCompletion, TaskScheduler.Default);
+    }
+
+    public void SuspendFilter()
+    {
+        _filterSuspended = true;
+    }
+
+    public void ResumeFilter()
+    {
+        _filterSuspended = false;
+        ApplyFilter();
+    }
+
     private void ApplyFilter()
     {
+        // Skip filter application when suspended (during bulk loading)
+        if (_filterSuspended)
+        {
+            return;
+        }
+
         // Prevent recursive calls using atomic compare-exchange for thread safety
         if (Interlocked.CompareExchange(ref _isApplyingFilter, 1, 0) != 0)
         {

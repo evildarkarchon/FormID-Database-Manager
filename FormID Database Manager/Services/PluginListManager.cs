@@ -82,14 +82,17 @@ public class PluginListManager(
                 {
                     var pluginFileName = plugin.ModKey.FileName;
 
-                    // Report scanning progress
+                    // Report scanning progress every 10th plugin to reduce UI thread pressure
                     scannedCount++;
-                    var currentCount = scannedCount;
-                    var total = totalPlugins;
-                    dispatcher.Post(() =>
+                    if (scannedCount % 10 == 0 || scannedCount == totalPlugins)
                     {
-                        viewModel.UpdateProgress($"Scanning plugins... ({currentCount}/{total})", (double)currentCount / total * 100);
-                    });
+                        var currentCount = scannedCount;
+                        var total = totalPlugins;
+                        dispatcher.Post(() =>
+                        {
+                            viewModel.UpdateProgress($"Scanning plugins... ({currentCount}/{total})", (double)currentCount / total * 100);
+                        });
+                    }
 
                     // Deduplication check
                     if (addedPlugins.Contains(pluginFileName))
@@ -136,14 +139,24 @@ public class PluginListManager(
             // Update UI on UI thread
             await dispatcher.InvokeAsync(() =>
             {
-                // Clear plugin lists
-                plugins.Clear();
-                viewModel.FilteredPlugins.Clear();
-
-                // Populate plugin list - FilteredPlugins is auto-synced via CollectionChanged -> ApplyFilter()
-                foreach (var plugin in pluginItems)
+                // Suspend filter during bulk add to avoid N ApplyFilter calls
+                viewModel.SuspendFilter();
+                try
                 {
-                    plugins.Add(plugin);
+                    // Clear plugin lists
+                    plugins.Clear();
+                    viewModel.FilteredPlugins.Clear();
+
+                    // Populate plugin list
+                    foreach (var plugin in pluginItems)
+                    {
+                        plugins.Add(plugin);
+                    }
+                }
+                finally
+                {
+                    // Resume triggers a single ApplyFilter for all added plugins
+                    viewModel.ResumeFilter();
                 }
 
                 // Add a standard informational message
@@ -208,6 +221,14 @@ public class PluginListManager(
     {
         try
         {
+            // Size heuristic: files > 1KB almost certainly have records.
+            // Skips expensive Mutagen overlay for the common case.
+            // Only very small files (header-only) need the full check.
+            var fileInfo = new FileInfo(pluginPath);
+            if (fileInfo.Exists && fileInfo.Length > 1024)
+            {
+                return true;
+            }
             IModGetter? mod = gameRelease switch
             {
                 GameRelease.Oblivion => OblivionMod.CreateFromBinaryOverlay(pluginPath,

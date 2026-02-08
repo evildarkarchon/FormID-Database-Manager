@@ -97,6 +97,27 @@ public class HasRecordsTests : IDisposable
     }
 
     [Fact]
+    public void HasRecords_ReturnsTrue_ForLargeFile_WithoutMutagen()
+    {
+        // Arrange - Create a file larger than the size threshold (> 1KB)
+        var pluginPath = Path.Combine(_testDirectory, "Large.esp");
+        var largeContent = new byte[2048]; // 2KB - above the 1KB threshold
+        // Fill with non-zero data to make it look like a real file
+        for (var i = 0; i < largeContent.Length; i++)
+        {
+            largeContent[i] = 0xFF;
+        }
+
+        File.WriteAllBytes(pluginPath, largeContent);
+
+        // Act - Should return true immediately via size heuristic without Mutagen
+        var result = PluginListManager.HasRecords(pluginPath, GameRelease.SkyrimSE);
+
+        // Assert
+        Assert.True(result);
+    }
+
+    [Fact]
     public void HasRecords_ReturnsTrue_ForUnsupportedGameRelease()
     {
         // Arrange - Valid file but unsupported game

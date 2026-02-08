@@ -4,7 +4,6 @@ using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using FormID_Database_Manager.Models;
@@ -95,8 +94,15 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
         try
         {
             transaction = conn.BeginTransaction();
-            var plugin = loadOrder.FirstOrDefault(p =>
-                string.Equals(p.ModKey.FileName, pluginItem.Name, StringComparison.OrdinalIgnoreCase));
+
+            // Build dictionary for O(1) lookup instead of O(n) FirstOrDefault scan
+            var loadOrderDict = new Dictionary<string, IModListingGetter<IModGetter>>(StringComparer.OrdinalIgnoreCase);
+            foreach (var listing in loadOrder)
+            {
+                loadOrderDict.TryAdd(listing.ModKey.FileName, listing);
+            }
+
+            loadOrderDict.TryGetValue(pluginItem.Name, out var plugin);
 
             if (plugin == null)
             {
@@ -172,7 +178,7 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
     /// <param name="mod">The mod plugin containing the records to be processed.</param>
     /// <param name="cancellationToken">The cancellation token to handle termination of the processing operation.</param>
     [RequiresUnreferencedCode("Uses reflection-based name extraction for Mutagen records via GetRecordName.")]
-    private async Task ProcessModRecordsAsync(
+    private Task ProcessModRecordsAsync(
         SqliteConnection conn,
         GameRelease gameRelease,
         string pluginName,
@@ -180,6 +186,17 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
         CancellationToken cancellationToken)
     {
         var batch = new List<(string formId, string entry)>(BatchSize);
+
+        // Create a prepared command once and reuse for all batch inserts.
+        // Prepared statements avoid repeated SQL parsing and parameter allocation,
+        // which is faster than multi-value INSERT for SQLite (in-process, negligible round-trip cost).
+        var tableName = GetSafeTableName(gameRelease);
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"INSERT INTO {tableName} (plugin, formid, entry) VALUES (@plugin, @formid, @entry)";
+        cmd.Parameters.Add(new SqliteParameter { ParameterName = "@plugin" });
+        cmd.Parameters.Add(new SqliteParameter { ParameterName = "@formid" });
+        cmd.Parameters.Add(new SqliteParameter { ParameterName = "@entry" });
+        cmd.Prepare();
 
         var majorRecords = mod.EnumerateMajorRecords();
 
@@ -215,8 +232,7 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
                 {
                     try
                     {
-                        await InsertBatchAsync(conn, gameRelease, pluginName, batch, cancellationToken)
-                            .ConfigureAwait(false);
+                        FlushBatch(cmd, pluginName, batch);
                         batch.Clear();
                     }
                     catch (Exception ex)
@@ -242,77 +258,39 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
         {
             try
             {
-                await InsertBatchAsync(conn, gameRelease, pluginName, batch, cancellationToken)
-                    .ConfigureAwait(false);
+                FlushBatch(cmd, pluginName, batch);
             }
             catch (Exception ex)
             {
                 errorCallback($"Warning: Failed to insert final batch in {pluginName}: {ex.Message}");
             }
         }
+
+        return Task.CompletedTask;
     }
 
     /// <summary>
-    ///     Inserts a batch of form ID and entry pairs into the specified database table for the given game release and plugin.
-    ///     Uses a single multi-value INSERT statement for optimal performance (10-100x faster than individual INSERTs).
+    ///     Flushes a batch of records using a pre-prepared command.
+    ///     Uses synchronous ExecuteNonQuery for minimal overhead (SQLite is in-process).
     /// </summary>
-    /// <param name="conn">The SQLite database connection used to execute the insertion commands.</param>
-    /// <param name="gameRelease">The specific game release that determines the target database table.</param>
-    /// <param name="pluginName">The name of the plugin associated with the records being inserted.</param>
-    /// <param name="batch">The list of form ID and entry pairs to be inserted into the database.</param>
-    /// <param name="cancellationToken">The cancellation token to handle termination of the insertion operation.</param>
-    private async Task InsertBatchAsync(
-        SqliteConnection conn,
-        GameRelease gameRelease,
+    private static void FlushBatch(
+        SqliteCommand cmd,
         string pluginName,
-        List<(string formId, string entry)> batch,
-        CancellationToken cancellationToken)
+        List<(string formId, string entry)> batch)
     {
-        if (batch.Count == 0)
+        foreach (var (formId, entry) in batch)
         {
-            return;
+            cmd.Parameters["@plugin"].Value = pluginName;
+            cmd.Parameters["@formid"].Value = formId;
+            cmd.Parameters["@entry"].Value = entry;
+            cmd.ExecuteNonQuery();
         }
-
-        cancellationToken.ThrowIfCancellationRequested();
-
-        // Build multi-value INSERT statement: INSERT INTO table VALUES (...), (...), (...)
-        // This reduces database round-trips from O(n) to O(1), improving performance by 10-100x
-        using var cmd = conn.CreateCommand();
-        var tableName = GetSafeTableName(gameRelease);
-        var sb = new StringBuilder();
-        sb.Append($"INSERT INTO {tableName} (plugin, formid, entry) VALUES ");
-
-        // Build the VALUES clause with parameterized values for each batch item
-        for (var i = 0; i < batch.Count; i++)
-        {
-            if (i > 0)
-            {
-                sb.Append(", ");
-            }
-
-            sb.Append($"(@plugin, @formid{i}, @entry{i})");
-        }
-
-        cmd.CommandText = sb.ToString();
-
-        // Add plugin parameter (shared by all rows)
-        cmd.Parameters.AddWithValue("@plugin", pluginName);
-
-        // Add parameters for each batch item
-        for (var i = 0; i < batch.Count; i++)
-        {
-            cmd.Parameters.AddWithValue($"@formid{i}", batch[i].formId);
-            cmd.Parameters.AddWithValue($"@entry{i}", batch[i].entry);
-        }
-
-        // Execute single INSERT for entire batch
-        await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
     ///     Retrieves a human-readable name for a given major record, prioritizing the editor ID,
-    ///     or extracting the name from the record type using cached reflection. Caching improves
-    ///     performance by 10-20x for records without EditorIDs.
+    ///     then trying a direct INamedGetter cast (avoids reflection), and finally falling back
+    ///     to cached reflection for edge cases.
     /// </summary>
     /// <param name="record">The major record for which the name is to be retrieved.</param>
     /// <returns>A string representing the name of the record, or a formatted fallback string if no name or editor ID is found.</returns>
@@ -324,7 +302,15 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
             return record.EditorID;
         }
 
-        // Cache the name extraction function per type - O(1) lookup after first call per type
+        // Fast path: direct cast avoids reflection entirely for most record types
+        // INamedGetter.Name returns String? directly, no reflection needed
+        if (record is Mutagen.Bethesda.Plugins.Aspects.INamedGetter named && !string.IsNullOrEmpty(named.Name))
+        {
+            return named.Name;
+        }
+
+        // Slow path: reflection-based extraction for edge cases (e.g., types with
+        // TranslatedString Name property that isn't exposed via INamedGetter)
         var extractor = NameExtractorCache.GetOrAdd(record.GetType(), type =>
         {
             // This reflection only happens ONCE per type, not once per record

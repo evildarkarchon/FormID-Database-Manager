@@ -532,6 +532,76 @@ public class FormIdTextProcessorTests : IDisposable
 
     #endregion
 
+    #region Case-Insensitive Plugin Tests
+
+    [Fact]
+    public async Task ProcessFormIdListFile_TreatsDifferentCasePluginNames_AsSamePlugin()
+    {
+        // Arrange
+        var testFile = Path.Combine(_testFilesDir, "case_insensitive.txt");
+        var content = new[]
+        {
+            "Plugin1.esp|000001|Entry1",
+            "plugin1.esp|000002|Entry2", // Same plugin, different case
+            "PLUGIN1.ESP|000003|Entry3"  // Same plugin, all caps
+        };
+        await File.WriteAllLinesAsync(testFile, content);
+
+        var progressReports = new List<(string Message, double? Value)>();
+        var progress = new Progress<(string Message, double? Value)>(report => progressReports.Add(report));
+
+        // Act
+        await _processor.ProcessFormIdListFile(
+            testFile,
+            _connection,
+            GameRelease.SkyrimSE,
+            false,
+            CancellationToken.None,
+            progress);
+
+        // Give time for all progress reports to be captured
+        await Task.Delay(100);
+
+        // Assert - All 3 records should be inserted
+        var records = GetAllRecords();
+        Assert.Equal(3, records.Count);
+
+        // Should report only 1 unique plugin since names differ only by case
+        Assert.Contains(progressReports,
+            r => r.Message.Contains("Completed processing 1 plugins"));
+    }
+
+    [Fact]
+    public async Task ProcessFormIdListFile_CaseInsensitive_DoesNotDuplicateClearPluginEntries()
+    {
+        // Arrange - Pre-populate database with entries under different casing
+        await InsertTestRecord("Plugin1.esp", "000001", "OldEntry1");
+
+        var testFile = Path.Combine(_testFilesDir, "case_clear.txt");
+        var content = new[]
+        {
+            "Plugin1.esp|000001|NewEntry1",
+            "PLUGIN1.ESP|000002|NewEntry2" // Same plugin, different case - should NOT trigger second clear
+        };
+        await File.WriteAllLinesAsync(testFile, content);
+
+        // Act
+        await _processor.ProcessFormIdListFile(
+            testFile,
+            _connection,
+            GameRelease.SkyrimSE,
+            true, // Update mode
+            CancellationToken.None);
+
+        // Assert - Should have 2 new entries (old one cleared once, both new ones inserted)
+        var records = GetAllRecords();
+        Assert.Equal(2, records.Count);
+        Assert.Contains(records, r => r.entry == "NewEntry1");
+        Assert.Contains(records, r => r.entry == "NewEntry2");
+    }
+
+    #endregion
+
     #region Helper Methods
 
     private void InitializeDatabase(SqliteConnection connection, GameRelease gameRelease)

@@ -103,11 +103,16 @@ public class DatabaseService
                 )";
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
 
-        // Create indices (CLASSIC pattern)
-        command.CommandText = $"CREATE INDEX IF NOT EXISTS {tableName}_index ON {tableName}(formid, plugin COLLATE nocase)";
+        // Covering index for SELECT queries (formid + plugin + entry covers typical lookups)
+        command.CommandText = $"CREATE INDEX IF NOT EXISTS {tableName}_covering_idx ON {tableName}(formid, plugin COLLATE nocase, entry)";
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
 
-        command.CommandText = $"CREATE INDEX IF NOT EXISTS {tableName}_covering_idx ON {tableName}(formid, plugin COLLATE nocase, entry)";
+        // Plugin-only index for DELETE performance (WHERE plugin = @plugin)
+        command.CommandText = $"CREATE INDEX IF NOT EXISTS {tableName}_plugin_idx ON {tableName}(plugin COLLATE nocase)";
+        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+
+        // Drop legacy redundant index if it exists (covered by covering_idx)
+        command.CommandText = $"DROP INDEX IF EXISTS {tableName}_index";
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 

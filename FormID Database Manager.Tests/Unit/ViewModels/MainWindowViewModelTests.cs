@@ -482,6 +482,91 @@ public class MainWindowViewModelTests
 
     #endregion
 
+    #region Debounce Tests
+
+    [Fact]
+    public async Task PluginFilter_WithDebounce_DelaysFilterApplication()
+    {
+        // Arrange - Use SynchronousThreadDispatcher to avoid Avalonia headless issues
+        var dispatcher = new FormID_Database_Manager.TestUtilities.Mocks.SynchronousThreadDispatcher();
+        var debouncedVm = new MainWindowViewModel(dispatcher, 200);
+        debouncedVm.Plugins.Add(new PluginListItem { Name = "Plugin1.esp" });
+        debouncedVm.Plugins.Add(new PluginListItem { Name = "TestMod.esp" });
+
+        // Act - Set filter (should not apply immediately due to debounce)
+        debouncedVm.PluginFilter = "Plugin";
+
+        // Assert - Immediately after setting, all plugins still visible (debounce not yet fired)
+        Assert.Equal(2, debouncedVm.FilteredPlugins.Count);
+
+        // After debounce period, filter should be applied
+        await Task.Delay(350);
+        Assert.Single(debouncedVm.FilteredPlugins);
+    }
+
+    [AvaloniaFact]
+    public void PluginFilter_WithZeroDebounce_AppliesImmediately()
+    {
+        // Arrange - Zero debounce (default for existing tests)
+        var vm = new MainWindowViewModel(null, 0);
+        vm.Plugins.Add(new PluginListItem { Name = "Plugin1.esp" });
+        vm.Plugins.Add(new PluginListItem { Name = "TestMod.esp" });
+
+        // Act
+        vm.PluginFilter = "Plugin";
+
+        // Assert - Filter should apply immediately with zero debounce
+        Assert.Single(vm.FilteredPlugins);
+    }
+
+    #endregion
+
+    #region Filter Suspension Tests
+
+    [AvaloniaFact]
+    public void SuspendFilter_PreventsApplyFilterDuringBulkAdd()
+    {
+        // Arrange
+        var filterCallCount = 0;
+        _viewModel.PropertyChanged += (s, e) =>
+        {
+            if (e.PropertyName == nameof(MainWindowViewModel.FilteredPlugins))
+            {
+                filterCallCount++;
+            }
+        };
+
+        // Act - Suspend, add many plugins, resume
+        _viewModel.SuspendFilter();
+        for (var i = 0; i < 100; i++)
+        {
+            _viewModel.Plugins.Add(new PluginListItem { Name = $"Plugin{i}.esp" });
+        }
+        _viewModel.ResumeFilter();
+
+        // Assert - All plugins should be in filtered list
+        Assert.Equal(100, _viewModel.FilteredPlugins.Count);
+    }
+
+    [AvaloniaFact]
+    public void ResumeFilter_AppliesCurrentFilter()
+    {
+        // Arrange
+        _viewModel.PluginFilter = "Test";
+        _viewModel.SuspendFilter();
+        _viewModel.Plugins.Add(new PluginListItem { Name = "TestPlugin.esp" });
+        _viewModel.Plugins.Add(new PluginListItem { Name = "OtherPlugin.esp" });
+
+        // Act
+        _viewModel.ResumeFilter();
+
+        // Assert - Filter "Test" should be applied
+        Assert.Single(_viewModel.FilteredPlugins);
+        Assert.Equal("TestPlugin.esp", _viewModel.FilteredPlugins[0].Name);
+    }
+
+    #endregion
+
     #region Edge Cases and Stress Tests
 
     [AvaloniaFact]

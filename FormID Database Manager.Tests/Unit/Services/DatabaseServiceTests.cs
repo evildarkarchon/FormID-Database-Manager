@@ -105,8 +105,9 @@ public class DatabaseServiceTests : IClassFixture<DatabaseFixture>, IAsyncLifeti
                     indices.Add(reader.GetString(0));
                 }
 
-                Assert.Contains($"{gameRelease}_index", indices);
                 Assert.Contains($"{gameRelease}_covering_idx", indices);
+                Assert.Contains($"{gameRelease}_plugin_idx", indices);
+                Assert.DoesNotContain($"{gameRelease}_index", indices);
             }
 
             // Force garbage collection to ensure SQLite releases the file

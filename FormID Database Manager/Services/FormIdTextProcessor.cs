@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -47,16 +46,14 @@ public class FormIdTextProcessor(DatabaseService databaseService)
         CancellationToken cancellationToken,
         IProgress<(string Message, double? Value)>? progress = null)
     {
-        var processedPlugins = new HashSet<string>();
+        var processedPlugins = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         await using var batchInserter = new BatchInserter(conn, gameRelease, BatchSize);
         var currentPlugin = string.Empty;
         var recordCount = 0;
 
-        // Use byte-based progress estimation instead of counting lines (avoids double file read)
-        // This reduces I/O time by 50% for large files
+        // Use stream position for progress tracking (avoids per-line UTF8.GetByteCount overhead)
         var fileInfo = new FileInfo(formIdListPath);
         var totalBytes = fileInfo.Length;
-        long bytesRead = 0;
 
         progress?.Report(("Starting processing...", 0));
 
@@ -74,19 +71,39 @@ public class FormIdTextProcessor(DatabaseService databaseService)
                 break;
             }
 
-            // Track bytes read for progress estimation
-            bytesRead += Encoding.UTF8.GetByteCount(line) + Environment.NewLine.Length;
+            // Use stream position directly for progress (no per-line byte counting)
+            var bytesRead = stream.Position;
 
             if (string.IsNullOrWhiteSpace(line))
             {
                 continue;
             }
 
-            var parts = line.Split('|').Select(p => p.Trim()).ToArray();
-            if (parts.Length != 3)
+            // Span-based parsing: find pipe positions without allocating Split array
+            var span = line.AsSpan();
+            var firstPipe = span.IndexOf('|');
+            if (firstPipe < 0)
             {
                 continue;
             }
+
+            var rest = span[(firstPipe + 1)..];
+            var secondPipe = rest.IndexOf('|');
+            if (secondPipe < 0)
+            {
+                continue;
+            }
+
+            // Check for extra pipes (more than 3 parts)
+            var afterSecond = rest[(secondPipe + 1)..];
+            if (afterSecond.IndexOf('|') >= 0)
+            {
+                continue;
+            }
+
+            var pluginName = span[..firstPipe].Trim().ToString();
+            var formId = rest[..secondPipe].Trim().ToString();
+            var entry = afterSecond.Trim().ToString();
 
             recordCount++;
 
@@ -98,12 +115,8 @@ public class FormIdTextProcessor(DatabaseService databaseService)
                     progressPercent));
             }
 
-            var pluginName = parts[0];
-            var formId = parts[1];
-            var entry = parts[2];
-
             // If we've moved to a new plugin
-            if (currentPlugin != pluginName)
+            if (!string.Equals(currentPlugin, pluginName, StringComparison.OrdinalIgnoreCase))
             {
                 // Flush any existing batch for the previous plugin
                 await batchInserter.FlushBatchAsync(cancellationToken).ConfigureAwait(false);
@@ -202,12 +215,10 @@ public class FormIdTextProcessor(DatabaseService databaseService)
         }
 
         /// <summary>
-        ///     Flushes the current batch of records to the database, committing them in a single transaction.
-        ///     This method ensures the batched records are inserted and any associated resources, such as transactions, are
-        ///     properly handled.
+        ///     Flushes the current batch using a prepared statement in a single transaction.
+        ///     Uses synchronous ExecuteNonQuery within the loop for minimal overhead
+        ///     (SQLite is in-process, so async round-trip savings are negligible).
         /// </summary>
-        /// <param name="cancellationToken">The token to monitor for cancellation requests during the flushing process.</param>
-        /// <returns>A task representing the asynchronous operation of flushing the batch to the database.</returns>
         public async Task FlushBatchAsync(CancellationToken cancellationToken)
         {
             if (_batch.Count == 0)
@@ -218,11 +229,11 @@ public class FormIdTextProcessor(DatabaseService databaseService)
             if (_insertCommand == null)
             {
                 _insertCommand = _conn.CreateCommand();
-                _insertCommand.CommandText = $@"INSERT INTO {_tableName} (plugin, formid, entry)
-                                               VALUES (@plugin, @formid, @entry)";
+                _insertCommand.CommandText = $"INSERT INTO {_tableName} (plugin, formid, entry) VALUES (@plugin, @formid, @entry)";
                 _insertCommand.Parameters.Add(new SqliteParameter { ParameterName = "@plugin" });
                 _insertCommand.Parameters.Add(new SqliteParameter { ParameterName = "@formid" });
                 _insertCommand.Parameters.Add(new SqliteParameter { ParameterName = "@entry" });
+                _insertCommand.Prepare();
             }
 
             await using var transaction = await _conn.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
@@ -238,7 +249,7 @@ public class FormIdTextProcessor(DatabaseService databaseService)
                     _insertCommand.Parameters["@formid"].Value = formId;
                     _insertCommand.Parameters["@entry"].Value = entry;
 
-                    await _insertCommand.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+                    _insertCommand.ExecuteNonQuery();
                 }
 
                 await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
