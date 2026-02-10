@@ -91,6 +91,5 @@ The solution has three projects in `FormID Database Manager.slnx`:
 
 ## Important Notes
 
-- The `Mutagen/` directory is a **git submodule** included as a **read-only API reference** for AI agents and developers. It is not part of the solution build and should never be modified. The app references Mutagen via NuGet package, not the submodule source. Use it to look up Mutagen types, interfaces, and method signatures when needed.
+- **Mutagen API Reference**: When looking up Mutagen types, interfaces, or method signatures, consult `docs/mutagen/` first — it contains pre-generated API documentation (one markdown file per project) with organized type catalogs, method signatures, and common patterns. If the documentation doesn't have the detail you need, fall back to the `Mutagen/` git submodule source code as a secondary reference. The submodule is read-only and should never be modified. The app references Mutagen via NuGet package, not the submodule source.
 - `CS1998` (async method lacks await) is treated as an error via `WarningsAsErrors`.
-- The app targets `net10.0` (upgraded from net8.0; README still references .NET 8).
