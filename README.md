@@ -1,8 +1,25 @@
 ﻿# FormID Database Manager
 
-FormID Database Manager is a desktop application developed using [Avalonia](https://avaloniaui.net/) that aims to
-provide a robust and user-friendly interface for creating SQLite databases that store the FormIDs and their associated
-EditorID or Name value (if any).
+FormID Database Manager is a desktop application developed using [Avalonia](https://avaloniaui.net/) that provides a
+robust and user-friendly interface for creating SQLite databases that store the FormIDs and their associated
+EditorID or Name value (if any) from Bethesda game plugins.
+
+## Supported Games
+
+- The Elder Scrolls IV: Oblivion
+- The Elder Scrolls V: Skyrim (LE, SE, SE GOG, VR)
+- Enderal (LE, SE)
+- Fallout 4 (including VR)
+- Starfield
+
+## Features
+
+- Automatic game detection from directory structure
+- Plugin list loading with filtering and selection
+- Batch processing of plugins into a SQLite database
+- Import from pipe-delimited FormID text files (`plugin|formid|entry`)
+- Update mode to replace existing plugin entries
+- Progress reporting with cancellation support
 
 ---
 
@@ -10,10 +27,11 @@ EditorID or Name value (if any).
 
 ### Framework and Technologies
 
-- **C#**: Built with `C# 12.0` for clean, efficient, and modern software development.
-- **Avalonia UI**: Provides cross-platform UI development with advanced rendering capabilities.
-- **Mutagen Framework**: Allows parsing of Bethesda Plugins to get the data needed for the database.
-- **Target Framework**: `.NET 8.0`.
+- **C#** / **.NET 10.0**
+- **Avalonia UI 11.3**: Cross-platform desktop UI framework
+- **Mutagen**: Bethesda plugin parsing library
+- **Microsoft.Data.Sqlite**: SQLite database access
+- **xUnit** + **Moq**: Testing framework
 
 ---
 
@@ -21,18 +39,47 @@ EditorID or Name value (if any).
 
 ### Prerequisites
 
-To run the project, ensure you have:
+- [.NET SDK 10.0](https://dotnet.microsoft.com/download) or later
 
-- .NET SDK 8.0 or later installed.
+### Build
+
+```bash
+dotnet build "FormID Database Manager.slnx"
+```
+
+### Run
+
+```bash
+dotnet run --project "FormID Database Manager"
+```
+
+### Test
+
+```bash
+dotnet test "FormID Database Manager.Tests"
+```
+
+### Publish
+
+```bash
+dotnet publish "FormID Database Manager" -c Release -r win-x64
+```
+
+This produces a self-contained, trimmed single-file executable.
 
 ---
 
 ## Project Structure
 
-- **`Program.cs`**: Handles application entry point and configuration.
-- **`App.xaml` / `App.xaml.cs`**: Defines and initializes the Avalonia application core and styles.
-- **UI Components**: Contains Avalonia XAML files and related logic for user interface rendering and interaction.
-- **`libs` Directory**: Holds dynamically loaded `.dll` dependencies.
+- **`FormID Database Manager/`**: Main application
+  - `Program.cs` — Application entry point
+  - `App.axaml` / `App.axaml.cs` — Avalonia application core and styles
+  - `MainWindow.axaml` / `MainWindow.axaml.cs` — Main UI window
+  - `ViewModels/` — MVVM view models
+  - `Services/` — Business logic (database, plugin processing, game detection)
+  - `Models/` — Data models
+- **`FormID Database Manager.Tests/`**: Unit, integration, UI, and performance tests
+- **`FormID Database Manager.TestUtilities/`**: Shared test fixtures, mocks, and builders
 
 ---
 
@@ -58,6 +105,7 @@ modify, and distribute the code as needed.
 ## Acknowledgements
 
 - [Avalonia UI](https://avaloniaui.net/) for providing the framework to build a cross-platform desktop application.
+- [Mutagen](https://github.com/Mutagen-Modding/Mutagen) for Bethesda plugin parsing.
 
 ---
 

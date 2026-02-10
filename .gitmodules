@@ -1,0 +1,3 @@
+[submodule "Mutagen"]
+	path = Mutagen
+	url = https://github.com/Mutagen-Modding/Mutagen.git

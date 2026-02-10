@@ -4,244 +4,93 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-FormID Database Manager is a cross-platform desktop application built with Avalonia UI that creates SQLite databases containing FormIDs and their associated EditorID/Name values from Bethesda game plugins. It supports Skyrim (SE/AE/VR/GOG), Fallout 4, Starfield, and Oblivion.
+FormID Database Manager is an Avalonia UI desktop application that creates SQLite databases storing FormIDs and their associated EditorID/Name values from Bethesda game plugins (Skyrim, Fallout 4, Starfield, Oblivion). It uses the Mutagen library to parse plugin files.
 
-**Technical Stack:**
-- C# 12.0 with .NET 10.0
-- Nullable reference types enabled
-- Compiled bindings for Avalonia
-- **Warning CS1998 treated as error**: Async methods without await operators will cause build failures
-
-## Build Commands
+## Build & Run Commands
 
 ```bash
-# Build the project
-dotnet build
+# Build (solution file uses .slnx format)
+dotnet build "FormID Database Manager.slnx"
 
-# Run the application  
-dotnet run --project "FormID Database Manager/FormID Database Manager.csproj"
+# Run the application
+dotnet run --project "FormID Database Manager"
 
 # Run all tests
-dotnet test
+dotnet test "FormID Database Manager.Tests"
 
-# Run specific test project
-dotnet test "FormID Database Manager.Tests/FormID Database Manager.Tests.csproj"
+# Run a specific test class
+dotnet test "FormID Database Manager.Tests" --filter "FullyQualifiedName~DatabaseServiceTests"
 
 # Run a single test
-dotnet test --filter "FullyQualifiedName~DatabaseServiceTests.InitializeDatabase_CreatesCorrectTable"
+dotnet test "FormID Database Manager.Tests" --filter "FullyQualifiedName~DatabaseServiceTests.InitializeDatabase_CreatesTableForEachGameRelease"
 
-# Check code formatting
-dotnet format --verify-no-changes
+# Run tests by category
+dotnet test "FormID Database Manager.Tests" --filter "Category=LoadTest"
 
-# Fix code formatting
-dotnet format
-
-# Publish for release (with DLL organization)
-dotnet publish -c Release
+# Publish (self-contained, trimmed single file)
+dotnet publish "FormID Database Manager" -c Release -r win-x64
 ```
 
-## Code Coverage Commands
+## Tech Stack
 
-```bash
-# Run tests with code coverage
-dotnet test /p:CollectCoverage=true /p:CoverletOutputFormat=cobertura
-
-# Run tests with coverage and generate report file
-dotnet test /p:CollectCoverage=true /p:CoverletOutput=./coverage.xml /p:CoverletOutputFormat=cobertura
-
-# Run tests with coverage showing results in console
-dotnet test /p:CollectCoverage=true /p:CoverletOutputFormat=lcov
-
-# Run specific test category with coverage
-dotnet test --filter "Category=Unit" /p:CollectCoverage=true
-
-# Exclude test files from coverage
-dotnet test /p:CollectCoverage=true /p:Exclude="[*Tests*]*"
-```
-
-## Performance Testing
-
-```bash
-# Run performance benchmarks
-dotnet run -c Release --project "FormID Database Manager.Tests/FormID Database Manager.Tests.csproj" -- --filter "*Benchmark*"
-
-# Run specific benchmark
-dotnet run -c Release --project "FormID Database Manager.Tests/FormID Database Manager.Tests.csproj" -- --filter "DatabaseBenchmarks"
-
-# Run load tests
-dotnet test --filter "Category=LoadTest"
-
-# Run stress tests  
-dotnet test --filter "Category=StressTest"
-```
+- **.NET 10.0** / C# with nullable enabled
+- **Avalonia UI 11.3** (cross-platform desktop UI, AXAML files)
+- **Mutagen 0.51.5** (Bethesda plugin parsing)
+- **Microsoft.Data.Sqlite** (database)
+- **xUnit** + **Moq** + **Avalonia.Headless.XUnit** (testing)
+- **BenchmarkDotNet** (performance benchmarks)
 
 ## Architecture
 
-The application follows MVVM pattern with these key components:
+The solution has three projects in `FormID Database Manager.slnx`:
 
-### Services (Business Logic)
-- **DatabaseService**: Manages SQLite database operations with game-specific tables
-- **GameDetectionService**: Auto-detects game type from plugin directory  
-- **ModProcessor**: Processes individual plugins using Mutagen library
-- **PluginProcessingService**: Orchestrates the entire processing workflow
-- **FormIdTextProcessor**: Filters FormID text files based on plugin lists
-- **PluginListManager**: Manages plugin list loading and parsing
-- **WindowManager**: Window positioning and management utilities
+### Main App (`FormID Database Manager/`)
+- `MainWindow.axaml.cs` — UI event handlers, wires services together manually (no DI container)
+- `ViewModels/MainWindowViewModel.cs` — INotifyPropertyChanged ViewModel with plugin filtering, progress tracking, and thread-safe UI updates via `IThreadDispatcher`
+- `Services/` — All business logic:
+  - `DatabaseService` — SQLite schema, CRUD, optimizations (WAL mode, covering indexes)
+  - `PluginProcessingService` — Orchestrates plugin processing with cancellation support
+  - `ModProcessor` — Parses plugins via Mutagen's `CreateFromBinaryOverlay`, extracts FormIDs with batched inserts (1000/batch). Uses cached reflection for name extraction
+  - `FormIdTextProcessor` — Parses pipe-delimited text files (`plugin|formid|entry`), batched inserts (10000/batch)
+  - `PluginListManager` — Loads plugin lists from game directories on background thread
+  - `GameDetectionService` — Detects game type from directory structure (master file presence)
+  - `WindowManager` — Avalonia file/folder picker dialogs
+  - `IThreadDispatcher` / `AvaloniaThreadDispatcher` — Abstraction for UI thread marshalling (testable)
+- `Models/` — `PluginListItem` (INotifyPropertyChanged), `ProcessingParameters`
 
-### Key Design Patterns
-- Dependency injection for services
-- Async/await throughout for UI responsiveness
-- Error callbacks with ignorable error patterns
-- Batch database operations for performance
-- Custom assembly resolver for DLL loading from libs folder
-- IThreadDispatcher abstraction for UI thread access (enables testability)
+### Test Utilities (`FormID Database Manager.TestUtilities/`)
+- `Fixtures/DatabaseFixture` — Shared in-memory SQLite setup
+- `Mocks/MockFactory` — Consistent mock creation for services
+- `Mocks/SynchronousThreadDispatcher` — Test-friendly IThreadDispatcher (executes immediately)
+- `Mocks/SynchronousProgress` — Synchronous IProgress for testing
+- `Builders/` — Test data builders (GameDetectionBuilder, PluginBuilder)
+- Custom test attributes: `RequiresGameInstallationAttribute`, `ExpectsGameEnvironmentFailureAttribute`
 
-### Database Schema
-Each game gets its own table:
-```sql
-CREATE TABLE {GameRelease} (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    plugin TEXT NOT NULL,
-    formid TEXT NOT NULL,
-    entry TEXT NOT NULL
-)
-```
+### Tests (`FormID Database Manager.Tests/`)
+- `Unit/Services/` — Service unit tests
+- `Unit/ViewModels/` — ViewModel tests
+- `UI/` — Avalonia headless UI tests (use `[AvaloniaFact]`)
+- `Integration/` — Tests with real database/Mutagen (some require game installations)
+- `Performance/` — Benchmarks, load tests, stress tests, regression tests
 
-## Important Implementation Details
+## Key Patterns
 
-1. **DLL Resolution**: Program.cs contains custom assembly resolver that loads DLLs from `libs` folder. The PostPublish build target automatically organizes all dependency DLLs into the `libs` directory during `dotnet publish`.
-2. **Game Detection**: Uses directory name and plugin files to auto-detect game type
-3. **Batch Processing**: Database inserts are batched (1000 entries) for performance
-4. **Error Handling**: Ignorable errors are defined in GameDetectionService for known issues
-5. **UI Threading**: Heavy operations use Task.Run to avoid blocking UI
-6. **Acrylic Effect**: MainWindow uses platform-specific acrylic blur for modern appearance
-7. **Async Method Warning**: CS1998 warning (async without await) is configured as an error. Remove the `async` keyword from methods that don't use `await`.
+- **Thread safety**: UI updates go through `IThreadDispatcher`. ViewModel uses `Interlocked` for filter reentrancy guard and `lock` for plugins collection access.
+- **SQL injection prevention**: `GetSafeTableName()` uses an explicit whitelist switch on `GameRelease` enum — this pattern is duplicated in `DatabaseService`, `ModProcessor`, and `FormIdTextProcessor.BatchInserter`.
+- **Cancellation**: All async processing supports `CancellationToken`. `PluginProcessingService` manages `CancellationTokenSource` lifecycle with a lock. Note: Mutagen's `CreateFromBinaryOverlay` is synchronous and not cancellable.
+- **Test collections**: Database and UI tests use `[Collection(...)]` for sequential execution. Unit tests run in parallel.
+- **InternalsVisibleTo**: The main project exposes internals to the test project.
 
-## Testing Strategy
+## Testing Conventions
 
-### Test Categories
-- **Unit Tests**: Located in `FormID Database Manager.Tests/Unit/`
-  - Service tests with mocked dependencies
-  - ViewModel tests for business logic
-  - Model tests for data validation
-  
-- **Integration Tests**: Located in `FormID Database Manager.Tests/Integration/`
-  - End-to-end service tests with real dependencies
-  - Database integration tests
-  - Plugin processing workflow tests
-  
-- **UI Tests**: Located in `FormID Database Manager.Tests/UI/`
-  - Use Avalonia.Headless.XUnit for headless UI testing
-  - MainWindow initialization and control tests
-  - Data binding verification tests
-  - UI control behavior tests
-  
-- **Performance Tests**: Located in `FormID Database Manager.Tests/Performance/`
-  - **Benchmarks**: Using BenchmarkDotNet for micro-benchmarks
-    - DatabaseBenchmarks: Database operation performance
-    - PluginProcessingBenchmarks: Plugin processing speed
-    - MemoryBenchmarks: Memory usage analysis
-  - **Load Tests**: Testing under heavy load (Category=LoadTest)
-    - 100+ concurrent plugin processing
-    - Large plugin handling (100k+ FormIDs)
-    - Concurrent database operations
-  - **Stress Tests**: Testing extreme conditions (Category=StressTest)
-    - Rapid cancellation scenarios
-    - Maximum connection limits
-    - Memory pressure scenarios
+- Test naming: `MethodName_StateUnderTest_ExpectedBehavior`
+- Use `SynchronousThreadDispatcher` in tests instead of `AvaloniaThreadDispatcher`
+- Use in-memory SQLite via `DatabaseFixture` for database tests
+- Integration tests requiring game installations use `[RequiresGameInstallationFact]`
+- UI tests use `[AvaloniaFact]` attribute
 
-- **Test Utilities**: Shared test builders and mocks in `FormID Database Manager.TestUtilities/`
-  - `SynchronousThreadDispatcher`: Test-friendly dispatcher that executes actions immediately (avoids UI thread deadlocks)
-  - `SynchronousProgress<T>`: Synchronous IProgress implementation for reliable test assertions
+## Important Notes
 
-### Known Test Runner Quirk
-**Running integration tests in isolation via `--filter` may hang**, but the full test suite runs successfully. This appears to be an environmental/test runner behavior rather than a code issue:
-- `dotnet test` (full suite): Works correctly, all tests pass
-- `dotnet test --filter "FullyQualifiedName~IntegrationTests"`: May hang indefinitely
-- Individual tests via filter work: `dotnet test --filter "FullyQualifiedName~DatabaseIntegrationTests.Database_RecoverFromCorruption_Successfully"`
-
-**Workaround**: Run the full test suite instead of filtering to integration test classes.
-
-### Coverage Goals
-- Target: 80% code coverage
-- Use coverlet for coverage analysis
-- Exclude test projects from coverage metrics
-
-## Key Dependencies
-
-- **Avalonia UI 11.3.9**: Cross-platform UI framework
-- **Mutagen.Bethesda 0.51.5**: For parsing Bethesda game plugins
-- **Microsoft.Data.Sqlite 10.0.0**: Database operations (lightweight, modern SQLite provider)
-- **xUnit 2.9.3**: Testing framework with Moq for mocking
-- **BenchmarkDotNet 0.15.8**: Performance benchmarking
-
-## Development Notes
-
-### Mutagen API Documentation
-- There is no dedicated API documentation for Mutagen
-- API queries must reference the source code at `https://github.com/Mutagen-Modding/Mutagen/tree/0.51.5` (match current version)
-
-### Project License
-- GPL-3.0 License - modifications and distributions must comply with GPL-3.0 terms
-
-## Mandatory: Test-Driven Development (TDD)
-
-**All code changes MUST follow TDD using the Red-Green-Refactor cycle.**
-
-### TDD Workflow
-
-1. **RED**: Write a failing test first. Run it to confirm it fails.
-2. **GREEN**: Write the minimum code to make the test pass. Run the test.
-3. **REFACTOR**: Clean up the code. Run all tests to verify nothing broke.
-
-### Requirements
-
-- Never write implementation code without a failing test first
-- Run tests at each step to verify the cycle
-- Use test naming: `MethodName_Scenario_ExpectedBehavior`
-- One assertion per test when possible
-
-For detailed guidance, see [`skills/test-driven-development/SKILL.md`](skills/test-driven-development/SKILL.md).
-
-### Quick TDD Commands
-
-```bash
-# Run specific test class during development
-dotnet test --filter "FullyQualifiedName~DatabaseServiceTests"
-
-# Run tests continuously in watch mode
-dotnet watch test --project "FormID Database Manager.Tests"
-
-# Run tests with coverage for the class under development
-dotnet test /p:CollectCoverage=true /p:CoverletOutputFormat=lcov
-```
-
-### TDD Commit Strategy
-
-```bash
-# RED phase - commit failing tests
-git commit -m "RED: Add tests for [feature name]
-
-- Test scenario 1
-- Test scenario 2
-- Edge cases covered
-
-Tests failing as expected"
-
-# GREEN phase - commit passing implementation
-git commit -m "GREEN: Implement [feature name]
-
-- Minimal implementation to pass tests
-- All tests passing
-
-Implements: [TestClassName]"
-
-# REFACTOR phase - commit improvements
-git commit -m "REFACTOR: Improve [component] quality
-
-- Extracted methods for clarity
-- Improved naming
-- Reduced complexity
-
-Behavior unchanged - all tests passing"
-```
+- The `Mutagen/` directory is a **git submodule** included as a **read-only API reference** for AI agents and developers. It is not part of the solution build and should never be modified. The app references Mutagen via NuGet package, not the submodule source. Use it to look up Mutagen types, interfaces, and method signatures when needed.
+- `CS1998` (async method lacks await) is treated as an error via `WarningsAsErrors`.
+- The app targets `net10.0` (upgraded from net8.0; README still references .NET 8).
