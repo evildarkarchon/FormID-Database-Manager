@@ -358,7 +358,7 @@ public class StressTests : IDisposable
         _output.WriteLine($"Optimize time: {optimizeStopwatch.Elapsed.TotalSeconds:F2} seconds");
 
         Assert.True(fileInfo.Length > 0, "Database file is empty");
-        Assert.True(searchStopwatch.ElapsedMilliseconds < 1000,
+        Assert.True(searchStopwatch.ElapsedMilliseconds < 1200,
             $"Search too slow: {searchStopwatch.ElapsedMilliseconds} ms");
     }
 

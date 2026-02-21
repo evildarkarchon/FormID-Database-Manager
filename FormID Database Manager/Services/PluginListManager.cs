@@ -45,12 +45,10 @@ public class PluginListManager(
             var (pluginItems, nonBaseCount) = await Task.Run(() =>
             {
                 // Determine the data path
-                var dataPath = Path.GetFileName(gameDirectory).Equals("Data", StringComparison.OrdinalIgnoreCase)
-                    ? gameDirectory
-                    : Path.Combine(gameDirectory, "Data");
+                var dataPath = GameReleaseHelper.ResolveDataPath(gameDirectory);
 
                 // Prepare environment scoped to the target directory
-                var env = GameEnvironment.Typical.Builder(gameRelease)
+                using var env = GameEnvironment.Typical.Builder(gameRelease)
                     .WithTargetDataFolder(dataPath)
                     .Build();
 

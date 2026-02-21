@@ -94,7 +94,7 @@ public class PluginProcessingServiceTests : IDisposable
     {
         var parameters = CreateTestParameters(true);
         var progressReports = new List<(string Message, double? Value)>();
-        var progress = new Progress<(string Message, double? Value)>(report => progressReports.Add(report));
+        var progress = new SynchronousProgress<(string Message, double? Value)>(report => progressReports.Add(report));
 
         await _service.ProcessPlugins(parameters, progress);
 
@@ -110,7 +110,7 @@ public class PluginProcessingServiceTests : IDisposable
     {
         var parameters = CreateTestParameters(true, "C:\\Test\\formids.txt");
         var progressReports = new List<(string Message, double? Value)>();
-        var progress = new Progress<(string Message, double? Value)>(report => progressReports.Add(report));
+        var progress = new SynchronousProgress<(string Message, double? Value)>(report => progressReports.Add(report));
 
         await _service.ProcessPlugins(parameters, progress);
 
@@ -136,7 +136,7 @@ public class PluginProcessingServiceTests : IDisposable
             FormIdListPath = parameters.FormIdListPath
         };
         var progressReports = new List<(string Message, double? Value)>();
-        var progress = new Progress<(string Message, double? Value)>(report => progressReports.Add(report));
+        var progress = new SynchronousProgress<(string Message, double? Value)>(report => progressReports.Add(report));
 
         await _service.ProcessPlugins(parameters, progress);
 

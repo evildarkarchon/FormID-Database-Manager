@@ -65,7 +65,7 @@ public class ModProcessorTests : IDisposable
 
         var pluginItem = new PluginListItem { Name = "TestPlugin.esp", IsSelected = true };
         var mockModListing = CreateMockModListing("TestPlugin.esp");
-        var loadOrder = new List<IModListingGetter<IModGetter>> { mockModListing.Object };
+        var loadOrder = CreateLoadOrderDictionary(mockModListing.Object);
 
         // Get initial count
         var initialCount = GetRecordCount();
@@ -109,7 +109,7 @@ public class ModProcessorTests : IDisposable
 
         var pluginItem = new PluginListItem { Name = "TestPlugin.esp", IsSelected = true };
         var mockModListing = CreateMockModListing("TestPlugin.esp");
-        var loadOrder = new List<IModListingGetter<IModGetter>> { mockModListing.Object };
+        var loadOrder = CreateLoadOrderDictionary(mockModListing.Object);
 
         // Act & Assert - Should throw because plugin is not valid
         await Assert.ThrowsAnyAsync<Exception>(async () =>
@@ -145,7 +145,7 @@ public class ModProcessorTests : IDisposable
 
             var pluginItem = new PluginListItem { Name = "TestPlugin.esp", IsSelected = true };
             var mockModListing = CreateMockModListing("TestPlugin.esp");
-            var loadOrder = new List<IModListingGetter<IModGetter>> { mockModListing.Object };
+            var loadOrder = CreateLoadOrderDictionary(mockModListing.Object);
 
             // Initialize table for each game
             InitializeDatabase(_connection, gameRelease);
@@ -182,7 +182,7 @@ public class ModProcessorTests : IDisposable
         await CreateMinimalPluginFile(pluginPath);
 
         var pluginItem = new PluginListItem { Name = "TestPlugin.esp", IsSelected = true };
-        var emptyLoadOrder = new List<IModListingGetter<IModGetter>>(); // Empty load order
+        var emptyLoadOrder = CreateLoadOrderDictionary(); // Empty load order
 
         // Act
         await _modProcessor.ProcessPlugin(
@@ -215,7 +215,7 @@ public class ModProcessorTests : IDisposable
 
         var pluginItem = new PluginListItem { Name = "Corrupted.esp", IsSelected = true };
         var mockModListing = CreateMockModListing("Corrupted.esp");
-        var loadOrder = new List<IModListingGetter<IModGetter>> { mockModListing.Object };
+        var loadOrder = CreateLoadOrderDictionary(mockModListing.Object);
 
         // Act & Assert
         await Assert.ThrowsAnyAsync<Exception>(async () =>
@@ -257,7 +257,7 @@ public class ModProcessorTests : IDisposable
         var gameDir = Path.Combine(Path.GetTempPath(), "TestGame");
         var pluginItem = new PluginListItem { Name = "Missing.esp", IsSelected = true };
         var mockModListing = CreateMockModListing("Missing.esp");
-        var loadOrder = new List<IModListingGetter<IModGetter>> { mockModListing.Object };
+        var loadOrder = CreateLoadOrderDictionary(mockModListing.Object);
 
         // Act - Process with non-existent plugin
         await _modProcessor.ProcessPlugin(
@@ -288,7 +288,7 @@ public class ModProcessorTests : IDisposable
 
         var pluginItem = new PluginListItem { Name = "TestPlugin.esp", IsSelected = true };
         var mockModListing = CreateMockModListing("TestPlugin.esp");
-        var loadOrder = new List<IModListingGetter<IModGetter>> { mockModListing.Object };
+        var loadOrder = CreateLoadOrderDictionary(mockModListing.Object);
 
         var cts = new CancellationTokenSource();
         cts.Cancel(); // Cancel immediately
@@ -337,7 +337,7 @@ public class ModProcessorTests : IDisposable
 
         var pluginItem = new PluginListItem { Name = "Empty.esp", IsSelected = true };
         var mockModListing = CreateMockModListing("Empty.esp");
-        var loadOrder = new List<IModListingGetter<IModGetter>> { mockModListing.Object };
+        var loadOrder = CreateLoadOrderDictionary(mockModListing.Object);
 
         // Act & Assert - Should fail due to invalid plugin format
         await Assert.ThrowsAnyAsync<Exception>(async () =>
@@ -357,7 +357,7 @@ public class ModProcessorTests : IDisposable
         // Arrange
         var gameDir = Path.Combine(Path.GetTempPath(), "TestGame", "Data");
         var pluginItem = new PluginListItem { Name = "Test.esp", IsSelected = true };
-        var emptyLoadOrder = new List<IModListingGetter<IModGetter>>();
+        var emptyLoadOrder = CreateLoadOrderDictionary();
 
         // Act
         await _modProcessor.ProcessPlugin(
@@ -394,7 +394,7 @@ public class ModProcessorTests : IDisposable
 
             var pluginItem = new PluginListItem { Name = "Test.esp", IsSelected = true };
             var mockModListing = CreateMockModListing("Test.esp");
-            var loadOrder = new List<IModListingGetter<IModGetter>> { mockModListing.Object };
+            var loadOrder = CreateLoadOrderDictionary(mockModListing.Object);
 
             // Act - Should fail due to invalid plugin
             try
@@ -434,7 +434,7 @@ public class ModProcessorTests : IDisposable
 
             var pluginItem = new PluginListItem { Name = pluginName, IsSelected = true };
             var mockModListing = CreateMockModListing(pluginName);
-            var loadOrder = new List<IModListingGetter<IModGetter>> { mockModListing.Object };
+            var loadOrder = CreateLoadOrderDictionary(mockModListing.Object);
 
             // Act - Should fail due to invalid plugin
             try
@@ -497,6 +497,18 @@ public class ModProcessorTests : IDisposable
         var modKey = new ModKey(modName, modType);
         mock.Setup(m => m.ModKey).Returns(modKey);
         return mock;
+    }
+
+    private static IReadOnlyDictionary<string, IModListingGetter<IModGetter>> CreateLoadOrderDictionary(
+        params IModListingGetter<IModGetter>[] listings)
+    {
+        var loadOrderDict = new Dictionary<string, IModListingGetter<IModGetter>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var listing in listings)
+        {
+            loadOrderDict.TryAdd(listing.ModKey.FileName, listing);
+        }
+
+        return loadOrderDict;
     }
 
     private async Task CreateMinimalPluginFile(string path)

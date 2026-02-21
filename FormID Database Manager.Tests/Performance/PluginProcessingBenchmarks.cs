@@ -247,9 +247,10 @@ public class PluginProcessingBenchmarks : IDisposable
         return plugins;
     }
 
-    private IList<IModListingGetter<IModGetter>> CreateLoadOrder(IEnumerable<PluginListItem> plugins)
+    private IReadOnlyDictionary<string, IModListingGetter<IModGetter>> CreateLoadOrder(
+        IEnumerable<PluginListItem> plugins)
     {
-        var loadOrder = new List<IModListingGetter<IModGetter>>();
+        var loadOrder = new Dictionary<string, IModListingGetter<IModGetter>>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var plugin in plugins)
         {
@@ -260,7 +261,7 @@ public class PluginProcessingBenchmarks : IDisposable
             mockListing.Setup(x => x.Enabled).Returns(true);
             mockListing.Setup(x => x.ModExists).Returns(true);
 
-            loadOrder.Add(mockListing.Object);
+            loadOrder.TryAdd(plugin.Name, mockListing.Object);
         }
 
         return loadOrder;

@@ -164,29 +164,10 @@ public class FormIdTextProcessor(DatabaseService databaseService)
         public BatchInserter(SqliteConnection conn, GameRelease gameRelease, int batchSize)
         {
             _conn = conn;
-            _tableName = GetSafeTableName(gameRelease);
+            _tableName = GameReleaseHelper.GetSafeTableName(gameRelease);
             _batchSize = batchSize;
             _batch = new List<(string plugin, string formId, string entry)>(batchSize);
         }
-
-        /// <summary>
-        ///     Gets a validated table name for the specified game release.
-        ///     Uses explicit whitelist mapping to prevent SQL injection even though GameRelease is an enum.
-        /// </summary>
-        private static string GetSafeTableName(GameRelease release) => release switch
-        {
-            GameRelease.SkyrimSE => "SkyrimSE",
-            GameRelease.SkyrimSEGog => "SkyrimSEGog",
-            GameRelease.SkyrimVR => "SkyrimVR",
-            GameRelease.SkyrimLE => "SkyrimLE",
-            GameRelease.Fallout4 => "Fallout4",
-            GameRelease.Fallout4VR => "Fallout4VR",
-            GameRelease.Starfield => "Starfield",
-            GameRelease.Oblivion => "Oblivion",
-            GameRelease.EnderalLE => "EnderalLE",
-            GameRelease.EnderalSE => "EnderalSE",
-            _ => throw new ArgumentException($"Unsupported game release: {release}", nameof(release))
-        };
 
         public async ValueTask DisposeAsync()
         {

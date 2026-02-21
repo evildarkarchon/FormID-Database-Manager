@@ -139,7 +139,10 @@ public class LoadTests : IDisposable
             conn,
             GameRelease.SkyrimSE,
             new PluginListItem { Name = pluginName },
-            [],
+            new Dictionary<string, IModListingGetter<IModGetter>>(StringComparer.OrdinalIgnoreCase)
+            {
+                [pluginName] = CreateMockModListing(pluginName)
+            },
             false,
             CancellationToken.None);
 
@@ -399,5 +402,15 @@ public class LoadTests : IDisposable
 
             mod.WriteToBinary(path);
         });
+    }
+
+    private static IModListingGetter<IModGetter> CreateMockModListing(string pluginName)
+    {
+        var modKey = ModKey.FromNameAndExtension(pluginName);
+        var mockListing = new Moq.Mock<IModListingGetter<IModGetter>>();
+        mockListing.Setup(x => x.ModKey).Returns(modKey);
+        mockListing.Setup(x => x.Enabled).Returns(true);
+        mockListing.Setup(x => x.ModExists).Returns(true);
+        return mockListing.Object;
     }
 }

@@ -73,88 +73,20 @@ public class GameDetectionService
     {
         try
         {
+            var resolvedDataPath = GameReleaseHelper.ResolveDataPath(gameDirectory);
+
             // If this is already a data directory, use it directly
-            if (Path.GetFileName(gameDirectory).Equals("Data", StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(resolvedDataPath, gameDirectory, StringComparison.OrdinalIgnoreCase))
             {
-                // Check for game-specific master files in the current directory
-                if (File.Exists(Path.Combine(gameDirectory, "Skyrim.esm")))
-                {
-                    if (Directory.Exists(Path.Combine(gameDirectory, "..", "gogscripts")) ||
-                        File.Exists(Path.Combine(gameDirectory, "..", "goggame-1746476928.info")))
-                    {
-                        return GameRelease.SkyrimSEGog;
-                    }
-
-                    if (File.Exists(Path.Combine(gameDirectory, "..", "SkyrimVR.exe")))
-                    {
-                        return GameRelease.SkyrimVR;
-                    }
-
-                    return GameRelease.SkyrimSE;
-                }
-
-                if (File.Exists(Path.Combine(gameDirectory, "Oblivion.esm")))
-                {
-                    return GameRelease.Oblivion;
-                }
-
-                if (File.Exists(Path.Combine(gameDirectory, "Fallout4.esm")))
-                {
-                    if (File.Exists(Path.Combine(gameDirectory, "..", "Fallout4VR.exe")))
-                    {
-                        return GameRelease.Fallout4VR;
-                    }
-
-                    return GameRelease.Fallout4;
-                }
-
-                if (File.Exists(Path.Combine(gameDirectory, "Starfield.esm")))
-                {
-                    return GameRelease.Starfield;
-                }
+                var gameRoot = Directory.GetParent(gameDirectory)?.FullName ??
+                               Path.GetFullPath(Path.Combine(gameDirectory, ".."));
+                return DetectGameFromDataDirectory(resolvedDataPath, gameRoot);
             }
-            else
+
+            // Check in the Data subdirectory
+            if (Directory.Exists(resolvedDataPath))
             {
-                // Check in the Data subdirectory
-                var dataPath = Path.Combine(gameDirectory, "Data");
-                if (Directory.Exists(dataPath))
-                {
-                    if (File.Exists(Path.Combine(dataPath, "Oblivion.esm")))
-                    {
-                        return GameRelease.Oblivion;
-                    }
-
-                    if (File.Exists(Path.Combine(dataPath, "Skyrim.esm")))
-                    {
-                        if (Directory.Exists(Path.Combine(gameDirectory, "gogscripts")) ||
-                            File.Exists(Path.Combine(gameDirectory, "goggame-1746476928.info")))
-                        {
-                            return GameRelease.SkyrimSEGog;
-                        }
-
-                        if (File.Exists(Path.Combine(gameDirectory, "SkyrimVR.exe")))
-                        {
-                            return GameRelease.SkyrimVR;
-                        }
-
-                        return GameRelease.SkyrimSE;
-                    }
-
-                    if (File.Exists(Path.Combine(dataPath, "Fallout4.esm")))
-                    {
-                        if (File.Exists(Path.Combine(gameDirectory, "Fallout4VR.exe")))
-                        {
-                            return GameRelease.Fallout4VR;
-                        }
-
-                        return GameRelease.Fallout4;
-                    }
-
-                    if (File.Exists(Path.Combine(dataPath, "Starfield.esm")))
-                    {
-                        return GameRelease.Starfield;
-                    }
-                }
+                return DetectGameFromDataDirectory(resolvedDataPath, gameDirectory);
             }
         }
         catch (Exception)
@@ -163,6 +95,67 @@ public class GameDetectionService
         }
 
         return null;
+    }
+
+    private static GameRelease? DetectGameFromDataDirectory(string dataPath, string gameRoot)
+    {
+        if (File.Exists(Path.Combine(dataPath, "Skyrim.esm")))
+        {
+            return DetectSkyrimRelease(dataPath, gameRoot);
+        }
+
+        if (File.Exists(Path.Combine(dataPath, "Oblivion.esm")))
+        {
+            return GameRelease.Oblivion;
+        }
+
+        if (File.Exists(Path.Combine(dataPath, "Fallout4.esm")))
+        {
+            if (File.Exists(Path.Combine(gameRoot, "Fallout4VR.exe")))
+            {
+                return GameRelease.Fallout4VR;
+            }
+
+            return GameRelease.Fallout4;
+        }
+
+        if (File.Exists(Path.Combine(dataPath, "Starfield.esm")))
+        {
+            return GameRelease.Starfield;
+        }
+
+        return null;
+    }
+
+    private static GameRelease DetectSkyrimRelease(string dataPath, string gameRoot)
+    {
+        var hasSkyrimSeExecutable = File.Exists(Path.Combine(gameRoot, "SkyrimSE.exe"));
+
+        if (File.Exists(Path.Combine(dataPath, "Enderal - Forgotten Stories.esm")))
+        {
+            if (hasSkyrimSeExecutable)
+            {
+                return GameRelease.EnderalSE;
+            }
+
+            if (File.Exists(Path.Combine(gameRoot, "TESV.exe")))
+            {
+                return GameRelease.EnderalLE;
+            }
+        }
+
+        if (Directory.Exists(Path.Combine(gameRoot, "gogscripts")) ||
+            File.Exists(Path.Combine(gameRoot, "goggame-1746476928.info")))
+        {
+            return GameRelease.SkyrimSEGog;
+        }
+
+        if (File.Exists(Path.Combine(gameRoot, "SkyrimVR.exe")))
+        {
+            return GameRelease.SkyrimVR;
+        }
+
+        return hasSkyrimSeExecutable ? GameRelease.SkyrimSE : GameRelease.SkyrimLE;
     }
 
     /// <summary>
@@ -181,6 +174,9 @@ public class GameDetectionService
             GameRelease.SkyrimSE => _skyrimPlugins,
             GameRelease.SkyrimVR => _skyrimPlugins,
             GameRelease.SkyrimSEGog => _skyrimPlugins,
+            GameRelease.SkyrimLE => _skyrimPlugins,
+            GameRelease.EnderalLE => _skyrimPlugins,
+            GameRelease.EnderalSE => _skyrimPlugins,
             GameRelease.Oblivion => _oblivionPlugins,
             GameRelease.Fallout4 => _falloutPlugins,
             GameRelease.Fallout4VR => _falloutPlugins,

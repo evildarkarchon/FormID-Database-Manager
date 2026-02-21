@@ -45,25 +45,6 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
         "Object reference not set to an instance"
     };
 
-    /// <summary>
-    ///     Gets a validated table name for the specified game release.
-    ///     Uses explicit whitelist mapping to prevent SQL injection even though GameRelease is an enum.
-    /// </summary>
-    private static string GetSafeTableName(GameRelease release) => release switch
-    {
-        GameRelease.SkyrimSE => "SkyrimSE",
-        GameRelease.SkyrimSEGog => "SkyrimSEGog",
-        GameRelease.SkyrimVR => "SkyrimVR",
-        GameRelease.SkyrimLE => "SkyrimLE",
-        GameRelease.Fallout4 => "Fallout4",
-        GameRelease.Fallout4VR => "Fallout4VR",
-        GameRelease.Starfield => "Starfield",
-        GameRelease.Oblivion => "Oblivion",
-        GameRelease.EnderalLE => "EnderalLE",
-        GameRelease.EnderalSE => "EnderalSE",
-        _ => throw new ArgumentException($"Unsupported game release: {release}", nameof(release))
-    };
-
     // Cache reflection lookups to avoid O(n×m) complexity
     // Reflection is 10-100x slower than direct access - this reduces to O(1) per type
     private static readonly ConcurrentDictionary<Type, Func<IMajorRecordGetter, string?>> NameExtractorCache = new();
@@ -86,22 +67,13 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
         SqliteConnection conn,
         GameRelease gameRelease,
         PluginListItem pluginItem,
-        IList<IModListingGetter<IModGetter>> loadOrder,
+        IReadOnlyDictionary<string, IModListingGetter<IModGetter>> loadOrderDict,
         bool updateMode,
         CancellationToken cancellationToken)
     {
         SqliteTransaction? transaction = null;
         try
         {
-            transaction = conn.BeginTransaction();
-
-            // Build dictionary for O(1) lookup instead of O(n) FirstOrDefault scan
-            var loadOrderDict = new Dictionary<string, IModListingGetter<IModGetter>>(StringComparer.OrdinalIgnoreCase);
-            foreach (var listing in loadOrder)
-            {
-                loadOrderDict.TryAdd(listing.ModKey.FileName, listing);
-            }
-
             loadOrderDict.TryGetValue(pluginItem.Name, out var plugin);
 
             if (plugin == null)
@@ -110,9 +82,7 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
                 return;
             }
 
-            var dataPath = Path.GetFileName(gameDir).Equals("Data", StringComparison.OrdinalIgnoreCase)
-                ? gameDir
-                : Path.Combine(gameDir, "Data");
+            var dataPath = GameReleaseHelper.ResolveDataPath(gameDir);
 
             var pluginPath = Path.Combine(dataPath, pluginItem.Name);
 
@@ -121,6 +91,8 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
                 errorCallback($"Warning: Could not find plugin file: {pluginPath}");
                 return;
             }
+
+            transaction = conn.BeginTransaction();
 
             if (updateMode)
             {
@@ -134,25 +106,34 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
                 // Note: Mutagen's CreateFromBinaryOverlay methods are synchronous and do not accept
                 // cancellation tokens. For large plugins (100MB+), this may cause several seconds
                 // of uninterruptible loading. Cancellation will be checked after loading completes.
-                IModGetter mod = gameRelease switch
+                cancellationToken.ThrowIfCancellationRequested();
+
+                using IModDisposeGetter mod = gameRelease switch
                 {
                     GameRelease.Oblivion => OblivionMod.CreateFromBinaryOverlay(pluginPath,
                         OblivionRelease.Oblivion),
+                    GameRelease.SkyrimLE => SkyrimMod.CreateFromBinaryOverlay(pluginPath,
+                        SkyrimRelease.SkyrimLE),
                     GameRelease.SkyrimSE => SkyrimMod.CreateFromBinaryOverlay(pluginPath,
                         SkyrimRelease.SkyrimSE),
                     GameRelease.SkyrimSEGog => SkyrimMod.CreateFromBinaryOverlay(pluginPath,
                         SkyrimRelease.SkyrimSEGog),
                     GameRelease.SkyrimVR => SkyrimMod.CreateFromBinaryOverlay(pluginPath,
                         SkyrimRelease.SkyrimVR),
+                    GameRelease.EnderalLE => SkyrimMod.CreateFromBinaryOverlay(pluginPath,
+                        SkyrimRelease.EnderalLE),
+                    GameRelease.EnderalSE => SkyrimMod.CreateFromBinaryOverlay(pluginPath,
+                        SkyrimRelease.EnderalSE),
                     GameRelease.Fallout4 => Fallout4Mod.CreateFromBinaryOverlay(pluginPath,
                         Fallout4Release.Fallout4),
+                    GameRelease.Fallout4VR => Fallout4Mod.CreateFromBinaryOverlay(pluginPath,
+                        Fallout4Release.Fallout4VR),
                     GameRelease.Starfield => StarfieldMod.CreateFromBinaryOverlay(pluginPath,
                         StarfieldRelease.Starfield),
                     _ => throw new NotSupportedException($"Unsupported game release: {gameRelease}")
                 };
 
-                await ProcessModRecordsAsync(conn, gameRelease, pluginItem.Name, mod, cancellationToken)
-                    .ConfigureAwait(false);
+                ProcessModRecords(conn, gameRelease, pluginItem.Name, mod, cancellationToken);
                 transaction?.Commit();
             }
             catch (Exception ex)
@@ -178,7 +159,7 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
     /// <param name="mod">The mod plugin containing the records to be processed.</param>
     /// <param name="cancellationToken">The cancellation token to handle termination of the processing operation.</param>
     [RequiresUnreferencedCode("Uses reflection-based name extraction for Mutagen records via GetRecordName.")]
-    private Task ProcessModRecordsAsync(
+    private void ProcessModRecords(
         SqliteConnection conn,
         GameRelease gameRelease,
         string pluginName,
@@ -190,7 +171,7 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
         // Create a prepared command once and reuse for all batch inserts.
         // Prepared statements avoid repeated SQL parsing and parameter allocation,
         // which is faster than multi-value INSERT for SQLite (in-process, negligible round-trip cost).
-        var tableName = GetSafeTableName(gameRelease);
+        var tableName = GameReleaseHelper.GetSafeTableName(gameRelease);
         using var cmd = conn.CreateCommand();
         cmd.CommandText = $"INSERT INTO {tableName} (plugin, formid, entry) VALUES (@plugin, @formid, @entry)";
         cmd.Parameters.Add(new SqliteParameter { ParameterName = "@plugin" });
@@ -266,7 +247,6 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
             }
         }
 
-        return Task.CompletedTask;
     }
 
     /// <summary>

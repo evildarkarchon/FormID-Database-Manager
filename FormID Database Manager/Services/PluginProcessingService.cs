@@ -9,6 +9,8 @@ using FormID_Database_Manager.Models;
 using FormID_Database_Manager.ViewModels;
 using Microsoft.Data.Sqlite;
 using Mutagen.Bethesda.Environments;
+using Mutagen.Bethesda.Plugins.Order;
+using Mutagen.Bethesda.Plugins.Records;
 
 namespace FormID_Database_Manager.Services;
 
@@ -151,10 +153,27 @@ public class PluginProcessingService : IDisposable
 
             // Process plugins
             progress?.Report(("Initializing plugin processing...", 0));
-            var env = GameEnvironment.Typical.Construct(parameters.GameRelease);
-            // Note: ToList() is required here because ModProcessor.ProcessPlugin expects IList
-            var loadOrder = env.LoadOrder.ListedOrder.ToList();
+
             var pluginList = new List<PluginListItem>(parameters.SelectedPlugins);
+            var loadOrderDict = new Dictionary<string, IModListingGetter<IModGetter>>(StringComparer.OrdinalIgnoreCase);
+
+            if (pluginList.Count > 0)
+            {
+                var dataPath = GameReleaseHelper.ResolveDataPath(parameters.GameDirectory!);
+                List<IModListingGetter<IModGetter>> loadOrder;
+                using (var env = GameEnvironment.Typical.Builder(parameters.GameRelease)
+                           .WithTargetDataFolder(dataPath)
+                           .Build())
+                {
+                    loadOrder = env.LoadOrder.ListedOrder.ToList();
+                }
+
+                foreach (var listing in loadOrder)
+                {
+                    loadOrderDict.TryAdd(listing.ModKey.FileName, listing);
+                }
+            }
+
             var successfulPlugins = 0;
             var failedPlugins = 0;
 
@@ -177,7 +196,7 @@ public class PluginProcessingService : IDisposable
                         conn,
                         parameters.GameRelease,
                         pluginItem,
-                        loadOrder,
+                        loadOrderDict,
                         parameters.UpdateMode,
                         cancellationTokenSource.Token).ConfigureAwait(false);
                     successfulPlugins++;

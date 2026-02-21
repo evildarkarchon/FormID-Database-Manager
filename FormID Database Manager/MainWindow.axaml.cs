@@ -46,6 +46,8 @@ public partial class MainWindow : Window, IDisposable
         _pluginListManager = new PluginListManager(_gameDetectionService, _viewModel, new AvaloniaThreadDispatcher());
         _databaseService = new DatabaseService();
         _pluginProcessingService = new PluginProcessingService(_databaseService, _viewModel, new AvaloniaThreadDispatcher());
+
+        this.Closed += (_, _) => Dispose();
     }
 
     public void Dispose()
@@ -59,6 +61,8 @@ public partial class MainWindow : Window, IDisposable
         {
             disposableService.Dispose();
         }
+
+        _viewModel.Dispose();
     }
 
     private async void SelectGameDirectory_Click(object sender, RoutedEventArgs e)
@@ -290,11 +294,7 @@ public partial class MainWindow : Window, IDisposable
                 _viewModel.UpdateProgress(update.Message, update.Value);
             });
 
-            // Run the processing in a background thread
-            await Task.Run(async () =>
-            {
-                await _pluginProcessingService.ProcessPlugins(parameters, progress).ConfigureAwait(false);
-            }).ConfigureAwait(true);
+            await _pluginProcessingService.ProcessPlugins(parameters, progress);
         }
         catch (OperationCanceledException)
         {

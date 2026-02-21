@@ -15,29 +15,6 @@ namespace FormID_Database_Manager.Services;
 public class DatabaseService
 {
     /// <summary>
-    ///     Gets a validated table name for the specified game release.
-    ///     Uses explicit whitelist mapping to prevent SQL injection even though GameRelease is an enum.
-    /// </summary>
-    /// <param name="release">The game release to get the table name for.</param>
-    /// <returns>A safe table name string.</returns>
-    /// <exception cref="ArgumentException">Thrown if the game release is not supported.</exception>
-    private static string GetSafeTableName(GameRelease release) => release switch
-    {
-        GameRelease.SkyrimSE => "SkyrimSE",
-        GameRelease.SkyrimSEGog => "SkyrimSEGog",
-        GameRelease.SkyrimVR => "SkyrimVR",
-        GameRelease.SkyrimLE => "SkyrimLE",
-        GameRelease.Fallout4 => "Fallout4",
-        GameRelease.Fallout4VR => "Fallout4VR",
-        GameRelease.Starfield => "Starfield",
-        GameRelease.Oblivion => "Oblivion",
-        GameRelease.OblivionRE => "OblivionRE",
-        GameRelease.EnderalLE => "EnderalLE",
-        GameRelease.EnderalSE => "EnderalSE",
-        _ => throw new ArgumentException($"Unsupported game release: {release}", nameof(release))
-    };
-
-    /// <summary>
     ///     Creates an optimized SQLite connection string with connection pooling.
     ///     Additional performance pragmas (WAL mode, etc.) are applied via ConfigureConnection.
     /// </summary>
@@ -49,7 +26,7 @@ public class DatabaseService
         {
             DataSource = dbPath,
             Pooling = true,
-            Cache = SqliteCacheMode.Shared,
+            Cache = SqliteCacheMode.Default,
             Mode = SqliteOpenMode.ReadWriteCreate
         }.ToString();
     }
@@ -66,7 +43,7 @@ public class DatabaseService
             PRAGMA journal_mode = WAL;
             PRAGMA synchronous = NORMAL;
             PRAGMA cache_size = -64000;
-            PRAGMA page_size = 4096;
+            PRAGMA mmap_size = 268435456;
             PRAGMA temp_store = MEMORY;";
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
@@ -91,7 +68,7 @@ public class DatabaseService
         await ConfigureConnection(conn, cancellationToken).ConfigureAwait(false);
 
         await using var command = conn.CreateCommand();
-        var tableName = GetSafeTableName(gameRelease);
+        var tableName = GameReleaseHelper.GetSafeTableName(gameRelease);
 
         // Create main table (CLASSIC schema - no NOT NULL constraints)
         command.CommandText = $@"
@@ -129,7 +106,7 @@ public class DatabaseService
         CancellationToken cancellationToken = default)
     {
         await using var command = conn.CreateCommand();
-        var tableName = GetSafeTableName(gameRelease);
+        var tableName = GameReleaseHelper.GetSafeTableName(gameRelease);
         command.CommandText = $"DELETE FROM {tableName} WHERE plugin = @plugin";
         command.Parameters.AddWithValue("@plugin", pluginName);
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
@@ -150,7 +127,7 @@ public class DatabaseService
         string entry, CancellationToken cancellationToken = default)
     {
         await using var command = conn.CreateCommand();
-        var tableName = GetSafeTableName(gameRelease);
+        var tableName = GameReleaseHelper.GetSafeTableName(gameRelease);
         command.CommandText = $"INSERT INTO {tableName} (plugin, formid, entry) VALUES (@plugin, @formid, @entry)";
         command.Parameters.AddWithValue("@plugin", pluginName);
         command.Parameters.AddWithValue("@formid", formId);
@@ -172,7 +149,7 @@ public class DatabaseService
     public virtual async Task OptimizeDatabase(SqliteConnection conn, CancellationToken cancellationToken = default)
     {
         await using var command = conn.CreateCommand();
-        command.CommandText = "VACUUM";
+        command.CommandText = "PRAGMA wal_checkpoint(TRUNCATE); PRAGMA optimize;";
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 }

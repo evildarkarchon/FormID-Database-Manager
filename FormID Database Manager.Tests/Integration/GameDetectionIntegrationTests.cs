@@ -100,7 +100,7 @@ public class GameDetectionIntegrationTests : IDisposable
             var detectedGame = _gameDetectionService.DetectGame(symlinkPath);
 
             // Assert
-            Assert.Equal(GameRelease.SkyrimSE, detectedGame);
+            Assert.Equal(GameRelease.SkyrimLE, detectedGame);
         }
         catch
         {
@@ -138,7 +138,7 @@ public class GameDetectionIntegrationTests : IDisposable
         var elapsed = DateTime.UtcNow - startTime;
 
         // Assert
-        Assert.Equal(GameRelease.SkyrimSE, detectedGame);
+        Assert.Equal(GameRelease.SkyrimLE, detectedGame);
         Assert.True(elapsed.TotalSeconds < 1, $"Detection took too long: {elapsed.TotalSeconds}s");
     }
 
@@ -303,6 +303,9 @@ public class GameDetectionIntegrationTests : IDisposable
             // Create additional files for specific game detection
             switch (testCase.GameRelease)
             {
+                case GameRelease.SkyrimSE:
+                    File.WriteAllText(Path.Combine(gameDir, "SkyrimSE.exe"), "dummy");
+                    break;
                 case GameRelease.SkyrimVR:
                     // Create SkyrimVR.exe in parent directory
                     File.WriteAllText(Path.Combine(gameDir, "SkyrimVR.exe"), "dummy");
@@ -363,7 +366,7 @@ public class GameDetectionIntegrationTests : IDisposable
             var detectedGame = _gameDetectionService.DetectGame(variation.Path);
 
             // Assert
-            Assert.Equal(GameRelease.SkyrimSE, detectedGame);
+            Assert.Equal(GameRelease.SkyrimLE, detectedGame);
         }
     }
 
@@ -416,7 +419,7 @@ public class GameDetectionIntegrationTests : IDisposable
         var detectedGame = _gameDetectionService.DetectGame(ambiguousPath);
 
         // Assert - Should detect based on priority (Skyrim files present)
-        Assert.Equal(GameRelease.SkyrimSE, detectedGame);
+        Assert.Equal(GameRelease.SkyrimLE, detectedGame);
     }
 
     [Fact]

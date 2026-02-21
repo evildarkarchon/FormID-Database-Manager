@@ -11,7 +11,7 @@ using FormID_Database_Manager.Services;
 
 namespace FormID_Database_Manager.ViewModels;
 
-public class MainWindowViewModel : INotifyPropertyChanged
+public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
 {
     private readonly int _debounceMs;
     private readonly IThreadDispatcher _dispatcher;
@@ -161,6 +161,7 @@ public class MainWindowViewModel : INotifyPropertyChanged
     private void DebounceApplyFilter()
     {
         _debounceCts?.Cancel();
+        _debounceCts?.Dispose();
         _debounceCts = new CancellationTokenSource();
         var token = _debounceCts.Token;
 
@@ -342,5 +343,12 @@ public class MainWindowViewModel : INotifyPropertyChanged
         {
             ProgressValue = value.Value;
         }
+    }
+
+    public void Dispose()
+    {
+        _debounceCts?.Cancel();
+        _debounceCts?.Dispose();
+        _debounceCts = null;
     }
 }

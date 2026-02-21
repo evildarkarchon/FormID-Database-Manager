@@ -1,6 +1,8 @@
 using System;
 using System.IO;
+using System.Linq;
 using FormID_Database_Manager.Services;
+using FormID_Database_Manager.TestUtilities.Builders;
 using Mutagen.Bethesda;
 using Xunit;
 
@@ -69,6 +71,17 @@ public class GameDetectionServiceTests : IDisposable
         }
     }
 
+    private (string gamePath, string dataPath, GameDetectionData detectionData) CreateStructureFromBuilder(
+        string testName,
+        GameDetectionBuilder builder)
+    {
+        var gamePath = Path.Combine(_testDirectory, testName);
+        var detectionData = builder.WithDirectory(gamePath).Build();
+        var dataPath = Path.Combine(detectionData.DirectoryPath, "Data");
+        CreateGameStructure(detectionData.DirectoryPath, dataPath, detectionData.PluginFiles.ToArray());
+        return (gamePath, dataPath, detectionData);
+    }
+
     [Fact]
     public void DetectGame_ReturnsNull_WhenDirectoryDoesNotExist()
     {
@@ -90,7 +103,7 @@ public class GameDetectionServiceTests : IDisposable
     }
 
     [Theory]
-    [InlineData("Skyrim.esm", GameRelease.SkyrimSE)]
+    [InlineData("Skyrim.esm", GameRelease.SkyrimLE)]
     [InlineData("Oblivion.esm", GameRelease.Oblivion)]
     [InlineData("Fallout4.esm", GameRelease.Fallout4)]
     [InlineData("Starfield.esm", GameRelease.Starfield)]
@@ -106,7 +119,7 @@ public class GameDetectionServiceTests : IDisposable
     }
 
     [Theory]
-    [InlineData("Skyrim.esm", GameRelease.SkyrimSE)]
+    [InlineData("Skyrim.esm", GameRelease.SkyrimLE)]
     [InlineData("Oblivion.esm", GameRelease.Oblivion)]
     [InlineData("Fallout4.esm", GameRelease.Fallout4)]
     [InlineData("Starfield.esm", GameRelease.Starfield)]
@@ -145,6 +158,60 @@ public class GameDetectionServiceTests : IDisposable
         var result = _service.DetectGame(dataPath);
 
         Assert.Equal(GameRelease.SkyrimVR, result);
+    }
+
+    [Fact]
+    public void DetectGame_DetectsSkyrimSE_WhenSkyrimSEExecutableExists()
+    {
+        var gamePath = Path.Combine(_testDirectory, "SkyrimSE");
+        var dataPath = Path.Combine(gamePath, "Data");
+        CreateGameStructure(gamePath, dataPath, "Skyrim.esm");
+        File.WriteAllText(Path.Combine(gamePath, "SkyrimSE.exe"), string.Empty);
+
+        var result = _service.DetectGame(gamePath);
+
+        Assert.Equal(GameRelease.SkyrimSE, result);
+    }
+
+    [Fact]
+    public void DetectGame_DetectsSkyrimLE_UsingGameDetectionBuilder()
+    {
+        var builder = new GameDetectionBuilder()
+            .WithGame(GameRelease.SkyrimLE)
+            .AddPlugin("Skyrim.esm");
+        var (gamePath, _, detectionData) = CreateStructureFromBuilder("SkyrimLE_Builder", builder);
+
+        var result = _service.DetectGame(gamePath);
+
+        Assert.Equal(detectionData.ExpectedGame, result);
+    }
+
+    [Fact]
+    public void DetectGame_DetectsEnderalSE_UsingGameDetectionBuilder()
+    {
+        var builder = new GameDetectionBuilder()
+            .WithGame(GameRelease.EnderalSE)
+            .AddPlugins("Skyrim.esm", "Enderal - Forgotten Stories.esm");
+        var (gamePath, _, detectionData) = CreateStructureFromBuilder("EnderalSE_Builder", builder);
+        File.WriteAllText(Path.Combine(gamePath, "SkyrimSE.exe"), string.Empty);
+
+        var result = _service.DetectGame(gamePath);
+
+        Assert.Equal(detectionData.ExpectedGame, result);
+    }
+
+    [Fact]
+    public void DetectGame_DetectsEnderalLE_UsingGameDetectionBuilder()
+    {
+        var builder = new GameDetectionBuilder()
+            .WithGame(GameRelease.EnderalLE)
+            .AddPlugins("Skyrim.esm", "Enderal - Forgotten Stories.esm");
+        var (gamePath, _, detectionData) = CreateStructureFromBuilder("EnderalLE_Builder", builder);
+        File.WriteAllText(Path.Combine(gamePath, "TESV.exe"), string.Empty);
+
+        var result = _service.DetectGame(gamePath);
+
+        Assert.Equal(detectionData.ExpectedGame, result);
     }
 
     [Fact]
@@ -312,6 +379,6 @@ public class GameDetectionServiceTests : IDisposable
 
         var result = _service.DetectGame(testPath);
 
-        Assert.Equal(GameRelease.SkyrimSE, result);
+        Assert.Equal(GameRelease.SkyrimLE, result);
     }
 }
