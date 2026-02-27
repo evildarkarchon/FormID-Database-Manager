@@ -14,12 +14,11 @@ namespace FormID_Database_Manager;
 
 public partial class MainWindow : Window, IDisposable
 {
-    private readonly DatabaseService _databaseService;
     private readonly GameDetectionService _gameDetectionService;
     private readonly PluginListManager _pluginListManager;
     private readonly PluginProcessingService _pluginProcessingService;
     private readonly MainWindowViewModel _viewModel;
-    private readonly WindowManager? _windowManager;
+    private readonly WindowManager _windowManager;
 
     public MainWindow()
     {
@@ -36,16 +35,12 @@ public partial class MainWindow : Window, IDisposable
         _viewModel = new MainWindowViewModel();
         DataContext = _viewModel;
 
-        // Only initialize services if StorageProvider is available (not in test mode)
-        // In test scenarios, StorageProvider may be null
-        _windowManager = StorageProvider != null
-            ? new WindowManager(StorageProvider, _viewModel)
-            : null;
+        _windowManager = new WindowManager(StorageProvider, _viewModel);
 
         _gameDetectionService = new GameDetectionService();
         _pluginListManager = new PluginListManager(_gameDetectionService, _viewModel, new AvaloniaThreadDispatcher());
-        _databaseService = new DatabaseService();
-        _pluginProcessingService = new PluginProcessingService(_databaseService, _viewModel, new AvaloniaThreadDispatcher());
+        var databaseService = new DatabaseService();
+        _pluginProcessingService = new PluginProcessingService(databaseService, _viewModel, new AvaloniaThreadDispatcher());
 
         this.Closed += (_, _) => Dispose();
     }
@@ -79,11 +74,6 @@ public partial class MainWindow : Window, IDisposable
 
     private async Task SelectGameDirectoryAsync()
     {
-        if (_windowManager == null)
-        {
-            return;
-        }
-
         var path = await _windowManager.SelectGameDirectory();
         if (string.IsNullOrEmpty(path))
         {
@@ -123,11 +113,6 @@ public partial class MainWindow : Window, IDisposable
 
     private async Task SelectDatabaseAsync()
     {
-        if (_windowManager == null)
-        {
-            return;
-        }
-
         var path = await _windowManager.SelectDatabaseFile();
         if (string.IsNullOrEmpty(path))
         {
@@ -151,11 +136,6 @@ public partial class MainWindow : Window, IDisposable
 
     private async Task SelectFormIdListAsync()
     {
-        if (_windowManager == null)
-        {
-            return;
-        }
-
         var path = await _windowManager.SelectFormIdListFile();
         if (string.IsNullOrEmpty(path))
         {

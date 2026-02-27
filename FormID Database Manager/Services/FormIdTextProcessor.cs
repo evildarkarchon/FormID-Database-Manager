@@ -58,7 +58,7 @@ public class FormIdTextProcessor(DatabaseService databaseService)
         progress?.Report(("Starting processing...", 0));
 
         // Read the file line by line with byte-based progress tracking
-        using var stream = new FileStream(formIdListPath, FileMode.Open, FileAccess.Read, FileShare.Read, 81920);
+        await using var stream = new FileStream(formIdListPath, FileMode.Open, FileAccess.Read, FileShare.Read, 81920);
         using var reader = new StreamReader(stream, Encoding.UTF8);
 
         while (true)
@@ -153,21 +153,12 @@ public class FormIdTextProcessor(DatabaseService databaseService)
     ///     into a SQLite database. This class facilitates batching operations to reduce database overhead
     ///     and supports asynchronous processing to enhance performance in bulk insertion scenarios.
     /// </summary>
-    private sealed class BatchInserter : IAsyncDisposable, IDisposable
+    private sealed class BatchInserter(SqliteConnection conn, GameRelease gameRelease, int batchSize)
+        : IAsyncDisposable, IDisposable
     {
-        private readonly List<(string plugin, string formId, string entry)> _batch;
-        private readonly int _batchSize;
-        private readonly SqliteConnection _conn;
-        private readonly string _tableName;
+        private readonly List<(string plugin, string formId, string entry)> _batch = new(batchSize);
+        private readonly string _tableName = GameReleaseHelper.GetSafeTableName(gameRelease);
         private SqliteCommand? _insertCommand;
-
-        public BatchInserter(SqliteConnection conn, GameRelease gameRelease, int batchSize)
-        {
-            _conn = conn;
-            _tableName = GameReleaseHelper.GetSafeTableName(gameRelease);
-            _batchSize = batchSize;
-            _batch = new List<(string plugin, string formId, string entry)>(batchSize);
-        }
 
         public async ValueTask DisposeAsync()
         {
@@ -189,7 +180,7 @@ public class FormIdTextProcessor(DatabaseService databaseService)
         {
             _batch.Add((plugin, formId, entry));
 
-            if (_batch.Count >= _batchSize)
+            if (_batch.Count >= batchSize)
             {
                 await FlushBatchAsync(cancellationToken).ConfigureAwait(false);
             }
@@ -209,7 +200,7 @@ public class FormIdTextProcessor(DatabaseService databaseService)
 
             if (_insertCommand == null)
             {
-                _insertCommand = _conn.CreateCommand();
+                _insertCommand = conn.CreateCommand();
                 _insertCommand.CommandText = $"INSERT INTO {_tableName} (plugin, formid, entry) VALUES (@plugin, @formid, @entry)";
                 _insertCommand.Parameters.Add(new SqliteParameter { ParameterName = "@plugin" });
                 _insertCommand.Parameters.Add(new SqliteParameter { ParameterName = "@formid" });
@@ -217,7 +208,7 @@ public class FormIdTextProcessor(DatabaseService databaseService)
                 _insertCommand.Prepare();
             }
 
-            await using var transaction = await _conn.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+            await using var transaction = await conn.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
             _insertCommand.Transaction = transaction as SqliteTransaction;
 
             try

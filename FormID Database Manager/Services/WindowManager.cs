@@ -64,7 +64,7 @@ public class WindowManager
         {
             var fileTypeChoices = new List<FilePickerFileType>
             {
-                new("Database Files") { Patterns = new[] { "*.db" } }
+                new("Database Files") { Patterns = ["*.db"] }
             };
 
             var options = new FilePickerSaveOptions
@@ -98,7 +98,7 @@ public class WindowManager
     {
         try
         {
-            var fileTypeChoices = new List<FilePickerFileType> { new("Text Files") { Patterns = new[] { "*.txt" } } };
+            var fileTypeChoices = new List<FilePickerFileType> { new("Text Files") { Patterns = ["*.txt"] } };
 
             var options = new FilePickerOpenOptions
             {

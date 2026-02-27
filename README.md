@@ -1,4 +1,4 @@
-﻿# FormID Database Manager
+# FormID Database Manager
 
 FormID Database Manager is a desktop application developed using [Avalonia](https://avaloniaui.net/) that provides a
 robust and user-friendly interface for creating SQLite databases that store the FormIDs and their associated
@@ -57,6 +57,23 @@ dotnet run --project "FormID Database Manager"
 
 ```bash
 dotnet test "FormID Database Manager.Tests"
+```
+
+### Coverage (Machine + Human Readable)
+
+```powershell
+pwsh ./scripts/run-coverage.ps1
+```
+
+This generates:
+- Cobertura XML: `coverage/coverage.cobertura.xml`
+- JSON: `coverage/coverage.json`
+- HTML report: `coverage/report/index.html`
+
+Optional (open the HTML report automatically):
+
+```powershell
+pwsh ./scripts/run-coverage.ps1 -OpenReport
 ```
 
 ### Publish

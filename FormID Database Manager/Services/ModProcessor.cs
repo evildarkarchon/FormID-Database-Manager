@@ -57,7 +57,7 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
     /// <param name="conn">The SQLite database connection used for processing.</param>
     /// <param name="gameRelease">The specific game release associated with the plugin.</param>
     /// <param name="pluginItem">The plugin to be processed, represented as a list item.</param>
-    /// <param name="loadOrder">The load order that includes all the plugins for the current session.</param>
+    /// <param name="loadOrderDict">The load order that includes all the plugins for the current session.</param>
     /// <param name="updateMode">Indicates if the plugin entries should be updated in the database.</param>
     /// <param name="cancellationToken">The cancellation token to handle processing termination requests.</param>
     /// <returns>A task that processes the plugin asynchronously and manages its database entries accordingly.</returns>
@@ -134,18 +134,21 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
                 };
 
                 ProcessModRecords(conn, gameRelease, pluginItem.Name, mod, cancellationToken);
-                transaction?.Commit();
+                transaction.Commit();
             }
             catch (Exception ex)
             {
                 errorCallback($"Error processing {pluginItem.Name}: {ex.Message}");
-                transaction?.Rollback();
+                transaction.Rollback();
                 throw;
             }
         }
         finally
         {
-            transaction?.Dispose();
+            if (transaction is not null)
+            {
+                await transaction.DisposeAsync().ConfigureAwait(false);
+            }
         }
     }
 

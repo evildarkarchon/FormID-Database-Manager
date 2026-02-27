@@ -5,32 +5,33 @@ namespace FormID_Database_Manager.Models;
 
 public class PluginListItem : INotifyPropertyChanged, IDataErrorInfo
 {
-    private bool _isSelected;
-    private string _name = string.Empty;
-
     public string Name
     {
-        get => _name;
+        get;
         set
         {
-            if (_name != value)
+            if (field == value)
             {
-                _name = value;
-                OnPropertyChanged();
+                return;
             }
+
+            field = value;
+            OnPropertyChanged();
         }
-    }
+    } = string.Empty;
 
     public bool IsSelected
     {
-        get => _isSelected;
+        get;
         set
         {
-            if (_isSelected != value)
+            if (field == value)
             {
-                _isSelected = value;
-                OnPropertyChanged();
+                return;
             }
+
+            field = value;
+            OnPropertyChanged();
         }
     }
 
