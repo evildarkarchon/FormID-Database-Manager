@@ -4,6 +4,8 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Security.Principal;
+using System.Threading;
+using System.Threading.Tasks;
 using FormID_Database_Manager.Services;
 using Mutagen.Bethesda;
 using Xunit;
@@ -53,13 +55,13 @@ public class GameDetectionIntegrationTests : IDisposable
 
     #region Symbolic Link Tests
 
-    [Fact]
-    public void DetectGame_HandlesSymbolicLinks_Correctly()
+    [SkippableFact(Timeout = 30000)]
+    public async Task DetectGame_HandlesSymbolicLinks_Correctly()
     {
         // Skip if not running as administrator on Windows
         if (Environment.OSVersion.Platform == PlatformID.Win32NT && !IsAdministrator())
         {
-            return;
+            Skip.If(true, "Requires administrator privileges to create symbolic links on Windows.");
         }
 
         // Arrange
@@ -75,37 +77,91 @@ public class GameDetectionIntegrationTests : IDisposable
 
         // Create symbolic link
         Directory.CreateDirectory(Path.GetDirectoryName(symlinkPath)!);
-        try
+
+        const int processTimeoutMs = 10000;
+
+        if (Environment.OSVersion.Platform == PlatformID.Win32NT)
         {
-            if (Environment.OSVersion.Platform == PlatformID.Win32NT)
+            Process process;
+            try
             {
                 // Windows symbolic link
-                var process = Process.Start(new ProcessStartInfo
+                process = Process.Start(new ProcessStartInfo
                 {
                     FileName = "cmd.exe",
                     Arguments = $"/c mklink /D \"{symlinkPath}\" \"{realDataPath}\"",
                     UseShellExecute = false,
                     CreateNoWindow = true
                 });
-                process?.WaitForExit();
             }
-            else
+            catch (Exception ex)
+            {
+                Skip.If(true, $"Unable to start mklink process: {ex.Message}");
+                return;
+            }
+
+            if (process is null)
+            {
+                Skip.If(true, "Unable to create symbolic link: mklink process was not created.");
+            }
+
+            using (process)
+            {
+                if (!await WaitForExitWithTimeout(process, processTimeoutMs))
+                {
+                    Skip.If(true, "mklink timed out while creating symbolic link.");
+                }
+
+                if (process.ExitCode != 0)
+                {
+                    Skip.If(true, $"mklink failed with exit code {process.ExitCode}.");
+                }
+            }
+        }
+        else
+        {
+            Process process;
+            try
             {
                 // Unix symbolic link
-                var process = Process.Start("ln", $"-s \"{realDataPath}\" \"{symlinkPath}\"");
-                process?.WaitForExit();
+                process = Process.Start(new ProcessStartInfo
+                {
+                    FileName = "ln",
+                    Arguments = $"-s \"{realDataPath}\" \"{symlinkPath}\"",
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                });
+            }
+            catch (Exception ex)
+            {
+                Skip.If(true, $"Unable to start ln process: {ex.Message}");
+                return;
             }
 
-            // Act
-            var detectedGame = _gameDetectionService.DetectGame(symlinkPath);
+            if (process is null)
+            {
+                Skip.If(true, "Unable to create symbolic link: ln process was not created.");
+            }
 
-            // Assert
-            Assert.Equal(GameRelease.SkyrimLE, detectedGame);
+            using (process)
+            {
+                if (!await WaitForExitWithTimeout(process, processTimeoutMs))
+                {
+                    Skip.If(true, "ln timed out while creating symbolic link.");
+                }
+
+                if (process.ExitCode != 0)
+                {
+                    Skip.If(true, $"ln failed with exit code {process.ExitCode}.");
+                }
+            }
         }
-        catch
-        {
-            // Skip test if symbolic link creation fails
-        }
+
+        // Act
+        var detectedGame = _gameDetectionService.DetectGame(symlinkPath);
+
+        // Assert
+        Assert.Equal(GameRelease.SkyrimLE, detectedGame);
     }
 
     #endregion
@@ -468,6 +524,32 @@ public class GameDetectionIntegrationTests : IDisposable
         }
 
         File.WriteAllBytes(filePath, header);
+    }
+
+    private static async Task<bool> WaitForExitWithTimeout(Process process, int timeoutMs)
+    {
+        using var timeoutCts = new CancellationTokenSource(timeoutMs);
+        try
+        {
+            await process.WaitForExitAsync(timeoutCts.Token);
+            return true;
+        }
+        catch (OperationCanceledException)
+        {
+            try
+            {
+                if (!process.HasExited)
+                {
+                    process.Kill(true);
+                }
+            }
+            catch
+            {
+                // Best effort cleanup
+            }
+
+            return false;
+        }
     }
 
     private bool IsAdministrator()

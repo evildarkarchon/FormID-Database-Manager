@@ -70,7 +70,7 @@ public class PluginProcessingIntegrationTests : IDisposable
 
     #region FormID List Processing Tests
 
-    [Fact(Skip = "Causes test host crash")]
+    [Fact]
     public async Task ProcessPlugins_FormIdListProcessing_Integration()
     {
         // Arrange
@@ -85,7 +85,7 @@ public class PluginProcessingIntegrationTests : IDisposable
             "TestPlugin.esp|000001|TestWeapon", "TestPlugin.esp|000002|TestArmor",
             "AnotherPlugin.esp|000003|TestSpell"
         };
-        await File.WriteAllLinesAsync(formIdListPath, formIdContent);
+        File.WriteAllLines(formIdListPath, formIdContent);
 
         var parameters = new ProcessingParameters
         {
@@ -118,7 +118,7 @@ public class PluginProcessingIntegrationTests : IDisposable
 
     #region Progress Reporting Tests
 
-    [ExpectsGameEnvironmentFailureFact]
+    [Fact]
     public async Task ProcessPlugins_ReportsDetailedProgress_InDryRun()
     {
         // Arrange
@@ -169,7 +169,7 @@ public class PluginProcessingIntegrationTests : IDisposable
 
         // Create FormID list file instead of plugins to avoid GameEnvironment
         var formIdContent = new[] { "TestPlugin.esp|000001|TestItem" };
-        await File.WriteAllLinesAsync(formIdListPath, formIdContent);
+        File.WriteAllLines(formIdListPath, formIdContent);
 
         var parameters = new ProcessingParameters
         {
@@ -201,27 +201,28 @@ public class PluginProcessingIntegrationTests : IDisposable
 
     #region Complete Workflow Tests
 
-    [ExpectsGameEnvironmentFailureFact]
-    public async Task ProcessPlugins_CompleteWorkflow_FailsWithoutGameInstallation()
+    [Fact]
+    public async Task ProcessPlugins_FormIdListWorkflow_CompletesSuccessfully()
     {
         // Arrange
-        var dbPath = Path.Combine(_testDirectory, "test.db");
+        var dbPath = Path.Combine(_testDirectory, "workflow_test.db");
+        var formIdListPath = Path.Combine(_testDirectory, "workflow_formids.txt");
         _tempFiles.Add(dbPath);
+        _tempFiles.Add(formIdListPath);
 
-        var dataPath = Path.Combine(_testDirectory, "Data");
-        CreateTestPlugin(dataPath, "TestPlugin1.esp");
-        CreateTestPlugin(dataPath, "TestPlugin2.esp");
+        File.WriteAllLines(formIdListPath,
+        [
+            "TestPlugin1.esp|000001|WorkflowEntry1",
+            "TestPlugin1.esp|000002|WorkflowEntry2",
+            "TestPlugin2.esp|000003|WorkflowEntry3"
+        ]);
 
         var parameters = new ProcessingParameters
         {
             GameDirectory = _testDirectory,
             DatabasePath = dbPath,
             GameRelease = GameRelease.SkyrimSE,
-            SelectedPlugins =
-            [
-                new() { Name = "TestPlugin1.esp", IsSelected = true },
-                new() { Name = "TestPlugin2.esp", IsSelected = true }
-            ],
+            FormIdListPath = formIdListPath,
             UpdateMode = false,
             DryRun = false
         };
@@ -229,13 +230,23 @@ public class PluginProcessingIntegrationTests : IDisposable
         var progressReports = new List<(string Message, double? Value)>();
         var progress = new SynchronousProgress<(string Message, double? Value)>(report => progressReports.Add(report));
 
-        // Act & Assert - GameEnvironment will fail without real game
-        await Assert.ThrowsAnyAsync<Exception>(async () =>
-            await _processingService.ProcessPlugins(parameters, progress));
+        // Act
+        await _processingService.ProcessPlugins(parameters, progress);
+
+        // Assert
+        Assert.Contains(progressReports,
+            r => r.Message.Contains("Completed processing 2 plugins") && r.Message.Contains("3 total records"));
+        Assert.Contains(progressReports, r => r.Message.Contains("Processing completed successfully"));
+
+        using var connection = new SqliteConnection($"Data Source={dbPath}");
+        connection.Open();
+        using var countCmd = new SqliteCommand($"SELECT COUNT(*) FROM {GameRelease.SkyrimSE}", connection);
+        var count = Convert.ToInt32(countCmd.ExecuteScalar());
+        Assert.Equal(3, count);
     }
 
-    [ExpectsGameEnvironmentFailureFact]
-    public async Task ProcessPlugins_HandlesMultipleGameTypes_FailsWithoutGames()
+    [Fact]
+    public async Task ProcessPlugins_FormIdListSupportsMultipleGameReleases()
     {
         // Arrange
         var gameReleases = new[] { GameRelease.SkyrimSE, GameRelease.Fallout4, GameRelease.Starfield };
@@ -243,53 +254,106 @@ public class PluginProcessingIntegrationTests : IDisposable
         foreach (var gameRelease in gameReleases)
         {
             var dbPath = Path.Combine(_testDirectory, $"{gameRelease}.db");
+            var formIdListPath = Path.Combine(_testDirectory, $"{gameRelease}.txt");
             _tempFiles.Add(dbPath);
+            _tempFiles.Add(formIdListPath);
 
-            var dataPath = Path.Combine(_testDirectory, "Data");
-            CreateTestPlugin(dataPath, $"{gameRelease}_Test.esp");
+            File.WriteAllLines(formIdListPath,
+            [
+                $"{gameRelease}_Test.esp|0000AA|{gameRelease} Entry"
+            ]);
 
             var parameters = new ProcessingParameters
             {
                 GameDirectory = _testDirectory,
                 DatabasePath = dbPath,
                 GameRelease = gameRelease,
-                SelectedPlugins =
-                [
-                    new() { Name = $"{gameRelease}_Test.esp", IsSelected = true }
-                ],
+                FormIdListPath = formIdListPath,
                 UpdateMode = false,
                 DryRun = false
             };
 
-            // Act & Assert - GameEnvironment will fail without real games
-            await Assert.ThrowsAnyAsync<Exception>(async () =>
-                await _processingService.ProcessPlugins(parameters));
+            // Act
+            await _processingService.ProcessPlugins(parameters);
+
+            // Assert
+            using var connection = new SqliteConnection($"Data Source={dbPath}");
+            connection.Open();
+            using var countCmd = new SqliteCommand($"SELECT COUNT(*) FROM {gameRelease}", connection);
+            var count = Convert.ToInt32(countCmd.ExecuteScalar());
+            Assert.Equal(1, count);
         }
     }
 
-    [ExpectsGameEnvironmentFailureFact]
-    public async Task ProcessPlugins_UpdateMode_FailsWithoutGameInstallation()
+    [Fact]
+    public async Task ProcessPlugins_UpdateMode_ReplacesPluginEntriesFromFormIdList()
     {
         // Arrange
         var dbPath = Path.Combine(_testDirectory, "update_test.db");
+        var initialPath = Path.Combine(_testDirectory, "update_initial.txt");
+        var updatedPath = Path.Combine(_testDirectory, "update_new.txt");
         _tempFiles.Add(dbPath);
+        _tempFiles.Add(initialPath);
+        _tempFiles.Add(updatedPath);
 
-        var dataPath = Path.Combine(_testDirectory, "Data");
-        CreateTestPlugin(dataPath, "UpdateTest.esp");
+        File.WriteAllLines(initialPath,
+        [
+            "UpdateTest.esp|000001|InitialEntry1",
+            "UpdateTest.esp|000002|InitialEntry2"
+        ]);
 
-        var parameters = new ProcessingParameters
+        File.WriteAllLines(updatedPath,
+        [
+            "UpdateTest.esp|000010|UpdatedEntry"
+        ]);
+
+        var initialParameters = new ProcessingParameters
         {
             GameDirectory = _testDirectory,
             DatabasePath = dbPath,
             GameRelease = GameRelease.SkyrimSE,
-            SelectedPlugins = [new() { Name = "UpdateTest.esp", IsSelected = true }],
+            FormIdListPath = initialPath,
             UpdateMode = false,
             DryRun = false
         };
 
-        // Act & Assert - GameEnvironment will fail without real game
-        await Assert.ThrowsAnyAsync<Exception>(async () =>
-            await _processingService.ProcessPlugins(parameters));
+        var updateParameters = new ProcessingParameters
+        {
+            GameDirectory = _testDirectory,
+            DatabasePath = dbPath,
+            GameRelease = GameRelease.SkyrimSE,
+            FormIdListPath = updatedPath,
+            UpdateMode = true,
+            DryRun = false
+        };
+
+        // Act
+        await _processingService.ProcessPlugins(initialParameters);
+        await _processingService.ProcessPlugins(updateParameters);
+
+        // Assert
+        using var connection = new SqliteConnection($"Data Source={dbPath}");
+        connection.Open();
+
+        using var pluginCountCmd = new SqliteCommand(
+            $"SELECT COUNT(*) FROM {GameRelease.SkyrimSE} WHERE plugin = @plugin", connection);
+        pluginCountCmd.Parameters.AddWithValue("@plugin", "UpdateTest.esp");
+        var pluginCount = Convert.ToInt32(pluginCountCmd.ExecuteScalar());
+        Assert.Equal(1, pluginCount);
+
+        using var oldRecordCmd = new SqliteCommand(
+            $"SELECT COUNT(*) FROM {GameRelease.SkyrimSE} WHERE plugin = @plugin AND formid = @formid", connection);
+        oldRecordCmd.Parameters.AddWithValue("@plugin", "UpdateTest.esp");
+        oldRecordCmd.Parameters.AddWithValue("@formid", "000001");
+        var oldRecordCount = Convert.ToInt32(oldRecordCmd.ExecuteScalar());
+        Assert.Equal(0, oldRecordCount);
+
+        using var newRecordCmd = new SqliteCommand(
+            $"SELECT COUNT(*) FROM {GameRelease.SkyrimSE} WHERE plugin = @plugin AND formid = @formid", connection);
+        newRecordCmd.Parameters.AddWithValue("@plugin", "UpdateTest.esp");
+        newRecordCmd.Parameters.AddWithValue("@formid", "000010");
+        var newRecordCount = Convert.ToInt32(newRecordCmd.ExecuteScalar());
+        Assert.Equal(1, newRecordCount);
     }
 
     #endregion
@@ -336,7 +400,7 @@ public class PluginProcessingIntegrationTests : IDisposable
         var formIdListPath = Path.Combine(_testDirectory, "formids.txt");
         _tempFiles.Add(formIdListPath);
 
-        await File.WriteAllTextAsync(formIdListPath, "Test content");
+        File.WriteAllText(formIdListPath, "Test content");
 
         var parameters = new ProcessingParameters
         {
@@ -363,29 +427,30 @@ public class PluginProcessingIntegrationTests : IDisposable
 
     #region Error Handling Tests
 
-    [ExpectsGameEnvironmentFailureFact]
-    public async Task ProcessPlugins_HandlesPluginErrors_ContinuesProcessing()
+    [Fact]
+    public async Task ProcessPlugins_HandlesMalformedFormIdLines_ContinuesProcessing()
     {
         // Arrange
-        var dbPath = Path.Combine(_testDirectory, "error_test.db");
+        var dbPath = Path.Combine(_testDirectory, "malformed_lines_test.db");
+        var formIdListPath = Path.Combine(_testDirectory, "malformed_lines.txt");
         _tempFiles.Add(dbPath);
+        _tempFiles.Add(formIdListPath);
 
-        var dataPath = Path.Combine(_testDirectory, "Data");
-        CreateTestPlugin(dataPath, "GoodPlugin.esp");
-        CreateCorruptedPlugin(dataPath, "BadPlugin.esp");
-        CreateTestPlugin(dataPath, "AnotherGoodPlugin.esp");
+        File.WriteAllLines(formIdListPath,
+        [
+            "GoodPlugin.esp|000001|ValidEntry1",
+            "MalformedLineWithoutPipes",
+            "AnotherGoodPlugin.esp|000002|ValidEntry2",
+            "Too|Many|Pipes|In|This|Line",
+            "MissingEntryField|000003"
+        ]);
 
         var parameters = new ProcessingParameters
         {
             GameDirectory = _testDirectory,
             DatabasePath = dbPath,
             GameRelease = GameRelease.SkyrimSE,
-            SelectedPlugins =
-            [
-                new() { Name = "GoodPlugin.esp", IsSelected = true },
-                new() { Name = "BadPlugin.esp", IsSelected = true },
-                new() { Name = "AnotherGoodPlugin.esp", IsSelected = true }
-            ],
+            FormIdListPath = formIdListPath,
             UpdateMode = false,
             DryRun = false
         };
@@ -397,11 +462,16 @@ public class PluginProcessingIntegrationTests : IDisposable
         await _processingService.ProcessPlugins(parameters, progress);
 
         // Assert
-        Assert.Contains(progressReports, r => r.Message.Contains("Error processing plugin BadPlugin.esp"));
         Assert.Contains(progressReports,
-            r => r.Message.Contains("Processing completed with") && r.Message.Contains("failed"));
-        Assert.NotEmpty(_viewModel.ErrorMessages);
-        Assert.Contains(_viewModel.ErrorMessages, msg => msg.Contains("Failed to process plugin BadPlugin.esp"));
+            r => r.Message.Contains("Completed processing 2 plugins") && r.Message.Contains("2 total records"));
+        Assert.Contains(progressReports,
+            r => r.Message.Contains("Processing completed successfully"));
+
+        using var connection = new SqliteConnection($"Data Source={dbPath}");
+        connection.Open();
+        using var countCmd = new SqliteCommand($"SELECT COUNT(*) FROM {GameRelease.SkyrimSE}", connection);
+        var count = Convert.ToInt32(countCmd.ExecuteScalar());
+        Assert.Equal(2, count);
     }
 
     [Fact]
@@ -429,56 +499,107 @@ public class PluginProcessingIntegrationTests : IDisposable
 
     #region Cancellation Tests
 
-    [ExpectsGameEnvironmentFailureFact]
-    public async Task ProcessPlugins_CancellationBeforeStart_ThrowsImmediately()
+    [Fact]
+    public async Task ProcessPlugins_CancellationBeforeStart_DoesNotAffectNextRun()
     {
         // Arrange
         var dbPath = Path.Combine(_testDirectory, "cancel_test.db");
+        var formIdListPath = Path.Combine(_testDirectory, "cancel_test.txt");
         _tempFiles.Add(dbPath);
+        _tempFiles.Add(formIdListPath);
+
+        File.WriteAllLines(formIdListPath,
+        [
+            "CancelTest.esp|000001|CancelEntry"
+        ]);
 
         var parameters = new ProcessingParameters
         {
             GameDirectory = _testDirectory,
             DatabasePath = dbPath,
             GameRelease = GameRelease.SkyrimSE,
-            SelectedPlugins = [new() { Name = "Test.esp", IsSelected = true }],
+            FormIdListPath = formIdListPath,
             UpdateMode = false,
             DryRun = false
         };
 
         // Act - Cancel before starting
         _processingService.CancelProcessing();
+        await _processingService.ProcessPlugins(parameters);
 
-        // Assert - Should fail due to GameEnvironment or cancellation
-        await Assert.ThrowsAnyAsync<Exception>(() => _processingService.ProcessPlugins(parameters));
+        // Assert
+        using var connection = new SqliteConnection($"Data Source={dbPath}");
+        connection.Open();
+        using var countCmd = new SqliteCommand($"SELECT COUNT(*) FROM {GameRelease.SkyrimSE}", connection);
+        var count = Convert.ToInt32(countCmd.ExecuteScalar());
+        Assert.Equal(1, count);
     }
 
-    [ExpectsGameEnvironmentFailureFact]
-    public async Task ProcessPlugins_MultipleCancellations_HandledCorrectly()
+    [Fact]
+    public async Task ProcessPlugins_MultipleCancellations_DoNotCorruptSubsequentRuns()
     {
         // Arrange
         var dbPath = Path.Combine(_testDirectory, "multi_cancel.db");
+        var initialPath = Path.Combine(_testDirectory, "multi_cancel_initial.txt");
+        var updatedPath = Path.Combine(_testDirectory, "multi_cancel_updated.txt");
         _tempFiles.Add(dbPath);
+        _tempFiles.Add(initialPath);
+        _tempFiles.Add(updatedPath);
 
-        var parameters = new ProcessingParameters
+        File.WriteAllLines(initialPath,
+        [
+            "MultiCancel.esp|000001|Initial"
+        ]);
+
+        File.WriteAllLines(updatedPath,
+        [
+            "MultiCancel.esp|000002|Updated"
+        ]);
+
+        var initialParameters = new ProcessingParameters
         {
             GameDirectory = _testDirectory,
             DatabasePath = dbPath,
             GameRelease = GameRelease.SkyrimSE,
-            SelectedPlugins = [],
+            FormIdListPath = initialPath,
             UpdateMode = false,
+            DryRun = false
+        };
+
+        var updatedParameters = new ProcessingParameters
+        {
+            GameDirectory = _testDirectory,
+            DatabasePath = dbPath,
+            GameRelease = GameRelease.SkyrimSE,
+            FormIdListPath = updatedPath,
+            UpdateMode = true,
             DryRun = false
         };
 
         // Act - Cancel multiple times
         _processingService.CancelProcessing(); // Cancel before start
         _processingService.CancelProcessing(); // Cancel again
+        await _processingService.ProcessPlugins(initialParameters);
+        _processingService.CancelProcessing(); // Cancel between runs
+        _processingService.CancelProcessing(); // Cancel again between runs
+        await _processingService.ProcessPlugins(updatedParameters);
 
-        var task = _processingService.ProcessPlugins(parameters);
-        _processingService.CancelProcessing(); // Cancel during
+        // Assert - service still processes correctly after repeated cancels
+        using var connection = new SqliteConnection($"Data Source={dbPath}");
+        connection.Open();
 
-        // Assert - Should handle gracefully
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => task);
+        using var countCmd = new SqliteCommand(
+            $"SELECT COUNT(*) FROM {GameRelease.SkyrimSE} WHERE plugin = @plugin", connection);
+        countCmd.Parameters.AddWithValue("@plugin", "MultiCancel.esp");
+        var count = Convert.ToInt32(countCmd.ExecuteScalar());
+        Assert.Equal(1, count);
+
+        using var formIdCmd = new SqliteCommand(
+            $"SELECT COUNT(*) FROM {GameRelease.SkyrimSE} WHERE plugin = @plugin AND formid = @formid", connection);
+        formIdCmd.Parameters.AddWithValue("@plugin", "MultiCancel.esp");
+        formIdCmd.Parameters.AddWithValue("@formid", "000002");
+        var updatedCount = Convert.ToInt32(formIdCmd.ExecuteScalar());
+        Assert.Equal(1, updatedCount);
     }
 
     #endregion

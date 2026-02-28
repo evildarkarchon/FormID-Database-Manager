@@ -1,4 +1,3 @@
-using System.Runtime.CompilerServices;
 using Avalonia;
 using Avalonia.Headless;
 using Avalonia.ReactiveUI;
@@ -11,19 +10,10 @@ namespace FormID_Database_Manager.Tests;
 
 public class TestApp : Application
 {
-    [ModuleInitializer]
-    public static void InitializeTests()
-    {
-        // Build and initialize the Avalonia app for headless testing
-        BuildAvaloniaApp()
-            .UseHeadless(new AvaloniaHeadlessPlatformOptions())
-            .SetupWithoutStarting();
-    }
-
     public static AppBuilder BuildAvaloniaApp()
     {
         return AppBuilder.Configure<TestApp>()
-            .UsePlatformDetect()
+            .UseHeadless(new AvaloniaHeadlessPlatformOptions())
             .UseReactiveUI()
             .LogToTrace();
     }

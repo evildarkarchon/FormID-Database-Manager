@@ -423,4 +423,24 @@ public class PluginProcessingServiceTests : IDisposable
         // Due to the way errors are handled, the callback might not always be invoked
         // The test passes if no exception is thrown unexpectedly
     }
+
+    [Fact]
+    public void AddErrorMessage_CheckAccessFalse_PostsToDispatcher()
+    {
+        _mockDispatcher.Setup(d => d.CheckAccess()).Returns(false);
+
+        var posted = false;
+        _mockDispatcher.Setup(d => d.Post(It.IsAny<Action>()))
+            .Callback<Action>(action =>
+            {
+                posted = true;
+                _mockDispatcher.Setup(d => d.CheckAccess()).Returns(true);
+                action();
+            });
+
+        _service.AddErrorMessage("from test");
+
+        Assert.True(posted);
+        _mockViewModel.Verify(x => x.AddErrorMessage("from test", It.IsAny<int>()), Times.Once);
+    }
 }

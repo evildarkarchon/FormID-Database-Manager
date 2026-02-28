@@ -62,7 +62,7 @@ public class PluginProcessingService : IDisposable
     ///     Adds an error message to the view model, ensuring thread-safe access to UI updates.
     /// </summary>
     /// <param name="message">The error message to be added.</param>
-    private void AddErrorMessage(string message)
+    internal void AddErrorMessage(string message)
     {
         // Use Dispatcher to ensure UI thread update
         if (!_dispatcher.CheckAccess())

@@ -96,7 +96,7 @@ public class ModProcessorTests : IDisposable
 
     #region Basic Functionality Tests
 
-    [ExpectsGameEnvironmentFailureFact]
+    [Fact]
     public async Task ProcessPlugin_FailsGracefully_WithInvalidPlugin()
     {
         // Arrange
@@ -126,7 +126,7 @@ public class ModProcessorTests : IDisposable
         Assert.Contains(_errorMessages, msg => msg.Contains("Error processing TestPlugin.esp"));
     }
 
-    [ExpectsGameEnvironmentFailureFact]
+    [Fact]
     public async Task ProcessPlugin_HandlesMultipleGameTypes_WithErrors()
     {
         // Arrange
@@ -198,11 +198,128 @@ public class ModProcessorTests : IDisposable
         Assert.Contains(_errorMessages, msg => msg.Contains("Could not find plugin in load order"));
     }
 
+    [Fact]
+    public async Task ProcessPlugin_WarnsWhenPluginFileMissing()
+    {
+        // Arrange
+        var gameDir = Path.Combine(Path.GetTempPath(), "TestGame");
+        Directory.CreateDirectory(gameDir);
+
+        var pluginItem = new PluginListItem { Name = "Missing.esp", IsSelected = true };
+        var mockModListing = CreateMockModListing("Missing.esp");
+        var loadOrder = CreateLoadOrderDictionary(mockModListing.Object);
+
+        // Act
+        await _modProcessor.ProcessPlugin(
+            gameDir,
+            _connection,
+            GameRelease.SkyrimSE,
+            pluginItem,
+            loadOrder,
+            false,
+            CancellationToken.None);
+
+        // Assert
+        Assert.Contains(_errorMessages, msg => msg.Contains("Could not find plugin file"));
+    }
+
+    [Fact]
+    public async Task ProcessPlugin_CancelledBeforeOverlay_ThrowsOperationCanceledException()
+    {
+        // Arrange
+        var gameDir = Path.Combine(Path.GetTempPath(), "TestGame", "Data");
+        Directory.CreateDirectory(gameDir);
+        await CreateMinimalPluginFile(Path.Combine(gameDir, "TestPlugin.esp"));
+
+        var pluginItem = new PluginListItem { Name = "TestPlugin.esp", IsSelected = true };
+        var mockModListing = CreateMockModListing("TestPlugin.esp");
+        var loadOrder = CreateLoadOrderDictionary(mockModListing.Object);
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        // Act / Assert
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+            await _modProcessor.ProcessPlugin(
+                gameDir,
+                _connection,
+                GameRelease.SkyrimSE,
+                pluginItem,
+                loadOrder,
+                false,
+                cts.Token));
+    }
+
+    [Fact]
+    public async Task ProcessPlugin_UnsupportedGameRelease_ThrowsNotSupportedException()
+    {
+        // Arrange
+        var gameDir = Path.Combine(Path.GetTempPath(), "TestGame", "Data");
+        Directory.CreateDirectory(gameDir);
+        await CreateMinimalPluginFile(Path.Combine(gameDir, "TestPlugin.esp"));
+
+        var pluginItem = new PluginListItem { Name = "TestPlugin.esp", IsSelected = true };
+        var mockModListing = CreateMockModListing("TestPlugin.esp");
+        var loadOrder = CreateLoadOrderDictionary(mockModListing.Object);
+
+        // Act / Assert
+        await Assert.ThrowsAsync<NotSupportedException>(async () =>
+            await _modProcessor.ProcessPlugin(
+                gameDir,
+                _connection,
+                (GameRelease)999,
+                pluginItem,
+                loadOrder,
+                false,
+                CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task ProcessPlugin_UpdateMode_CallsClearPluginEntriesBeforeProcessing()
+    {
+        // Arrange
+        var databaseServiceMock = new Mock<DatabaseService>();
+        databaseServiceMock.Setup(x => x.ClearPluginEntries(
+                It.IsAny<SqliteConnection>(),
+                It.IsAny<GameRelease>(),
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var errors = new List<string>();
+        var processor = new ModProcessor(databaseServiceMock.Object, errors.Add);
+
+        var gameDir = Path.Combine(Path.GetTempPath(), "TestGame", "Data");
+        Directory.CreateDirectory(gameDir);
+        await CreateMinimalPluginFile(Path.Combine(gameDir, "TestPlugin.esp"));
+
+        var pluginItem = new PluginListItem { Name = "TestPlugin.esp", IsSelected = true };
+        var mockModListing = CreateMockModListing("TestPlugin.esp");
+        var loadOrder = CreateLoadOrderDictionary(mockModListing.Object);
+
+        // Act
+        await Assert.ThrowsAnyAsync<Exception>(async () =>
+            await processor.ProcessPlugin(
+                gameDir,
+                _connection,
+                GameRelease.SkyrimSE,
+                pluginItem,
+                loadOrder,
+                true,
+                CancellationToken.None));
+
+        // Assert
+        databaseServiceMock.Verify(x => x.ClearPluginEntries(
+            _connection,
+            GameRelease.SkyrimSE,
+            "TestPlugin.esp",
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
     #endregion
 
     #region Error Handling Tests
 
-    [ExpectsGameEnvironmentFailureFact]
+    [Fact]
     public async Task ProcessPlugin_HandlesCorruptedPlugin_WithErrorCallback()
     {
         // Arrange
@@ -250,7 +367,7 @@ public class ModProcessorTests : IDisposable
         await Task.CompletedTask;
     }
 
-    [ExpectsGameEnvironmentFailureFact]
+    [Fact]
     public async Task ProcessPlugin_ReportsUnknownErrors_ToCallback()
     {
         // Arrange
@@ -277,7 +394,7 @@ public class ModProcessorTests : IDisposable
 
     #region Performance and Cancellation Tests
 
-    [ExpectsGameEnvironmentFailureFact]
+    [Fact]
     public async Task ProcessPlugin_RespectsCancellationToken_DuringProcessing()
     {
         // Arrange
@@ -326,7 +443,7 @@ public class ModProcessorTests : IDisposable
 
     #region Edge Cases Tests
 
-    [ExpectsGameEnvironmentFailureFact]
+    [Fact]
     public async Task ProcessPlugin_HandlesEmptyPlugin_WithError()
     {
         // Arrange
@@ -373,7 +490,7 @@ public class ModProcessorTests : IDisposable
         Assert.Contains(_errorMessages, msg => msg.Contains("Could not find plugin in load order"));
     }
 
-    [ExpectsGameEnvironmentFailureFact]
+    [Fact]
     public async Task ProcessPlugin_HandlesDataDirectoryVariants_WithErrors()
     {
         // Test both "GameDir" and "GameDir/Data" paths

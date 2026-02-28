@@ -19,10 +19,10 @@ public class UITestCollection
     // They should not run in parallel to avoid conflicts
 }
 
-[CollectionDefinition("Integration Tests", DisableParallelization = false)]
+[CollectionDefinition("Integration Tests", DisableParallelization = true)]
 public class IntegrationTestCollection
 {
-    // Integration tests can run in parallel as they use isolated resources
+    // Integration tests run sequentially to avoid resource contention during coverage runs
 }
 
 [CollectionDefinition("Performance Tests", DisableParallelization = true)]

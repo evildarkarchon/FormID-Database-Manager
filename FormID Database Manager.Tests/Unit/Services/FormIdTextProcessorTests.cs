@@ -368,7 +368,7 @@ public class FormIdTextProcessorTests : IDisposable
     {
         // Arrange
         var testFile = Path.Combine(_testFilesDir, "empty.txt");
-        await File.WriteAllTextAsync(testFile, string.Empty);
+        File.WriteAllText(testFile, string.Empty);
 
         // Act & Assert - Should not throw
         await _processor.ProcessFormIdListFile(

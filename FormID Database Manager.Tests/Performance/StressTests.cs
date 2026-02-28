@@ -9,6 +9,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using FormID_Database_Manager.Models;
 using FormID_Database_Manager.Services;
+using FormID_Database_Manager.TestUtilities;
 using FormID_Database_Manager.ViewModels;
 using Microsoft.Data.Sqlite;
 using Mutagen.Bethesda;
@@ -17,6 +18,7 @@ using Xunit.Abstractions;
 
 namespace FormID_Database_Manager.Tests.Performance;
 
+[Collection("Performance Tests")]
 public class StressTests : IDisposable
 {
     private readonly List<string> _createdFiles = [];
@@ -56,7 +58,8 @@ public class StressTests : IDisposable
         }
     }
 
-    [Fact(Timeout = 120000)]
+    [ManualPerformanceFact(Timeout = 120000)]
+    [Trait("Category", "ManualPerformance")]
     [Trait("Category", "StressTest")]
     public async Task StressTest_RapidCancellations()
     {
@@ -125,7 +128,8 @@ public class StressTests : IDisposable
         Assert.True(cancelledCount > 0, "No operations were cancelled");
     }
 
-    [Fact(Timeout = 120000)]
+    [ManualPerformanceFact(Timeout = 120000)]
+    [Trait("Category", "ManualPerformance")]
     [Trait("Category", "StressTest")]
     public async Task StressTest_MaximumDatabaseConnections()
     {
@@ -204,7 +208,8 @@ public class StressTests : IDisposable
             $"Too many connection failures: {errors.Count}/{maxConnections}");
     }
 
-    [Fact(Skip = "Requires UI thread synchronization", Timeout = 60000)]
+    [ManualPerformanceFact(Timeout = 60000)]
+    [Trait("Category", "ManualPerformance")]
     [Trait("Category", "StressTest")]
     public async Task StressTest_RapidUIUpdates()
     {
@@ -278,7 +283,8 @@ public class StressTests : IDisposable
         Assert.Empty(errors);
     }
 
-    [Fact(Timeout = 300000)]
+    [ManualPerformanceFact(Timeout = 300000)]
+    [Trait("Category", "ManualPerformance")]
     [Trait("Category", "StressTest")]
     public async Task StressTest_LargeDatabaseFile()
     {
@@ -362,7 +368,8 @@ public class StressTests : IDisposable
             $"Search too slow: {searchStopwatch.ElapsedMilliseconds} ms");
     }
 
-    [Fact]
+    [ManualPerformanceFact]
+    [Trait("Category", "ManualPerformance")]
     [Trait("Category", "StressTest")]
     public void StressTest_OutOfMemoryScenario()
     {

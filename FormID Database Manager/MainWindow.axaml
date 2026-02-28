@@ -33,7 +33,8 @@
                 <!-- Game Directory Selection -->
                 <DockPanel Grid.Row="0">
                     <TextBlock Text="Game Directory:" VerticalAlignment="Center" />
-                    <Button Content="Select Directory"
+                    <Button x:Name="SelectDirectoryButton"
+                            Content="Select Directory"
                             DockPanel.Dock="Right"
                             Click="SelectGameDirectory_Click" />
                     <TextBox x:Name="GameDirectoryTextBox"
@@ -45,7 +46,8 @@
                 <!-- Database Selection -->
                 <DockPanel Grid.Row="1">
                     <TextBlock Text="Database File:" VerticalAlignment="Center" />
-                    <Button Content="Select Database"
+                    <Button x:Name="SelectDatabaseButton"
+                            Content="Select Database"
                             DockPanel.Dock="Right"
                             Click="OnSelectDatabase_Click" />
                     <TextBox x:Name="DatabasePathTextBox"
@@ -57,7 +59,8 @@
                 <!-- FormID List Selection -->
                 <DockPanel Grid.Row="2">
                     <TextBlock Text="FormID List File (Optional):" VerticalAlignment="Center" />
-                    <Button Content="Select List File"
+                    <Button x:Name="SelectListFileButton"
+                            Content="Select List File"
                             DockPanel.Dock="Right"
                             Click="OnSelectFormIdList_Click" />
                     <TextBox x:Name="FormIdListPathTextBox"
@@ -105,10 +108,12 @@
                         </ScrollViewer>
                     </Border>
                     <StackPanel Grid.Column="1" Margin="0,0,0,0">
-                        <Button Content="Select All"
+                        <Button x:Name="SelectAllButton"
+                                Content="Select All"
                                 Click="SelectAll_Click"
                                 Margin="0,2" />
-                        <Button Content="Select None"
+                        <Button x:Name="SelectNoneButton"
+                                Content="Select None"
                                 Click="SelectNone_Click"
                                 Margin="0,2" />
                     </StackPanel>
@@ -175,7 +180,8 @@
                                        TextWrapping="Wrap"
                                        Margin="5" />
                         </Grid>
-                        <ProgressBar Grid.Row="1"
+                        <ProgressBar x:Name="ProcessingProgressBar"
+                                     Grid.Row="1"
                                      Height="20"
                                      Minimum="0"
                                      Maximum="100"
@@ -184,7 +190,8 @@
                     </Grid>
 
                     <!-- Process Button -->
-                    <Button Grid.Row="1"
+                    <Button x:Name="ProcessFormIdsButton"
+                            Grid.Row="1"
                             Content="Process FormIDs"
                             Click="ProcessFormIds_Click"
                             HorizontalAlignment="Stretch"

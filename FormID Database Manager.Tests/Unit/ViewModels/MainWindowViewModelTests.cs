@@ -5,6 +5,7 @@ using System.Linq;
 using System.Reflection;
 using System.Threading.Tasks;
 using Avalonia.Headless.XUnit;
+using Avalonia.Threading;
 using FormID_Database_Manager.Models;
 using FormID_Database_Manager.ViewModels;
 using Xunit;
@@ -297,7 +298,7 @@ public class MainWindowViewModelTests
         Assert.Equal("Info 9", _viewModel.InformationMessages.Last());
     }
 
-    [AvaloniaFact(Skip = "Dispatcher synchronization issues in headless mode")]
+    [AvaloniaFact]
     public async Task AddMessages_WorksFromBackgroundThread()
     {
         // Arrange
@@ -313,8 +314,8 @@ public class MainWindowViewModelTests
             infoAdded = true;
         });
 
-        // Wait for dispatcher to process
-        await Task.Delay(100);
+        // Wait for dispatcher to process deterministically
+        await FlushUiAsync();
 
         // Assert
         Assert.True(errorAdded);
@@ -373,21 +374,21 @@ public class MainWindowViewModelTests
         Assert.Equal(75, _viewModel.ProgressValue); // Unchanged
     }
 
-    [AvaloniaFact(Skip = "Dispatcher synchronization issues in headless mode")]
+    [AvaloniaFact]
     public async Task UpdateProgress_WorksFromBackgroundThread()
     {
         // Arrange
         var tcs = new TaskCompletionSource<bool>();
-        string? capturedStatus = null;
-        double? capturedValue = null;
 
         _viewModel.PropertyChanged += (s, e) =>
         {
-            if (e.PropertyName == nameof(MainWindowViewModel.ProgressStatus))
+            if (e.PropertyName == nameof(MainWindowViewModel.ProgressStatus) ||
+                e.PropertyName == nameof(MainWindowViewModel.ProgressValue))
             {
-                capturedStatus = _viewModel.ProgressStatus;
-                capturedValue = _viewModel.ProgressValue;
-                tcs.TrySetResult(true);
+                if (_viewModel.ProgressStatus == "Background update" && _viewModel.ProgressValue == 25)
+                {
+                    tcs.TrySetResult(true);
+                }
             }
         };
 
@@ -402,11 +403,11 @@ public class MainWindowViewModelTests
 
         // Assert
         Assert.Same(tcs.Task, completedTask); // Ensure we didn't timeout
-        Assert.Equal("Background update", capturedStatus);
-        Assert.Equal(25, capturedValue);
+        Assert.Equal("Background update", _viewModel.ProgressStatus);
+        Assert.Equal(25, _viewModel.ProgressValue);
     }
 
-    [AvaloniaFact(Skip = "Dispatcher synchronization issues in headless mode")]
+    [AvaloniaFact]
     public async Task ResetProgress_WorksFromBackgroundThread()
     {
         // Arrange
@@ -421,8 +422,8 @@ public class MainWindowViewModelTests
             reset = true;
         });
 
-        // Wait for dispatcher
-        await Task.Delay(100);
+        // Wait for dispatcher deterministically
+        await FlushUiAsync();
 
         // Assert
         Assert.True(reset);
@@ -731,4 +732,9 @@ public class MainWindowViewModelTests
     }
 
     #endregion
+
+    private static async Task FlushUiAsync()
+    {
+        await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
+    }
 }
