@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Collections.Specialized;
 using System.ComponentModel;
 using System.Linq;
 using System.Runtime.CompilerServices;
@@ -15,6 +16,7 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
 {
     private readonly int _debounceMs;
     private readonly IThreadDispatcher _dispatcher;
+    private readonly object _messagesLock = new();
     private readonly object _pluginsLock = new();
     private CancellationTokenSource? _debounceCts;
     private string _databasePath = string.Empty;
@@ -41,8 +43,20 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     {
         _dispatcher = dispatcher ?? new AvaloniaThreadDispatcher();
         _debounceMs = debounceMs;
-        _plugins = [];
-        _plugins.CollectionChanged += (s, e) => ApplyFilter();
+        _plugins = CreatePluginsCollection();
+        _plugins.CollectionChanged += OnPluginsCollectionChanged;
+    }
+
+    private LockedObservableCollection<PluginListItem> CreatePluginsCollection(IEnumerable<PluginListItem>? source = null)
+    {
+        return source == null
+            ? new LockedObservableCollection<PluginListItem>(_pluginsLock)
+            : new LockedObservableCollection<PluginListItem>(_pluginsLock, source);
+    }
+
+    private void OnPluginsCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        ApplyFilter();
     }
 
     public string GameDirectory
@@ -112,8 +126,18 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         get => _plugins;
         set
         {
-            if (SetProperty(ref _plugins, value))
+            if (ReferenceEquals(_plugins, value))
             {
+                return;
+            }
+
+            var normalizedPlugins = value as LockedObservableCollection<PluginListItem> ?? CreatePluginsCollection(value);
+            var previousPlugins = _plugins;
+
+            if (SetProperty(ref _plugins, normalizedPlugins))
+            {
+                previousPlugins.CollectionChanged -= OnPluginsCollectionChanged;
+                _plugins.CollectionChanged += OnPluginsCollectionChanged;
                 ApplyFilter();
             }
         }
@@ -259,11 +283,14 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             return;
         }
 
-        ErrorMessages.Add(message);
-
-        if (ErrorMessages.Count > maxMessages)
+        lock (_messagesLock)
         {
-            ErrorMessages.RemoveAt(0);
+            ErrorMessages.Add(message);
+
+            if (ErrorMessages.Count > maxMessages)
+            {
+                ErrorMessages.RemoveAt(0);
+            }
         }
     }
 
@@ -276,11 +303,14 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             return;
         }
 
-        InformationMessages.Add(message);
-
-        if (InformationMessages.Count > maxMessages)
+        lock (_messagesLock)
         {
-            InformationMessages.RemoveAt(0);
+            InformationMessages.Add(message);
+
+            if (InformationMessages.Count > maxMessages)
+            {
+                InformationMessages.RemoveAt(0);
+            }
         }
     }
 
@@ -313,8 +343,11 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         ProgressValue = 0;
         ProgressStatus = string.Empty;
         IsProcessing = false;
-        ErrorMessages.Clear();
-        InformationMessages.Clear();
+        lock (_messagesLock)
+        {
+            ErrorMessages.Clear();
+            InformationMessages.Clear();
+        }
     }
 
     /// <summary>
@@ -350,5 +383,60 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         _debounceCts?.Cancel();
         _debounceCts?.Dispose();
         _debounceCts = null;
+    }
+
+    private sealed class LockedObservableCollection<T> : ObservableCollection<T>
+    {
+        private readonly object _syncRoot;
+
+        public LockedObservableCollection(object syncRoot)
+        {
+            _syncRoot = syncRoot;
+        }
+
+        public LockedObservableCollection(object syncRoot, IEnumerable<T> source) : base(source)
+        {
+            _syncRoot = syncRoot;
+        }
+
+        protected override void InsertItem(int index, T item)
+        {
+            lock (_syncRoot)
+            {
+                base.InsertItem(index, item);
+            }
+        }
+
+        protected override void RemoveItem(int index)
+        {
+            lock (_syncRoot)
+            {
+                base.RemoveItem(index);
+            }
+        }
+
+        protected override void SetItem(int index, T item)
+        {
+            lock (_syncRoot)
+            {
+                base.SetItem(index, item);
+            }
+        }
+
+        protected override void MoveItem(int oldIndex, int newIndex)
+        {
+            lock (_syncRoot)
+            {
+                base.MoveItem(oldIndex, newIndex);
+            }
+        }
+
+        protected override void ClearItems()
+        {
+            lock (_syncRoot)
+            {
+                base.ClearItems();
+            }
+        }
     }
 }

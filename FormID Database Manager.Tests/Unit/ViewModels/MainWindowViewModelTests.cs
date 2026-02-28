@@ -1,5 +1,7 @@
 #nullable enable
 
+using System;
+using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
 using System.Linq;
 using System.Reflection;
@@ -622,6 +624,76 @@ public class MainWindowViewModelTests
         Assert.Equal(50, _viewModel.InformationMessages.Count);
         Assert.Equal("Error 50", _viewModel.ErrorMessages.First());
         Assert.Equal("Error 99", _viewModel.ErrorMessages.Last());
+    }
+
+    [AvaloniaFact]
+    public async Task AddErrorMessage_IsThreadSafeUnderConcurrentCalls()
+    {
+        // Arrange
+        const int threadCount = 8;
+        const int perThreadMessages = 200;
+        const int maxMessages = 10;
+        var errors = new ConcurrentQueue<Exception>();
+
+        // Act
+        var tasks = Enumerable.Range(0, threadCount)
+            .Select(threadId => Task.Run(() =>
+            {
+                for (var i = 0; i < perThreadMessages; i++)
+                {
+                    try
+                    {
+                        _viewModel.AddErrorMessage($"T{threadId}:{i}", maxMessages);
+                    }
+                    catch (Exception ex)
+                    {
+                        errors.Enqueue(ex);
+                    }
+                }
+            }))
+            .ToArray();
+
+        await Task.WhenAll(tasks);
+        await FlushUiAsync();
+
+        // Assert
+        Assert.Empty(errors);
+        Assert.Equal(maxMessages, _viewModel.ErrorMessages.Count);
+    }
+
+    [AvaloniaFact]
+    public async Task Plugins_Add_IsThreadSafeUnderConcurrentCalls()
+    {
+        // Arrange
+        const int threadCount = 8;
+        const int perThreadPlugins = 100;
+        var errors = new ConcurrentQueue<Exception>();
+
+        // Act
+        var tasks = Enumerable.Range(0, threadCount)
+            .Select(threadId => Task.Run(() =>
+            {
+                for (var i = 0; i < perThreadPlugins; i++)
+                {
+                    try
+                    {
+                        _viewModel.Plugins.Add(new PluginListItem { Name = $"T{threadId}_{i}.esp" });
+                    }
+                    catch (Exception ex)
+                    {
+                        errors.Enqueue(ex);
+                    }
+                }
+            }))
+            .ToArray();
+
+        await Task.WhenAll(tasks);
+        await FlushUiAsync();
+
+        // Assert
+        Assert.Empty(errors);
+        Assert.Equal(threadCount * perThreadPlugins, _viewModel.Plugins.Count);
+        Assert.Equal(_viewModel.Plugins.Count, _viewModel.FilteredPlugins.Count);
     }
 
     [AvaloniaFact]
