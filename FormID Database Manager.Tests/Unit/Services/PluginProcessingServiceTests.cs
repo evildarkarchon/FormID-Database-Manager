@@ -21,6 +21,7 @@ public class PluginProcessingServiceTests : IDisposable
     private readonly Mock<DatabaseService> _mockDatabaseService;
     private readonly Mock<MainWindowViewModel> _mockViewModel;
     private readonly Mock<IThreadDispatcher> _mockDispatcher;
+    private readonly Mock<IGameLoadOrderProvider> _mockLoadOrderProvider;
     private readonly PluginProcessingService _service;
     private readonly List<string> _tempFiles = [];
 
@@ -29,12 +30,21 @@ public class PluginProcessingServiceTests : IDisposable
         _mockDatabaseService = new Mock<DatabaseService>();
         _mockDispatcher = new Mock<IThreadDispatcher>();
         _mockViewModel = new Mock<MainWindowViewModel>(_mockDispatcher.Object);
+        _mockLoadOrderProvider = new Mock<IGameLoadOrderProvider>();
 
         _mockDispatcher.Setup(d => d.CheckAccess()).Returns(true);
         _mockDispatcher.Setup(d => d.Post(It.IsAny<Action>()))
             .Callback<Action>(action => action());
 
-        _service = new PluginProcessingService(_mockDatabaseService.Object, _mockViewModel.Object, _mockDispatcher.Object);
+        _mockLoadOrderProvider
+            .Setup(x => x.BuildSnapshot(It.IsAny<GameRelease>(), It.IsAny<string>(), It.IsAny<bool>()))
+            .Returns(new GameLoadOrderSnapshot(["TestPlugin1.esp", "TestPlugin2.esp"]));
+
+        _service = new PluginProcessingService(
+            _mockDatabaseService.Object,
+            _mockViewModel.Object,
+            _mockDispatcher.Object,
+            _mockLoadOrderProvider.Object);
     }
 
     public void Dispose()

@@ -10,6 +10,7 @@ using FormID_Database_Manager.TestUtilities;
 using Microsoft.Data.Sqlite;
 using Moq;
 using Mutagen.Bethesda;
+using Mutagen.Bethesda.Plugins.Binary.Parameters;
 using Mutagen.Bethesda.Plugins;
 using Mutagen.Bethesda.Plugins.Order;
 using Mutagen.Bethesda.Plugins.Records;
@@ -199,6 +200,28 @@ public class ModProcessorTests : IDisposable
     }
 
     [Fact]
+    public async Task ProcessPlugin_WarnsWhenPluginNotInSnapshot()
+    {
+        var gameDir = Path.Combine(Path.GetTempPath(), "TestGame", "Data");
+        Directory.CreateDirectory(gameDir);
+        await CreateMinimalPluginFile(Path.Combine(gameDir, "TestPlugin.esp"));
+
+        var pluginItem = new PluginListItem { Name = "TestPlugin.esp", IsSelected = true };
+        var snapshot = new GameLoadOrderSnapshot(["OtherPlugin.esp"]);
+
+        await _modProcessor.ProcessPlugin(
+            gameDir,
+            _connection,
+            GameRelease.SkyrimSE,
+            pluginItem,
+            snapshot,
+            false,
+            CancellationToken.None);
+
+        Assert.Contains(_errorMessages, msg => msg.Contains("Could not find plugin in load order"));
+    }
+
+    [Fact]
     public async Task ProcessPlugin_WarnsWhenPluginFileMissing()
     {
         // Arrange
@@ -313,6 +336,34 @@ public class ModProcessorTests : IDisposable
             GameRelease.SkyrimSE,
             "TestPlugin.esp",
             It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ProcessPlugin_StarfieldSnapshot_PassesMasterFlagsLookupToOverlayReads()
+    {
+        var errors = new List<string>();
+        var processor = new CapturingModProcessor(_databaseService, errors.Add);
+
+        var gameDir = Path.Combine(Path.GetTempPath(), "TestGame", "Data");
+        Directory.CreateDirectory(gameDir);
+        await CreateMinimalPluginFile(Path.Combine(gameDir, "TestPlugin.esm"));
+
+        var pluginItem = new PluginListItem { Name = "TestPlugin.esm", IsSelected = true };
+        var snapshot = new GameLoadOrderSnapshot(
+            ["TestPlugin.esm"],
+            [new KeyedMasterStyle(ModKey.FromNameAndExtension("TestPlugin.esm"), MasterStyle.Full)]);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => processor.ProcessPlugin(
+            gameDir,
+            _connection,
+            GameRelease.Starfield,
+            pluginItem,
+            snapshot,
+            false,
+            CancellationToken.None));
+
+        Assert.NotNull(processor.CapturedReadParameters);
+        Assert.NotNull(processor.CapturedReadParameters.MasterFlagsLookup);
     }
 
     #endregion
@@ -578,6 +629,19 @@ public class ModProcessorTests : IDisposable
     #endregion
 
     #region Helper Methods
+
+    private sealed class CapturingModProcessor(DatabaseService databaseService, Action<string> errorCallback)
+        : ModProcessor(databaseService, errorCallback)
+    {
+        internal BinaryReadParameters CapturedReadParameters { get; private set; } = null!;
+
+        internal override IModDisposeGetter CreateOverlay(string pluginPath, GameRelease gameRelease,
+            BinaryReadParameters readParameters)
+        {
+            CapturedReadParameters = readParameters;
+            throw new InvalidOperationException("Overlay creation intercepted for testing.");
+        }
+    }
 
     private void InitializeDatabase(SqliteConnection connection, GameRelease gameRelease)
     {

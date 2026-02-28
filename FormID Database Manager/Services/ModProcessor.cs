@@ -11,6 +11,7 @@ using Microsoft.Data.Sqlite;
 using Mutagen.Bethesda;
 using Mutagen.Bethesda.Fallout4;
 using Mutagen.Bethesda.Oblivion;
+using Mutagen.Bethesda.Plugins.Binary.Parameters;
 using Mutagen.Bethesda.Plugins.Order;
 using Mutagen.Bethesda.Plugins.Records;
 using Mutagen.Bethesda.Skyrim;
@@ -57,7 +58,7 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
     /// <param name="conn">The SQLite database connection used for processing.</param>
     /// <param name="gameRelease">The specific game release associated with the plugin.</param>
     /// <param name="pluginItem">The plugin to be processed, represented as a list item.</param>
-    /// <param name="loadOrderDict">The load order that includes all the plugins for the current session.</param>
+    /// <param name="loadOrderSnapshot">The run-scoped load order snapshot for membership and read parameters.</param>
     /// <param name="updateMode">Indicates if the plugin entries should be updated in the database.</param>
     /// <param name="cancellationToken">The cancellation token to handle processing termination requests.</param>
     /// <returns>A task that processes the plugin asynchronously and manages its database entries accordingly.</returns>
@@ -71,12 +72,43 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
         bool updateMode,
         CancellationToken cancellationToken)
     {
+        var snapshot = new GameLoadOrderSnapshot(loadOrderDict.Keys.ToList());
+        await ProcessPlugin(
+            gameDir,
+            conn,
+            gameRelease,
+            pluginItem,
+            snapshot,
+            updateMode,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    ///     Processes the specified plugin file, updates the database with its entries,
+    ///     and provides error handling during processing.
+    /// </summary>
+    /// <param name="gameDir">The root directory of the game where the plugin resides.</param>
+    /// <param name="conn">The SQLite database connection used for processing.</param>
+    /// <param name="gameRelease">The specific game release associated with the plugin.</param>
+    /// <param name="pluginItem">The plugin to be processed, represented as a list item.</param>
+    /// <param name="loadOrderSnapshot">The run-scoped load order snapshot for membership and read parameters.</param>
+    /// <param name="updateMode">Indicates if the plugin entries should be updated in the database.</param>
+    /// <param name="cancellationToken">The cancellation token to handle processing termination requests.</param>
+    /// <returns>A task that processes the plugin asynchronously and manages its database entries accordingly.</returns>
+    [RequiresUnreferencedCode("Uses reflection to discover INamedGetter interface and Name/String properties on Mutagen record types for name extraction.")]
+    public async Task ProcessPlugin(
+        string gameDir,
+        SqliteConnection conn,
+        GameRelease gameRelease,
+        PluginListItem pluginItem,
+        GameLoadOrderSnapshot loadOrderSnapshot,
+        bool updateMode,
+        CancellationToken cancellationToken)
+    {
         SqliteTransaction? transaction = null;
         try
         {
-            loadOrderDict.TryGetValue(pluginItem.Name, out var plugin);
-
-            if (plugin == null)
+            if (!loadOrderSnapshot.ContainsPlugin(pluginItem.Name))
             {
                 errorCallback($"Warning: Could not find plugin in load order: {pluginItem.Name}");
                 return;
@@ -108,30 +140,7 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
                 // of uninterruptible loading. Cancellation will be checked after loading completes.
                 cancellationToken.ThrowIfCancellationRequested();
 
-                using IModDisposeGetter mod = gameRelease switch
-                {
-                    GameRelease.Oblivion => OblivionMod.CreateFromBinaryOverlay(pluginPath,
-                        OblivionRelease.Oblivion),
-                    GameRelease.SkyrimLE => SkyrimMod.CreateFromBinaryOverlay(pluginPath,
-                        SkyrimRelease.SkyrimLE),
-                    GameRelease.SkyrimSE => SkyrimMod.CreateFromBinaryOverlay(pluginPath,
-                        SkyrimRelease.SkyrimSE),
-                    GameRelease.SkyrimSEGog => SkyrimMod.CreateFromBinaryOverlay(pluginPath,
-                        SkyrimRelease.SkyrimSEGog),
-                    GameRelease.SkyrimVR => SkyrimMod.CreateFromBinaryOverlay(pluginPath,
-                        SkyrimRelease.SkyrimVR),
-                    GameRelease.EnderalLE => SkyrimMod.CreateFromBinaryOverlay(pluginPath,
-                        SkyrimRelease.EnderalLE),
-                    GameRelease.EnderalSE => SkyrimMod.CreateFromBinaryOverlay(pluginPath,
-                        SkyrimRelease.EnderalSE),
-                    GameRelease.Fallout4 => Fallout4Mod.CreateFromBinaryOverlay(pluginPath,
-                        Fallout4Release.Fallout4),
-                    GameRelease.Fallout4VR => Fallout4Mod.CreateFromBinaryOverlay(pluginPath,
-                        Fallout4Release.Fallout4VR),
-                    GameRelease.Starfield => StarfieldMod.CreateFromBinaryOverlay(pluginPath,
-                        StarfieldRelease.Starfield),
-                    _ => throw new NotSupportedException($"Unsupported game release: {gameRelease}")
-                };
+                using var mod = CreateOverlay(pluginPath, gameRelease, loadOrderSnapshot.ReadParameters);
 
                 ProcessModRecords(conn, gameRelease, pluginItem.Name, mod, cancellationToken);
                 transaction.Commit();
@@ -150,6 +159,47 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
                 await transaction.DisposeAsync().ConfigureAwait(false);
             }
         }
+    }
+
+    internal virtual IModDisposeGetter CreateOverlay(
+        string pluginPath,
+        GameRelease gameRelease,
+        BinaryReadParameters readParameters)
+    {
+        return gameRelease switch
+        {
+            GameRelease.Oblivion => OblivionMod.CreateFromBinaryOverlay(pluginPath,
+                OblivionRelease.Oblivion,
+                readParameters),
+            GameRelease.SkyrimLE => SkyrimMod.CreateFromBinaryOverlay(pluginPath,
+                SkyrimRelease.SkyrimLE,
+                readParameters),
+            GameRelease.SkyrimSE => SkyrimMod.CreateFromBinaryOverlay(pluginPath,
+                SkyrimRelease.SkyrimSE,
+                readParameters),
+            GameRelease.SkyrimSEGog => SkyrimMod.CreateFromBinaryOverlay(pluginPath,
+                SkyrimRelease.SkyrimSEGog,
+                readParameters),
+            GameRelease.SkyrimVR => SkyrimMod.CreateFromBinaryOverlay(pluginPath,
+                SkyrimRelease.SkyrimVR,
+                readParameters),
+            GameRelease.EnderalLE => SkyrimMod.CreateFromBinaryOverlay(pluginPath,
+                SkyrimRelease.EnderalLE,
+                readParameters),
+            GameRelease.EnderalSE => SkyrimMod.CreateFromBinaryOverlay(pluginPath,
+                SkyrimRelease.EnderalSE,
+                readParameters),
+            GameRelease.Fallout4 => Fallout4Mod.CreateFromBinaryOverlay(pluginPath,
+                Fallout4Release.Fallout4,
+                readParameters),
+            GameRelease.Fallout4VR => Fallout4Mod.CreateFromBinaryOverlay(pluginPath,
+                Fallout4Release.Fallout4VR,
+                readParameters),
+            GameRelease.Starfield => StarfieldMod.CreateFromBinaryOverlay(pluginPath,
+                StarfieldRelease.Starfield,
+                readParameters),
+            _ => throw new NotSupportedException($"Unsupported game release: {gameRelease}")
+        };
     }
 
     /// <summary>

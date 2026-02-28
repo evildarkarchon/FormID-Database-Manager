@@ -64,7 +64,8 @@ public class PluginListManager(
                 // Determine the data path
                 var dataPath = GameReleaseHelper.ResolveDataPath(gameDirectory);
 
-                var loadOrder = effectiveLoadOrderProvider.GetListedPluginNames(gameRelease, dataPath);
+                var loadOrderSnapshot = effectiveLoadOrderProvider.BuildSnapshot(gameRelease, dataPath);
+                var loadOrder = loadOrderSnapshot.ListedPluginNames;
                 var basePluginSet = new HashSet<string>(
                     gameDetectionService.GetBaseGamePlugins(gameRelease),
                     StringComparer.OrdinalIgnoreCase);

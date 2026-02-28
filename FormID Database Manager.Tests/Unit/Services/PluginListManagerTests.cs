@@ -67,14 +67,19 @@ public class PluginListManagerTests : IDisposable
         }
     }
 
+    private static GameLoadOrderSnapshot Snapshot(params string[] pluginNames)
+    {
+        return new GameLoadOrderSnapshot(pluginNames);
+    }
+
     [Fact]
     public async Task RefreshPluginList_NormalMode_FiltersBaseAndDeduplicates()
     {
         var dataPath = Path.Combine(_testDirectory, "Data");
         CreatePluginFiles(dataPath, "Skyrim.esm", "Update.esm", "UserA.esp", "UserB.esp");
 
-        _loadOrderProvider.Setup(x => x.GetListedPluginNames(GameRelease.SkyrimSE, dataPath))
-            .Returns(["Skyrim.esm", "Update.esm", "UserA.esp", "UserA.esp", "UserB.esp"]);
+        _loadOrderProvider.Setup(x => x.BuildSnapshot(GameRelease.SkyrimSE, dataPath, false))
+            .Returns(Snapshot("Skyrim.esm", "Update.esm", "UserA.esp", "UserA.esp", "UserB.esp"));
         _gameDetectionService.Setup(x => x.GetBaseGamePlugins(GameRelease.SkyrimSE))
             .Returns(["Skyrim.esm", "Update.esm"]);
 
@@ -95,8 +100,8 @@ public class PluginListManagerTests : IDisposable
         var dataPath = Path.Combine(_testDirectory, "Data");
         CreatePluginFiles(dataPath, "Skyrim.esm", "Update.esm", "UserA.esp");
 
-        _loadOrderProvider.Setup(x => x.GetListedPluginNames(GameRelease.SkyrimSE, dataPath))
-            .Returns(["Skyrim.esm", "Update.esm", "UserA.esp"]);
+        _loadOrderProvider.Setup(x => x.BuildSnapshot(GameRelease.SkyrimSE, dataPath, false))
+            .Returns(Snapshot("Skyrim.esm", "Update.esm", "UserA.esp"));
 
         var sut = CreateSut();
 
@@ -113,8 +118,8 @@ public class PluginListManagerTests : IDisposable
         var dataPath = Path.Combine(_testDirectory, "Data");
         CreatePluginFiles(dataPath, "UserA.esp");
 
-        _loadOrderProvider.Setup(x => x.GetListedPluginNames(GameRelease.SkyrimSE, dataPath))
-            .Returns(["UserA.esp", "Missing.esp"]);
+        _loadOrderProvider.Setup(x => x.BuildSnapshot(GameRelease.SkyrimSE, dataPath, false))
+            .Returns(Snapshot("UserA.esp", "Missing.esp"));
 
         var sut = CreateSut();
 
@@ -130,8 +135,8 @@ public class PluginListManagerTests : IDisposable
         var dataPath = Path.Combine(_testDirectory, "Data");
         CreatePluginFiles(dataPath, "skyrim.esm", "update.esm", "UserA.esp");
 
-        _loadOrderProvider.Setup(x => x.GetListedPluginNames(GameRelease.SkyrimSE, dataPath))
-            .Returns(["skyrim.esm", "update.esm", "UserA.esp"]);
+        _loadOrderProvider.Setup(x => x.BuildSnapshot(GameRelease.SkyrimSE, dataPath, false))
+            .Returns(Snapshot("skyrim.esm", "update.esm", "UserA.esp"));
         _gameDetectionService.Setup(x => x.GetBaseGamePlugins(GameRelease.SkyrimSE))
             .Returns(["Skyrim.esm", "Update.esm"]);
 
@@ -151,7 +156,7 @@ public class PluginListManagerTests : IDisposable
         _viewModel.FilteredPlugins.Add(new PluginListItem { Name = "OldPlugin.esp" });
 
         var dataPath = Path.Combine(_testDirectory, "Data");
-        _loadOrderProvider.Setup(x => x.GetListedPluginNames(GameRelease.SkyrimSE, dataPath))
+        _loadOrderProvider.Setup(x => x.BuildSnapshot(GameRelease.SkyrimSE, dataPath, false))
             .Throws(new InvalidOperationException("load order failure"));
 
         var sut = CreateSut();
@@ -178,8 +183,8 @@ public class PluginListManagerTests : IDisposable
         var pluginNames = Enumerable.Range(1, 12).Select(i => $"Plugin{i}.esp").ToArray();
         CreatePluginFiles(dataPath, pluginNames);
 
-        _loadOrderProvider.Setup(x => x.GetListedPluginNames(GameRelease.SkyrimSE, dataPath))
-            .Returns(pluginNames);
+        _loadOrderProvider.Setup(x => x.BuildSnapshot(GameRelease.SkyrimSE, dataPath, false))
+            .Returns(Snapshot(pluginNames));
 
         var sut = CreateSut();
 
@@ -199,14 +204,14 @@ public class PluginListManagerTests : IDisposable
         var olderStarted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var allowOlderToContinue = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        _loadOrderProvider.SetupSequence(x => x.GetListedPluginNames(GameRelease.SkyrimSE, dataPath))
+        _loadOrderProvider.SetupSequence(x => x.BuildSnapshot(GameRelease.SkyrimSE, dataPath, false))
             .Returns(() =>
             {
                 olderStarted.TrySetResult(true);
                 allowOlderToContinue.Task.GetAwaiter().GetResult();
-                return ["OlderA.esp", "OlderB.esp"];
+                return Snapshot("OlderA.esp", "OlderB.esp");
             })
-            .Returns(["Newer.esp"]);
+            .Returns(Snapshot("Newer.esp"));
 
         var sut = CreateSut();
 

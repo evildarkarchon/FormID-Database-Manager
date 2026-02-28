@@ -7,9 +7,6 @@ using System.Threading.Tasks;
 using FormID_Database_Manager.Models;
 using FormID_Database_Manager.ViewModels;
 using Microsoft.Data.Sqlite;
-using Mutagen.Bethesda.Environments;
-using Mutagen.Bethesda.Plugins.Order;
-using Mutagen.Bethesda.Plugins.Records;
 
 namespace FormID_Database_Manager.Services;
 
@@ -25,6 +22,7 @@ public class PluginProcessingService : IDisposable
     private readonly MainWindowViewModel _viewModel;
     private CancellationTokenSource? _cancellationTokenSource;
     private readonly IThreadDispatcher _dispatcher;
+    private readonly IGameLoadOrderProvider _loadOrderProvider;
 
     /// <summary>
     ///     Service responsible for processing game plugins, utilizing various modules such as
@@ -37,11 +35,13 @@ public class PluginProcessingService : IDisposable
     public PluginProcessingService(
         DatabaseService databaseService,
         MainWindowViewModel viewModel,
-        IThreadDispatcher? dispatcher = null)
+        IThreadDispatcher? dispatcher = null,
+        IGameLoadOrderProvider? loadOrderProvider = null)
     {
         _databaseService = databaseService;
         _viewModel = viewModel;
         _dispatcher = dispatcher ?? new AvaloniaThreadDispatcher();
+        _loadOrderProvider = loadOrderProvider ?? new GameLoadOrderProvider();
         _textProcessor = new FormIdTextProcessor(databaseService);
         _modProcessor = new ModProcessor(databaseService, AddErrorMessage);
     }
@@ -154,23 +154,15 @@ public class PluginProcessingService : IDisposable
             progress?.Report(("Initializing plugin processing...", 0));
 
             var pluginList = new List<PluginListItem>(parameters.SelectedPlugins);
-            var loadOrderDict = new Dictionary<string, IModListingGetter<IModGetter>>(StringComparer.OrdinalIgnoreCase);
+            var loadOrderSnapshot = GameLoadOrderSnapshot.Empty;
 
             if (pluginList.Count > 0)
             {
                 var dataPath = GameReleaseHelper.ResolveDataPath(parameters.GameDirectory!);
-                List<IModListingGetter<IModGetter>> loadOrder;
-                using (var env = GameEnvironment.Typical.Builder(parameters.GameRelease)
-                           .WithTargetDataFolder(dataPath)
-                           .Build())
-                {
-                    loadOrder = env.LoadOrder.ListedOrder.ToList();
-                }
-
-                foreach (var listing in loadOrder)
-                {
-                    loadOrderDict.TryAdd(listing.ModKey.FileName, listing);
-                }
+                loadOrderSnapshot = _loadOrderProvider.BuildSnapshot(
+                    parameters.GameRelease,
+                    dataPath,
+                    includeMasterFlagsLookup: true);
             }
 
             var successfulPlugins = 0;
@@ -195,7 +187,7 @@ public class PluginProcessingService : IDisposable
                         conn,
                         parameters.GameRelease,
                         pluginItem,
-                        loadOrderDict,
+                        loadOrderSnapshot,
                         parameters.UpdateMode,
                         cancellationTokenSource.Token).ConfigureAwait(false);
                     successfulPlugins++;
