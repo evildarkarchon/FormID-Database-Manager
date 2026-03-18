@@ -37,6 +37,17 @@ public static class MockFactory
         return mock;
     }
 
+    public static Mock<IGameLocationService> CreateGameLocationServiceMock(
+        List<string>? folders = null)
+    {
+        var mock = new Mock<IGameLocationService>();
+
+        mock.Setup(x => x.GetGameFolders(It.IsAny<GameRelease>()))
+            .Returns(folders ?? []);
+
+        return mock;
+    }
+
     public static Mock<DatabaseService> CreateDatabaseServiceMock()
     {
         var mock = new Mock<DatabaseService>();

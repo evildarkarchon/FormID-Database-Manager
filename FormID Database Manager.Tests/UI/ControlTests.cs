@@ -3,6 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Headless.XUnit;
 using FormID_Database_Manager.Models;
 using FormID_Database_Manager.ViewModels;
+using Mutagen.Bethesda;
 using Xunit;
 
 namespace FormID_Database_Manager.Tests.UI;
@@ -87,19 +88,20 @@ public class ControlTests
     }
 
     [AvaloniaFact]
-    public async Task GameReleaseTextBlock_DisplaysDetectedGame()
+    public async Task GameComboBox_BindsToSelectedGame()
     {
         await UiTestHost.WithWindowAsync(() => new MainWindow(), async window =>
         {
             var viewModel = (MainWindowViewModel)window.DataContext!;
-            var gameReleaseTextBlock = window.FindControl<TextBlock>("GameReleaseTextBlock");
+            var gameComboBox = window.FindControl<ComboBox>("GameComboBox");
 
-            Assert.NotNull(gameReleaseTextBlock);
+            Assert.NotNull(gameComboBox);
+            Assert.Equal(10, gameComboBox.ItemCount);
 
-            viewModel.DetectedGame = "SkyrimSE";
+            viewModel.SelectedGame = GameRelease.SkyrimSE;
             await UiTestHost.FlushUiAsync();
 
-            Assert.Equal("SkyrimSE", gameReleaseTextBlock.Text);
+            Assert.Equal(GameRelease.SkyrimSE, gameComboBox.SelectedItem);
         });
     }
 
@@ -109,13 +111,13 @@ public class ControlTests
         await UiTestHost.WithWindowAsync(() => new MainWindow(), async window =>
         {
             var viewModel = (MainWindowViewModel)window.DataContext!;
-            var selectDirectoryButton = window.FindControl<Button>("SelectDirectoryButton");
+            var browseDirectoryButton = window.FindControl<Button>("BrowseDirectoryButton");
             var processButton = window.FindControl<Button>("ProcessFormIdsButton");
 
-            Assert.NotNull(selectDirectoryButton);
+            Assert.NotNull(browseDirectoryButton);
             Assert.NotNull(processButton);
 
-            Assert.True(selectDirectoryButton.IsEnabled);
+            Assert.True(browseDirectoryButton.IsEnabled);
             Assert.True(processButton.IsEnabled);
 
             viewModel.IsProcessing = true;

@@ -2,6 +2,7 @@ using System;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
@@ -15,12 +16,25 @@ namespace FormID_Database_Manager;
 public partial class MainWindow : Window, IDisposable
 {
     private readonly GameDetectionService _gameDetectionService;
+    private readonly IGameLocationService _gameLocationService;
     private readonly PluginListManager _pluginListManager;
     private readonly PluginProcessingService _pluginProcessingService;
     private readonly MainWindowViewModel _viewModel;
     private readonly WindowManager _windowManager;
+    private int _gameSelectionVersion;
+    private bool _suppressDirectorySelectionChanged;
+    private bool _suppressGameSelectionChanged;
 
-    public MainWindow()
+    public MainWindow() : this(null, null, null, null, null)
+    {
+    }
+
+    internal MainWindow(
+        MainWindowViewModel? viewModel,
+        GameDetectionService? gameDetectionService,
+        IGameLocationService? gameLocationService,
+        PluginListManager? pluginListManager,
+        PluginProcessingService? pluginProcessingService)
     {
         try
         {
@@ -32,15 +46,18 @@ public partial class MainWindow : Window, IDisposable
             // This is expected when running headless tests
         }
 
-        _viewModel = new MainWindowViewModel();
+        _viewModel = viewModel ?? new MainWindowViewModel();
         DataContext = _viewModel;
 
         _windowManager = new WindowManager(StorageProvider, _viewModel);
 
-        _gameDetectionService = new GameDetectionService();
-        _pluginListManager = new PluginListManager(_gameDetectionService, _viewModel, new AvaloniaThreadDispatcher());
+        _gameDetectionService = gameDetectionService ?? new GameDetectionService();
+        _gameLocationService = gameLocationService ?? new GameLocationService();
+        _pluginListManager = pluginListManager ??
+                             new PluginListManager(_gameDetectionService, _viewModel, new AvaloniaThreadDispatcher());
         var databaseService = new DatabaseService();
-        _pluginProcessingService = new PluginProcessingService(databaseService, _viewModel, new AvaloniaThreadDispatcher());
+        _pluginProcessingService = pluginProcessingService ??
+                                   new PluginProcessingService(databaseService, _viewModel, new AvaloniaThreadDispatcher());
 
         this.Closed += (_, _) => Dispose();
     }
@@ -60,11 +77,16 @@ public partial class MainWindow : Window, IDisposable
         _viewModel.Dispose();
     }
 
-    private async void SelectGameDirectory_Click(object sender, RoutedEventArgs e)
+    private async void GameComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        if (_suppressGameSelectionChanged)
+        {
+            return;
+        }
+
         try
         {
-            await SelectGameDirectoryAsync();
+            await OnGameSelectedAsync();
         }
         catch (Exception ex)
         {
@@ -72,7 +94,67 @@ public partial class MainWindow : Window, IDisposable
         }
     }
 
-    private async Task SelectGameDirectoryAsync()
+    private async Task OnGameSelectedAsync()
+    {
+        if (_viewModel.SelectedGame is not { } selectedGame)
+        {
+            return;
+        }
+
+        var gameSelectionVersion = Interlocked.Increment(ref _gameSelectionVersion);
+
+        ResetGameSelectionState();
+
+        // Run GameLocations lookup off UI thread (does registry + file system I/O)
+        var folders = await Task.Run(() => _gameLocationService.GetGameFolders(selectedGame));
+
+        if (!IsLatestGameSelection(gameSelectionVersion))
+        {
+            return;
+        }
+
+        if (folders.Count == 0)
+        {
+            _viewModel.AddInformationMessage(
+                $"No installed locations found for {selectedGame}. Use Browse to select a directory.");
+        }
+        else
+        {
+            ApplyDetectedFolders(folders);
+            await LoadPluginsForCurrentSelection();
+        }
+    }
+
+    private async void DirectoryComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressDirectorySelectionChanged)
+        {
+            return;
+        }
+
+        try
+        {
+            await LoadPluginsForCurrentSelection();
+        }
+        catch (Exception ex)
+        {
+            _viewModel.AddErrorMessage($"Unexpected error: {ex.Message}");
+        }
+    }
+
+    private async void BrowseDirectory_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            await BrowseDirectoryAsync();
+        }
+        catch (Exception ex)
+        {
+            _viewModel.AddErrorMessage($"Unexpected error: {ex.Message}");
+        }
+    }
+
+    private async Task BrowseDirectoryAsync()
     {
         var path = await _windowManager.SelectGameDirectory();
         if (string.IsNullOrEmpty(path))
@@ -80,22 +162,100 @@ public partial class MainWindow : Window, IDisposable
             return;
         }
 
-        _viewModel.GameDirectory = path;
+        Interlocked.Increment(ref _gameSelectionVersion);
+        SetGameDirectory(path);
 
-        var detectedGame = _gameDetectionService.DetectGame(path);
-        if (detectedGame.HasValue)
+        // Auto-detect game from directory if no game is selected yet
+        if (_viewModel.SelectedGame is null)
         {
-            _viewModel.DetectedGame = detectedGame.ToString() ?? string.Empty;
-            await _pluginListManager.RefreshPluginList(
-                path,
-                detectedGame.Value,
-                _viewModel.Plugins,
-                AdvancedModeCheckBox.IsChecked ?? false);
+            var detectedGame = _gameDetectionService.DetectGame(path);
+            if (detectedGame.HasValue)
+            {
+                // Suppress the SelectionChanged event to prevent re-running location detection
+                _suppressGameSelectionChanged = true;
+                try
+                {
+                    _viewModel.SelectedGame = detectedGame.Value;
+                }
+                finally
+                {
+                    _suppressGameSelectionChanged = false;
+                }
+            }
+            else
+            {
+                _viewModel.AddErrorMessage(
+                    "Could not detect game from directory. Please select a game from the dropdown.");
+                return;
+            }
         }
-        else
+
+        await LoadPluginsForCurrentSelection();
+    }
+
+    private async Task LoadPluginsForCurrentSelection()
+    {
+        if (_viewModel.SelectedGame is not { } game || string.IsNullOrEmpty(_viewModel.GameDirectory))
         {
-            _viewModel.AddErrorMessage(
-                "Could not detect game from directory. Please ensure this is a valid game Data directory.");
+            return;
+        }
+
+        await _pluginListManager.RefreshPluginList(
+            _viewModel.GameDirectory,
+            game,
+            _viewModel.Plugins,
+            AdvancedModeCheckBox.IsChecked ?? false);
+    }
+
+    private bool IsLatestGameSelection(int gameSelectionVersion)
+    {
+        return gameSelectionVersion == Volatile.Read(ref _gameSelectionVersion);
+    }
+
+    private void ResetGameSelectionState()
+    {
+        RunWithDirectorySelectionSuppressed(() =>
+        {
+            _viewModel.GameDirectory = string.Empty;
+            _viewModel.DetectedDirectories.Clear();
+        });
+
+        _viewModel.Plugins.Clear();
+    }
+
+    private void ApplyDetectedFolders(System.Collections.Generic.IReadOnlyList<string> folders)
+    {
+        RunWithDirectorySelectionSuppressed(() =>
+        {
+            _viewModel.DetectedDirectories.Clear();
+
+            if (folders.Count > 1)
+            {
+                foreach (var folder in folders)
+                {
+                    _viewModel.DetectedDirectories.Add(folder);
+                }
+            }
+
+            _viewModel.GameDirectory = folders[0];
+        });
+    }
+
+    private void SetGameDirectory(string path)
+    {
+        RunWithDirectorySelectionSuppressed(() => _viewModel.GameDirectory = path);
+    }
+
+    private void RunWithDirectorySelectionSuppressed(Action action)
+    {
+        _suppressDirectorySelectionChanged = true;
+        try
+        {
+            action();
+        }
+        finally
+        {
+            _suppressDirectorySelectionChanged = false;
         }
     }
 
@@ -169,21 +329,7 @@ public partial class MainWindow : Window, IDisposable
 
     private async Task AdvancedModeChangedAsync()
     {
-        if (!string.IsNullOrEmpty(_viewModel.GameDirectory) && !string.IsNullOrEmpty(_viewModel.DetectedGame))
-        {
-            if (Enum.TryParse<GameRelease>(_viewModel.DetectedGame, out var gameRelease))
-            {
-                await _pluginListManager.RefreshPluginList(
-                    _viewModel.GameDirectory,
-                    gameRelease,
-                    _viewModel.Plugins,
-                    AdvancedModeCheckBox.IsChecked ?? false);
-            }
-            else
-            {
-                _viewModel.AddErrorMessage($"Invalid game release: {_viewModel.DetectedGame}");
-            }
-        }
+        await LoadPluginsForCurrentSelection();
     }
 
     [RequiresUnreferencedCode("Uses reflection-based name extraction for Mutagen records.")]
@@ -222,15 +368,9 @@ public partial class MainWindow : Window, IDisposable
         try
         {
             // Validate game type is selected
-            if (string.IsNullOrEmpty(_viewModel.DetectedGame))
+            if (_viewModel.SelectedGame is not { } gameRelease)
             {
-                _viewModel.AddErrorMessage("Game type must be specified. Please select a game directory first.");
-                return;
-            }
-
-            if (!Enum.TryParse<GameRelease>(_viewModel.DetectedGame, out var gameRelease))
-            {
-                _viewModel.AddErrorMessage($"Invalid game release: {_viewModel.DetectedGame}");
+                _viewModel.AddErrorMessage("Please select a game from the dropdown first.");
                 return;
             }
 
@@ -264,7 +404,7 @@ public partial class MainWindow : Window, IDisposable
             {
                 parameters.DatabasePath = Path.Combine(
                     Directory.GetCurrentDirectory(),
-                    $"{_viewModel.DetectedGame}.db");
+                    $"{GameReleaseHelper.GetSafeTableName(gameRelease)}.db");
                 _viewModel.DatabasePath = parameters.DatabasePath;
             }
 

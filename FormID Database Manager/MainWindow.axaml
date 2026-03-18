@@ -30,13 +30,32 @@
 
             <!-- Main Content -->
             <Grid Grid.Row="1" Margin="10,10,10,0" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,*,Auto,Auto,Auto,Auto">
-                <!-- Game Directory Selection -->
+                <!-- Game Selection -->
                 <DockPanel Grid.Row="0">
+                    <TextBlock Text="Game:" VerticalAlignment="Center" />
+                    <ComboBox x:Name="GameComboBox"
+                              ItemsSource="{Binding AvailableGames}"
+                              SelectedItem="{Binding SelectedGame}"
+                              SelectionChanged="GameComboBox_SelectionChanged"
+                              PlaceholderText="Select a game..."
+                              Margin="5" />
+                </DockPanel>
+
+                <!-- Game Directory Selection -->
+                <DockPanel Grid.Row="1">
                     <TextBlock Text="Game Directory:" VerticalAlignment="Center" />
-                    <Button x:Name="SelectDirectoryButton"
-                            Content="Select Directory"
+                    <Button x:Name="BrowseDirectoryButton"
+                            Content="Browse..."
                             DockPanel.Dock="Right"
-                            Click="SelectGameDirectory_Click" />
+                            Click="BrowseDirectory_Click" />
+                    <ComboBox x:Name="DirectoryComboBox"
+                              DockPanel.Dock="Right"
+                              ItemsSource="{Binding DetectedDirectories}"
+                              SelectedItem="{Binding GameDirectory}"
+                              SelectionChanged="DirectoryComboBox_SelectionChanged"
+                              IsVisible="{Binding HasMultipleDirectories}"
+                              MinWidth="300"
+                              Margin="5" />
                     <TextBox x:Name="GameDirectoryTextBox"
                              IsReadOnly="True"
                              Margin="5"
@@ -44,7 +63,7 @@
                 </DockPanel>
 
                 <!-- Database Selection -->
-                <DockPanel Grid.Row="1">
+                <DockPanel Grid.Row="2">
                     <TextBlock Text="Database File:" VerticalAlignment="Center" />
                     <Button x:Name="SelectDatabaseButton"
                             Content="Select Database"
@@ -57,7 +76,7 @@
                 </DockPanel>
 
                 <!-- FormID List Selection -->
-                <DockPanel Grid.Row="2">
+                <DockPanel Grid.Row="3">
                     <TextBlock Text="FormID List File (Optional):" VerticalAlignment="Center" />
                     <Button x:Name="SelectListFileButton"
                             Content="Select List File"
@@ -68,15 +87,6 @@
                              Margin="5"
                              Text="{Binding FormIdListPath}" />
                 </DockPanel>
-
-                <!-- Game Release Info -->
-                <StackPanel Grid.Row="3" Orientation="Horizontal">
-                    <TextBlock Text="Detected Game:" VerticalAlignment="Center" />
-                    <TextBlock x:Name="GameReleaseTextBlock"
-                               Margin="5"
-                               VerticalAlignment="Center"
-                               Text="{Binding DetectedGame}" />
-                </StackPanel>
 
                 <!-- Plugin Filter -->
                 <DockPanel Grid.Row="4" Margin="0,10,0,5">

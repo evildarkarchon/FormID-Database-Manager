@@ -10,6 +10,7 @@ using Avalonia.Headless.XUnit;
 using Avalonia.Threading;
 using FormID_Database_Manager.Models;
 using FormID_Database_Manager.ViewModels;
+using Mutagen.Bethesda;
 using Xunit;
 
 namespace FormID_Database_Manager.Tests.Unit.ViewModels;
@@ -71,18 +72,130 @@ public class MainWindowViewModelTests
     }
 
     [AvaloniaFact]
-    public void DetectedGame_RaisesPropertyChanged_WhenSet()
+    public void SelectedGame_RaisesPropertyChanged_WhenSet()
     {
         // Arrange
-        var propertyName = string.Empty;
-        _viewModel.PropertyChanged += (sender, args) => propertyName = args.PropertyName;
+        var notifiedProperties = new System.Collections.Generic.List<string>();
+        _viewModel.PropertyChanged += (sender, args) =>
+        {
+            if (args.PropertyName != null)
+            {
+                notifiedProperties.Add(args.PropertyName);
+            }
+        };
 
         // Act
-        _viewModel.DetectedGame = "Skyrim SE";
+        _viewModel.SelectedGame = GameRelease.SkyrimSE;
 
         // Assert
-        Assert.Equal(nameof(MainWindowViewModel.DetectedGame), propertyName);
-        Assert.Equal("Skyrim SE", _viewModel.DetectedGame);
+        Assert.Contains(nameof(MainWindowViewModel.SelectedGame), notifiedProperties);
+        Assert.Contains(nameof(MainWindowViewModel.IsGameSelected), notifiedProperties);
+        Assert.Equal(GameRelease.SkyrimSE, _viewModel.SelectedGame);
+    }
+
+    [AvaloniaFact]
+    public void SelectedGame_IsNullByDefault()
+    {
+        // Assert
+        Assert.Null(_viewModel.SelectedGame);
+    }
+
+    [AvaloniaFact]
+    public void IsGameSelected_ReturnsFalse_WhenSelectedGameIsNull()
+    {
+        // Assert
+        Assert.False(_viewModel.IsGameSelected);
+    }
+
+    [AvaloniaFact]
+    public void IsGameSelected_ReturnsTrue_WhenSelectedGameHasValue()
+    {
+        // Arrange
+        _viewModel.SelectedGame = GameRelease.Fallout4;
+
+        // Assert
+        Assert.True(_viewModel.IsGameSelected);
+    }
+
+    [AvaloniaFact]
+    public void AvailableGames_ContainsAll10SupportedReleases()
+    {
+        // Assert
+        Assert.Equal(10, _viewModel.AvailableGames.Count);
+        Assert.Contains(GameRelease.Fallout4, _viewModel.AvailableGames);
+        Assert.Contains(GameRelease.SkyrimSE, _viewModel.AvailableGames);
+        Assert.Contains(GameRelease.SkyrimLE, _viewModel.AvailableGames);
+        Assert.Contains(GameRelease.SkyrimVR, _viewModel.AvailableGames);
+        Assert.Contains(GameRelease.SkyrimSEGog, _viewModel.AvailableGames);
+        Assert.Contains(GameRelease.EnderalSE, _viewModel.AvailableGames);
+        Assert.Contains(GameRelease.EnderalLE, _viewModel.AvailableGames);
+        Assert.Contains(GameRelease.Fallout4VR, _viewModel.AvailableGames);
+        Assert.Contains(GameRelease.Oblivion, _viewModel.AvailableGames);
+        Assert.Contains(GameRelease.Starfield, _viewModel.AvailableGames);
+    }
+
+    [AvaloniaFact]
+    public void AvailableGames_HasFallout4First()
+    {
+        // Assert
+        Assert.Equal(GameRelease.Fallout4, _viewModel.AvailableGames[0]);
+    }
+
+    [AvaloniaFact]
+    public void DetectedDirectories_InitializesAsEmptyCollection()
+    {
+        // Assert
+        Assert.NotNull(_viewModel.DetectedDirectories);
+        Assert.Empty(_viewModel.DetectedDirectories);
+    }
+
+    [AvaloniaFact]
+    public void HasMultipleDirectories_ReturnsFalse_WhenEmpty()
+    {
+        // Assert
+        Assert.False(_viewModel.HasMultipleDirectories);
+    }
+
+    [AvaloniaFact]
+    public void HasMultipleDirectories_ReturnsFalse_WhenSingleEntry()
+    {
+        // Arrange
+        _viewModel.DetectedDirectories.Add(@"C:\Games\Fallout4");
+
+        // Assert
+        Assert.False(_viewModel.HasMultipleDirectories);
+    }
+
+    [AvaloniaFact]
+    public void HasMultipleDirectories_ReturnsTrue_WhenMultipleEntries()
+    {
+        // Arrange
+        _viewModel.DetectedDirectories.Add(@"C:\Games\Fallout4");
+        _viewModel.DetectedDirectories.Add(@"D:\Games\Fallout4");
+
+        // Assert
+        Assert.True(_viewModel.HasMultipleDirectories);
+    }
+
+    [AvaloniaFact]
+    public void HasMultipleDirectories_RaisesPropertyChanged_WhenDirectoriesChange()
+    {
+        // Arrange
+        var notifiedProperties = new System.Collections.Generic.List<string>();
+        _viewModel.PropertyChanged += (sender, args) =>
+        {
+            if (args.PropertyName != null)
+            {
+                notifiedProperties.Add(args.PropertyName);
+            }
+        };
+
+        // Act
+        _viewModel.DetectedDirectories.Add(@"C:\Games\Fallout4");
+        _viewModel.DetectedDirectories.Add(@"D:\Games\Fallout4");
+
+        // Assert
+        Assert.Contains(nameof(MainWindowViewModel.HasMultipleDirectories), notifiedProperties);
     }
 
     [AvaloniaFact]

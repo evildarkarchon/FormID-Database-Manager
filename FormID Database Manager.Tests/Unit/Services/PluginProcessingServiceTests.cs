@@ -249,6 +249,35 @@ public class PluginProcessingServiceTests : IDisposable
         Assert.Equal(100, progressReports.Last().Value);
     }
 
+    [Fact]
+    public async Task ProcessPlugins_ReturnsControlToCaller_WhenInitializationBlocksSynchronously()
+    {
+        using var initializeEntered = new ManualResetEventSlim(false);
+        using var allowInitializeToContinue = new ManualResetEventSlim(false);
+        using var returnedFromCall = new ManualResetEventSlim(false);
+
+        using var service = new PluginProcessingService(
+            new BlockingInitializeDatabaseService(initializeEntered, allowInitializeToContinue),
+            _mockViewModel.Object,
+            _mockDispatcher.Object,
+            _mockLoadOrderProvider.Object);
+
+        var parameters = CreateTestParameters(selectedPlugins: []);
+
+        var callerTask = Task.Run(() =>
+        {
+            var processingTask = service.ProcessPlugins(parameters);
+            returnedFromCall.Set();
+            processingTask.GetAwaiter().GetResult();
+        });
+
+        Assert.True(initializeEntered.Wait(TimeSpan.FromSeconds(1)));
+        Assert.True(returnedFromCall.Wait(TimeSpan.FromSeconds(1)));
+
+        allowInitializeToContinue.Set();
+        await callerTask;
+    }
+
     /// <summary>
     /// A synchronous IProgress implementation that invokes callbacks immediately on the calling thread,
     /// avoiding the async callback behavior of Progress&lt;T&gt; that can cause race conditions in tests.
@@ -265,6 +294,21 @@ public class PluginProcessingServiceTests : IDisposable
         public void Report(T value)
         {
             _handler(value);
+        }
+    }
+
+    private sealed class BlockingInitializeDatabaseService(
+        ManualResetEventSlim initializeEntered,
+        ManualResetEventSlim allowInitializeToContinue) : DatabaseService
+    {
+        public override Task InitializeDatabase(
+            string dbPath,
+            GameRelease gameRelease,
+            CancellationToken cancellationToken = default)
+        {
+            initializeEntered.Set();
+            allowInitializeToContinue.Wait(cancellationToken);
+            return base.InitializeDatabase(dbPath, gameRelease, cancellationToken);
         }
     }
 

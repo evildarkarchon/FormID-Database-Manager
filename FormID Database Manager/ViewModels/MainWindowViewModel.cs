@@ -9,6 +9,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using FormID_Database_Manager.Models;
 using FormID_Database_Manager.Services;
+using Mutagen.Bethesda;
 
 namespace FormID_Database_Manager.ViewModels;
 
@@ -20,7 +21,7 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     private readonly object _pluginsLock = new();
     private CancellationTokenSource? _debounceCts;
     private string _databasePath = string.Empty;
-    private string _detectedGame = string.Empty;
+    private ObservableCollection<string> _detectedDirectories = [];
     private ObservableCollection<string> _errorMessages = [];
     private ObservableCollection<PluginListItem> _filteredPlugins = [];
     private string _formIdListPath = string.Empty;
@@ -33,6 +34,7 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     private string _pluginFilter = string.Empty;
     private ObservableCollection<PluginListItem> _plugins;
     private string _progressStatus = string.Empty;
+    private GameRelease? _selectedGame;
     private double _progressValue;
 
     public MainWindowViewModel(IThreadDispatcher? dispatcher = null) : this(dispatcher, 0)
@@ -45,6 +47,22 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         _debounceMs = debounceMs;
         _plugins = CreatePluginsCollection();
         _plugins.CollectionChanged += OnPluginsCollectionChanged;
+
+        AvailableGames = new List<GameRelease>
+        {
+            GameRelease.Fallout4,
+            GameRelease.SkyrimSE,
+            GameRelease.SkyrimLE,
+            GameRelease.SkyrimVR,
+            GameRelease.SkyrimSEGog,
+            GameRelease.EnderalSE,
+            GameRelease.EnderalLE,
+            GameRelease.Fallout4VR,
+            GameRelease.Oblivion,
+            GameRelease.Starfield
+        }.AsReadOnly();
+
+        _detectedDirectories.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasMultipleDirectories));
     }
 
     private LockedObservableCollection<PluginListItem> CreatePluginsCollection(IEnumerable<PluginListItem>? source = null)
@@ -77,11 +95,29 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         set => SetProperty(ref _formIdListPath, value);
     }
 
-    public string DetectedGame
+    public IReadOnlyList<GameRelease> AvailableGames { get; }
+
+    public GameRelease? SelectedGame
     {
-        get => _detectedGame;
-        set => SetProperty(ref _detectedGame, value);
+        get => _selectedGame;
+        set
+        {
+            if (SetProperty(ref _selectedGame, value))
+            {
+                OnPropertyChanged(nameof(IsGameSelected));
+            }
+        }
     }
+
+    public bool IsGameSelected => SelectedGame.HasValue;
+
+    public ObservableCollection<string> DetectedDirectories
+    {
+        get => _detectedDirectories;
+        set => SetProperty(ref _detectedDirectories, value);
+    }
+
+    public bool HasMultipleDirectories => DetectedDirectories.Count > 1;
 
     public bool IsProcessing
     {

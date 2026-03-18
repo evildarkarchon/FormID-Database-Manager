@@ -103,6 +103,16 @@ public class PluginProcessingService : IDisposable
             cancellationTokenSource = _cancellationTokenSource;
         }
 
+        await Task.Run(() => ProcessPluginsCore(parameters, progress, cancellationTokenSource))
+            .ConfigureAwait(false);
+    }
+
+    [RequiresUnreferencedCode("Uses reflection-based name extraction for Mutagen records via ModProcessor.ProcessPlugin.")]
+    private async Task ProcessPluginsCore(
+        ProcessingParameters parameters,
+        IProgress<(string Message, double? Value)>? progress,
+        CancellationTokenSource cancellationTokenSource)
+    {
         if (parameters.DryRun)
         {
             if (!string.IsNullOrEmpty(parameters.FormIdListPath))
