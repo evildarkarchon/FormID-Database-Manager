@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Runtime.CompilerServices;
 using Mutagen.Bethesda;
 using Mutagen.Bethesda.Environments;
 using Xunit;
@@ -14,9 +15,12 @@ public sealed class RequiresGameInstallationFactAttribute : FactAttribute
 {
     private readonly GameRelease[] _requiredGames;
 
-    public RequiresGameInstallationFactAttribute(params GameRelease[] requiredGames)
+    public RequiresGameInstallationFactAttribute(
+        [CallerFilePath] string? sourceFilePath = null,
+        [CallerLineNumber] int sourceLineNumber = -1)
+        : base(sourceFilePath, sourceLineNumber)
     {
-        _requiredGames = requiredGames ?? Array.Empty<GameRelease>();
+        _requiredGames = [];
 
         if (_requiredGames.Length == 0)
         {
@@ -66,9 +70,12 @@ public sealed class RequiresGameInstallationTheoryAttribute : TheoryAttribute
 {
     private readonly GameRelease[] _requiredGames;
 
-    public RequiresGameInstallationTheoryAttribute(params GameRelease[] requiredGames)
+    public RequiresGameInstallationTheoryAttribute(
+        [CallerFilePath] string? sourceFilePath = null,
+        [CallerLineNumber] int sourceLineNumber = -1)
+        : base(sourceFilePath, sourceLineNumber)
     {
-        _requiredGames = requiredGames ?? Array.Empty<GameRelease>();
+        _requiredGames = [];
 
         if (_requiredGames.Length == 0)
         {

@@ -356,6 +356,83 @@ public class PluginProcessingIntegrationTests : IDisposable
         Assert.Equal(1, newRecordCount);
     }
 
+    [Fact]
+    public async Task ProcessPlugins_UpdateMode_SelectivelyReplacesOnlyExistingPluginsFromFormIdList()
+    {
+        var dbPath = Path.Combine(_testDirectory, "selective_update_test.db");
+        var initialPath = Path.Combine(_testDirectory, "selective_initial.txt");
+        var updatedPath = Path.Combine(_testDirectory, "selective_new.txt");
+        _tempFiles.Add(dbPath);
+        _tempFiles.Add(initialPath);
+        _tempFiles.Add(updatedPath);
+
+        File.WriteAllLines(initialPath,
+        [
+            "ExistingPlugin.esp|000001|InitialEntry1",
+            "ExistingPlugin.esp|000002|InitialEntry2"
+        ]);
+
+        File.WriteAllLines(updatedPath,
+        [
+            "ExistingPlugin.esp|000010|UpdatedEntry",
+            "BrandNewPlugin.esp|000020|BrandNewEntry"
+        ]);
+
+        var initialParameters = new ProcessingParameters
+        {
+            GameDirectory = _testDirectory,
+            DatabasePath = dbPath,
+            GameRelease = GameRelease.SkyrimSE,
+            FormIdListPath = initialPath,
+            UpdateMode = false,
+            DryRun = false
+        };
+
+        var updateParameters = new ProcessingParameters
+        {
+            GameDirectory = _testDirectory,
+            DatabasePath = dbPath,
+            GameRelease = GameRelease.SkyrimSE,
+            FormIdListPath = updatedPath,
+            UpdateMode = true,
+            DryRun = false
+        };
+
+        await _processingService.ProcessPlugins(initialParameters);
+        await _processingService.ProcessPlugins(updateParameters);
+
+        using var connection = new SqliteConnection($"Data Source={dbPath}");
+        connection.Open();
+
+        using var existingPluginCountCmd = new SqliteCommand(
+            $"SELECT COUNT(*) FROM {GameRelease.SkyrimSE} WHERE plugin = @plugin", connection);
+        existingPluginCountCmd.Parameters.AddWithValue("@plugin", "ExistingPlugin.esp");
+        var existingPluginCount = Convert.ToInt32(existingPluginCountCmd.ExecuteScalar());
+
+        using var oldExistingRecordCmd = new SqliteCommand(
+            $"SELECT COUNT(*) FROM {GameRelease.SkyrimSE} WHERE plugin = @plugin AND formid = @formid", connection);
+        oldExistingRecordCmd.Parameters.AddWithValue("@plugin", "ExistingPlugin.esp");
+        oldExistingRecordCmd.Parameters.AddWithValue("@formid", "000001");
+        var oldExistingRecordCount = Convert.ToInt32(oldExistingRecordCmd.ExecuteScalar());
+
+        using var updatedExistingRecordCmd = new SqliteCommand(
+            $"SELECT COUNT(*) FROM {GameRelease.SkyrimSE} WHERE plugin = @plugin AND formid = @formid", connection);
+        updatedExistingRecordCmd.Parameters.AddWithValue("@plugin", "ExistingPlugin.esp");
+        updatedExistingRecordCmd.Parameters.AddWithValue("@formid", "000010");
+        var updatedExistingRecordCount = Convert.ToInt32(updatedExistingRecordCmd.ExecuteScalar());
+
+        using var brandNewRecordCmd = new SqliteCommand(
+            $"SELECT COUNT(*) FROM {GameRelease.SkyrimSE} WHERE plugin = @plugin AND formid = @formid", connection);
+        brandNewRecordCmd.Parameters.AddWithValue("@plugin", "BrandNewPlugin.esp");
+        brandNewRecordCmd.Parameters.AddWithValue("@formid", "000020");
+        var brandNewRecordCount = Convert.ToInt32(brandNewRecordCmd.ExecuteScalar());
+
+        Assert.Equal(1, existingPluginCount);
+        Assert.Equal(0, oldExistingRecordCount);
+        Assert.Equal(1, updatedExistingRecordCount);
+        Assert.Equal(1, brandNewRecordCount);
+    }
+
     #endregion
 
     #region Dry Run Tests

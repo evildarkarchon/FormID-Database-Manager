@@ -16,7 +16,6 @@ using Mutagen.Bethesda.Plugins.Order;
 using Mutagen.Bethesda.Plugins.Records;
 using Mutagen.Bethesda.Skyrim;
 using Xunit;
-using Xunit.Abstractions;
 
 namespace FormID_Database_Manager.Tests.Performance;
 

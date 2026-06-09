@@ -9,10 +9,10 @@
         <WarningsAsErrors>CS1998</WarningsAsErrors>
 
         <!-- Trimming and Single File Configuration -->
-        <PublishTrimmed>true</PublishTrimmed>
+        <PublishTrimmed>False</PublishTrimmed>
         <TrimMode>partial</TrimMode>
         <PublishSingleFile>true</PublishSingleFile>
-        <SelfContained>true</SelfContained>
+        <SelfContained Condition="'$(Configuration)' == 'Release'">true</SelfContained>
         <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     </PropertyGroup>
 
@@ -26,15 +26,12 @@
     </ItemGroup>
 
     <ItemGroup>
-        <PackageReference Include="Avalonia" Version="11.3.11" />
-        <PackageReference Include="Avalonia.Desktop" Version="11.3.11" />
-        <PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.11" />
-        <PackageReference Include="Avalonia.Fonts.Inter" Version="11.3.11" />
-        <!--Condition below is needed to remove Avalonia.Diagnostics package from build output in Release configuration.-->
-        <PackageReference Include="Avalonia.Diagnostics" Version="11.3.11">
-            <IncludeAssets Condition="'$(Configuration)' != 'Debug'">None</IncludeAssets>
-            <PrivateAssets Condition="'$(Configuration)' != 'Debug'">All</PrivateAssets>
-        </PackageReference>
+        <PackageReference Include="Avalonia" Version="12.0.1" />
+        <PackageReference Include="Avalonia.Desktop" Version="12.0.1" />
+        <PackageReference Include="Avalonia.Themes.Fluent" Version="12.0.1" />
+        <PackageReference Include="Avalonia.Fonts.Inter" Version="12.0.1" />
+        <PackageReference Include="AvaloniaUI.DiagnosticsSupport" Version="2.2.1" />
+        <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
         <PackageReference Include="Mutagen.Bethesda" Version="0.51.5" />
         <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.0" />
     </ItemGroup>

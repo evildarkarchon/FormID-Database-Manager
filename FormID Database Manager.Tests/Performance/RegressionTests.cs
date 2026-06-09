@@ -10,7 +10,6 @@ using Microsoft.Data.Sqlite;
 using Moq;
 using Mutagen.Bethesda;
 using Xunit;
-using Xunit.Abstractions;
 
 namespace FormID_Database_Manager.Tests.Performance;
 
@@ -74,7 +73,7 @@ public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
 
         // Act
         var stopwatch = Stopwatch.StartNew();
-        await service.InitializeDatabase(dbPath, GameRelease.SkyrimSE);
+        await service.InitializeDatabase(dbPath, GameRelease.SkyrimSE, TestContext.Current.CancellationToken);
         stopwatch.Stop();
 
         // Assert
@@ -103,7 +102,7 @@ public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
         foreach (var game in games)
         {
             var dbPath = Path.Combine(_testDirectory, $"test_{game}.db");
-            await service.InitializeDatabase(dbPath, game);
+            await service.InitializeDatabase(dbPath, game, TestContext.Current.CancellationToken);
         }
 
         stopwatch.Stop();
@@ -125,7 +124,7 @@ public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
         // Arrange
         var service = new DatabaseService();
         var dbPath = Path.Combine(_testDirectory, $"test_batch_{recordCount}.db");
-        await service.InitializeDatabase(dbPath, GameRelease.SkyrimSE);
+        await service.InitializeDatabase(dbPath, GameRelease.SkyrimSE, TestContext.Current.CancellationToken);
 
         var baseline = _performanceBaselines[baselineKey];
         var records = GenerateTestRecords(recordCount);
@@ -134,14 +133,14 @@ public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
         var stopwatch = Stopwatch.StartNew();
         using (var connection = new SqliteConnection($"Data Source={dbPath}"))
         {
-            await connection.OpenAsync();
+            await connection.OpenAsync(TestContext.Current.CancellationToken);
             // Simulate batch insert by inserting records in a transaction
             using (var transaction = connection.BeginTransaction())
             {
                 foreach (var record in records)
                 {
                     await service.InsertRecord(connection, GameRelease.SkyrimSE, record.plugin, record.formId,
-                        record.editorId);
+                        record.editorId, TestContext.Current.CancellationToken);
                 }
 
                 transaction.Commit();
@@ -239,14 +238,14 @@ public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
             plugins.Add($"*Plugin{i:D3}.esp");
         }
 
-        await File.WriteAllLinesAsync(listPath, plugins);
+        await File.WriteAllLinesAsync(listPath, plugins, TestContext.Current.CancellationToken);
 
         var baseline = _performanceBaselines[baselineKey];
 
         // Act
         var stopwatch = Stopwatch.StartNew();
         // Simulate plugin list loading by reading the file
-        var pluginList = await File.ReadAllLinesAsync(listPath);
+        var pluginList = await File.ReadAllLinesAsync(listPath, TestContext.Current.CancellationToken);
         stopwatch.Stop();
 
         // Assert
@@ -276,11 +275,11 @@ public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
             lines.Add($"TestPlugin.esp|{i:X8}|TestItem{i}");
         }
 
-        await File.WriteAllLinesAsync(formIdFile, lines);
+        await File.WriteAllLinesAsync(formIdFile, lines, TestContext.Current.CancellationToken);
 
         // Setup database
         var dbService = new DatabaseService();
-        await dbService.InitializeDatabase(dbPath, GameRelease.SkyrimSE);
+        await dbService.InitializeDatabase(dbPath, GameRelease.SkyrimSE, TestContext.Current.CancellationToken);
 
         var baseline = _performanceBaselines[baselineKey];
 
@@ -289,13 +288,13 @@ public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
         // Open connection and process the file
         using (var connection = new SqliteConnection($"Data Source={dbPath}"))
         {
-            await connection.OpenAsync();
+            await connection.OpenAsync(TestContext.Current.CancellationToken);
             await processor.ProcessFormIdListFile(
                 formIdFile,
                 connection,
                 GameRelease.SkyrimSE,
                 false,
-                default
+                TestContext.Current.CancellationToken
             );
         }
 
@@ -317,7 +316,7 @@ public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
         // Arrange
         var service = new DatabaseService();
         var dbPath = Path.Combine(_testDirectory, "memory_test.db");
-        await service.InitializeDatabase(dbPath, GameRelease.SkyrimSE);
+        await service.InitializeDatabase(dbPath, GameRelease.SkyrimSE, TestContext.Current.CancellationToken);
 
         var records = GenerateTestRecords(50000);
 
@@ -331,14 +330,14 @@ public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
         // Act
         using (var connection = new SqliteConnection($"Data Source={dbPath}"))
         {
-            await connection.OpenAsync();
+            await connection.OpenAsync(TestContext.Current.CancellationToken);
             // Simulate batch insert by inserting records in a transaction
             using (var transaction = connection.BeginTransaction())
             {
                 foreach (var record in records)
                 {
                     await service.InsertRecord(connection, GameRelease.SkyrimSE, record.plugin, record.formId,
-                        record.editorId);
+                        record.editorId, TestContext.Current.CancellationToken);
                 }
 
                 transaction.Commit();

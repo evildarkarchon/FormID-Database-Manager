@@ -93,7 +93,7 @@
                     <TextBlock Text="Filter Plugins:" VerticalAlignment="Center" />
                     <TextBox Text="{Binding PluginFilter}"
                              Margin="5,0,0,0"
-                             Watermark="Type to filter plugins..." />
+                             PlaceholderText="Type to filter plugins..." />
                 </DockPanel>
 
                 <!-- Plugin Selection -->

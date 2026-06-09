@@ -2,39 +2,68 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
-using System.ComponentModel;
 using System.Linq;
-using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
+using CommunityToolkit.Mvvm.ComponentModel;
 using FormID_Database_Manager.Models;
 using FormID_Database_Manager.Services;
 using Mutagen.Bethesda;
 
 namespace FormID_Database_Manager.ViewModels;
 
-public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
+public partial class MainWindowViewModel : ObservableObject, IDisposable
 {
     private readonly int _debounceMs;
     private readonly IThreadDispatcher _dispatcher;
     private readonly object _messagesLock = new();
     private readonly object _pluginsLock = new();
     private CancellationTokenSource? _debounceCts;
+
+    [ObservableProperty]
     private string _databasePath = string.Empty;
+
+    [ObservableProperty]
     private ObservableCollection<string> _detectedDirectories = [];
+
+    [ObservableProperty]
     private ObservableCollection<string> _errorMessages = [];
+
     private ObservableCollection<PluginListItem> _filteredPlugins = [];
+
+    [ObservableProperty]
     private string _formIdListPath = string.Empty;
+
+    [ObservableProperty]
     private string _gameDirectory = string.Empty;
+
+    [ObservableProperty]
     private ObservableCollection<string> _informationMessages = [];
+
     private bool _filterSuspended;
     private int _isApplyingFilter;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsProgressVisible))]
     private bool _isProcessing;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsProgressVisible))]
     private bool _isScanning;
+
+    [ObservableProperty]
     private string _pluginFilter = string.Empty;
+
     private ObservableCollection<PluginListItem> _plugins;
+
+    [ObservableProperty]
     private string _progressStatus = string.Empty;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsGameSelected))]
     private GameRelease? _selectedGame;
+
+    [ObservableProperty]
     private double _progressValue;
 
     public MainWindowViewModel(IThreadDispatcher? dispatcher = null) : this(dispatcher, 0)
@@ -77,85 +106,13 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         ApplyFilter();
     }
 
-    public string GameDirectory
-    {
-        get => _gameDirectory;
-        set => SetProperty(ref _gameDirectory, value);
-    }
-
-    public string DatabasePath
-    {
-        get => _databasePath;
-        set => SetProperty(ref _databasePath, value);
-    }
-
-    public string FormIdListPath
-    {
-        get => _formIdListPath;
-        set => SetProperty(ref _formIdListPath, value);
-    }
-
     public IReadOnlyList<GameRelease> AvailableGames { get; }
-
-    public GameRelease? SelectedGame
-    {
-        get => _selectedGame;
-        set
-        {
-            if (SetProperty(ref _selectedGame, value))
-            {
-                OnPropertyChanged(nameof(IsGameSelected));
-            }
-        }
-    }
 
     public bool IsGameSelected => SelectedGame.HasValue;
 
-    public ObservableCollection<string> DetectedDirectories
-    {
-        get => _detectedDirectories;
-        set => SetProperty(ref _detectedDirectories, value);
-    }
-
     public bool HasMultipleDirectories => DetectedDirectories.Count > 1;
 
-    public bool IsProcessing
-    {
-        get => _isProcessing;
-        set
-        {
-            if (SetProperty(ref _isProcessing, value))
-            {
-                OnPropertyChanged(nameof(IsProgressVisible));
-            }
-        }
-    }
-
-    public bool IsScanning
-    {
-        get => _isScanning;
-        set
-        {
-            if (SetProperty(ref _isScanning, value))
-            {
-                OnPropertyChanged(nameof(IsProgressVisible));
-            }
-        }
-    }
-
     public bool IsProgressVisible => IsProcessing || IsScanning;
-
-    public double ProgressValue
-    {
-        get => _progressValue;
-        set => SetProperty(ref _progressValue, value);
-    }
-
-    public string ProgressStatus
-    {
-        get => _progressStatus;
-        set => SetProperty(ref _progressStatus, value);
-    }
 
     public ObservableCollection<PluginListItem> Plugins
     {
@@ -182,41 +139,21 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     public ObservableCollection<PluginListItem> FilteredPlugins
     {
         get => _filteredPlugins;
+        // Keep this hand-written instead of using [ObservableProperty] so only the view model can replace the collection.
         private set => SetProperty(ref _filteredPlugins, value);
     }
 
-    public string PluginFilter
+    partial void OnPluginFilterChanged(string value)
     {
-        get => _pluginFilter;
-        set
+        if (_debounceMs <= 0)
         {
-            if (SetProperty(ref _pluginFilter, value))
-            {
-                if (_debounceMs <= 0)
-                {
-                    ApplyFilter();
-                }
-                else
-                {
-                    DebounceApplyFilter();
-                }
-            }
+            ApplyFilter();
+        }
+        else
+        {
+            DebounceApplyFilter();
         }
     }
-
-    public ObservableCollection<string> ErrorMessages
-    {
-        get => _errorMessages;
-        set => SetProperty(ref _errorMessages, value);
-    }
-
-    public ObservableCollection<string> InformationMessages
-    {
-        get => _informationMessages;
-        set => SetProperty(ref _informationMessages, value);
-    }
-
-    public event PropertyChangedEventHandler? PropertyChanged;
 
     private void DebounceApplyFilter()
     {
@@ -276,9 +213,9 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             List<PluginListItem> filtered;
             lock (_pluginsLock)
             {
-                filtered = string.IsNullOrWhiteSpace(_pluginFilter)
+                filtered = string.IsNullOrWhiteSpace(PluginFilter)
                     ? _plugins.ToList()
-                    : _plugins.Where(p => p.Name.Contains(_pluginFilter, StringComparison.OrdinalIgnoreCase)).ToList();
+                    : _plugins.Where(p => p.Name.Contains(PluginFilter, StringComparison.OrdinalIgnoreCase)).ToList();
             }
 
             // Use HashSet for O(1) lookup performance
@@ -348,23 +285,6 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
                 InformationMessages.RemoveAt(0);
             }
         }
-    }
-
-    protected virtual void OnPropertyChanged([CallerMemberName] string? propertyName = null)
-    {
-        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
-    }
-
-    protected bool SetProperty<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
-    {
-        if (EqualityComparer<T>.Default.Equals(field, value))
-        {
-            return false;
-        }
-
-        field = value;
-        OnPropertyChanged(propertyName);
-        return true;
     }
 
     public void ResetProgress()

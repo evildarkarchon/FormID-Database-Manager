@@ -175,6 +175,14 @@ public class PluginProcessingService : IDisposable
                     includeMasterFlagsLookup: true);
             }
 
+            HashSet<string>? existingPlugins = null;
+            if (parameters.UpdateMode && pluginList.Count > 0)
+            {
+                existingPlugins = await _databaseService
+                    .GetPluginsWithEntries(conn, parameters.GameRelease, cancellationTokenSource.Token)
+                    .ConfigureAwait(false);
+            }
+
             var successfulPlugins = 0;
             var failedPlugins = 0;
 
@@ -199,7 +207,8 @@ public class PluginProcessingService : IDisposable
                         pluginItem,
                         loadOrderSnapshot,
                         parameters.UpdateMode,
-                        cancellationTokenSource.Token).ConfigureAwait(false);
+                        cancellationTokenSource.Token,
+                        existingPlugins).ConfigureAwait(false);
                     successfulPlugins++;
                 }
                 catch (Exception ex)

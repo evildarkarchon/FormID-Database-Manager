@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Runtime.CompilerServices;
 using Mutagen.Bethesda;
 using Mutagen.Bethesda.Environments;
 using Xunit;
@@ -15,9 +16,12 @@ public sealed class ExpectsGameEnvironmentFailureFactAttribute : FactAttribute
 {
     private readonly GameRelease[] _games;
 
-    public ExpectsGameEnvironmentFailureFactAttribute(params GameRelease[] games)
+    public ExpectsGameEnvironmentFailureFactAttribute(
+        [CallerFilePath] string? sourceFilePath = null,
+        [CallerLineNumber] int sourceLineNumber = -1)
+        : base(sourceFilePath, sourceLineNumber)
     {
-        _games = games ?? Array.Empty<GameRelease>();
+        _games = [];
 
         if (_games.Length == 0)
         {

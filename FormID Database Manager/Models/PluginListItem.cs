@@ -1,39 +1,15 @@
 using System.ComponentModel;
-using System.Runtime.CompilerServices;
+using CommunityToolkit.Mvvm.ComponentModel;
 
 namespace FormID_Database_Manager.Models;
 
-public class PluginListItem : INotifyPropertyChanged, IDataErrorInfo
+public partial class PluginListItem : ObservableObject, IDataErrorInfo
 {
-    public string Name
-    {
-        get;
-        set
-        {
-            if (field == value)
-            {
-                return;
-            }
+    [ObservableProperty]
+    private string _name = string.Empty;
 
-            field = value;
-            OnPropertyChanged();
-        }
-    } = string.Empty;
-
-    public bool IsSelected
-    {
-        get;
-        set
-        {
-            if (field == value)
-            {
-                return;
-            }
-
-            field = value;
-            OnPropertyChanged();
-        }
-    }
+    [ObservableProperty]
+    private bool _isSelected;
 
     // IDataErrorInfo implementation to prevent error states
     // Note: IDataErrorInfo predates nullable reference types and expects null/"" for no error.
@@ -50,12 +26,5 @@ public class PluginListItem : INotifyPropertyChanged, IDataErrorInfo
                 _ => string.Empty
             };
         }
-    }
-
-    public event PropertyChangedEventHandler? PropertyChanged;
-
-    protected virtual void OnPropertyChanged([CallerMemberName] string? propertyName = null)
-    {
-        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
     }
 }

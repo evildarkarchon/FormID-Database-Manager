@@ -1,5 +1,7 @@
 // Services/DatabaseService.cs
 
+using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Data.Sqlite;
@@ -106,9 +108,34 @@ public class DatabaseService
     {
         await using var command = conn.CreateCommand();
         var tableName = GameReleaseHelper.GetSafeTableName(gameRelease);
-        command.CommandText = $"DELETE FROM {tableName} WHERE plugin = @plugin";
+        command.CommandText = $"DELETE FROM {tableName} WHERE plugin COLLATE NOCASE = @plugin";
         command.Parameters.AddWithValue("@plugin", pluginName);
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    ///     Retrieves the set of plugin names that currently have at least one row in the database.
+    /// </summary>
+    /// <param name="conn">The SQLite database connection used to execute the operation.</param>
+    /// <param name="gameRelease">The game release for which plugin names are being retrieved.</param>
+    /// <param name="cancellationToken"></param>
+    /// <returns>A case-insensitive set of plugin names found in the database.</returns>
+    public virtual async Task<HashSet<string>> GetPluginsWithEntries(SqliteConnection conn, GameRelease gameRelease,
+        CancellationToken cancellationToken = default)
+    {
+        var plugins = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        await using var command = conn.CreateCommand();
+        var tableName = GameReleaseHelper.GetSafeTableName(gameRelease);
+        command.CommandText = $"SELECT DISTINCT plugin FROM {tableName} WHERE plugin IS NOT NULL";
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            plugins.Add(reader.GetString(0));
+        }
+
+        return plugins;
     }
 
     /// <summary>

@@ -1,6 +1,5 @@
 using Avalonia;
 using Avalonia.Headless;
-using Avalonia.ReactiveUI;
 using Avalonia.Themes.Fluent;
 using FormID_Database_Manager.Tests;
 
@@ -14,7 +13,6 @@ public class TestApp : Application
     {
         return AppBuilder.Configure<TestApp>()
             .UseHeadless(new AvaloniaHeadlessPlatformOptions())
-            .UseReactiveUI()
             .LogToTrace();
     }
 

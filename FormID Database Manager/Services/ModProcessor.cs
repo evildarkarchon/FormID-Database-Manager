@@ -70,7 +70,8 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
         PluginListItem pluginItem,
         IReadOnlyDictionary<string, IModListingGetter<IModGetter>> loadOrderDict,
         bool updateMode,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        ISet<string>? existingPlugins = null)
     {
         var snapshot = new GameLoadOrderSnapshot(loadOrderDict.Keys.ToList());
         await ProcessPlugin(
@@ -80,7 +81,8 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
             pluginItem,
             snapshot,
             updateMode,
-            cancellationToken).ConfigureAwait(false);
+            cancellationToken,
+            existingPlugins).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -103,7 +105,8 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
         PluginListItem pluginItem,
         GameLoadOrderSnapshot loadOrderSnapshot,
         bool updateMode,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        ISet<string>? existingPlugins = null)
     {
         SqliteTransaction? transaction = null;
         try
@@ -128,8 +131,15 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
 
             if (updateMode)
             {
-                await databaseService.ClearPluginEntries(conn, gameRelease, pluginItem.Name, cancellationToken)
+                existingPlugins ??= await databaseService
+                    .GetPluginsWithEntries(conn, gameRelease, cancellationToken)
                     .ConfigureAwait(false);
+
+                if (existingPlugins.Remove(pluginItem.Name))
+                {
+                    await databaseService.ClearPluginEntries(conn, gameRelease, pluginItem.Name, cancellationToken)
+                        .ConfigureAwait(false);
+                }
             }
 
             try

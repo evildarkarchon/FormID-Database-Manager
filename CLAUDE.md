@@ -34,7 +34,8 @@ dotnet publish "FormID Database Manager" -c Release -r win-x64
 ## Tech Stack
 
 - **.NET 10.0** / C# with nullable enabled
-- **Avalonia UI 11.3** (cross-platform desktop UI, AXAML files)
+- **Avalonia UI 12.x** (cross-platform desktop UI, AXAML files)
+- **CommunityToolkit.Mvvm 8.x** (MVVM source generators)
 - **Mutagen 0.51.5** (Bethesda plugin parsing)
 - **Microsoft.Data.Sqlite** (database)
 - **xUnit** + **Moq** + **Avalonia.Headless.XUnit** (testing)
@@ -46,7 +47,7 @@ The solution has three projects in `FormID Database Manager.slnx`:
 
 ### Main App (`FormID Database Manager/`)
 - `MainWindow.axaml.cs` — UI event handlers, wires services together manually (no DI container)
-- `ViewModels/MainWindowViewModel.cs` — INotifyPropertyChanged ViewModel with plugin filtering, progress tracking, and thread-safe UI updates via `IThreadDispatcher`
+- `ViewModels/MainWindowViewModel.cs` — CommunityToolkit.Mvvm ObservableObject ViewModel with plugin filtering, progress tracking, and thread-safe UI updates via `IThreadDispatcher`
 - `Services/` — All business logic:
   - `DatabaseService` — SQLite schema, CRUD, optimizations (WAL mode, covering indexes)
   - `PluginProcessingService` — Orchestrates plugin processing with cancellation support
@@ -56,7 +57,7 @@ The solution has three projects in `FormID Database Manager.slnx`:
   - `GameDetectionService` — Detects game type from directory structure (master file presence)
   - `WindowManager` — Avalonia file/folder picker dialogs
   - `IThreadDispatcher` / `AvaloniaThreadDispatcher` — Abstraction for UI thread marshalling (testable)
-- `Models/` — `PluginListItem` (INotifyPropertyChanged), `ProcessingParameters`
+- `Models/` — `PluginListItem` (CommunityToolkit.Mvvm ObservableObject), `ProcessingParameters`
 
 ### Test Utilities (`FormID Database Manager.TestUtilities/`)
 - `Fixtures/DatabaseFixture` — Shared in-memory SQLite setup

@@ -64,6 +64,10 @@ public static class MockFactory
                 It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
+        mock.Setup(x => x.GetPluginsWithEntries(It.IsAny<SqliteConnection>(), It.IsAny<GameRelease>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+
         mock.Setup(x => x.OptimizeDatabase(It.IsAny<SqliteConnection>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 

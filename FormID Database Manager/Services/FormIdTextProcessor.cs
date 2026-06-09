@@ -47,6 +47,9 @@ public class FormIdTextProcessor(DatabaseService databaseService)
         IProgress<(string Message, double? Value)>? progress = null)
     {
         var processedPlugins = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var existingPlugins = updateMode
+            ? await databaseService.GetPluginsWithEntries(conn, gameRelease, cancellationToken).ConfigureAwait(false)
+            : null;
         await using var batchInserter = new BatchInserter(conn, gameRelease, BatchSize);
         var currentPlugin = string.Empty;
         var recordCount = 0;
@@ -128,8 +131,12 @@ public class FormIdTextProcessor(DatabaseService databaseService)
                     if (updateMode)
                     {
                         progress?.Report(($"Processing plugin: {pluginName}", null));
-                        await databaseService.ClearPluginEntries(conn, gameRelease, pluginName, cancellationToken)
-                            .ConfigureAwait(false);
+
+                        if (existingPlugins != null && existingPlugins.Remove(pluginName))
+                        {
+                            await databaseService.ClearPluginEntries(conn, gameRelease, pluginName, cancellationToken)
+                                .ConfigureAwait(false);
+                        }
                     }
 
                     processedPlugins.Add(pluginName);

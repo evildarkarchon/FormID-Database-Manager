@@ -407,3 +407,6 @@ FodyWeavers.xsd
 *.bak
 plans/
 coverage/
+.coverage/
+# CocoIndex Code (ccc)
+/.cocoindex_code/

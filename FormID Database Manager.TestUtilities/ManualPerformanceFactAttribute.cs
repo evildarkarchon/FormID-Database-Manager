@@ -1,4 +1,5 @@
 using System;
+using System.Runtime.CompilerServices;
 using Xunit;
 
 namespace FormID_Database_Manager.TestUtilities;
@@ -11,7 +12,9 @@ public sealed class ManualPerformanceFactAttribute : FactAttribute
 {
     private const string EnvironmentVariableName = "RUN_MANUAL_PERFORMANCE_TESTS";
 
-    public ManualPerformanceFactAttribute()
+    public ManualPerformanceFactAttribute(
+        [CallerFilePath] string? sourceFilePath = null,
+        [CallerLineNumber] int sourceLineNumber = -1) : base(sourceFilePath, sourceLineNumber)
     {
         var value = Environment.GetEnvironmentVariable(EnvironmentVariableName)?.Trim();
         var isEnabled =

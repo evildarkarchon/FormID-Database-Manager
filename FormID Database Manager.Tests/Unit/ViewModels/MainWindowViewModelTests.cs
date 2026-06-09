@@ -427,7 +427,7 @@ public class MainWindowViewModelTests
             errorAdded = true;
             _viewModel.AddInformationMessage("Background info");
             infoAdded = true;
-        });
+        }, TestContext.Current.CancellationToken);
 
         // Wait for dispatcher to process deterministically
         await FlushUiAsync();
@@ -511,10 +511,10 @@ public class MainWindowViewModelTests
         await Task.Run(() =>
         {
             _viewModel.UpdateProgress("Background update", 25);
-        });
+        }, TestContext.Current.CancellationToken);
 
         // Wait for property changed event with timeout
-        var completedTask = await Task.WhenAny(tcs.Task, Task.Delay(5000));
+        var completedTask = await Task.WhenAny(tcs.Task, Task.Delay(5000, TestContext.Current.CancellationToken));
 
         // Assert
         Assert.Same(tcs.Task, completedTask); // Ensure we didn't timeout
@@ -535,7 +535,7 @@ public class MainWindowViewModelTests
         {
             _viewModel.ResetProgress();
             reset = true;
-        });
+        }, TestContext.Current.CancellationToken);
 
         // Wait for dispatcher deterministically
         await FlushUiAsync();
@@ -616,7 +616,7 @@ public class MainWindowViewModelTests
         Assert.Equal(2, debouncedVm.FilteredPlugins.Count);
 
         // After debounce period, filter should be applied
-        await Task.Delay(350);
+        await Task.Delay(350, TestContext.Current.CancellationToken);
         Assert.Single(debouncedVm.FilteredPlugins);
     }
 
@@ -698,7 +698,10 @@ public class MainWindowViewModelTests
 
         // Act - Force PropertyChanged with reflection
         var method = typeof(MainWindowViewModel).GetMethod("OnPropertyChanged",
-            BindingFlags.NonPublic | BindingFlags.Instance);
+            BindingFlags.NonPublic | BindingFlags.Instance,
+            binder: null,
+            [typeof(string)],
+            modifiers: null);
         method?.Invoke(_viewModel, new object?[] { null });
 
         // Assert
@@ -763,7 +766,7 @@ public class MainWindowViewModelTests
                         errors.Enqueue(ex);
                     }
                 }
-            }))
+            }, TestContext.Current.CancellationToken))
             .ToArray();
 
         await Task.WhenAll(tasks);
@@ -797,7 +800,7 @@ public class MainWindowViewModelTests
                         errors.Enqueue(ex);
                     }
                 }
-            }))
+            }, TestContext.Current.CancellationToken))
             .ToArray();
 
         await Task.WhenAll(tasks);

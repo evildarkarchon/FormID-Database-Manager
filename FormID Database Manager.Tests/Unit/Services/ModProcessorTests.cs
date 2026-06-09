@@ -62,7 +62,7 @@ public class ModProcessorTests : IDisposable
         var pluginPath = Path.Combine(gameDir, "TestPlugin.esp");
 
         // Create corrupted plugin that will fail processing
-        await File.WriteAllBytesAsync(pluginPath, new byte[] { 0xFF, 0xFF, 0xFF, 0xFF });
+        await File.WriteAllBytesAsync(pluginPath, new byte[] { 0xFF, 0xFF, 0xFF, 0xFF }, TestContext.Current.CancellationToken);
 
         var pluginItem = new PluginListItem { Name = "TestPlugin.esp", IsSelected = true };
         var mockModListing = CreateMockModListing("TestPlugin.esp");
@@ -301,6 +301,11 @@ public class ModProcessorTests : IDisposable
     {
         // Arrange
         var databaseServiceMock = new Mock<DatabaseService>();
+        databaseServiceMock.Setup(x => x.GetPluginsWithEntries(
+                It.IsAny<SqliteConnection>(),
+                It.IsAny<GameRelease>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "TestPlugin.esp" });
         databaseServiceMock.Setup(x => x.ClearPluginEntries(
                 It.IsAny<SqliteConnection>(),
                 It.IsAny<GameRelease>(),
@@ -331,6 +336,10 @@ public class ModProcessorTests : IDisposable
                 CancellationToken.None));
 
         // Assert
+        databaseServiceMock.Verify(x => x.GetPluginsWithEntries(
+            _connection,
+            GameRelease.SkyrimSE,
+            It.IsAny<CancellationToken>()), Times.Once);
         databaseServiceMock.Verify(x => x.ClearPluginEntries(
             _connection,
             GameRelease.SkyrimSE,
@@ -379,7 +388,7 @@ public class ModProcessorTests : IDisposable
         var pluginPath = Path.Combine(gameDir, "Corrupted.esp");
 
         // Create corrupted plugin file
-        await File.WriteAllBytesAsync(pluginPath, new byte[] { 0xFF, 0xFF, 0xFF, 0xFF });
+        await File.WriteAllBytesAsync(pluginPath, new byte[] { 0xFF, 0xFF, 0xFF, 0xFF }, TestContext.Current.CancellationToken);
 
         var pluginItem = new PluginListItem { Name = "Corrupted.esp", IsSelected = true };
         var mockModListing = CreateMockModListing("Corrupted.esp");

@@ -55,13 +55,13 @@ public class GameDetectionIntegrationTests : IDisposable
 
     #region Symbolic Link Tests
 
-    [SkippableFact(Timeout = 30000)]
+    [Fact(Timeout = 30000)]
     public async Task DetectGame_HandlesSymbolicLinks_Correctly()
     {
         // Skip if not running as administrator on Windows
         if (Environment.OSVersion.Platform == PlatformID.Win32NT && !IsAdministrator())
         {
-            Skip.If(true, "Requires administrator privileges to create symbolic links on Windows.");
+            Assert.Skip("Requires administrator privileges to create symbolic links on Windows.");
         }
 
         // Arrange
@@ -96,25 +96,25 @@ public class GameDetectionIntegrationTests : IDisposable
             }
             catch (Exception ex)
             {
-                Skip.If(true, $"Unable to start mklink process: {ex.Message}");
+                Assert.Skip($"Unable to start mklink process: {ex.Message}");
                 return;
             }
 
             if (process is null)
             {
-                Skip.If(true, "Unable to create symbolic link: mklink process was not created.");
+                Assert.Skip("Unable to create symbolic link: mklink process was not created.");
             }
 
             using (process)
             {
                 if (!await WaitForExitWithTimeout(process, processTimeoutMs))
                 {
-                    Skip.If(true, "mklink timed out while creating symbolic link.");
+                    Assert.Skip("mklink timed out while creating symbolic link.");
                 }
 
                 if (process.ExitCode != 0)
                 {
-                    Skip.If(true, $"mklink failed with exit code {process.ExitCode}.");
+                    Assert.Skip($"mklink failed with exit code {process.ExitCode}.");
                 }
             }
         }
@@ -134,25 +134,25 @@ public class GameDetectionIntegrationTests : IDisposable
             }
             catch (Exception ex)
             {
-                Skip.If(true, $"Unable to start ln process: {ex.Message}");
+                Assert.Skip($"Unable to start ln process: {ex.Message}");
                 return;
             }
 
             if (process is null)
             {
-                Skip.If(true, "Unable to create symbolic link: ln process was not created.");
+                Assert.Skip("Unable to create symbolic link: ln process was not created.");
             }
 
             using (process)
             {
                 if (!await WaitForExitWithTimeout(process, processTimeoutMs))
                 {
-                    Skip.If(true, "ln timed out while creating symbolic link.");
+                    Assert.Skip("ln timed out while creating symbolic link.");
                 }
 
                 if (process.ExitCode != 0)
                 {
-                    Skip.If(true, $"ln failed with exit code {process.ExitCode}.");
+                    Assert.Skip($"ln failed with exit code {process.ExitCode}.");
                 }
             }
         }
