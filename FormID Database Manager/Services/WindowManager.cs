@@ -10,7 +10,7 @@ namespace FormID_Database_Manager.Services;
 ///     Handles various window-based operations such as file and folder selection
 ///     for the application using the provided IStorageProvider.
 /// </summary>
-public class WindowManager
+public class WindowManager : IFileDialogService
 {
     private readonly IStorageProvider _storageProvider;
     private readonly MainWindowViewModel _viewModel;

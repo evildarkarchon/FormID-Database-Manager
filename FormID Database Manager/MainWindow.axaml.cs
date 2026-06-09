@@ -46,7 +46,8 @@ public partial class MainWindow : Window, IDisposable
             // This is expected when running headless tests
         }
 
-        _viewModel = viewModel ?? new MainWindowViewModel();
+        var dispatcher = new AvaloniaThreadDispatcher();
+        _viewModel = viewModel ?? new MainWindowViewModel(dispatcher);
         DataContext = _viewModel;
 
         _windowManager = new WindowManager(StorageProvider, _viewModel);
@@ -54,10 +55,10 @@ public partial class MainWindow : Window, IDisposable
         _gameDetectionService = gameDetectionService ?? new GameDetectionService();
         _gameLocationService = gameLocationService ?? new GameLocationService();
         _pluginListManager = pluginListManager ??
-                             new PluginListManager(_gameDetectionService, _viewModel, new AvaloniaThreadDispatcher());
+                             new PluginListManager(_gameDetectionService, _viewModel, dispatcher);
         var databaseService = new DatabaseService();
         _pluginProcessingService = pluginProcessingService ??
-                                   new PluginProcessingService(databaseService, _viewModel, new AvaloniaThreadDispatcher());
+                                   new PluginProcessingService(databaseService, _viewModel, dispatcher);
 
         this.Closed += (_, _) => Dispose();
     }

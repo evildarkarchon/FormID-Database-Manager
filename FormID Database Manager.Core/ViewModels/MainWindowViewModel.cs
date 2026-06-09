@@ -72,7 +72,7 @@ public partial class MainWindowViewModel : ObservableObject, IDisposable
 
     public MainWindowViewModel(IThreadDispatcher? dispatcher, int debounceMs)
     {
-        _dispatcher = dispatcher ?? new AvaloniaThreadDispatcher();
+        _dispatcher = dispatcher ?? new ImmediateThreadDispatcher();
         _debounceMs = debounceMs;
         _plugins = CreatePluginsCollection();
         _plugins.CollectionChanged += OnPluginsCollectionChanged;

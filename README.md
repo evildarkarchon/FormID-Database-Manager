@@ -28,10 +28,23 @@ EditorID or Name value (if any) from Bethesda game plugins.
 ### Framework and Technologies
 
 - **C#** / **.NET 10.0**
-- **Avalonia UI 11.3**: Cross-platform desktop UI framework
+- **Avalonia UI 12.x**: Cross-platform desktop UI framework
 - **Mutagen**: Bethesda plugin parsing library
 - **Microsoft.Data.Sqlite**: SQLite database access
 - **xUnit** + **Moq**: Testing framework
+
+---
+
+## WinUI Migration Checkpoint
+
+Phase 0 was recorded on June 9, 2026 before extracting the UI-neutral core boundary.
+
+- Branch/checkpoint: `winui`
+- Worktree state: existing uncommitted OpenSpec/migration-plan changes were present before Phase 1 extraction work began.
+- Baseline build: `dotnet build "FormID Database Manager.slnx"` succeeded with `0` warnings and `0` errors.
+- Baseline tests: `dotnet test "FormID Database Manager.Tests"` passed with `272` passed and `11` skipped.
+- WinUI template status: `dotnet new list winui` exposes the C# `WinUI 3 App`, `WinUI 3 Blazor App`, and `WinUI 3 Class Library` templates.
+- Target deployment model: packaged MSIX is selected for the staged WinUI migration. The current Avalonia publish output remains unchanged until later migration phases.
 
 ---
 
@@ -88,13 +101,15 @@ This produces a self-contained, trimmed single-file executable.
 
 ## Project Structure
 
-- **`FormID Database Manager/`**: Main application
+- **`FormID Database Manager.Core/`**: UI-neutral application core
+  - `Models/` — Data models
+  - `ViewModels/` — MVVM view models
+  - `Services/` — Business logic, dispatcher/file-dialog abstractions, database, plugin processing, and game detection
+- **`FormID Database Manager/`**: Avalonia application shell
   - `Program.cs` — Application entry point
   - `App.axaml` / `App.axaml.cs` — Avalonia application core and styles
   - `MainWindow.axaml` / `MainWindow.axaml.cs` — Main UI window
-  - `ViewModels/` — MVVM view models
-  - `Services/` — Business logic (database, plugin processing, game detection)
-  - `Models/` — Data models
+  - `Services/` — Avalonia dispatcher and picker implementations
 - **`FormID Database Manager.Tests/`**: Unit, integration, UI, and performance tests
 - **`FormID Database Manager.TestUtilities/`**: Shared test fixtures, mocks, and builders
 

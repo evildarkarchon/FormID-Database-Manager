@@ -40,7 +40,7 @@ public class PluginProcessingService : IDisposable
     {
         _databaseService = databaseService;
         _viewModel = viewModel;
-        _dispatcher = dispatcher ?? new AvaloniaThreadDispatcher();
+        _dispatcher = dispatcher ?? new ImmediateThreadDispatcher();
         _loadOrderProvider = loadOrderProvider ?? new GameLoadOrderProvider();
         _textProcessor = new FormIdTextProcessor(databaseService);
         _modProcessor = new ModProcessor(databaseService, AddErrorMessage);

@@ -32,6 +32,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\FormID Database Manager.Core\FormID Database Manager.Core.csproj" />
     <ProjectReference Include="..\FormID Database Manager\FormID Database Manager.csproj" />
     <ProjectReference Include="..\FormID Database Manager.TestUtilities\FormID Database Manager.TestUtilities.csproj" />
   </ItemGroup>
