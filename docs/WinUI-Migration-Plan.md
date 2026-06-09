@@ -155,6 +155,21 @@ Phase 2 verification checkpoint, 2026-06-09:
 - Replace the red/green message borders with WinUI `InfoBar` surfaces or a compact message panel with severity styling.
 - Keep the initial port behavior-first. A later polish pass can improve layout density, icons, and responsive behavior.
 
+Phase 3 verification checkpoint, 2026-06-09:
+
+- `FormID Database Manager.WinUI/MainWindow.xaml` and `MainWindow.xaml.cs` now provide the single-window WinUI workflow surface, and `App.OnLaunched` instantiates `MainWindow` directly instead of navigating to the generated counter `MainPage`.
+- The generated `Views/MainPage.xaml` and `Views/MainPage.xaml.cs` files were removed because they are no longer referenced by the launch path.
+- The WinUI UI binds to the core `MainWindowViewModel` and `PluginListItem` types for game selection, paths, plugin filtering, plugin checkbox selection, messages, and progress state.
+- `MainWindowViewModel` exposes `HasErrorMessages` and `HasInformationMessages` so WinUI `InfoBar` message surfaces can bind to stable boolean state instead of collection-count converter semantics.
+- Picker-dependent buttons report a temporary information message until the Phase 4 picker services exist, and the process action reports that WinUI workflow parity remains disabled until Phase 5.
+- `dotnet build "FormID Database Manager.WinUI\FormID Database Manager.WinUI.csproj" -p:Platform=x64` succeeded with 0 warnings and 0 errors.
+- `dotnet build "FormID Database Manager.slnx"` succeeded with 0 warnings and 0 errors, including the existing Avalonia project and the staged WinUI project.
+- `dotnet test "FormID Database Manager.Tests"` passed with 278 tests passed, 11 skipped, and 0 failed.
+- `rg "Avalonia|axaml|ExperimentalAcrylicBorder|DockPanel|IsVisible|Boolean_Converter|BooleanConverter" "FormID Database Manager.WinUI" -g "!bin/**" -g "!obj/**"` found no WinUI project matches.
+- `rg "MainPage|Hello, World|Welcome to WinUI 3|Current count|OnCountClicked|Click Me" "FormID Database Manager.WinUI" -g "!bin/**" -g "!obj/**"` found no WinUI project matches.
+- Packaged local verification refreshed the x64 registration with `Add-AppxPackage -Register` against `FormID Database Manager.WinUI\bin\x64\Debug\net10.0-windows10.0.19041.0\win-x64\AppxManifest.xml`, then launched `shell:AppsFolder\f403736a-da6f-4a60-b086-e0a232acbcaa_9zz4h110yvjzm!App` through Explorer.
+- Objective launch evidence: process `FormID Database Manager.WinUI` opened from the x64 WinUI output, returned main window handle `16911194`, title `FormID Database Manager`, and `Responding: True`.
+
 ### Phase 4: Port Platform Services
 
 - Implement `WinUiThreadDispatcher` using the WinUI `DispatcherQueue`.
@@ -166,6 +181,23 @@ Phase 2 verification checkpoint, 2026-06-09:
 - Use older `Windows.Storage.Pickers` plus `InitializeWithWindow` only if the selected Windows App SDK version or app elevation requirements force that fallback.
 - Preserve the existing error-reporting behavior by routing picker exceptions to the ViewModel.
 - Keep cancellation on window close: the WinUI window should still cancel processing and dispose the ViewModel/service lifecycle.
+
+Phase 4 verification checkpoint, 2026-06-09:
+
+- `FormID Database Manager.WinUI/Services/WinUiThreadDispatcher.cs` now adapts the window `DispatcherQueue` to the core `IThreadDispatcher`, including awaited callback completion, queued exception propagation, and deterministic failure if `TryEnqueue` rejects work during shutdown.
+- `FormID Database Manager.WinUI/Services/WinUiFileDialogService.cs` now uses Windows App SDK `Microsoft.Windows.Storage.Pickers` with `AppWindow.Id`, path-returning folder/save/open picker results, `.db` database save choices, `.txt` FormID list filtering, cancellation-as-`null`, and ViewModel error reporting.
+- `FormID Database Manager.WinUI/MainWindow.xaml.cs` now owns the picker service, game detection/location services, plugin-list manager, and processing service; close/dispose cancels processing, disposes the processing service, unsubscribes the close handler, and disposes the ViewModel once.
+- WinUI game selection now performs background installed-location lookup, ignores stale lookup results, resets directory/plugin state, applies detected directories, and loads plugins through `PluginListManager`.
+- Browse, database, and FormID list buttons now call real WinUI picker services and only update ViewModel paths when a path is returned.
+- Select All, Select None, and advanced-mode reload now use `PluginListManager`; `ProcessFormIds_Click` intentionally remains scoped to the Phase 5 pending message while the owned processing service is available for close-time cancellation.
+- Added focused coverage for dispatcher queue behavior and WinUI platform-service source wiring. `dotnet test "FormID Database Manager.Tests" --filter "FullyQualifiedName~QueuedThreadDispatcherTests|FullyQualifiedName~WinUiPlatformServiceSourceTests"` passed with 7 passed, 0 skipped, and 0 failed.
+- `dotnet build "FormID Database Manager.WinUI\FormID Database Manager.WinUI.csproj" -p:Platform=x64` succeeded with 0 warnings and 0 errors.
+- `dotnet build "FormID Database Manager.slnx"` succeeded with 0 warnings and 0 errors, including the existing Avalonia app and staged WinUI project.
+- `dotnet test "FormID Database Manager.Tests"` passed with 285 tests passed, 11 skipped, and 0 failed. The skipped tests are the existing symbolic-link/game-environment and manual load/stress tests.
+- `rg "Avalonia|axaml|AXAML" "FormID Database Manager.WinUI" -g "!bin/**" -g "!obj/**"` found no WinUI project matches.
+- Packaged local verification refreshed the x64 registration with `Add-AppxPackage -Register` against `FormID Database Manager.WinUI\bin\x64\Debug\net10.0-windows10.0.19041.0\win-x64\AppxManifest.xml`, then launched `shell:AppsFolder\f403736a-da6f-4a60-b086-e0a232acbcaa_9zz4h110yvjzm!App` through Explorer.
+- Objective launch evidence: process `FormID Database Manager.WinUI` opened from the x64 WinUI output, returned main window handle `30084502`, title `FormID Database Manager`, and `Responding: True`.
+- Phase 5 follow-up: port full processing parity, including start/cancel process button behavior, parameter validation, default database path generation, progress updates, and manual verification against at least one real or representative game-directory flow.
 
 ### Phase 5: Restore Behavior Parity
 

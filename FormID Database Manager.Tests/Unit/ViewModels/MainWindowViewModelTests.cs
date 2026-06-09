@@ -582,6 +582,56 @@ public class MainWindowViewModelTests
         Assert.Empty(_viewModel.InformationMessages);
     }
 
+    [Fact]
+    public void MessageVisibilityProperties_ReturnFalseByDefault()
+    {
+        // Assert
+        Assert.False(GetBooleanProperty(_viewModel, "HasErrorMessages"));
+        Assert.False(GetBooleanProperty(_viewModel, "HasInformationMessages"));
+    }
+
+    [Fact]
+    public void AddErrorMessage_UpdatesHasErrorMessages()
+    {
+        // Arrange
+        var notifiedProperties = new System.Collections.Generic.List<string>();
+        _viewModel.PropertyChanged += (sender, args) =>
+        {
+            if (args.PropertyName != null)
+            {
+                notifiedProperties.Add(args.PropertyName);
+            }
+        };
+
+        // Act
+        _viewModel.AddErrorMessage("Binding support error");
+
+        // Assert
+        Assert.True(GetBooleanProperty(_viewModel, "HasErrorMessages"));
+        Assert.Contains("HasErrorMessages", notifiedProperties);
+    }
+
+    [Fact]
+    public void AddInformationMessage_UpdatesHasInformationMessages()
+    {
+        // Arrange
+        var notifiedProperties = new System.Collections.Generic.List<string>();
+        _viewModel.PropertyChanged += (sender, args) =>
+        {
+            if (args.PropertyName != null)
+            {
+                notifiedProperties.Add(args.PropertyName);
+            }
+        };
+
+        // Act
+        _viewModel.AddInformationMessage("Binding support information");
+
+        // Assert
+        Assert.True(GetBooleanProperty(_viewModel, "HasInformationMessages"));
+        Assert.Contains("HasInformationMessages", notifiedProperties);
+    }
+
     [AvaloniaFact]
     public void Collections_CanBeModified()
     {
@@ -924,5 +974,13 @@ public class MainWindowViewModelTests
     private static async Task FlushUiAsync()
     {
         await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
+    }
+
+    private static bool GetBooleanProperty(MainWindowViewModel viewModel, string propertyName)
+    {
+        var property = typeof(MainWindowViewModel).GetProperty(propertyName);
+        Assert.NotNull(property);
+        Assert.Equal(typeof(bool), property.PropertyType);
+        return (bool)property.GetValue(viewModel)!;
     }
 }

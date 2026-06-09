@@ -1,5 +1,4 @@
 using Microsoft.UI.Windowing;
-using Microsoft.UI.Xaml.Navigation;
 
 namespace FormID_Database_Manager.WinUI
 {
@@ -8,7 +7,7 @@ namespace FormID_Database_Manager.WinUI
     /// </summary>
     public partial class App : Application
     {
-        private Window window = Window.Current;
+        private Window? window;
 
         /// <summary>
         /// Initializes the singleton application object.  This is the first line of authored code
@@ -26,34 +25,15 @@ namespace FormID_Database_Manager.WinUI
         /// <param name="e">Details about the launch request and process.</param>
         protected override void OnLaunched(LaunchActivatedEventArgs e)
         {
-            window ??= new Window();
+            window = new MainWindow();
             window.ExtendsContentIntoTitleBar = false;
 
             if (window.AppWindow.Presenter is OverlappedPresenter presenter)
             {
-                //presenter.SetBorderAndTitleBar(false, false);
                 presenter.Maximize();
             }
 
-            if (window.Content is not Frame rootFrame)
-            {
-                rootFrame = new Frame();
-                rootFrame.NavigationFailed += OnNavigationFailed;
-                window.Content = rootFrame;
-            }
-
-            _ = rootFrame.Navigate(typeof(MainPage), e.Arguments);
             window.Activate();
-        }
-
-        /// <summary>
-        /// Invoked when Navigation to a certain page fails
-        /// </summary>
-        /// <param name="sender">The Frame which failed navigation</param>
-        /// <param name="e">Details about the navigation failure</param>
-        void OnNavigationFailed(object sender, NavigationFailedEventArgs e)
-        {
-            throw new Exception("Failed to load Page " + e.SourcePageType.FullName);
         }
     }
 }

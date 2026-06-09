@@ -27,6 +27,7 @@ public partial class MainWindowViewModel : ObservableObject, IDisposable
     private ObservableCollection<string> _detectedDirectories = [];
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasErrorMessages))]
     private ObservableCollection<string> _errorMessages = [];
 
     private ObservableCollection<PluginListItem> _filteredPlugins = [];
@@ -38,6 +39,7 @@ public partial class MainWindowViewModel : ObservableObject, IDisposable
     private string _gameDirectory = string.Empty;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasInformationMessages))]
     private ObservableCollection<string> _informationMessages = [];
 
     private bool _filterSuspended;
@@ -92,6 +94,8 @@ public partial class MainWindowViewModel : ObservableObject, IDisposable
         }.AsReadOnly();
 
         _detectedDirectories.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasMultipleDirectories));
+        _errorMessages.CollectionChanged += OnErrorMessagesCollectionChanged;
+        _informationMessages.CollectionChanged += OnInformationMessagesCollectionChanged;
     }
 
     private LockedObservableCollection<PluginListItem> CreatePluginsCollection(IEnumerable<PluginListItem>? source = null)
@@ -111,6 +115,10 @@ public partial class MainWindowViewModel : ObservableObject, IDisposable
     public bool IsGameSelected => SelectedGame.HasValue;
 
     public bool HasMultipleDirectories => DetectedDirectories.Count > 1;
+
+    public bool HasErrorMessages => ErrorMessages.Count > 0;
+
+    public bool HasInformationMessages => InformationMessages.Count > 0;
 
     public bool IsProgressVisible => IsProcessing || IsScanning;
 
@@ -141,6 +149,38 @@ public partial class MainWindowViewModel : ObservableObject, IDisposable
         get => _filteredPlugins;
         // Keep this hand-written instead of using [ObservableProperty] so only the view model can replace the collection.
         private set => SetProperty(ref _filteredPlugins, value);
+    }
+
+    partial void OnErrorMessagesChanging(ObservableCollection<string> value)
+    {
+        ErrorMessages.CollectionChanged -= OnErrorMessagesCollectionChanged;
+    }
+
+    partial void OnErrorMessagesChanged(ObservableCollection<string> value)
+    {
+        value.CollectionChanged += OnErrorMessagesCollectionChanged;
+        OnPropertyChanged(nameof(HasErrorMessages));
+    }
+
+    partial void OnInformationMessagesChanging(ObservableCollection<string> value)
+    {
+        InformationMessages.CollectionChanged -= OnInformationMessagesCollectionChanged;
+    }
+
+    partial void OnInformationMessagesChanged(ObservableCollection<string> value)
+    {
+        value.CollectionChanged += OnInformationMessagesCollectionChanged;
+        OnPropertyChanged(nameof(HasInformationMessages));
+    }
+
+    private void OnErrorMessagesCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        OnPropertyChanged(nameof(HasErrorMessages));
+    }
+
+    private void OnInformationMessagesCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        OnPropertyChanged(nameof(HasInformationMessages));
     }
 
     partial void OnPluginFilterChanged(string value)

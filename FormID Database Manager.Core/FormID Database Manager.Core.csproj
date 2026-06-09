@@ -16,6 +16,7 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="FormID Database Manager.Tests" />
+    <InternalsVisibleTo Include="FormID Database Manager.WinUI" />
   </ItemGroup>
 
 </Project>
