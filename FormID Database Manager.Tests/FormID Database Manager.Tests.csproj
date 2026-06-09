@@ -16,9 +16,6 @@
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
     <PackageReference Include="Moq" Version="4.20.72" />
-    <PackageReference Include="Avalonia" Version="12.0.1" />
-    <PackageReference Include="Avalonia.Themes.Fluent" Version="12.0.1" />
-    <PackageReference Include="Avalonia.Headless.XUnit" Version="12.0.1" />
     <PackageReference Include="coverlet.collector" Version="6.0.4">
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
       <PrivateAssets>all</PrivateAssets>
@@ -33,7 +30,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\FormID Database Manager.Core\FormID Database Manager.Core.csproj" />
-    <ProjectReference Include="..\FormID Database Manager\FormID Database Manager.csproj" />
     <ProjectReference Include="..\FormID Database Manager.TestUtilities\FormID Database Manager.TestUtilities.csproj" />
   </ItemGroup>
 

@@ -58,9 +58,10 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
     /// <param name="conn">The SQLite database connection used for processing.</param>
     /// <param name="gameRelease">The specific game release associated with the plugin.</param>
     /// <param name="pluginItem">The plugin to be processed, represented as a list item.</param>
-    /// <param name="loadOrderSnapshot">The run-scoped load order snapshot for membership and read parameters.</param>
+    /// <param name="loadOrderDict">The load order listings used for membership and read parameter metadata.</param>
     /// <param name="updateMode">Indicates if the plugin entries should be updated in the database.</param>
     /// <param name="cancellationToken">The cancellation token to handle processing termination requests.</param>
+    /// <param name="existingPlugins">Ignored legacy cache parameter; update mode always clears the plugin before inserting.</param>
     /// <returns>A task that processes the plugin asynchronously and manages its database entries accordingly.</returns>
     [RequiresUnreferencedCode("Uses reflection to discover INamedGetter interface and Name/String properties on Mutagen record types for name extraction.")]
     public async Task ProcessPlugin(
@@ -71,9 +72,17 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
         IReadOnlyDictionary<string, IModListingGetter<IModGetter>> loadOrderDict,
         bool updateMode,
         CancellationToken cancellationToken,
-        ISet<string>? existingPlugins = null)
+        IReadOnlySet<string>? existingPlugins = null)
     {
-        var snapshot = new GameLoadOrderSnapshot(loadOrderDict.Keys.ToList());
+        var listedPluginNames = loadOrderDict.Keys.ToList();
+        var masterStyles = loadOrderDict.Values
+            .Select(listing => listing.Mod)
+            .OfType<IModMasterStyledGetter>()
+            .ToList();
+        var snapshot = masterStyles.Count > 0
+            ? new GameLoadOrderSnapshot(listedPluginNames, masterStyles)
+            : new GameLoadOrderSnapshot(listedPluginNames);
+
         await ProcessPlugin(
             gameDir,
             conn,
@@ -96,6 +105,7 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
     /// <param name="loadOrderSnapshot">The run-scoped load order snapshot for membership and read parameters.</param>
     /// <param name="updateMode">Indicates if the plugin entries should be updated in the database.</param>
     /// <param name="cancellationToken">The cancellation token to handle processing termination requests.</param>
+    /// <param name="existingPlugins">Ignored legacy cache parameter; update mode always clears the plugin before inserting.</param>
     /// <returns>A task that processes the plugin asynchronously and manages its database entries accordingly.</returns>
     [RequiresUnreferencedCode("Uses reflection to discover INamedGetter interface and Name/String properties on Mutagen record types for name extraction.")]
     public async Task ProcessPlugin(
@@ -106,7 +116,7 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
         GameLoadOrderSnapshot loadOrderSnapshot,
         bool updateMode,
         CancellationToken cancellationToken,
-        ISet<string>? existingPlugins = null)
+        IReadOnlySet<string>? existingPlugins = null)
     {
         SqliteTransaction? transaction = null;
         try
@@ -131,19 +141,8 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
 
             if (updateMode)
             {
-                if (existingPlugins != null)
-                {
-                    if (existingPlugins.Remove(pluginItem.Name))
-                    {
-                        await databaseService.ClearPluginEntries(conn, gameRelease, pluginItem.Name, cancellationToken)
-                            .ConfigureAwait(false);
-                    }
-                }
-                else
-                {
-                    await databaseService.ClearPluginEntries(conn, gameRelease, pluginItem.Name, cancellationToken)
-                        .ConfigureAwait(false);
-                }
+                await databaseService.ClearPluginEntries(conn, gameRelease, pluginItem.Name, cancellationToken)
+                    .ConfigureAwait(false);
             }
 
             try

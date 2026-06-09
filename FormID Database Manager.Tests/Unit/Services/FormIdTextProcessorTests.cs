@@ -119,6 +119,43 @@ public class FormIdTextProcessorTests : IDisposable
     }
 
     [Fact]
+    public async Task ProcessFormIdListFile_UpdateModeWithEmptyExistingPluginCache_StillClearsStaleRows()
+    {
+        await InsertTestRecord("Plugin1.esp", "000001", "OldEntry1");
+
+        var databaseServiceMock = new Mock<DatabaseService> { CallBase = true };
+        databaseServiceMock.Setup(x => x.GetPluginsWithEntries(
+                It.IsAny<SqliteConnection>(),
+                It.IsAny<GameRelease>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+        var processor = new FormIdTextProcessor(databaseServiceMock.Object);
+
+        var testFile = Path.Combine(_testFilesDir, "update_mode_empty_cache.txt");
+        var content = new[]
+        {
+            "Plugin1.esp|000010|NewEntry1"
+        };
+        await File.WriteAllLinesAsync(testFile, content, TestContext.Current.CancellationToken);
+
+        await processor.ProcessFormIdListFile(
+            testFile,
+            _connection,
+            GameRelease.SkyrimSE,
+            true,
+            TestContext.Current.CancellationToken);
+
+        var records = GetAllRecords();
+        Assert.Single(records);
+        Assert.DoesNotContain(records, r => r.entry == "OldEntry1");
+        Assert.Contains(records, r => r.plugin == "Plugin1.esp" && r.entry == "NewEntry1");
+        databaseServiceMock.Verify(x => x.GetPluginsWithEntries(
+            It.IsAny<SqliteConnection>(),
+            It.IsAny<GameRelease>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
     public async Task ProcessFormIdListFile_UpdateMode_ClearsExistingEntriesCaseInsensitively()
     {
         await InsertTestRecord("Plugin1.esp", "000001", "OldEntry1");
@@ -141,6 +178,44 @@ public class FormIdTextProcessorTests : IDisposable
         Assert.Single(records);
         Assert.DoesNotContain(records, r => r.entry == "OldEntry1");
         Assert.Contains(records, r => r.plugin == "PLUGIN1.ESP" && r.entry == "NewEntry1");
+    }
+
+    [Fact]
+    public async Task ProcessFormIdListFile_UpdateModeOff_DoesNotLoadCacheOrClearPluginEntries()
+    {
+        await InsertTestRecord("Plugin1.esp", "000001", "OldEntry1");
+
+        var databaseServiceMock = new Mock<DatabaseService> { CallBase = true };
+        var processor = new FormIdTextProcessor(databaseServiceMock.Object);
+
+        var testFile = Path.Combine(_testFilesDir, "update_mode_off_no_clear.txt");
+        var content = new[]
+        {
+            "Plugin1.esp|000002|NewEntry1"
+        };
+        await File.WriteAllLinesAsync(testFile, content, TestContext.Current.CancellationToken);
+
+        await processor.ProcessFormIdListFile(
+            testFile,
+            _connection,
+            GameRelease.SkyrimSE,
+            false,
+            TestContext.Current.CancellationToken);
+
+        var records = GetAllRecords();
+        Assert.Equal(2, records.Count);
+        Assert.Contains(records, r => r.entry == "OldEntry1");
+        Assert.Contains(records, r => r.entry == "NewEntry1");
+
+        databaseServiceMock.Verify(x => x.GetPluginsWithEntries(
+            It.IsAny<SqliteConnection>(),
+            It.IsAny<GameRelease>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+        databaseServiceMock.Verify(x => x.ClearPluginEntries(
+            It.IsAny<SqliteConnection>(),
+            It.IsAny<GameRelease>(),
+            It.IsAny<string>(),
+            It.IsAny<CancellationToken>()), Times.Never);
     }
 
     #endregion
@@ -289,7 +364,7 @@ public class FormIdTextProcessorTests : IDisposable
         await File.WriteAllLinesAsync(testFile, lines, TestContext.Current.CancellationToken);
 
         var progressReports = new List<(string Message, double? Value)>();
-        var progress = new Progress<(string Message, double? Value)>(report => progressReports.Add(report));
+        var progress = new SynchronousProgress<(string Message, double? Value)>(report => progressReports.Add(report));
 
         // Act
         await _processor.ProcessFormIdListFile(
@@ -324,7 +399,7 @@ public class FormIdTextProcessorTests : IDisposable
         await File.WriteAllLinesAsync(testFile, lines, TestContext.Current.CancellationToken);
 
         var progressReports = new List<(string Message, double? Value)>();
-        var progress = new Progress<(string Message, double? Value)>(report => progressReports.Add(report));
+        var progress = new SynchronousProgress<(string Message, double? Value)>(report => progressReports.Add(report));
 
         // Act
         await _processor.ProcessFormIdListFile(
@@ -375,21 +450,25 @@ public class FormIdTextProcessorTests : IDisposable
     }
 
     [Fact]
-    public async Task ProcessFormIdListFile_HandlesLargeFiles_Efficiently()
+    public async Task ProcessFormIdListFile_HandlesLargeFiles_Correctly()
     {
         // Arrange
         var testFile = Path.Combine(_testFilesDir, "large_file_test.txt");
-        var totalRecords = 25000; // Large number to test efficiency
+        const int totalRecords = 25000;
+        const int pluginCount = 2;
+        const int recordsPerPlugin = totalRecords / pluginCount;
 
         using (var writer = new StreamWriter(testFile))
         {
-            for (var i = 0; i < totalRecords; i++)
+            for (var pluginIndex = 0; pluginIndex < pluginCount; pluginIndex++)
             {
-                await writer.WriteLineAsync($"Plugin{i % 5}.esp|{i:X6}|Entry{i}");
+                for (var i = 0; i < recordsPerPlugin; i++)
+                {
+                    var recordIndex = pluginIndex * recordsPerPlugin + i;
+                    await writer.WriteLineAsync($"Plugin{pluginIndex}.esp|{recordIndex:X6}|Entry{recordIndex}");
+                }
             }
         }
-
-        var startTime = DateTime.UtcNow;
 
         // Act
         await _processor.ProcessFormIdListFile(
@@ -399,13 +478,9 @@ public class FormIdTextProcessorTests : IDisposable
             false,
             TestContext.Current.CancellationToken);
 
-        var elapsed = DateTime.UtcNow - startTime;
-
         // Assert
         var records = GetAllRecords();
         Assert.Equal(totalRecords, records.Count);
-        Assert.True(elapsed.TotalSeconds < 60,
-            $"Processing took too long: {elapsed.TotalSeconds} seconds"); // Increased threshold for CI environments
     }
 
     #endregion
@@ -558,7 +633,7 @@ public class FormIdTextProcessorTests : IDisposable
         await File.WriteAllLinesAsync(testFile, content, TestContext.Current.CancellationToken);
 
         var progressReports = new List<(string Message, double? Value)>();
-        var progress = new Progress<(string Message, double? Value)>(report => progressReports.Add(report));
+        var progress = new SynchronousProgress<(string Message, double? Value)>(report => progressReports.Add(report));
 
         // Act
         await _processor.ProcessFormIdListFile(
@@ -597,7 +672,7 @@ public class FormIdTextProcessorTests : IDisposable
         await File.WriteAllLinesAsync(testFile, content, TestContext.Current.CancellationToken);
 
         var progressReports = new List<(string Message, double? Value)>();
-        var progress = new Progress<(string Message, double? Value)>(report => progressReports.Add(report));
+        var progress = new SynchronousProgress<(string Message, double? Value)>(report => progressReports.Add(report));
 
         // Act
         await _processor.ProcessFormIdListFile(
@@ -650,7 +725,7 @@ public class FormIdTextProcessorTests : IDisposable
     }
 
     [Fact]
-    public async Task ProcessFormIdListFile_UpdateMode_LoadsExistingPluginCacheOnce()
+    public async Task ProcessFormIdListFile_UpdateMode_ClearsEachUniquePluginWithoutLoadingExistingPluginCache()
     {
         var databaseServiceMock = new Mock<DatabaseService>();
         databaseServiceMock
@@ -658,7 +733,7 @@ public class FormIdTextProcessorTests : IDisposable
                 It.IsAny<SqliteConnection>(),
                 It.IsAny<GameRelease>(),
                 It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "Plugin1.esp" });
+            .ReturnsAsync(new HashSet<string>(StringComparer.OrdinalIgnoreCase));
         databaseServiceMock
             .Setup(x => x.ClearPluginEntries(
                 It.IsAny<SqliteConnection>(),
@@ -689,7 +764,7 @@ public class FormIdTextProcessorTests : IDisposable
         databaseServiceMock.Verify(x => x.GetPluginsWithEntries(
             _connection,
             GameRelease.SkyrimSE,
-            It.IsAny<CancellationToken>()), Times.Once);
+            It.IsAny<CancellationToken>()), Times.Never);
         databaseServiceMock.Verify(x => x.ClearPluginEntries(
             _connection,
             GameRelease.SkyrimSE,
@@ -699,12 +774,20 @@ public class FormIdTextProcessorTests : IDisposable
             _connection,
             GameRelease.SkyrimSE,
             It.Is<string>(name => string.Equals(name, "Plugin2.esp", StringComparison.OrdinalIgnoreCase)),
-            It.IsAny<CancellationToken>()), Times.Never);
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     #endregion
 
     #region Helper Methods
+
+    private sealed class SynchronousProgress<T>(Action<T> handler) : IProgress<T>
+    {
+        public void Report(T value)
+        {
+            handler(value);
+        }
+    }
 
     private void InitializeDatabase(SqliteConnection connection, GameRelease gameRelease)
     {

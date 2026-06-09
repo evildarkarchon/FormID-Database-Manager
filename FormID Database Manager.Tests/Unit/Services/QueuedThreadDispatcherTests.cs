@@ -33,6 +33,30 @@ public class QueuedThreadDispatcherTests
     }
 
     /// <summary>
+    /// Verifies that direct dispatcher-owned callbacks preserve async exception observation semantics.
+    /// </summary>
+    [Fact]
+    public async Task InvokeAsync_WhenCallerHasAccessAndActionThrows_ReturnsFaultedTask()
+    {
+        var dispatcher = new QueuedThreadDispatcher(
+            () => true,
+            _ => true,
+            "Dispatcher rejected queued work.");
+        var expected = new InvalidOperationException("callback failed");
+        var task = Task.CompletedTask;
+
+        var synchronousException = Record.Exception((Action)(() =>
+        {
+            task = dispatcher.InvokeAsync(() => throw expected);
+        }));
+
+        Assert.Null(synchronousException);
+
+        var actual = await Assert.ThrowsAsync<InvalidOperationException>(() => task);
+        Assert.Same(expected, actual);
+    }
+
+    /// <summary>
     /// Verifies that background callers receive a task that completes after queued work runs.
     /// </summary>
     [Fact]

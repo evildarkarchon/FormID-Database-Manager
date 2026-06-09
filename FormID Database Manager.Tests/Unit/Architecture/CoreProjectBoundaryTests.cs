@@ -56,7 +56,7 @@ public class CoreProjectBoundaryTests
     }
 
     /// <summary>
-    /// Verifies that core exposes the file-dialog contract needed by Avalonia and future WinUI picker services.
+    /// Verifies that core exposes the file-dialog contract needed by desktop picker services.
     /// </summary>
     [Fact]
     public void CoreProject_DefinesFileDialogContract()

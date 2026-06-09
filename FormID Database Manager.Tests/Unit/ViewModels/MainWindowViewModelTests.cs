@@ -8,10 +8,9 @@ using System.Linq;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
-using Avalonia.Headless.XUnit;
-using Avalonia.Threading;
 using FormID_Database_Manager.Models;
 using FormID_Database_Manager.Services;
+using FormID_Database_Manager.TestUtilities.Mocks;
 using FormID_Database_Manager.ViewModels;
 using Mutagen.Bethesda;
 using Xunit;
@@ -24,12 +23,12 @@ public class MainWindowViewModelTests
 
     public MainWindowViewModelTests()
     {
-        _viewModel = new MainWindowViewModel();
+        _viewModel = new MainWindowViewModel(new SynchronousThreadDispatcher());
     }
 
     #region Property Change Notification Tests
 
-    [AvaloniaFact]
+    [Fact]
     public void GameDirectory_RaisesPropertyChanged_WhenSet()
     {
         // Arrange
@@ -44,7 +43,7 @@ public class MainWindowViewModelTests
         Assert.Equal(@"C:\Games\Skyrim", _viewModel.GameDirectory);
     }
 
-    [AvaloniaFact]
+    [Fact]
     public void DatabasePath_RaisesPropertyChanged_WhenSet()
     {
         // Arrange
@@ -59,7 +58,7 @@ public class MainWindowViewModelTests
         Assert.Equal(@"C:\Database\formids.db", _viewModel.DatabasePath);
     }
 
-    [AvaloniaFact]
+    [Fact]
     public void FormIdListPath_RaisesPropertyChanged_WhenSet()
     {
         // Arrange
@@ -74,7 +73,7 @@ public class MainWindowViewModelTests
         Assert.Equal(@"C:\Lists\formids.txt", _viewModel.FormIdListPath);
     }
 
-    [AvaloniaFact]
+    [Fact]
     public void SelectedGame_RaisesPropertyChanged_WhenSet()
     {
         // Arrange
@@ -96,21 +95,21 @@ public class MainWindowViewModelTests
         Assert.Equal(GameRelease.SkyrimSE, _viewModel.SelectedGame);
     }
 
-    [AvaloniaFact]
+    [Fact]
     public void SelectedGame_IsNullByDefault()
     {
         // Assert
         Assert.Null(_viewModel.SelectedGame);
     }
 
-    [AvaloniaFact]
+    [Fact]
     public void IsGameSelected_ReturnsFalse_WhenSelectedGameIsNull()
     {
         // Assert
         Assert.False(_viewModel.IsGameSelected);
     }
 
-    [AvaloniaFact]
+    [Fact]
     public void IsGameSelected_ReturnsTrue_WhenSelectedGameHasValue()
     {
         // Arrange
@@ -120,7 +119,7 @@ public class MainWindowViewModelTests
         Assert.True(_viewModel.IsGameSelected);
     }
 
-    [AvaloniaFact]
+    [Fact]
     public void AvailableGames_ContainsAll10SupportedReleases()
     {
         // Assert
@@ -137,14 +136,14 @@ public class MainWindowViewModelTests
         Assert.Contains(GameRelease.Starfield, _viewModel.AvailableGames);
     }
 
-    [AvaloniaFact]
+    [Fact]
     public void AvailableGames_HasFallout4First()
     {
         // Assert
         Assert.Equal(GameRelease.Fallout4, _viewModel.AvailableGames[0]);
     }
 
-    [AvaloniaFact]
+    [Fact]
     public void DetectedDirectories_InitializesAsEmptyCollection()
     {
         // Assert
@@ -152,14 +151,14 @@ public class MainWindowViewModelTests
         Assert.Empty(_viewModel.DetectedDirectories);
     }
 
-    [AvaloniaFact]
+    [Fact]
     public void HasMultipleDirectories_ReturnsFalse_WhenEmpty()
     {
         // Assert
         Assert.False(_viewModel.HasMultipleDirectories);
     }
 
-    [AvaloniaFact]
+    [Fact]
     public void HasMultipleDirectories_ReturnsFalse_WhenSingleEntry()
     {
         // Arrange
@@ -169,7 +168,7 @@ public class MainWindowViewModelTests
         Assert.False(_viewModel.HasMultipleDirectories);
     }
 
-    [AvaloniaFact]
+    [Fact]
     public void HasMultipleDirectories_ReturnsTrue_WhenMultipleEntries()
     {
         // Arrange
@@ -180,7 +179,7 @@ public class MainWindowViewModelTests
         Assert.True(_viewModel.HasMultipleDirectories);
     }
 
-    [AvaloniaFact]
+    [Fact]
     public void HasMultipleDirectories_RaisesPropertyChanged_WhenDirectoriesChange()
     {
         // Arrange
@@ -201,7 +200,7 @@ public class MainWindowViewModelTests
         Assert.Contains(nameof(MainWindowViewModel.HasMultipleDirectories), notifiedProperties);
     }
 
-    [AvaloniaFact]
+    [Fact]
     public void IsProcessing_RaisesPropertyChanged_WhenSet()
     {
         // Arrange
@@ -222,7 +221,7 @@ public class MainWindowViewModelTests
         Assert.True(_viewModel.IsProcessing);
     }
 
-    [AvaloniaFact]
+    [Fact]
     public void ProgressValue_RaisesPropertyChanged_WhenSet()
     {
         // Arrange
@@ -237,7 +236,7 @@ public class MainWindowViewModelTests
         Assert.Equal(75.5, _viewModel.ProgressValue);
     }
 
-    [AvaloniaFact]
+    [Fact]
     public void ProgressStatus_RaisesPropertyChanged_WhenSet()
     {
         // Arrange
@@ -252,7 +251,7 @@ public class MainWindowViewModelTests
         Assert.Equal("Processing plugins...", _viewModel.ProgressStatus);
     }
 
-    [AvaloniaFact]
+    [Fact]
     public void Properties_DoNotRaisePropertyChanged_WhenSetToSameValue()
     {
         // Arrange
@@ -271,7 +270,7 @@ public class MainWindowViewModelTests
 
     #region Filtering Tests
 
-    [AvaloniaFact]
+    [Fact]
     public void PluginFilter_UpdatesFilteredPlugins_WhenChanged()
     {
         // Arrange
@@ -287,7 +286,7 @@ public class MainWindowViewModelTests
         Assert.All(_viewModel.FilteredPlugins, p => Assert.Contains("Plugin", p.Name));
     }
 
-    [AvaloniaFact]
+    [Fact]
     public void ApplyFilter_FiltersCaseInsensitive()
     {
         // Arrange
@@ -302,7 +301,7 @@ public class MainWindowViewModelTests
         Assert.Equal(3, _viewModel.FilteredPlugins.Count);
     }
 
-    [AvaloniaFact]
+    [Fact]
     public void ApplyFilter_ShowsAllPlugins_WhenFilterIsEmpty()
     {
         // Arrange
@@ -317,7 +316,7 @@ public class MainWindowViewModelTests
         Assert.Equal(_viewModel.Plugins.Count, _viewModel.FilteredPlugins.Count);
     }
 
-    [AvaloniaFact]
+    [Fact]
     public void ApplyFilter_ShowsAllPlugins_WhenFilterIsWhitespace()
     {
         // Arrange
@@ -331,7 +330,7 @@ public class MainWindowViewModelTests
         Assert.Equal(_viewModel.Plugins.Count, _viewModel.FilteredPlugins.Count);
     }
 
-    [AvaloniaFact]
+    [Fact]
     public void Plugins_TriggersFilterUpdate_WhenSet()
     {
         // Arrange
@@ -348,7 +347,7 @@ public class MainWindowViewModelTests
         Assert.Equal(newPlugins.Count, _viewModel.FilteredPlugins.Count);
     }
 
-    [AvaloniaFact]
+    [Fact]
     public void GetSelectedPlugins_ReturnsOnlySelectedPluginSnapshot()
     {
         // Arrange
@@ -407,7 +406,7 @@ public class MainWindowViewModelTests
 
     #region Message Management Tests
 
-    [AvaloniaFact]
+    [Fact]
     public void AddErrorMessage_AddsToCollection()
     {
         // Arrange
@@ -421,7 +420,7 @@ public class MainWindowViewModelTests
         Assert.Contains(message, _viewModel.ErrorMessages);
     }
 
-    [AvaloniaFact]
+    [Fact]
     public void AddErrorMessage_MaintainsMaxMessages()
     {
         // Arrange
@@ -439,7 +438,7 @@ public class MainWindowViewModelTests
         Assert.Equal("Error 9", _viewModel.ErrorMessages.Last());
     }
 
-    [AvaloniaFact]
+    [Fact]
     public void AddErrorMessage_UsesDefaultMaxMessages()
     {
         // Act
@@ -454,7 +453,7 @@ public class MainWindowViewModelTests
         Assert.Equal("Error 11", _viewModel.ErrorMessages.Last());
     }
 
-    [AvaloniaFact]
+    [Fact]
     public void AddInformationMessage_AddsToCollection()
     {
         // Arrange
@@ -468,7 +467,7 @@ public class MainWindowViewModelTests
         Assert.Contains(message, _viewModel.InformationMessages);
     }
 
-    [AvaloniaFact]
+    [Fact]
     public void AddInformationMessage_MaintainsMaxMessages()
     {
         // Arrange
@@ -486,7 +485,7 @@ public class MainWindowViewModelTests
         Assert.Equal("Info 9", _viewModel.InformationMessages.Last());
     }
 
-    [AvaloniaFact]
+    [Fact]
     public void AddInformationMessage_UsesDefaultMaxMessages()
     {
         // Act
@@ -501,7 +500,7 @@ public class MainWindowViewModelTests
         Assert.Equal("Info 11", _viewModel.InformationMessages.Last());
     }
 
-    [AvaloniaFact]
+    [Fact]
     public async Task AddMessages_WorksFromBackgroundThread()
     {
         // Arrange
@@ -517,9 +516,6 @@ public class MainWindowViewModelTests
             infoAdded = true;
         }, TestContext.Current.CancellationToken);
 
-        // Wait for dispatcher to process deterministically
-        await FlushUiAsync();
-
         // Assert
         Assert.True(errorAdded);
         Assert.True(infoAdded);
@@ -531,7 +527,7 @@ public class MainWindowViewModelTests
 
     #region Progress Management Tests
 
-    [AvaloniaFact]
+    [Fact]
     public void ResetProgress_ClearsAllProgressState()
     {
         // Arrange
@@ -552,7 +548,7 @@ public class MainWindowViewModelTests
         Assert.Empty(_viewModel.InformationMessages);
     }
 
-    [AvaloniaFact]
+    [Fact]
     public void UpdateProgress_UpdatesStatusAndValue()
     {
         // Act
@@ -563,7 +559,7 @@ public class MainWindowViewModelTests
         Assert.Equal(50, _viewModel.ProgressValue);
     }
 
-    [AvaloniaFact]
+    [Fact]
     public void UpdateProgress_UpdatesOnlyStatus_WhenValueIsNull()
     {
         // Arrange
@@ -577,7 +573,7 @@ public class MainWindowViewModelTests
         Assert.Equal(75, _viewModel.ProgressValue); // Unchanged
     }
 
-    [AvaloniaFact]
+    [Fact]
     public async Task UpdateProgress_WorksFromBackgroundThread()
     {
         // Arrange
@@ -610,7 +606,7 @@ public class MainWindowViewModelTests
         Assert.Equal(25, _viewModel.ProgressValue);
     }
 
-    [AvaloniaFact]
+    [Fact]
     public async Task ResetProgress_WorksFromBackgroundThread()
     {
         // Arrange
@@ -625,9 +621,6 @@ public class MainWindowViewModelTests
             reset = true;
         }, TestContext.Current.CancellationToken);
 
-        // Wait for dispatcher deterministically
-        await FlushUiAsync();
-
         // Assert
         Assert.True(reset);
         Assert.Equal(0, _viewModel.ProgressValue);
@@ -638,7 +631,7 @@ public class MainWindowViewModelTests
 
     #region Collection Management Tests
 
-    [AvaloniaFact]
+    [Fact]
     public void Plugins_InitializesAsEmptyCollection()
     {
         // Assert
@@ -646,7 +639,7 @@ public class MainWindowViewModelTests
         Assert.Empty(_viewModel.Plugins);
     }
 
-    [AvaloniaFact]
+    [Fact]
     public void FilteredPlugins_InitializesAsEmptyCollection()
     {
         // Assert
@@ -654,7 +647,7 @@ public class MainWindowViewModelTests
         Assert.Empty(_viewModel.FilteredPlugins);
     }
 
-    [AvaloniaFact]
+    [Fact]
     public void ErrorMessages_InitializesAsEmptyCollection()
     {
         // Assert
@@ -662,7 +655,7 @@ public class MainWindowViewModelTests
         Assert.Empty(_viewModel.ErrorMessages);
     }
 
-    [AvaloniaFact]
+    [Fact]
     public void InformationMessages_InitializesAsEmptyCollection()
     {
         // Assert
@@ -840,7 +833,7 @@ public class MainWindowViewModelTests
         Assert.Contains(nameof(MainWindowViewModel.HasInformationMessages), notifiedProperties);
     }
 
-    [AvaloniaFact]
+    [Fact]
     public void Collections_CanBeModified()
     {
         // Act
@@ -861,8 +854,8 @@ public class MainWindowViewModelTests
     [Fact]
     public async Task PluginFilter_WithDebounce_DelaysFilterApplication()
     {
-        // Arrange - Use SynchronousThreadDispatcher to avoid Avalonia headless issues
-        var dispatcher = new FormID_Database_Manager.TestUtilities.Mocks.SynchronousThreadDispatcher();
+        // Arrange - Use SynchronousThreadDispatcher for deterministic debounce behavior
+        var dispatcher = new SynchronousThreadDispatcher();
         var debouncedVm = new MainWindowViewModel(dispatcher, 200);
         debouncedVm.Plugins.Add(new PluginListItem { Name = "Plugin1.esp" });
         debouncedVm.Plugins.Add(new PluginListItem { Name = "TestMod.esp" });
@@ -906,7 +899,7 @@ public class MainWindowViewModelTests
     public async Task PluginFilter_WithDebounce_PreservesPluginInstancesAndSelectionAcrossHideShow()
     {
         // Arrange
-        var dispatcher = new FormID_Database_Manager.TestUtilities.Mocks.SynchronousThreadDispatcher();
+        var dispatcher = new SynchronousThreadDispatcher();
         using var debouncedVm = new MainWindowViewModel(dispatcher, 25);
         var selectedPlugin = new PluginListItem { Name = "SelectedPlugin.esp", IsSelected = true };
         var otherPlugin = new PluginListItem { Name = "OtherPlugin.esp" };
@@ -931,7 +924,7 @@ public class MainWindowViewModelTests
         Assert.True(visiblePlugin.IsSelected);
     }
 
-    [AvaloniaFact]
+    [Fact]
     public void PluginFilter_WithZeroDebounce_AppliesImmediately()
     {
         // Arrange - Zero debounce (default for existing tests)
@@ -950,7 +943,7 @@ public class MainWindowViewModelTests
 
     #region Filter Suspension Tests
 
-    [AvaloniaFact]
+    [Fact]
     public void SuspendFilter_PreventsApplyFilterDuringBulkAdd()
     {
         // Arrange
@@ -975,7 +968,7 @@ public class MainWindowViewModelTests
         Assert.Equal(100, _viewModel.FilteredPlugins.Count);
     }
 
-    [AvaloniaFact]
+    [Fact]
     public void ResumeFilter_AppliesCurrentFilter()
     {
         // Arrange
@@ -996,7 +989,7 @@ public class MainWindowViewModelTests
 
     #region Edge Cases and Stress Tests
 
-    [AvaloniaFact]
+    [Fact]
     public void PropertyChanged_HandlesNullPropertyName()
     {
         // Arrange
@@ -1019,7 +1012,7 @@ public class MainWindowViewModelTests
         Assert.True(eventRaised);
     }
 
-    [AvaloniaFact]
+    [Fact]
     public void ApplyFilter_HandlesLargePluginList()
     {
         // Arrange - Add 1000 plugins
@@ -1035,7 +1028,7 @@ public class MainWindowViewModelTests
         Assert.Equal(11, _viewModel.FilteredPlugins.Count); // Plugin99, Plugin990-999
     }
 
-    [AvaloniaFact]
+    [Fact]
     public void Messages_HandleRapidAdditions()
     {
         // Act - Rapidly add many messages
@@ -1053,7 +1046,7 @@ public class MainWindowViewModelTests
         Assert.Equal("Error 99", _viewModel.ErrorMessages.Last());
     }
 
-    [AvaloniaFact]
+    [Fact]
     public async Task AddErrorMessage_IsThreadSafeUnderConcurrentCalls()
     {
         // Arrange
@@ -1081,14 +1074,12 @@ public class MainWindowViewModelTests
             .ToArray();
 
         await Task.WhenAll(tasks);
-        await FlushUiAsync();
-
         // Assert
         Assert.Empty(errors);
         Assert.Equal(maxMessages, _viewModel.ErrorMessages.Count);
     }
 
-    [AvaloniaFact]
+    [Fact]
     public async Task Plugins_Add_IsThreadSafeUnderConcurrentCalls()
     {
         // Arrange
@@ -1115,15 +1106,13 @@ public class MainWindowViewModelTests
             .ToArray();
 
         await Task.WhenAll(tasks);
-        await FlushUiAsync();
-
         // Assert
         Assert.Empty(errors);
         Assert.Equal(threadCount * perThreadPlugins, _viewModel.Plugins.Count);
         Assert.Equal(_viewModel.Plugins.Count, _viewModel.FilteredPlugins.Count);
     }
 
-    [AvaloniaFact]
+    [Fact]
     public void Filter_HandlesSpecialCharacters()
     {
         // Arrange
@@ -1139,7 +1128,7 @@ public class MainWindowViewModelTests
         Assert.Equal("Plugin[Special].esp", _viewModel.FilteredPlugins.First().Name);
     }
 
-    [AvaloniaFact]
+    [Fact]
     public void SetProperty_ReturnsFalse_WhenValueUnchanged()
     {
         // Arrange
@@ -1159,7 +1148,7 @@ public class MainWindowViewModelTests
 
     #region IsProgressVisible and IsScanning Tests
 
-    [AvaloniaFact]
+    [Fact]
     public void IsProgressVisible_True_WhenIsProcessingTrue()
     {
         // Arrange & Act
@@ -1169,7 +1158,7 @@ public class MainWindowViewModelTests
         Assert.True(_viewModel.IsProgressVisible);
     }
 
-    [AvaloniaFact]
+    [Fact]
     public void IsProgressVisible_True_WhenIsScanningTrue()
     {
         // Arrange & Act
@@ -1179,7 +1168,7 @@ public class MainWindowViewModelTests
         Assert.True(_viewModel.IsProgressVisible);
     }
 
-    [AvaloniaFact]
+    [Fact]
     public void IsProgressVisible_False_WhenBothFalse()
     {
         // Arrange - defaults are false, but be explicit
@@ -1190,7 +1179,7 @@ public class MainWindowViewModelTests
         Assert.False(_viewModel.IsProgressVisible);
     }
 
-    [AvaloniaFact]
+    [Fact]
     public void IsScanning_PropertyChanged_NotifiesIsProgressVisible()
     {
         // Arrange
@@ -1210,7 +1199,7 @@ public class MainWindowViewModelTests
         Assert.Contains(nameof(MainWindowViewModel.IsProgressVisible), notifiedProperties);
     }
 
-    [AvaloniaFact]
+    [Fact]
     public void IsProcessing_PropertyChanged_NotifiesIsProgressVisible()
     {
         // Arrange
@@ -1232,10 +1221,6 @@ public class MainWindowViewModelTests
 
     #endregion
 
-    private static async Task FlushUiAsync()
-    {
-        await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
-    }
 
     private sealed class RecordingThreadDispatcher(bool hasAccess) : IThreadDispatcher
     {

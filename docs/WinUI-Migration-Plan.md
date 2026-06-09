@@ -256,7 +256,7 @@ Phase 6 verification checkpoint, 2026-06-09:
 - Message-bar and process reset verification clicked `Process FormIDs` with no game selected. The Errors `InfoBar` opened with `Please select a game from the dropdown first.`, and the process button reset to `Process FormIDs`.
 - Representative Fallout 4 workflow verification selected Fallout 4 in the packaged shell and loaded the installed game directory. The shell reported `Loaded 184 non-base game plugins` and exposed 86 visible plugin checkboxes through UI Automation.
 - Plugin filtering and selection preservation were verified live with `ccRZRFO4001-TunnelSnakes.esm`: filtering to `Tunnel` showed the plugin, toggling it selected changed the checkbox to `On`, filtering to `NoSuchPluginPhase6` hid it, and filtering back to `Tunnel` returned the same visible plugin with selection still `On`.
-- A selected-plugin processing attempt in the packaged shell reset the process button to `Process FormIDs` and surfaced the expected default-path SQLite failure, `SQLite Error 14: 'unable to open database file'`, because the packaged launch defaulted the database path to `C:\WINDOWS\system32\Fallout4.db`. UI Automation could not set `DatabasePathTextBox` because it is read-only, and a direct executable launch with a writable working directory did not expose a UI window for automation. The cancel transition remains covered by source-level guardrails in this checkpoint; a fully writable packaged processing run should be rechecked when picker automation or a manual desktop pass is available.
+- A selected-plugin processing attempt in the packaged shell reset the process button to `Process FormIDs` and surfaced the expected default-path SQLite failure, `SQLite Error 14: 'unable to open database file'`, because the packaged launch defaulted the database path to `C:\WINDOWS\system32\Fallout4.db`. UI Automation could not set `DatabasePathTextBox` because it is read-only, and a direct executable launch with a writable working directory did not expose a UI window for automation. The cancel transition remains covered by source-level guardrails in this checkpoint; a fully writable packaged processing run should be rechecked when picker automation or a manual desktop pass is available (Human edit: A picker dialog did pop up, but was either not recognized by UI automation or was the wrong type).
 
 ### Phase 7: Rework Tests
 
@@ -267,6 +267,17 @@ Phase 6 verification checkpoint, 2026-06-09:
 - Retire `Avalonia.Headless.XUnit`, `TestInitialization.cs`, and `UiTestHost` once WinUI UI coverage is in place.
 - Keep integration and performance tests focused on Mutagen/SQLite behavior.
 - Create a CI workflow to run tests on a Windows runner.
+
+Phase 7 verification checkpoint, 2026-06-09:
+
+- ViewModel tests now run as standard xUnit facts through `FormID Database Manager.Core` and `FormID Database Manager.TestUtilities` with `SynchronousThreadDispatcher` or focused fake dispatchers. The test project no longer references `Avalonia.Headless.XUnit`, `Avalonia`, `Avalonia.Themes.Fluent`, or the legacy Avalonia app project.
+- Avalonia-only test host files and UI tests were retired after replacement coverage was added or preserved. WinUI source tests now lock down `WinUiThreadDispatcher` delegation, `IFileDialogService` picker workflow consumption, migration-critical controls and handlers, binding-critical XAML, and platform-service wiring. Real WinUI picker behavior remains manual/smoke coverage because the automated test project does not host a live WinUI window.
+- Windows CI was added at `.github/workflows/windows-ci.yml`. It restores the solution, builds the WinUI project for x64, builds the solution, and runs `dotnet test "FormID Database Manager.Tests"` on `windows-latest` using existing skip attributes for manual performance, load, stress, and environment-specific tests.
+- Final automated-headless search: `rg "AvaloniaFact|Avalonia.Headless|UiTestHost|TestInitialization|AvaloniaThreadDispatcher|using Avalonia|Avalonia.Themes|WindowManager" "FormID Database Manager.Tests"` found no automated headless dependencies. The only remaining Avalonia text in tests is the intentional `CoreProjectBoundaryTests` guard that asserts Core source files do not contain `using Avalonia`.
+- Focused Phase 7 tests passed: `dotnet test "FormID Database Manager.Tests" --filter "FullyQualifiedName~MainWindowViewModelTests|FullyQualifiedName~QueuedThreadDispatcherTests|FullyQualifiedName~ImmediateThreadDispatcherTests|FullyQualifiedName~WinUiPlatformServiceSourceTests|FullyQualifiedName~CoreProjectBoundaryTests"` completed with 85 passed, 0 skipped, and 0 failed.
+- `dotnet build "FormID Database Manager.WinUI\FormID Database Manager.WinUI.csproj" -p:Platform=x64` succeeded with 0 warnings and 0 errors.
+- `dotnet build "FormID Database Manager.slnx"` succeeded with 0 warnings and 0 errors.
+- `dotnet test "FormID Database Manager.Tests"` passed with 274 tests passed, 11 skipped, and 0 failed. The skipped tests remain the existing symbolic-link and manual performance/load/stress tests.
 
 ### Phase 8: Remove Avalonia
 

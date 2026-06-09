@@ -6,8 +6,7 @@ namespace FormID_Database_Manager.TestUtilities.Mocks;
 
 /// <summary>
 /// A synchronous implementation of <see cref="IThreadDispatcher"/> for testing purposes.
-/// Executes all actions immediately on the calling thread, avoiding deadlocks that can occur
-/// when the Avalonia UI dispatcher isn't being pumped (e.g., in non-[AvaloniaFact] tests).
+/// Executes all actions immediately on the calling thread for deterministic UI-neutral tests.
 /// </summary>
 public class SynchronousThreadDispatcher : IThreadDispatcher
 {

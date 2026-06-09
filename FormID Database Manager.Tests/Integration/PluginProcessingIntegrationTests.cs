@@ -33,9 +33,8 @@ public class PluginProcessingIntegrationTests : IDisposable
         _testDirectory = Path.Combine(Path.GetTempPath(), $"plugin_integration_{Guid.NewGuid()}");
         _tempFiles = [];
 
-        // Use SynchronousThreadDispatcher to avoid deadlocks in non-[AvaloniaFact] tests.
-        // The AvaloniaThreadDispatcher tries to post to the UI thread which isn't being pumped
-        // in regular xUnit tests, causing deadlocks.
+        // Use SynchronousThreadDispatcher so integration tests exercise the core workflow
+        // without depending on a desktop UI message pump.
         _dispatcher = new SynchronousThreadDispatcher();
         _viewModel = new MainWindowViewModel(_dispatcher);
         _databaseService = new DatabaseService();

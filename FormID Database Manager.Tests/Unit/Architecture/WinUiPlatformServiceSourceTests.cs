@@ -25,6 +25,8 @@ public class WinUiPlatformServiceSourceTests
         Assert.Contains("DispatcherQueue", dispatcherSource, StringComparison.Ordinal);
         Assert.Contains("HasThreadAccess", dispatcherSource, StringComparison.Ordinal);
         Assert.Contains("TryEnqueue", dispatcherSource, StringComparison.Ordinal);
+        Assert.Contains("new QueuedThreadDispatcher", dispatcherSource, StringComparison.Ordinal);
+        Assert.Contains("\"The WinUI dispatcher rejected queued work. The window may be closing.\"", dispatcherSource, StringComparison.Ordinal);
 
         var pickerSource = File.ReadAllText(pickerPath);
         Assert.Contains("public sealed class WinUiFileDialogService", pickerSource, StringComparison.Ordinal);
@@ -60,6 +62,73 @@ public class WinUiPlatformServiceSourceTests
         var xaml = File.ReadAllText(mainWindowXamlPath);
         Assert.Contains("x:Name=\"DirectoryComboBox\"", xaml, StringComparison.Ordinal);
         Assert.Contains("SelectionChanged=\"DirectoryComboBox_SelectionChanged\"", xaml, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Verifies that WinUI picker button workflow is bound to the UI-neutral picker abstraction.
+    /// </summary>
+    [Fact]
+    public void WinUiMainWindow_ConsumesFileDialogServiceForPickerWorkflow()
+    {
+        var winUiDirectory = GetWinUiProjectDirectory();
+        var mainWindowSourcePath = Path.Combine(winUiDirectory, "MainWindow.xaml.cs");
+        var mainWindowXamlPath = Path.Combine(winUiDirectory, "MainWindow.xaml");
+
+        var source = File.ReadAllText(mainWindowSourcePath);
+        var xaml = File.ReadAllText(mainWindowXamlPath);
+
+        Assert.Contains("private readonly IFileDialogService _fileDialogService;", source, StringComparison.Ordinal);
+        Assert.Contains("IFileDialogService? fileDialogService", source, StringComparison.Ordinal);
+        Assert.Contains("_fileDialogService = fileDialogService ?? new WinUiFileDialogService(AppWindow, ViewModel);", source, StringComparison.Ordinal);
+
+        Assert.Contains("await _fileDialogService.SelectGameDirectory()", source, StringComparison.Ordinal);
+        Assert.Contains("await _fileDialogService.SelectDatabaseFile()", source, StringComparison.Ordinal);
+        Assert.Contains("await _fileDialogService.SelectFormIdListFile()", source, StringComparison.Ordinal);
+        Assert.Contains("if (string.IsNullOrEmpty(path))", source, StringComparison.Ordinal);
+        Assert.Contains("SetGameDirectory(path);", source, StringComparison.Ordinal);
+        Assert.Contains("ViewModel.DatabasePath = path;", source, StringComparison.Ordinal);
+        Assert.Contains("ViewModel.FormIdListPath = path;", source, StringComparison.Ordinal);
+
+        Assert.Contains("Click=\"BrowseDirectory_Click\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("Click=\"OnSelectDatabase_Click\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("Click=\"OnSelectFormIdList_Click\"", xaml, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Verifies that WinUI preserves the migration-critical controls and handlers formerly covered by Avalonia UI tests.
+    /// </summary>
+    [Fact]
+    public void WinUiMainWindow_DefinesMigrationCriticalControlsAndHandlers()
+    {
+        var winUiDirectory = GetWinUiProjectDirectory();
+        var mainWindowSourcePath = Path.Combine(winUiDirectory, "MainWindow.xaml.cs");
+        var mainWindowXamlPath = Path.Combine(winUiDirectory, "MainWindow.xaml");
+
+        var source = File.ReadAllText(mainWindowSourcePath);
+        var xaml = File.ReadAllText(mainWindowXamlPath);
+
+        Assert.Contains("Title=\"FormID Database Manager\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("x:Name=\"GameComboBox\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("x:Name=\"BrowseDirectoryButton\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("x:Name=\"DatabasePathTextBox\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("x:Name=\"FormIdListPathTextBox\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("x:Name=\"PluginList\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("x:Name=\"AdvancedModeCheckBox\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("x:Name=\"UpdateModeCheckBox\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("x:Name=\"SelectAllButton\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("x:Name=\"SelectNoneButton\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("x:Name=\"ProcessFormIdsButton\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("x:Name=\"ProcessingProgressBar\"", xaml, StringComparison.Ordinal);
+
+        Assert.Contains("Click=\"SelectAll_Click\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("Click=\"SelectNone_Click\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("Click=\"ProcessFormIds_Click\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("Checked=\"AdvancedMode_CheckedChanged\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("Unchecked=\"AdvancedMode_CheckedChanged\"", xaml, StringComparison.Ordinal);
+
+        Assert.Contains("_pluginListManager.SelectAll(ViewModel.Plugins);", source, StringComparison.Ordinal);
+        Assert.Contains("_pluginListManager.SelectNone(ViewModel.Plugins);", source, StringComparison.Ordinal);
+        Assert.Contains("await LoadPluginsForCurrentSelection();", source, StringComparison.Ordinal);
     }
 
     /// <summary>

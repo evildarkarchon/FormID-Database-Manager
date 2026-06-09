@@ -41,8 +41,15 @@ internal sealed class QueuedThreadDispatcher : IThreadDispatcher
 
         if (CheckAccess())
         {
-            action();
-            return Task.CompletedTask;
+            try
+            {
+                action();
+                return Task.CompletedTask;
+            }
+            catch (Exception ex)
+            {
+                return Task.FromException(ex);
+            }
         }
 
         var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

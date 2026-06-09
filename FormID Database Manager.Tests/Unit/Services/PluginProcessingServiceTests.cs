@@ -160,7 +160,7 @@ public class PluginProcessingServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task ProcessPlugins_UpdateMode_LoadsExistingPluginCacheOnce()
+    public async Task ProcessPlugins_UpdateMode_ClearsSelectedPluginsWithoutLoadingExistingPluginCache()
     {
         var gameDir = Path.Combine(Path.GetTempPath(), $"Game_{Guid.NewGuid():N}");
         var dataDir = Path.Combine(gameDir, "Data");
@@ -208,6 +208,157 @@ public class PluginProcessingServiceTests : IDisposable
                 It.IsAny<SqliteConnection>(),
                 It.IsAny<GameRelease>(),
                 It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+        _mockDatabaseService.Setup(x => x.ClearPluginEntries(
+                It.IsAny<SqliteConnection>(),
+                It.IsAny<GameRelease>(),
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _mockDatabaseService.Setup(x => x.OptimizeDatabase(It.IsAny<SqliteConnection>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        await _service.ProcessPlugins(parameters);
+
+        _mockDatabaseService.Verify(x => x.GetPluginsWithEntries(
+            It.IsAny<SqliteConnection>(),
+            GameRelease.SkyrimSE,
+            It.IsAny<CancellationToken>()), Times.Never);
+        _mockDatabaseService.Verify(x => x.ClearPluginEntries(
+            It.IsAny<SqliteConnection>(),
+            GameRelease.SkyrimSE,
+            "TestPlugin1.esp",
+            It.IsAny<CancellationToken>()), Times.Once);
+        _mockDatabaseService.Verify(x => x.ClearPluginEntries(
+            It.IsAny<SqliteConnection>(),
+            GameRelease.SkyrimSE,
+            "TestPlugin2.esp",
+            It.IsAny<CancellationToken>()), Times.Once);
+        _mockDatabaseService.Verify(x => x.ClearPluginEntries(
+            It.IsAny<SqliteConnection>(),
+            GameRelease.SkyrimSE,
+            It.IsAny<string>(),
+            It.IsAny<CancellationToken>()), Times.Exactly(2));
+    }
+
+    [Fact]
+    public async Task ProcessPlugins_UpdateMode_ClearsRepeatedPluginEachTimeWithoutLoadingExistingPluginCache()
+    {
+        var gameDir = Path.Combine(Path.GetTempPath(), $"Game_{Guid.NewGuid():N}");
+        var dataDir = Path.Combine(gameDir, "Data");
+        Directory.CreateDirectory(dataDir);
+
+        var pluginPath = Path.Combine(dataDir, "TestPlugin1.esp");
+        await File.WriteAllBytesAsync(pluginPath,
+        [
+            0x54, 0x45, 0x53, 0x34,
+            0x2B, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00
+        ], TestContext.Current.CancellationToken);
+        _tempFiles.Add(pluginPath);
+
+        var parameters = CreateTestParameters(selectedPlugins:
+        [
+            new PluginListItem { Name = "TestPlugin1.esp", IsSelected = true },
+            new PluginListItem { Name = "TestPlugin1.esp", IsSelected = true }
+        ]);
+        parameters = new ProcessingParameters
+        {
+            GameDirectory = gameDir,
+            DatabasePath = parameters.DatabasePath,
+            GameRelease = parameters.GameRelease,
+            SelectedPlugins = parameters.SelectedPlugins,
+            UpdateMode = true,
+            DryRun = parameters.DryRun,
+            FormIdListPath = parameters.FormIdListPath
+        };
+
+        _mockDatabaseService.Setup(x => x.GetPluginsWithEntries(
+                It.IsAny<SqliteConnection>(),
+                It.IsAny<GameRelease>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+        _mockDatabaseService.Setup(x => x.ClearPluginEntries(
+                It.IsAny<SqliteConnection>(),
+                It.IsAny<GameRelease>(),
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _mockDatabaseService.Setup(x => x.OptimizeDatabase(It.IsAny<SqliteConnection>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        await _service.ProcessPlugins(parameters);
+
+        _mockDatabaseService.Verify(x => x.GetPluginsWithEntries(
+            It.IsAny<SqliteConnection>(),
+            GameRelease.SkyrimSE,
+            It.IsAny<CancellationToken>()), Times.Never);
+        _mockDatabaseService.Verify(x => x.ClearPluginEntries(
+            It.IsAny<SqliteConnection>(),
+            GameRelease.SkyrimSE,
+            "TestPlugin1.esp",
+            It.IsAny<CancellationToken>()), Times.Exactly(2));
+    }
+
+    [Fact]
+    public async Task ProcessPlugins_UpdateModeOff_DoesNotLoadCacheOrClearPluginEntries()
+    {
+        var gameDir = Path.Combine(Path.GetTempPath(), $"Game_{Guid.NewGuid():N}");
+        var dataDir = Path.Combine(gameDir, "Data");
+        Directory.CreateDirectory(dataDir);
+
+        var pluginPaths = new[]
+        {
+            Path.Combine(dataDir, "TestPlugin1.esp"),
+            Path.Combine(dataDir, "TestPlugin2.esp")
+        };
+
+        foreach (var pluginPath in pluginPaths)
+        {
+            await File.WriteAllBytesAsync(pluginPath,
+            [
+                0x54, 0x45, 0x53, 0x34,
+                0x2B, 0x00, 0x00, 0x00,
+                0x00, 0x00, 0x00, 0x00,
+                0x00, 0x00, 0x00, 0x00,
+                0x00, 0x00, 0x00, 0x00,
+                0x00, 0x00, 0x00, 0x00,
+                0x00, 0x00, 0x00, 0x00,
+                0x00, 0x00, 0x00, 0x00
+            ], TestContext.Current.CancellationToken);
+            _tempFiles.Add(pluginPath);
+        }
+
+        var parameters = CreateTestParameters(selectedPlugins:
+        [
+            new PluginListItem { Name = "TestPlugin1.esp", IsSelected = true },
+            new PluginListItem { Name = "TestPlugin2.esp", IsSelected = true }
+        ]);
+        parameters = new ProcessingParameters
+        {
+            GameDirectory = gameDir,
+            DatabasePath = parameters.DatabasePath,
+            GameRelease = parameters.GameRelease,
+            SelectedPlugins = parameters.SelectedPlugins,
+            UpdateMode = false,
+            DryRun = parameters.DryRun,
+            FormIdListPath = parameters.FormIdListPath
+        };
+
+        _mockDatabaseService.Setup(x => x.InitializeDatabase(
+                It.IsAny<string>(),
+                It.IsAny<GameRelease>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _mockDatabaseService.Setup(x => x.GetPluginsWithEntries(
+                It.IsAny<SqliteConnection>(),
+                It.IsAny<GameRelease>(),
+                It.IsAny<CancellationToken>()))
             .ReturnsAsync(new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             {
                 "TestPlugin1.esp",
@@ -227,22 +378,12 @@ public class PluginProcessingServiceTests : IDisposable
         _mockDatabaseService.Verify(x => x.GetPluginsWithEntries(
             It.IsAny<SqliteConnection>(),
             GameRelease.SkyrimSE,
-            It.IsAny<CancellationToken>()), Times.Once);
-        _mockDatabaseService.Verify(x => x.ClearPluginEntries(
-            It.IsAny<SqliteConnection>(),
-            GameRelease.SkyrimSE,
-            "TestPlugin1.esp",
-            It.IsAny<CancellationToken>()), Times.Once);
-        _mockDatabaseService.Verify(x => x.ClearPluginEntries(
-            It.IsAny<SqliteConnection>(),
-            GameRelease.SkyrimSE,
-            "TestPlugin2.esp",
-            It.IsAny<CancellationToken>()), Times.Once);
+            It.IsAny<CancellationToken>()), Times.Never);
         _mockDatabaseService.Verify(x => x.ClearPluginEntries(
             It.IsAny<SqliteConnection>(),
             GameRelease.SkyrimSE,
             It.IsAny<string>(),
-            It.IsAny<CancellationToken>()), Times.Exactly(2));
+            It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
