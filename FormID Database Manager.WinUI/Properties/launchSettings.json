@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "FormID Database Manager.WinUI (Package)": {
+      "commandName": "MsixPackage"
+    },
+    "FormID Database Manager.WinUI (Unpackaged)": {
+      "commandName": "Project"
+    }
+  }
+}

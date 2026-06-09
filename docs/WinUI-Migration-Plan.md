@@ -129,6 +129,18 @@ The safest implementation sequence is to create a new staging WinUI project alon
   - Mutagen and `Microsoft.Data.Sqlite` in core if processing code moves there.
 - Build and launch the blank WinUI app before porting UI. This gives a known-good template baseline for later troubleshooting.
 
+Phase 2 verification checkpoint, 2026-06-09:
+
+- `dotnet new list winui` showed the C# `WinUI 3 App` template, and `dotnet new winui --help` confirmed `--framework net10.0`, `--unpackaged false`, and `--no-solution-file`.
+- `FormID Database Manager.WinUI` was scaffolded with `dotnet new winui -o "FormID Database Manager.WinUI" --framework net10.0 --unpackaged false --no-solution-file`, which emitted `net10.0-windows10.0.19041.0`, `UseWinUI`, `EnableMsixTooling`, `Package.appxmanifest`, package assets, and Windows App SDK package references.
+- `FormID Database Manager.WinUI` references `FormID Database Manager.Core`, and `FormID Database Manager.slnx` includes both the existing Avalonia project and the new WinUI shell.
+- `dotnet build "FormID Database Manager.WinUI\FormID Database Manager.WinUI.csproj" -p:Platform=x64` succeeded with 0 warnings and 0 errors.
+- `dotnet build "FormID Database Manager.slnx"` succeeded with 0 warnings and 0 errors, including the Avalonia app and the WinUI shell.
+- `dotnet build "FormID Database Manager\FormID Database Manager.csproj"` succeeded with 0 warnings and 0 errors, confirming the Avalonia app remains buildable during the staged migration.
+- The generated packaged launch profile is `commandName: MsixPackage`; `dotnet run --launch-profile "FormID Database Manager.WinUI (Package)"` cannot apply that profile from the CLI. Local packaged verification used `Add-AppxPackage -Register` against the generated x64 `AppxManifest.xml`, then launched `shell:AppsFolder\f403736a-da6f-4a60-b086-e0a232acbcaa_9zz4h110yvjzm!App`.
+- Objective launch evidence: process `FormID Database Manager.WinUI` opened from the x64 WinUI output, returned main window handle `7211482`, title `WinUI Desktop`, and `Responding: True`.
+- Phase 9 deployment follow-up: replace the template identity/signing defaults in `Package.appxmanifest` (`Name="f403736a-da6f-4a60-b086-e0a232acbcaa"`, `Publisher="CN=User Name"`, display name `FormID Database Manager.WinUI`) with release-ready identity, publisher, signing, display name, and distribution-channel decisions.
+
 ### Phase 3: Port the Main Window UI
 
 - Create `App.xaml` and central resources for theme-aware styles.
