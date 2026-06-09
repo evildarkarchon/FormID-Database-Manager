@@ -37,8 +37,15 @@ internal sealed class ImmediateThreadDispatcher : IThreadDispatcher
     /// <returns>A completed task after the action has run.</returns>
     public Task InvokeAsync(Action action)
     {
-        action();
-        return Task.CompletedTask;
+        try
+        {
+            action();
+            return Task.CompletedTask;
+        }
+        catch (Exception ex)
+        {
+            return Task.FromException(ex);
+        }
     }
 
     /// <summary>

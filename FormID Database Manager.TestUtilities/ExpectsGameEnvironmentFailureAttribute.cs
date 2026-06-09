@@ -19,15 +19,22 @@ public sealed class ExpectsGameEnvironmentFailureFactAttribute : FactAttribute
     public ExpectsGameEnvironmentFailureFactAttribute(
         [CallerFilePath] string? sourceFilePath = null,
         [CallerLineNumber] int sourceLineNumber = -1)
+        : this(GetDefaultGames(), sourceFilePath, sourceLineNumber)
+    {
+    }
+
+    public ExpectsGameEnvironmentFailureFactAttribute(GameRelease game, params GameRelease[] additionalGames)
+        : this(BuildGameList(game, additionalGames), null, -1)
+    {
+    }
+
+    private ExpectsGameEnvironmentFailureFactAttribute(
+        GameRelease[] games,
+        string? sourceFilePath,
+        int sourceLineNumber)
         : base(sourceFilePath, sourceLineNumber)
     {
-        _games = [];
-
-        if (_games.Length == 0)
-        {
-            _games = new[] { GameRelease.SkyrimSE, GameRelease.Fallout4, GameRelease.Starfield, GameRelease.Oblivion };
-        }
-
+        _games = games;
         // Check if any of the games are actually installed
         var installedGames = new List<GameRelease>();
         foreach (var game in _games)
@@ -43,6 +50,19 @@ public sealed class ExpectsGameEnvironmentFailureFactAttribute : FactAttribute
             Skip =
                 $"Test expects GameEnvironment failures but these games are installed: {string.Join(", ", installedGames)}";
         }
+    }
+
+    private static GameRelease[] GetDefaultGames()
+    {
+        return [GameRelease.SkyrimSE, GameRelease.Fallout4, GameRelease.Starfield, GameRelease.Oblivion];
+    }
+
+    private static GameRelease[] BuildGameList(GameRelease firstGame, GameRelease[] additionalGames)
+    {
+        var games = new GameRelease[additionalGames.Length + 1];
+        games[0] = firstGame;
+        Array.Copy(additionalGames, 0, games, 1, additionalGames.Length);
+        return games;
     }
 
     private static bool IsGameInstalled(GameRelease gameRelease)

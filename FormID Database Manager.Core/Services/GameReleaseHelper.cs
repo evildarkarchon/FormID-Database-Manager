@@ -34,7 +34,9 @@ public static class GameReleaseHelper
     /// <returns>The path to the Data directory.</returns>
     public static string ResolveDataPath(string gameDirectory)
     {
-        return Path.GetFileName(gameDirectory).Equals("Data", StringComparison.OrdinalIgnoreCase)
+        var normalized = gameDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
+        return Path.GetFileName(normalized).Equals("Data", StringComparison.OrdinalIgnoreCase)
             ? gameDirectory
             : Path.Combine(gameDirectory, "Data");
     }

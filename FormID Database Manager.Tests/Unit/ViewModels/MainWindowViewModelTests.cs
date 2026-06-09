@@ -3,12 +3,15 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.Linq;
 using System.Reflection;
+using System.Threading;
 using System.Threading.Tasks;
 using Avalonia.Headless.XUnit;
 using Avalonia.Threading;
 using FormID_Database_Manager.Models;
+using FormID_Database_Manager.Services;
 using FormID_Database_Manager.ViewModels;
 using Mutagen.Bethesda;
 using Xunit;
@@ -345,6 +348,61 @@ public class MainWindowViewModelTests
         Assert.Equal(newPlugins.Count, _viewModel.FilteredPlugins.Count);
     }
 
+    [AvaloniaFact]
+    public void GetSelectedPlugins_ReturnsOnlySelectedPluginSnapshot()
+    {
+        // Arrange
+        var selectedPlugin = new PluginListItem { Name = "Selected.esp", IsSelected = true };
+        var unselectedPlugin = new PluginListItem { Name = "Unselected.esp", IsSelected = false };
+        _viewModel.Plugins.Add(selectedPlugin);
+        _viewModel.Plugins.Add(unselectedPlugin);
+
+        // Act
+        var selectedPlugins = _viewModel.GetSelectedPlugins();
+        selectedPlugin.IsSelected = false;
+
+        // Assert
+        Assert.Single(selectedPlugins);
+        Assert.Same(selectedPlugin, selectedPlugins[0]);
+    }
+
+    #endregion
+
+    #region Plugin Item Validation Tests
+
+    [Theory]
+    [InlineData("")]
+    [InlineData(" ")]
+    [InlineData("\t")]
+    public void PluginListItem_NameValidation_ReturnsErrorForEmptyOrWhitespaceNames(string pluginName)
+    {
+        // Arrange
+        var plugin = new PluginListItem { Name = pluginName };
+        var validation = Assert.IsAssignableFrom<IDataErrorInfo>(plugin);
+
+        // Act
+        var error = validation[nameof(PluginListItem.Name)];
+
+        // Assert
+        Assert.Equal("Name cannot be empty", error);
+    }
+
+    [Fact]
+    public void PluginListItem_ValidNameHasNoValidationErrorAndRemainsSelectable()
+    {
+        // Arrange
+        var plugin = new PluginListItem { Name = "ValidPlugin.esp" };
+        var validation = Assert.IsAssignableFrom<IDataErrorInfo>(plugin);
+
+        // Act
+        plugin.IsSelected = true;
+
+        // Assert
+        Assert.Equal(string.Empty, validation[nameof(PluginListItem.Name)]);
+        Assert.Equal("ValidPlugin.esp", plugin.Name);
+        Assert.True(plugin.IsSelected);
+    }
+
     #endregion
 
     #region Message Management Tests
@@ -382,6 +440,21 @@ public class MainWindowViewModelTests
     }
 
     [AvaloniaFact]
+    public void AddErrorMessage_UsesDefaultMaxMessages()
+    {
+        // Act
+        for (var i = 0; i < 12; i++)
+        {
+            _viewModel.AddErrorMessage($"Error {i}");
+        }
+
+        // Assert
+        Assert.Equal(10, _viewModel.ErrorMessages.Count);
+        Assert.Equal("Error 2", _viewModel.ErrorMessages.First());
+        Assert.Equal("Error 11", _viewModel.ErrorMessages.Last());
+    }
+
+    [AvaloniaFact]
     public void AddInformationMessage_AddsToCollection()
     {
         // Arrange
@@ -411,6 +484,21 @@ public class MainWindowViewModelTests
         Assert.Equal(maxMessages, _viewModel.InformationMessages.Count);
         Assert.Equal("Info 5", _viewModel.InformationMessages.First());
         Assert.Equal("Info 9", _viewModel.InformationMessages.Last());
+    }
+
+    [AvaloniaFact]
+    public void AddInformationMessage_UsesDefaultMaxMessages()
+    {
+        // Act
+        for (var i = 0; i < 12; i++)
+        {
+            _viewModel.AddInformationMessage($"Info {i}");
+        }
+
+        // Assert
+        Assert.Equal(10, _viewModel.InformationMessages.Count);
+        Assert.Equal("Info 2", _viewModel.InformationMessages.First());
+        Assert.Equal("Info 11", _viewModel.InformationMessages.Last());
     }
 
     [AvaloniaFact]
@@ -632,6 +720,126 @@ public class MainWindowViewModelTests
         Assert.Contains("HasInformationMessages", notifiedProperties);
     }
 
+    [Fact]
+    public void ErrorMessages_CollectionChangesNotifyHasErrorMessagesForAddAndClear()
+    {
+        // Arrange
+        var notifiedProperties = new System.Collections.Generic.List<string>();
+        _viewModel.PropertyChanged += (sender, args) =>
+        {
+            if (args.PropertyName != null)
+            {
+                notifiedProperties.Add(args.PropertyName);
+            }
+        };
+
+        // Act
+        _viewModel.ErrorMessages.Add("Binding support error");
+
+        // Assert
+        Assert.True(_viewModel.HasErrorMessages);
+        Assert.Contains(nameof(MainWindowViewModel.HasErrorMessages), notifiedProperties);
+
+        // Act
+        notifiedProperties.Clear();
+        _viewModel.ErrorMessages.Clear();
+
+        // Assert
+        Assert.False(_viewModel.HasErrorMessages);
+        Assert.Contains(nameof(MainWindowViewModel.HasErrorMessages), notifiedProperties);
+    }
+
+    [Fact]
+    public void InformationMessages_CollectionChangesNotifyHasInformationMessagesForAddAndClear()
+    {
+        // Arrange
+        var notifiedProperties = new System.Collections.Generic.List<string>();
+        _viewModel.PropertyChanged += (sender, args) =>
+        {
+            if (args.PropertyName != null)
+            {
+                notifiedProperties.Add(args.PropertyName);
+            }
+        };
+
+        // Act
+        _viewModel.InformationMessages.Add("Binding support information");
+
+        // Assert
+        Assert.True(_viewModel.HasInformationMessages);
+        Assert.Contains(nameof(MainWindowViewModel.HasInformationMessages), notifiedProperties);
+
+        // Act
+        notifiedProperties.Clear();
+        _viewModel.InformationMessages.Clear();
+
+        // Assert
+        Assert.False(_viewModel.HasInformationMessages);
+        Assert.Contains(nameof(MainWindowViewModel.HasInformationMessages), notifiedProperties);
+    }
+
+    [Fact]
+    public void ErrorMessages_ReplacedCollectionContinuesNotifyingHasErrorMessages()
+    {
+        // Arrange
+        var replacement = new ObservableCollection<string>();
+        var notifiedProperties = new System.Collections.Generic.List<string>();
+        _viewModel.ErrorMessages = replacement;
+        _viewModel.PropertyChanged += (sender, args) =>
+        {
+            if (args.PropertyName != null)
+            {
+                notifiedProperties.Add(args.PropertyName);
+            }
+        };
+
+        // Act
+        replacement.Add("Replacement error");
+
+        // Assert
+        Assert.True(_viewModel.HasErrorMessages);
+        Assert.Contains(nameof(MainWindowViewModel.HasErrorMessages), notifiedProperties);
+
+        // Act
+        notifiedProperties.Clear();
+        replacement.Clear();
+
+        // Assert
+        Assert.False(_viewModel.HasErrorMessages);
+        Assert.Contains(nameof(MainWindowViewModel.HasErrorMessages), notifiedProperties);
+    }
+
+    [Fact]
+    public void InformationMessages_ReplacedCollectionContinuesNotifyingHasInformationMessages()
+    {
+        // Arrange
+        var replacement = new ObservableCollection<string>();
+        var notifiedProperties = new System.Collections.Generic.List<string>();
+        _viewModel.InformationMessages = replacement;
+        _viewModel.PropertyChanged += (sender, args) =>
+        {
+            if (args.PropertyName != null)
+            {
+                notifiedProperties.Add(args.PropertyName);
+            }
+        };
+
+        // Act
+        replacement.Add("Replacement information");
+
+        // Assert
+        Assert.True(_viewModel.HasInformationMessages);
+        Assert.Contains(nameof(MainWindowViewModel.HasInformationMessages), notifiedProperties);
+
+        // Act
+        notifiedProperties.Clear();
+        replacement.Clear();
+
+        // Assert
+        Assert.False(_viewModel.HasInformationMessages);
+        Assert.Contains(nameof(MainWindowViewModel.HasInformationMessages), notifiedProperties);
+    }
+
     [AvaloniaFact]
     public void Collections_CanBeModified()
     {
@@ -668,6 +876,59 @@ public class MainWindowViewModelTests
         // After debounce period, filter should be applied
         await Task.Delay(350, TestContext.Current.CancellationToken);
         Assert.Single(debouncedVm.FilteredPlugins);
+    }
+
+    [Fact]
+    public async Task PluginFilter_WithDebounceAndUnavailableDispatcher_PostsBeforeUpdatingFilteredPlugins()
+    {
+        // Arrange
+        var dispatcher = new RecordingThreadDispatcher(hasAccess: true);
+        using var debouncedVm = new MainWindowViewModel(dispatcher, 50);
+        debouncedVm.Plugins.Add(new PluginListItem { Name = "Plugin1.esp" });
+        debouncedVm.Plugins.Add(new PluginListItem { Name = "TestMod.esp" });
+        dispatcher.HasAccess = false;
+
+        // Act
+        debouncedVm.PluginFilter = "Plugin";
+        await Task.Delay(150, TestContext.Current.CancellationToken);
+
+        // Assert
+        Assert.True(dispatcher.PostCount > 0);
+        Assert.Equal(2, debouncedVm.FilteredPlugins.Count);
+
+        dispatcher.DrainPostedActions(hasAccessDuringDrain: true);
+
+        Assert.Single(debouncedVm.FilteredPlugins);
+        Assert.Equal("Plugin1.esp", debouncedVm.FilteredPlugins[0].Name);
+    }
+
+    [Fact]
+    public async Task PluginFilter_WithDebounce_PreservesPluginInstancesAndSelectionAcrossHideShow()
+    {
+        // Arrange
+        var dispatcher = new FormID_Database_Manager.TestUtilities.Mocks.SynchronousThreadDispatcher();
+        using var debouncedVm = new MainWindowViewModel(dispatcher, 25);
+        var selectedPlugin = new PluginListItem { Name = "SelectedPlugin.esp", IsSelected = true };
+        var otherPlugin = new PluginListItem { Name = "OtherPlugin.esp" };
+        debouncedVm.Plugins.Add(selectedPlugin);
+        debouncedVm.Plugins.Add(otherPlugin);
+
+        // Act
+        debouncedVm.PluginFilter = "Other";
+        await Task.Delay(100, TestContext.Current.CancellationToken);
+
+        // Assert
+        Assert.DoesNotContain(selectedPlugin, debouncedVm.FilteredPlugins);
+        Assert.Contains(otherPlugin, debouncedVm.FilteredPlugins);
+
+        // Act
+        debouncedVm.PluginFilter = "Selected";
+        await Task.Delay(100, TestContext.Current.CancellationToken);
+
+        // Assert
+        var visiblePlugin = Assert.Single(debouncedVm.FilteredPlugins);
+        Assert.Same(selectedPlugin, visiblePlugin);
+        Assert.True(visiblePlugin.IsSelected);
     }
 
     [AvaloniaFact]
@@ -974,6 +1235,60 @@ public class MainWindowViewModelTests
     private static async Task FlushUiAsync()
     {
         await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
+    }
+
+    private sealed class RecordingThreadDispatcher(bool hasAccess) : IThreadDispatcher
+    {
+        private readonly ConcurrentQueue<Action> _postedActions = new();
+        private int _postCount;
+
+        public bool HasAccess { get; set; } = hasAccess;
+
+        public int PostCount => Volatile.Read(ref _postCount);
+
+        public Task InvokeAsync(Action action)
+        {
+            if (CheckAccess())
+            {
+                action();
+            }
+            else
+            {
+                Post(action);
+            }
+
+            return Task.CompletedTask;
+        }
+
+        public void Post(Action action)
+        {
+            Interlocked.Increment(ref _postCount);
+            _postedActions.Enqueue(action);
+        }
+
+        public bool CheckAccess()
+        {
+            return HasAccess;
+        }
+
+        public void DrainPostedActions(bool hasAccessDuringDrain)
+        {
+            var actionsToDrain = _postedActions.Count;
+            var previousHasAccess = HasAccess;
+            HasAccess = hasAccessDuringDrain;
+
+            try
+            {
+                for (var i = 0; i < actionsToDrain && _postedActions.TryDequeue(out var action); i++)
+                {
+                    action();
+                }
+            }
+            finally
+            {
+                HasAccess = previousHasAccess;
+            }
+        }
     }
 
     private static bool GetBooleanProperty(MainWindowViewModel viewModel, string propertyName)

@@ -228,6 +228,21 @@ public class PluginProcessingServiceTests : IDisposable
             It.IsAny<SqliteConnection>(),
             GameRelease.SkyrimSE,
             It.IsAny<CancellationToken>()), Times.Once);
+        _mockDatabaseService.Verify(x => x.ClearPluginEntries(
+            It.IsAny<SqliteConnection>(),
+            GameRelease.SkyrimSE,
+            "TestPlugin1.esp",
+            It.IsAny<CancellationToken>()), Times.Once);
+        _mockDatabaseService.Verify(x => x.ClearPluginEntries(
+            It.IsAny<SqliteConnection>(),
+            GameRelease.SkyrimSE,
+            "TestPlugin2.esp",
+            It.IsAny<CancellationToken>()), Times.Once);
+        _mockDatabaseService.Verify(x => x.ClearPluginEntries(
+            It.IsAny<SqliteConnection>(),
+            GameRelease.SkyrimSE,
+            It.IsAny<string>(),
+            It.IsAny<CancellationToken>()), Times.Exactly(2));
     }
 
     [Fact]

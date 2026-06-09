@@ -301,11 +301,6 @@ public class ModProcessorTests : IDisposable
     {
         // Arrange
         var databaseServiceMock = new Mock<DatabaseService>();
-        databaseServiceMock.Setup(x => x.GetPluginsWithEntries(
-                It.IsAny<SqliteConnection>(),
-                It.IsAny<GameRelease>(),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "TestPlugin.esp" });
         databaseServiceMock.Setup(x => x.ClearPluginEntries(
                 It.IsAny<SqliteConnection>(),
                 It.IsAny<GameRelease>(),
@@ -337,9 +332,9 @@ public class ModProcessorTests : IDisposable
 
         // Assert
         databaseServiceMock.Verify(x => x.GetPluginsWithEntries(
-            _connection,
-            GameRelease.SkyrimSE,
-            It.IsAny<CancellationToken>()), Times.Once);
+            It.IsAny<SqliteConnection>(),
+            It.IsAny<GameRelease>(),
+            It.IsAny<CancellationToken>()), Times.Never);
         databaseServiceMock.Verify(x => x.ClearPluginEntries(
             _connection,
             GameRelease.SkyrimSE,

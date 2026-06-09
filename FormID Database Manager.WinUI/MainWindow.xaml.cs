@@ -1,7 +1,11 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
+using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using FormID_Database_Manager.Models;
 using FormID_Database_Manager.Services;
 using FormID_Database_Manager.ViewModels;
 using FormID_Database_Manager.WinUI.Services;
@@ -10,9 +14,6 @@ namespace FormID_Database_Manager.WinUI;
 
 public sealed partial class MainWindow : Window, IDisposable
 {
-    private const string ProcessingPendingMessage =
-        "Processing remains disabled until the WinUI workflow parity phase.";
-
     private readonly IFileDialogService _fileDialogService;
     private readonly GameDetectionService _gameDetectionService;
     private readonly IGameLocationService _gameLocationService;
@@ -418,22 +419,109 @@ public sealed partial class MainWindow : Window, IDisposable
     }
 
     /// <summary>
-    /// Keeps processing intentionally disabled until the Phase 5 parity work.
+    /// Handles process button clicks by starting processing or cancelling the active run.
     /// </summary>
-    private void ProcessFormIds_Click(object sender, RoutedEventArgs e)
+    [RequiresUnreferencedCode("Uses reflection-based name extraction for Mutagen records.")]
+    private async void ProcessFormIds_Click(object sender, RoutedEventArgs e)
     {
-        AddInformationMessageOnce(ProcessingPendingMessage);
+        try
+        {
+            await ProcessFormIdsAsync(sender as Button);
+        }
+        catch (Exception ex)
+        {
+            ViewModel.AddErrorMessage($"Unexpected error: {ex.Message}");
+        }
     }
 
     /// <summary>
-    /// Adds a one-off informational message to avoid repeating deferred-work notices.
+    /// Validates WinUI processing state, runs the shared processing service, and restores UI state afterward.
     /// </summary>
-    /// <param name="message">The message to add if it is not already visible.</param>
-    private void AddInformationMessageOnce(string message)
+    /// <param name="processButton">The process button whose content should reflect start/cancel state.</param>
+    /// <returns>A task that completes after processing starts, finishes, fails, or observes cancellation.</returns>
+    [RequiresUnreferencedCode("Uses reflection-based name extraction for Mutagen records.")]
+    private async Task ProcessFormIdsAsync(Button? processButton)
     {
-        if (!ViewModel.InformationMessages.Contains(message))
+        if (ViewModel.IsProcessing)
         {
-            ViewModel.AddInformationMessage(message);
+            ViewModel.ProgressStatus = "Cancelling...";
+            _pluginProcessingService.CancelProcessing();
+            return;
+        }
+
+        if (processButton != null)
+        {
+            processButton.Content = "Cancel Processing";
+        }
+
+        ViewModel.IsProcessing = true;
+        ViewModel.ProgressValue = 0;
+        ViewModel.ProgressStatus = "Initializing...";
+        ViewModel.ErrorMessages.Clear();
+
+        try
+        {
+            if (ViewModel.SelectedGame is not { } gameRelease)
+            {
+                ViewModel.AddErrorMessage("Please select a game from the dropdown first.");
+                return;
+            }
+
+            var parameters = new ProcessingParameters
+            {
+                GameDirectory = ViewModel.GameDirectory,
+                DatabasePath = ViewModel.DatabasePath,
+                GameRelease = gameRelease,
+                SelectedPlugins = ViewModel.GetSelectedPlugins(),
+                UpdateMode = UpdateModeCheckBox.IsChecked ?? false,
+                FormIdListPath = ViewModel.FormIdListPath
+            };
+
+            var usingTextFile = !string.IsNullOrEmpty(parameters.FormIdListPath);
+
+            if (!usingTextFile && string.IsNullOrEmpty(parameters.GameDirectory))
+            {
+                ViewModel.AddErrorMessage("Game directory must be specified when processing plugins");
+                return;
+            }
+
+            if (!usingTextFile && !parameters.SelectedPlugins.Any())
+            {
+                ViewModel.AddErrorMessage("No plugins selected");
+                return;
+            }
+
+            if (string.IsNullOrEmpty(parameters.DatabasePath))
+            {
+                parameters.DatabasePath = Path.Combine(
+                    Directory.GetCurrentDirectory(),
+                    $"{GameReleaseHelper.GetSafeTableName(gameRelease)}.db");
+                ViewModel.DatabasePath = parameters.DatabasePath;
+            }
+
+            var progress = new Progress<(string Message, double? Value)>(update =>
+            {
+                ViewModel.UpdateProgress(update.Message, update.Value);
+            });
+
+            await _pluginProcessingService.ProcessPlugins(parameters, progress);
+        }
+        catch (OperationCanceledException)
+        {
+            ViewModel.ProgressStatus = "Processing cancelled by user.";
+        }
+        catch (Exception ex)
+        {
+            ViewModel.AddErrorMessage($"Error processing FormIDs: {ex.Message}");
+        }
+        finally
+        {
+            ViewModel.IsProcessing = false;
+            ViewModel.ProgressStatus = string.Empty;
+            if (processButton != null)
+            {
+                processButton.Content = "Process FormIDs";
+            }
         }
     }
 }

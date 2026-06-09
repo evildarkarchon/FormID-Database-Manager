@@ -217,6 +217,20 @@ Verify each existing workflow against the WinUI shell:
 - Default database path generation still uses `GameReleaseHelper.GetSafeTableName`.
 - Error and information messages cap at the existing limits.
 
+Phase 5 verification checkpoint, 2026-06-09:
+
+- `FormID Database Manager.WinUI/MainWindow.xaml.cs` now replaces the deferred processing placeholder with the Avalonia-parity processing workflow: selected-game validation, plugin-mode validation, FormID-list mode, selected-plugin snapshots, update mode, default database path generation through `GameReleaseHelper.GetSafeTableName`, progress updates through `MainWindowViewModel.UpdateProgress`, cancellation through `PluginProcessingService.CancelProcessing`, and start/finally process-button state resets.
+- WinUI workflow parity checks remain wired through the Phase 4 code paths: `GameComboBox` binds to `MainWindowViewModel.AvailableGames`; game-selection installed-location lookup still runs through `Task.Run` and `_gameSelectionVersion` stale-result checks; Browse suppresses duplicate installed-location lookup while applying auto-detected games; detected directory changes reload plugins; plugin filtering, individual checkbox selection, Select All, Select None, and advanced-mode reloads continue through the shared ViewModel and `PluginListManager`; database and FormID list pickers update paths only when a selection is returned; workflow messages still route through the capped ViewModel collections.
+- Added Phase 5 guardrails in `WinUiPlatformServiceSourceTests` for the restored WinUI processing workflow and in `MainWindowViewModelTests` for selected-plugin snapshots plus the default 10-message caps. `dotnet test "FormID Database Manager.Tests" --filter "FullyQualifiedName~WinUiPlatformServiceSourceTests|FullyQualifiedName~MainWindowViewModelTests"` passed with 63 passed, 0 skipped, and 0 failed.
+- `dotnet build "FormID Database Manager.WinUI\FormID Database Manager.WinUI.csproj" -p:Platform=x64` succeeded with 0 warnings and 0 errors.
+- `dotnet build "FormID Database Manager.slnx"` succeeded with 0 warnings and 0 errors, including the Avalonia app and staged WinUI project.
+- `dotnet test "FormID Database Manager.Tests"` passed with 289 tests passed, 11 skipped, and 0 failed. The skipped tests are the existing symbolic-link/game-environment and manual load/stress tests.
+- `rg "Avalonia|axaml|AXAML" "FormID Database Manager.WinUI"` found no WinUI project matches.
+- Packaged local verification refreshed the x64 registration with `Add-AppxPackage -Register` against `FormID Database Manager.WinUI\bin\x64\Debug\net10.0-windows10.0.19041.0\win-x64\AppxManifest.xml`, then launched `shell:AppsFolder\f403736a-da6f-4a60-b086-e0a232acbcaa_9zz4h110yvjzm!App`.
+- Objective launch evidence: process `FormID Database Manager.WinUI` opened from the x64 WinUI output, returned process ID `58640`, main window handle `6560662`, title `FormID Database Manager`, and `Responding: True`.
+- Default database path generation was observed with `DatabasePath` empty: selecting Fallout 4 and starting processing set the WinUI database path to `C:\WINDOWS\system32\Fallout4.db` through `GameReleaseHelper.GetSafeTableName`. The packaged shell could not create that file from its default working directory, producing the expected SQLite permission error for that path.
+- Representative game-directory workflow verification used the Fallout 4 install discovered at `HKEY_LOCAL_MACHINE\SOFTWARE\WOW6432Node\Bethesda Softworks\Fallout4`, `Installed Path = E:\SteamLibrary\steamapps\common\Fallout 4\`. The WinUI game selector loaded that directory, displayed 116 visible plugin checkboxes and reported `Loaded 184 non-base game plugins`. The database picker set `C:\Users\evild\AppData\Local\Temp\FIDM-WinUI-Phase5\Fallout4-ui-verification.db`; Select All plus Process changed the button to `Cancel Processing`; a second Process click showed `Cancelling...`; the button returned to `Process FormIDs`; the app remained responsive; and the temp database file was created at 4096 bytes. The cancellation surfaced an expected per-plugin cancellation error for `ccRZRFO4001-TunnelSnakes.esm`, confirming the active service cancellation path was exercised.
+
 ### Phase 6: Update Bindings and ViewModel Details
 
 - Prefer `Binding` for template data and dynamic ViewModel properties; use `x:Bind` where strongly typed bindings are straightforward.
@@ -228,6 +242,22 @@ Verify each existing workflow against the WinUI shell:
 - Make process button text bind to processing state or update it in a small WinUI event handler.
 - Keep the existing debounce/filtering logic, but verify it runs on the WinUI dispatcher.
 
+Phase 6 verification checkpoint, 2026-06-09:
+
+- `FormID Database Manager.WinUI/MainWindow.xaml` was audited for binding semantics. Template data, observable collection sources, and dynamic ViewModel properties remain on runtime `Binding`; no `x:Bind` bindings are used in the main window. Binding-critical source tests now lock down game, directory, path, plugin-filter, plugin-list, message, progress, and process-button wiring against the shared core ViewModel.
+- Process button content remains a narrow WinUI code-behind responsibility for Phase 6. Source tests verify the initial `Process FormIDs` content, the `Cancel Processing` start state assignment, and the `Process FormIDs` reset in the `finally` path without adding duplicate WinUI-only ViewModel state.
+- `PluginListItem` validation is documented by tests as a model-level contract in the current WinUI shell. Whitespace names return `Name cannot be empty`; valid plugin names remain selectable through the existing checkbox template.
+- ViewModel tests now cover `HasErrorMessages` and `HasInformationMessages` notifications for add, clear, and replacement collection changes. Debounced filtering tests verify dispatcher posting when dispatcher access is unavailable and verify that hidden/shown filtered plugins preserve the same `PluginListItem` instance and `IsSelected` state.
+- Focused Phase 6 tests passed: `dotnet test "FormID Database Manager.Tests" --filter "FullyQualifiedName~WinUiPlatformServiceSourceTests|FullyQualifiedName~MainWindowViewModelTests"` completed with 74 passed, 0 skipped, and 0 failed.
+- `dotnet build "FormID Database Manager.WinUI\FormID Database Manager.WinUI.csproj" -p:Platform=x64` succeeded with 0 warnings and 0 errors.
+- `dotnet build "FormID Database Manager.slnx"` succeeded with 0 warnings and 0 errors.
+- `dotnet test "FormID Database Manager.Tests"` passed with 300 tests passed, 11 skipped, and 0 failed. The skipped tests remain the existing symbolic-link and manual performance/load/stress tests.
+- Packaged local verification registered the x64 WinUI manifest and launched `shell:AppsFolder\f403736a-da6f-4a60-b086-e0a232acbcaa_9zz4h110yvjzm!App`. UI Automation observed process `108244`, main window handle `14095188`, title `FormID Database Manager`, `Responding: True`, and the expected binding-critical controls: game selector, directory selector, path fields, plugin filter, plugin list, message area, progress bar, and process button.
+- Message-bar and process reset verification clicked `Process FormIDs` with no game selected. The Errors `InfoBar` opened with `Please select a game from the dropdown first.`, and the process button reset to `Process FormIDs`.
+- Representative Fallout 4 workflow verification selected Fallout 4 in the packaged shell and loaded the installed game directory. The shell reported `Loaded 184 non-base game plugins` and exposed 86 visible plugin checkboxes through UI Automation.
+- Plugin filtering and selection preservation were verified live with `ccRZRFO4001-TunnelSnakes.esm`: filtering to `Tunnel` showed the plugin, toggling it selected changed the checkbox to `On`, filtering to `NoSuchPluginPhase6` hid it, and filtering back to `Tunnel` returned the same visible plugin with selection still `On`.
+- A selected-plugin processing attempt in the packaged shell reset the process button to `Process FormIDs` and surfaced the expected default-path SQLite failure, `SQLite Error 14: 'unable to open database file'`, because the packaged launch defaulted the database path to `C:\WINDOWS\system32\Fallout4.db`. UI Automation could not set `DatabasePathTextBox` because it is read-only, and a direct executable launch with a writable working directory did not expose a UI window for automation. The cancel transition remains covered by source-level guardrails in this checkpoint; a fully writable packaged processing run should be rechecked when picker automation or a manual desktop pass is available.
+
 ### Phase 7: Rework Tests
 
 - Move service and ViewModel tests to the core project dependency path.
@@ -236,7 +266,7 @@ Verify each existing workflow against the WinUI shell:
 - Replace `WindowManagerTests` with tests around `IFileDialogService` where logic can be mocked; keep actual picker behavior as manual or smoke verification.
 - Retire `Avalonia.Headless.XUnit`, `TestInitialization.cs`, and `UiTestHost` once WinUI UI coverage is in place.
 - Keep integration and performance tests focused on Mutagen/SQLite behavior.
-- Add a Windows-only CI job if the current CI does not already build on Windows.
+- Create a CI workflow to run tests on a Windows runner.
 
 ### Phase 8: Remove Avalonia
 

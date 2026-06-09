@@ -62,6 +62,79 @@ public class WinUiPlatformServiceSourceTests
         Assert.Contains("SelectionChanged=\"DirectoryComboBox_SelectionChanged\"", xaml, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// Verifies that Phase 5 restores the WinUI processing workflow instead of the deferred placeholder.
+    /// </summary>
+    [Fact]
+    public void WinUiMainWindow_WiresProcessingWorkflow()
+    {
+        var winUiDirectory = GetWinUiProjectDirectory();
+        var mainWindowSourcePath = Path.Combine(winUiDirectory, "MainWindow.xaml.cs");
+        var mainWindowXamlPath = Path.Combine(winUiDirectory, "MainWindow.xaml");
+
+        var source = File.ReadAllText(mainWindowSourcePath);
+        Assert.DoesNotContain("ProcessingPendingMessage", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("AddInformationMessageOnce", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("Processing remains disabled", source, StringComparison.Ordinal);
+        Assert.Contains("RequiresUnreferencedCode", source, StringComparison.Ordinal);
+        Assert.Contains("ProcessFormIdsAsync", source, StringComparison.Ordinal);
+        Assert.Contains("CancelProcessing", source, StringComparison.Ordinal);
+        Assert.Contains("\"Cancelling...\"", source, StringComparison.Ordinal);
+        Assert.Contains("\"Cancel Processing\"", source, StringComparison.Ordinal);
+        Assert.Contains("new ProcessingParameters", source, StringComparison.Ordinal);
+        Assert.Contains("GetSelectedPlugins", source, StringComparison.Ordinal);
+        Assert.Contains("GameReleaseHelper.GetSafeTableName", source, StringComparison.Ordinal);
+        Assert.Contains("ViewModel.UpdateProgress", source, StringComparison.Ordinal);
+        Assert.Contains("ProcessPlugins(parameters, progress)", source, StringComparison.Ordinal);
+        Assert.Contains("\"Error processing FormIDs:", source, StringComparison.Ordinal);
+        Assert.Contains("\"Process FormIDs\"", source, StringComparison.Ordinal);
+
+        var xaml = File.ReadAllText(mainWindowXamlPath);
+        Assert.Contains("ItemsSource=\"{Binding AvailableGames}\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("Click=\"ProcessFormIds_Click\"", xaml, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Verifies that Phase 6 keeps binding-critical WinUI state on stable runtime bindings.
+    /// </summary>
+    [Fact]
+    public void WinUiMainWindow_UsesStablePhase6BindingSemantics()
+    {
+        var winUiDirectory = GetWinUiProjectDirectory();
+        var mainWindowSourcePath = Path.Combine(winUiDirectory, "MainWindow.xaml.cs");
+        var mainWindowXamlPath = Path.Combine(winUiDirectory, "MainWindow.xaml");
+
+        var source = File.ReadAllText(mainWindowSourcePath);
+        var xaml = File.ReadAllText(mainWindowXamlPath);
+
+        Assert.DoesNotContain("x:Bind", xaml, StringComparison.Ordinal);
+        Assert.Contains("Root.DataContext = ViewModel;", source, StringComparison.Ordinal);
+        Assert.Contains("public MainWindowViewModel ViewModel", source, StringComparison.Ordinal);
+
+        Assert.Contains("ItemsSource=\"{Binding AvailableGames}\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("SelectedItem=\"{Binding SelectedGame, Mode=TwoWay}\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("Text=\"{Binding GameDirectory, Mode=TwoWay}\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("ItemsSource=\"{Binding DetectedDirectories}\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("Text=\"{Binding DatabasePath, Mode=TwoWay}\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("Text=\"{Binding FormIdListPath, Mode=TwoWay}\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("Text=\"{Binding PluginFilter, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}\"", xaml, StringComparison.Ordinal);
+
+        Assert.Contains("ItemsSource=\"{Binding FilteredPlugins}\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("Content=\"{Binding Name}\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("IsChecked=\"{Binding IsSelected, Mode=TwoWay}\"", xaml, StringComparison.Ordinal);
+
+        Assert.Contains("IsOpen=\"{Binding HasErrorMessages, Mode=OneWay}\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("ItemsSource=\"{Binding ErrorMessages}\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("IsOpen=\"{Binding HasInformationMessages, Mode=OneWay}\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("ItemsSource=\"{Binding InformationMessages}\"", xaml, StringComparison.Ordinal);
+
+        Assert.Contains("Text=\"{Binding ProgressStatus, Mode=OneWay}\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("Value=\"{Binding ProgressValue, Mode=OneWay}\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("Content=\"Process FormIDs\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("processButton.Content = \"Cancel Processing\";", source, StringComparison.Ordinal);
+        Assert.Contains("processButton.Content = \"Process FormIDs\";", source, StringComparison.Ordinal);
+    }
+
     private static string GetWinUiProjectDirectory()
     {
         return Path.Combine(FindRepositoryRoot(), "FormID Database Manager.WinUI");

@@ -131,11 +131,15 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
 
             if (updateMode)
             {
-                existingPlugins ??= await databaseService
-                    .GetPluginsWithEntries(conn, gameRelease, cancellationToken)
-                    .ConfigureAwait(false);
-
-                if (existingPlugins.Remove(pluginItem.Name))
+                if (existingPlugins != null)
+                {
+                    if (existingPlugins.Remove(pluginItem.Name))
+                    {
+                        await databaseService.ClearPluginEntries(conn, gameRelease, pluginItem.Name, cancellationToken)
+                            .ConfigureAwait(false);
+                    }
+                }
+                else
                 {
                     await databaseService.ClearPluginEntries(conn, gameRelease, pluginItem.Name, cancellationToken)
                         .ConfigureAwait(false);

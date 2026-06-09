@@ -18,20 +18,22 @@ public sealed class RequiresGameInstallationFactAttribute : FactAttribute
     public RequiresGameInstallationFactAttribute(
         [CallerFilePath] string? sourceFilePath = null,
         [CallerLineNumber] int sourceLineNumber = -1)
+        : this(GetDefaultRequiredGames(), sourceFilePath, sourceLineNumber)
+    {
+    }
+
+    public RequiresGameInstallationFactAttribute(GameRelease requiredGame, params GameRelease[] additionalRequiredGames)
+        : this(BuildGameList(requiredGame, additionalRequiredGames), null, -1)
+    {
+    }
+
+    private RequiresGameInstallationFactAttribute(
+        GameRelease[] requiredGames,
+        string? sourceFilePath,
+        int sourceLineNumber)
         : base(sourceFilePath, sourceLineNumber)
     {
-        _requiredGames = [];
-
-        if (_requiredGames.Length == 0)
-        {
-            // If no specific games specified, check for any common Bethesda game
-            _requiredGames = new[]
-            {
-                GameRelease.SkyrimSE, GameRelease.SkyrimVR, GameRelease.Fallout4, GameRelease.Starfield,
-                GameRelease.Oblivion
-            };
-        }
-
+        _requiredGames = requiredGames;
         var availableGames = new List<GameRelease>();
         foreach (var game in _requiredGames)
         {
@@ -45,6 +47,24 @@ public sealed class RequiresGameInstallationFactAttribute : FactAttribute
         {
             Skip = $"Requires one of the following games to be installed: {string.Join(", ", _requiredGames)}";
         }
+    }
+
+    private static GameRelease[] GetDefaultRequiredGames()
+    {
+        // If no specific games are requested, check for any common Bethesda game.
+        return
+        [
+            GameRelease.SkyrimSE, GameRelease.SkyrimVR, GameRelease.Fallout4, GameRelease.Starfield,
+            GameRelease.Oblivion
+        ];
+    }
+
+    private static GameRelease[] BuildGameList(GameRelease firstGame, GameRelease[] additionalGames)
+    {
+        var games = new GameRelease[additionalGames.Length + 1];
+        games[0] = firstGame;
+        Array.Copy(additionalGames, 0, games, 1, additionalGames.Length);
+        return games;
     }
 
     private static bool IsGameInstalled(GameRelease gameRelease)
@@ -73,19 +93,22 @@ public sealed class RequiresGameInstallationTheoryAttribute : TheoryAttribute
     public RequiresGameInstallationTheoryAttribute(
         [CallerFilePath] string? sourceFilePath = null,
         [CallerLineNumber] int sourceLineNumber = -1)
+        : this(GetDefaultRequiredGames(), sourceFilePath, sourceLineNumber)
+    {
+    }
+
+    public RequiresGameInstallationTheoryAttribute(GameRelease requiredGame, params GameRelease[] additionalRequiredGames)
+        : this(BuildGameList(requiredGame, additionalRequiredGames), null, -1)
+    {
+    }
+
+    private RequiresGameInstallationTheoryAttribute(
+        GameRelease[] requiredGames,
+        string? sourceFilePath,
+        int sourceLineNumber)
         : base(sourceFilePath, sourceLineNumber)
     {
-        _requiredGames = [];
-
-        if (_requiredGames.Length == 0)
-        {
-            _requiredGames = new[]
-            {
-                GameRelease.SkyrimSE, GameRelease.SkyrimVR, GameRelease.Fallout4, GameRelease.Starfield,
-                GameRelease.Oblivion
-            };
-        }
-
+        _requiredGames = requiredGames;
         var availableGames = new List<GameRelease>();
         foreach (var game in _requiredGames)
         {
@@ -99,6 +122,23 @@ public sealed class RequiresGameInstallationTheoryAttribute : TheoryAttribute
         {
             Skip = $"Requires one of the following games to be installed: {string.Join(", ", _requiredGames)}";
         }
+    }
+
+    private static GameRelease[] GetDefaultRequiredGames()
+    {
+        return
+        [
+            GameRelease.SkyrimSE, GameRelease.SkyrimVR, GameRelease.Fallout4, GameRelease.Starfield,
+            GameRelease.Oblivion
+        ];
+    }
+
+    private static GameRelease[] BuildGameList(GameRelease firstGame, GameRelease[] additionalGames)
+    {
+        var games = new GameRelease[additionalGames.Length + 1];
+        games[0] = firstGame;
+        Array.Copy(additionalGames, 0, games, 1, additionalGames.Length);
+        return games;
     }
 
     private static bool IsGameInstalled(GameRelease gameRelease)
