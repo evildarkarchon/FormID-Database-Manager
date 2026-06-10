@@ -5,5 +5,4 @@
   <Project Path="FormID Database Manager.WinUI/FormID Database Manager.WinUI.csproj">
     <Platform Project="x86" />
   </Project>
-  <Project Path="FormID Database Manager/FormID Database Manager.csproj" />
 </Solution>

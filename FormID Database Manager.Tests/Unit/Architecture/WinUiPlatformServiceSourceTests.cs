@@ -95,7 +95,7 @@ public class WinUiPlatformServiceSourceTests
     }
 
     /// <summary>
-    /// Verifies that WinUI preserves the migration-critical controls and handlers formerly covered by Avalonia UI tests.
+    /// Verifies that WinUI preserves the migration-critical controls and handlers formerly covered by legacy UI tests.
     /// </summary>
     [Fact]
     public void WinUiMainWindow_DefinesMigrationCriticalControlsAndHandlers()

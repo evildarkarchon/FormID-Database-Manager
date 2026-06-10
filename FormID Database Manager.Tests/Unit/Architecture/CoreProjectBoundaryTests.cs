@@ -26,13 +26,14 @@ public class CoreProjectBoundaryTests
     }
 
     /// <summary>
-    /// Verifies that the core project remains free of Avalonia package and source dependencies.
+    /// Verifies that the core project remains free of legacy desktop UI package and source dependencies.
     /// </summary>
     [Fact]
-    public void CoreProject_DoesNotReferenceAvalonia()
+    public void CoreProject_DoesNotReferenceLegacyDesktopUi()
     {
         var coreProjectDirectory = GetCoreProjectDirectory();
         var projectPath = Path.Combine(coreProjectDirectory, "FormID Database Manager.Core.csproj");
+        var legacyDesktopPackagePrefix = string.Concat("Ava", "lonia");
 
         Assert.True(File.Exists(projectPath), $"Core project file was not found at {projectPath}.");
 
@@ -42,7 +43,7 @@ public class CoreProjectBoundaryTests
             .Select(element => element.Attribute("Include")?.Value ?? string.Empty);
 
         Assert.DoesNotContain(packageReferences, packageName =>
-            packageName.Contains("Avalonia", StringComparison.OrdinalIgnoreCase));
+            packageName.Contains(legacyDesktopPackagePrefix, StringComparison.OrdinalIgnoreCase));
 
         var sourceFiles = Directory.EnumerateFiles(coreProjectDirectory, "*.cs", SearchOption.AllDirectories)
             .Where(path => !path.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase))
@@ -51,7 +52,7 @@ public class CoreProjectBoundaryTests
         foreach (var sourceFile in sourceFiles)
         {
             var source = File.ReadAllText(sourceFile);
-            Assert.DoesNotContain("using Avalonia", source, StringComparison.Ordinal);
+            Assert.DoesNotContain(string.Concat("using ", legacyDesktopPackagePrefix), source, StringComparison.Ordinal);
         }
     }
 

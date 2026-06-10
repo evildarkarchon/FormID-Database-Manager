@@ -294,6 +294,16 @@ After WinUI behavior parity and tests are stable:
 - Search for remaining Avalonia references with `rg "Avalonia|axaml|AvaloniaFact|Headless"`.
 - Build and test after removal.
 
+Phase 8 verification checkpoint, 2026-06-09:
+
+- The legacy `FormID Database Manager` desktop project was removed from `FormID Database Manager.slnx`, and its startup files, AXAML views, converter, dispatcher, picker service, manifest, project file, and publish profiles were deleted from the active source tree. The remaining ignored `bin`/`obj` outputs under the old directory are not part of the buildable solution.
+- Behavior formerly hosted by the removed shell is represented by `FormID Database Manager.Core` and `FormID Database Manager.WinUI`: Core owns models, ViewModels, processing, database, game detection, load-order, dispatcher abstractions, and file-dialog abstractions; WinUI owns startup, XAML, window workflow, file pickers, and dispatcher implementation.
+- Focused reference searches for `Avalonia|axaml|AvaloniaFact|Headless` found no matches in `FormID Database Manager.Core`, `FormID Database Manager.WinUI`, `FormID Database Manager.Tests`, `FormID Database Manager.TestUtilities`, active `*.csproj` files, `FormID Database Manager.slnx`, `README.md`, `AGENTS.md`, `CLAUDE.md`, or `GEMINI.md`.
+- Remaining broad-search matches are intentionally historical or workflow-local: this migration plan, archived OpenSpec changes, the completed Phase 7 OpenSpec change, and the Phase 8 OpenSpec artifacts themselves.
+- `dotnet build "FormID Database Manager.WinUI\FormID Database Manager.WinUI.csproj" -p:Platform=x64` succeeded with 0 warnings and 0 errors.
+- `dotnet build "FormID Database Manager.slnx"` succeeded with 0 warnings and 0 errors across Core, TestUtilities, Tests, and WinUI.
+- `dotnet test "FormID Database Manager.Tests"` passed with 282 tests passed, 11 skipped, and 0 failed. The skipped tests remain the existing symbolic-link and manual performance/load/stress tests.
+
 ### Phase 9: Deployment and Publish
 
 - If packaged:

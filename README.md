@@ -1,8 +1,7 @@
 # FormID Database Manager
 
-FormID Database Manager is a desktop application developed using [Avalonia](https://avaloniaui.net/) that provides a
-robust and user-friendly interface for creating SQLite databases that store the FormIDs and their associated
-EditorID or Name value (if any) from Bethesda game plugins.
+FormID Database Manager is a WinUI desktop application that provides a robust and user-friendly interface for creating
+SQLite databases that store the FormIDs and their associated EditorID or Name value (if any) from Bethesda game plugins.
 
 ## Supported Games
 
@@ -28,7 +27,8 @@ EditorID or Name value (if any) from Bethesda game plugins.
 ### Framework and Technologies
 
 - **C#** / **.NET 10.0**
-- **Avalonia UI 12.x**: Cross-platform desktop UI framework
+- **WinUI 3 / Windows App SDK**: Windows desktop UI framework
+- **CommunityToolkit.Mvvm**: MVVM source generators and observable state
 - **Mutagen**: Bethesda plugin parsing library
 - **Microsoft.Data.Sqlite**: SQLite database access
 - **xUnit** + **Moq**: Testing framework
@@ -44,7 +44,7 @@ Phase 0 was recorded on June 9, 2026 before extracting the UI-neutral core bound
 - Baseline build: `dotnet build "FormID Database Manager.slnx"` succeeded with `0` warnings and `0` errors.
 - Baseline tests: `dotnet test "FormID Database Manager.Tests"` passed with `272` passed and `11` skipped.
 - WinUI template status: `dotnet new list winui` exposes the C# `WinUI 3 App`, `WinUI 3 Blazor App`, and `WinUI 3 Class Library` templates.
-- Target deployment model: packaged MSIX is selected for the staged WinUI migration. The current Avalonia publish output remains unchanged until later migration phases.
+- Target deployment model: packaged MSIX is selected for the staged WinUI migration. The WinUI project is now the supported desktop shell.
 
 ---
 
@@ -63,7 +63,7 @@ dotnet build "FormID Database Manager.slnx"
 ### Run
 
 ```bash
-dotnet run --project "FormID Database Manager"
+dotnet run --project "FormID Database Manager.WinUI" -p:Platform=x64
 ```
 
 ### Test
@@ -92,10 +92,10 @@ pwsh ./scripts/run-coverage.ps1 -OpenReport
 ### Publish
 
 ```bash
-dotnet publish "FormID Database Manager" -c Release -r win-x64
+dotnet publish "FormID Database Manager.WinUI" -c Release -p:Platform=x64 -r win-x64
 ```
 
-This produces a self-contained, trimmed single-file executable.
+This produces the WinUI app's Windows publish output.
 
 ---
 
@@ -105,11 +105,10 @@ This produces a self-contained, trimmed single-file executable.
   - `Models/` — Data models
   - `ViewModels/` — MVVM view models
   - `Services/` — Business logic, dispatcher/file-dialog abstractions, database, plugin processing, and game detection
-- **`FormID Database Manager/`**: Avalonia application shell
-  - `Program.cs` — Application entry point
-  - `App.axaml` / `App.axaml.cs` — Avalonia application core and styles
-  - `MainWindow.axaml` / `MainWindow.axaml.cs` — Main UI window
-  - `Services/` — Avalonia dispatcher and picker implementations
+- **`FormID Database Manager.WinUI/`**: Supported WinUI desktop application shell
+  - `App.xaml` / `App.xaml.cs` — WinUI application startup and resources
+  - `MainWindow.xaml` / `MainWindow.xaml.cs` — Main UI window and workflow event handlers
+  - `Services/` — WinUI dispatcher and picker implementations
 - **`FormID Database Manager.Tests/`**: Unit, integration, UI, and performance tests
 - **`FormID Database Manager.TestUtilities/`**: Shared test fixtures, mocks, and builders
 
@@ -136,7 +135,7 @@ modify, and distribute the code as needed.
 
 ## Acknowledgements
 
-- [Avalonia UI](https://avaloniaui.net/) for providing the framework to build a cross-platform desktop application.
+- [Windows App SDK](https://learn.microsoft.com/windows/apps/windows-app-sdk/) for the WinUI desktop application framework.
 - [Mutagen](https://github.com/Mutagen-Modding/Mutagen) for Bethesda plugin parsing.
 
 ---
