@@ -26,12 +26,12 @@ public class DatabaseServiceTests : IClassFixture<DatabaseFixture>, IAsyncLifeti
         _service = new DatabaseService();
     }
 
-    public async Task InitializeAsync()
+    public async ValueTask InitializeAsync()
     {
         _connection = await _fixture.CreateConnectionAsync();
     }
 
-    public async Task DisposeAsync()
+    public async ValueTask DisposeAsync()
     {
         if (_connection != null)
         {
@@ -51,16 +51,16 @@ public class DatabaseServiceTests : IClassFixture<DatabaseFixture>, IAsyncLifeti
         var tempDbPath = Path.Combine(Path.GetTempPath(), $"test_{Guid.NewGuid()}.db");
         try
         {
-            await _service.InitializeDatabase(tempDbPath, gameRelease);
+            await _service.InitializeDatabase(tempDbPath, gameRelease, TestContext.Current.CancellationToken);
 
             using (var conn = new SqliteConnection($"Data Source={tempDbPath}"))
             {
-                await conn.OpenAsync();
+                await conn.OpenAsync(TestContext.Current.CancellationToken);
 
                 using var command = conn.CreateCommand();
                 command.CommandText = $"SELECT name FROM sqlite_master WHERE type='table' AND name='{gameRelease}'";
 
-                var tableName = await command.ExecuteScalarAsync();
+                var tableName = await command.ExecuteScalarAsync(TestContext.Current.CancellationToken);
 
                 Assert.NotNull(tableName);
                 Assert.Equal(gameRelease.ToString(), tableName);
@@ -88,19 +88,19 @@ public class DatabaseServiceTests : IClassFixture<DatabaseFixture>, IAsyncLifeti
 
         try
         {
-            await _service.InitializeDatabase(tempDbPath, gameRelease);
+            await _service.InitializeDatabase(tempDbPath, gameRelease, TestContext.Current.CancellationToken);
 
             using (var conn = new SqliteConnection($"Data Source={tempDbPath}"))
             {
-                await conn.OpenAsync();
+                await conn.OpenAsync(TestContext.Current.CancellationToken);
 
                 using var command = conn.CreateCommand();
                 command.CommandText = "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name=@table";
                 command.Parameters.AddWithValue("@table", gameRelease.ToString());
 
                 var indices = new List<string>();
-                using var reader = await command.ExecuteReaderAsync();
-                while (await reader.ReadAsync())
+                using var reader = await command.ExecuteReaderAsync(TestContext.Current.CancellationToken);
+                while (await reader.ReadAsync(TestContext.Current.CancellationToken))
                 {
                     indices.Add(reader.GetString(0));
                 }
@@ -132,9 +132,9 @@ public class DatabaseServiceTests : IClassFixture<DatabaseFixture>, IAsyncLifeti
 
         try
         {
-            await _service.InitializeDatabase(tempDbPath, gameRelease);
+            await _service.InitializeDatabase(tempDbPath, gameRelease, TestContext.Current.CancellationToken);
 
-            await _service.InitializeDatabase(tempDbPath, gameRelease);
+            await _service.InitializeDatabase(tempDbPath, gameRelease, TestContext.Current.CancellationToken);
 
             Assert.True(File.Exists(tempDbPath));
         }
@@ -184,18 +184,18 @@ public class DatabaseServiceTests : IClassFixture<DatabaseFixture>, IAsyncLifeti
         var gameRelease = GameRelease.SkyrimSE;
         await _fixture.InitializeSchemaAsync(_connection!, gameRelease.ToString());
 
-        await _service.InsertRecord(_connection!, gameRelease, "TestPlugin.esp", "0x00000001", "TestNPC");
+        await _service.InsertRecord(_connection!, gameRelease, "TestPlugin.esp", "0x00000001", "TestNPC", TestContext.Current.CancellationToken);
 
         var command = _connection!.CreateCommand();
         command.CommandText = $"SELECT COUNT(*) FROM {gameRelease}";
-        var count = Convert.ToInt32(await command.ExecuteScalarAsync());
+        var count = Convert.ToInt32(await command.ExecuteScalarAsync(TestContext.Current.CancellationToken));
 
         Assert.Equal(1, count);
 
         command.CommandText = $"SELECT plugin, formid, entry FROM {gameRelease} WHERE formid = '0x00000001'";
-        using var reader = await command.ExecuteReaderAsync();
+        using var reader = await command.ExecuteReaderAsync(TestContext.Current.CancellationToken);
 
-        Assert.True(await reader.ReadAsync());
+        Assert.True(await reader.ReadAsync(TestContext.Current.CancellationToken));
         Assert.Equal("TestPlugin.esp", reader.GetString(0));
         Assert.Equal("0x00000001", reader.GetString(1));
         Assert.Equal("TestNPC", reader.GetString(2));
@@ -208,11 +208,11 @@ public class DatabaseServiceTests : IClassFixture<DatabaseFixture>, IAsyncLifeti
         await _fixture.InitializeSchemaAsync(_connection!, gameRelease.ToString());
 
         var specialEntry = "Test'Entry\"With;Special--Characters";
-        await _service.InsertRecord(_connection!, gameRelease, "Plugin.esp", "0x00000001", specialEntry);
+        await _service.InsertRecord(_connection!, gameRelease, "Plugin.esp", "0x00000001", specialEntry, TestContext.Current.CancellationToken);
 
         var command = _connection!.CreateCommand();
         command.CommandText = $"SELECT entry FROM {gameRelease} WHERE formid = '0x00000001'";
-        var result = await command.ExecuteScalarAsync();
+        var result = await command.ExecuteScalarAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(specialEntry, result);
     }
@@ -223,18 +223,18 @@ public class DatabaseServiceTests : IClassFixture<DatabaseFixture>, IAsyncLifeti
         var gameRelease = GameRelease.SkyrimSE;
         await _fixture.InitializeSchemaAsync(_connection!, gameRelease.ToString());
 
-        await _service.InsertRecord(_connection!, gameRelease, "Plugin1.esp", "0x00000001", "Entry1");
-        await _service.InsertRecord(_connection!, gameRelease, "Plugin1.esp", "0x00000002", "Entry2");
-        await _service.InsertRecord(_connection!, gameRelease, "Plugin2.esp", "0x00000003", "Entry3");
+        await _service.InsertRecord(_connection!, gameRelease, "Plugin1.esp", "0x00000001", "Entry1", TestContext.Current.CancellationToken);
+        await _service.InsertRecord(_connection!, gameRelease, "Plugin1.esp", "0x00000002", "Entry2", TestContext.Current.CancellationToken);
+        await _service.InsertRecord(_connection!, gameRelease, "Plugin2.esp", "0x00000003", "Entry3", TestContext.Current.CancellationToken);
 
-        await _service.ClearPluginEntries(_connection!, gameRelease, "Plugin1.esp");
+        await _service.ClearPluginEntries(_connection!, gameRelease, "Plugin1.esp", TestContext.Current.CancellationToken);
 
         var command = _connection!.CreateCommand();
         command.CommandText = $"SELECT COUNT(*) FROM {gameRelease} WHERE plugin = 'Plugin1.esp'";
-        var plugin1Count = Convert.ToInt32(await command.ExecuteScalarAsync());
+        var plugin1Count = Convert.ToInt32(await command.ExecuteScalarAsync(TestContext.Current.CancellationToken));
 
         command.CommandText = $"SELECT COUNT(*) FROM {gameRelease} WHERE plugin = 'Plugin2.esp'";
-        var plugin2Count = Convert.ToInt32(await command.ExecuteScalarAsync());
+        var plugin2Count = Convert.ToInt32(await command.ExecuteScalarAsync(TestContext.Current.CancellationToken));
 
         Assert.Equal(0, plugin1Count);
         Assert.Equal(1, plugin2Count);
@@ -246,7 +246,47 @@ public class DatabaseServiceTests : IClassFixture<DatabaseFixture>, IAsyncLifeti
         var gameRelease = GameRelease.SkyrimSE;
         await _fixture.InitializeSchemaAsync(_connection!, gameRelease.ToString());
 
-        await _service.ClearPluginEntries(_connection!, gameRelease, "NonExistent.esp");
+        await _service.ClearPluginEntries(_connection!, gameRelease, "NonExistent.esp", TestContext.Current.CancellationToken);
+    }
+
+    [Fact]
+    public async Task ClearPluginEntries_RemovesEntriesCaseInsensitively()
+    {
+        var gameRelease = GameRelease.SkyrimSE;
+        await _fixture.InitializeSchemaAsync(_connection!, gameRelease.ToString());
+
+        await _service.InsertRecord(_connection!, gameRelease, "Plugin1.esp", "0x00000001", "Entry1", TestContext.Current.CancellationToken);
+        await _service.InsertRecord(_connection!, gameRelease, "PLUGIN1.ESP", "0x00000002", "Entry2", TestContext.Current.CancellationToken);
+        await _service.InsertRecord(_connection!, gameRelease, "Plugin2.esp", "0x00000003", "Entry3", TestContext.Current.CancellationToken);
+
+        await _service.ClearPluginEntries(_connection!, gameRelease, "plugin1.esp", TestContext.Current.CancellationToken);
+
+        var command = _connection!.CreateCommand();
+        command.CommandText = $"SELECT COUNT(*) FROM {gameRelease} WHERE plugin COLLATE NOCASE = 'plugin1.esp'";
+        var plugin1Count = Convert.ToInt32(await command.ExecuteScalarAsync(TestContext.Current.CancellationToken));
+
+        command.CommandText = $"SELECT COUNT(*) FROM {gameRelease} WHERE plugin = 'Plugin2.esp'";
+        var plugin2Count = Convert.ToInt32(await command.ExecuteScalarAsync(TestContext.Current.CancellationToken));
+
+        Assert.Equal(0, plugin1Count);
+        Assert.Equal(1, plugin2Count);
+    }
+
+    [Fact]
+    public async Task GetPluginsWithEntries_ReturnsCaseInsensitiveDistinctPlugins()
+    {
+        var gameRelease = GameRelease.SkyrimSE;
+        await _fixture.InitializeSchemaAsync(_connection!, gameRelease.ToString());
+
+        await _service.InsertRecord(_connection!, gameRelease, "Plugin1.esp", "0x00000001", "Entry1", TestContext.Current.CancellationToken);
+        await _service.InsertRecord(_connection!, gameRelease, "PLUGIN1.ESP", "0x00000002", "Entry2", TestContext.Current.CancellationToken);
+        await _service.InsertRecord(_connection!, gameRelease, "Plugin2.esp", "0x00000003", "Entry3", TestContext.Current.CancellationToken);
+
+        var plugins = await _service.GetPluginsWithEntries(_connection!, gameRelease, TestContext.Current.CancellationToken);
+
+        Assert.Equal(2, plugins.Count);
+        Assert.Contains("plugin1.esp", plugins);
+        Assert.Contains("Plugin2.esp", plugins);
     }
 
     [Fact]
@@ -257,10 +297,10 @@ public class DatabaseServiceTests : IClassFixture<DatabaseFixture>, IAsyncLifeti
 
         for (var i = 0; i < 100; i++)
         {
-            await _service.InsertRecord(_connection!, gameRelease, "Plugin.esp", $"0x{i:X8}", $"Entry{i}");
+            await _service.InsertRecord(_connection!, gameRelease, "Plugin.esp", $"0x{i:X8}", $"Entry{i}", TestContext.Current.CancellationToken);
         }
 
-        await _service.OptimizeDatabase(_connection!);
+        await _service.OptimizeDatabase(_connection!, TestContext.Current.CancellationToken);
     }
 
     [Theory]
@@ -276,14 +316,14 @@ public class DatabaseServiceTests : IClassFixture<DatabaseFixture>, IAsyncLifeti
         for (var i = 0; i < batchSize; i++)
         {
             tasks.Add(
-                _service.InsertRecord(_connection!, gameRelease, "BatchPlugin.esp", $"0x{i:X8}", $"BatchEntry{i}"));
+                _service.InsertRecord(_connection!, gameRelease, "BatchPlugin.esp", $"0x{i:X8}", $"BatchEntry{i}", TestContext.Current.CancellationToken));
         }
 
         await Task.WhenAll(tasks);
 
         var command = _connection!.CreateCommand();
         command.CommandText = $"SELECT COUNT(*) FROM {gameRelease}";
-        var count = Convert.ToInt32(await command.ExecuteScalarAsync());
+        var count = Convert.ToInt32(await command.ExecuteScalarAsync(TestContext.Current.CancellationToken));
 
         Assert.Equal(batchSize, count);
     }
@@ -296,7 +336,7 @@ public class DatabaseServiceTests : IClassFixture<DatabaseFixture>, IAsyncLifeti
 
         try
         {
-            await _service.InitializeDatabase(tempDbPath, gameRelease);
+            await _service.InitializeDatabase(tempDbPath, gameRelease, TestContext.Current.CancellationToken);
 
             var tasks = new List<Task>();
 
@@ -306,22 +346,22 @@ public class DatabaseServiceTests : IClassFixture<DatabaseFixture>, IAsyncLifeti
                 tasks.Add(Task.Run(async () =>
                 {
                     using var conn = new SqliteConnection($"Data Source={tempDbPath}");
-                    await conn.OpenAsync();
+                    await conn.OpenAsync(TestContext.Current.CancellationToken);
                     for (var j = 0; j < 20; j++)
                     {
                         await _service.InsertRecord(conn, gameRelease, pluginName, $"0x{i:X4}{j:X4}",
-                            $"Entry_{i}_{j}");
+                            $"Entry_{i}_{j}", TestContext.Current.CancellationToken);
                     }
-                }));
+                }, TestContext.Current.CancellationToken));
             }
 
             await Task.WhenAll(tasks);
 
             using var verifyConn = new SqliteConnection($"Data Source={tempDbPath}");
-            await verifyConn.OpenAsync();
+            await verifyConn.OpenAsync(TestContext.Current.CancellationToken);
             var command = verifyConn.CreateCommand();
             command.CommandText = $"SELECT COUNT(*) FROM {gameRelease}";
-            var count = Convert.ToInt32(await command.ExecuteScalarAsync());
+            var count = Convert.ToInt32(await command.ExecuteScalarAsync(TestContext.Current.CancellationToken));
 
             Assert.Equal(100, count);
         }

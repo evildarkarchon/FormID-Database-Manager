@@ -193,6 +193,9 @@ publish/
 # Note: Comment the next line if you want to checkin your web deploy settings,
 # but database connection strings (with potential passwords) will be unencrypted
 *.pubxml
+!FormID Database Manager.WinUI/Properties/PublishProfiles/win-x64-msix.pubxml
+!FormID Database Manager.WinUI/Properties/PublishProfiles/win-x64-unpackaged-framework-dependent.pubxml
+!FormID Database Manager.WinUI/Properties/PublishProfiles/win-x64-unpackaged-self-contained.pubxml
 *.publishproj
 
 # Microsoft Azure Web App publish settings. Comment the next line if you want to
@@ -407,3 +410,6 @@ FodyWeavers.xsd
 *.bak
 plans/
 coverage/
+.coverage/
+# CocoIndex Code (ccc)
+/.cocoindex_code/

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-FormID Database Manager is an Avalonia UI desktop application that creates SQLite databases storing FormIDs and their associated EditorID/Name values from Bethesda game plugins (Skyrim, Fallout 4, Starfield, Oblivion). It uses the Mutagen library to parse plugin files.
+FormID Database Manager is a WinUI desktop application that creates SQLite databases storing FormIDs and their associated EditorID/Name values from Bethesda game plugins (Skyrim, Fallout 4, Starfield, Oblivion). It uses the Mutagen library to parse plugin files.
 
 ## Build & Run Commands
 
@@ -13,7 +13,7 @@ FormID Database Manager is an Avalonia UI desktop application that creates SQLit
 dotnet build "FormID Database Manager.slnx"
 
 # Run the application
-dotnet run --project "FormID Database Manager"
+dotnet run --project "FormID Database Manager.WinUI" -p:Platform=x64 -p:WindowsPackageType=None -p:WindowsAppSDKSelfContained=true
 
 # Run all tests
 dotnet test "FormID Database Manager.Tests"
@@ -27,26 +27,26 @@ dotnet test "FormID Database Manager.Tests" --filter "FullyQualifiedName~Databas
 # Run tests by category
 dotnet test "FormID Database Manager.Tests" --filter "Category=LoadTest"
 
-# Publish (self-contained, trimmed single file)
-dotnet publish "FormID Database Manager" -c Release -r win-x64
+# Publish the WinUI app
+dotnet publish "FormID Database Manager.WinUI" -c Release -p:Platform=x64 -r win-x64
 ```
 
 ## Tech Stack
 
 - **.NET 10.0** / C# with nullable enabled
-- **Avalonia UI 11.3** (cross-platform desktop UI, AXAML files)
+- **WinUI 3 / Windows App SDK** (Windows desktop UI, XAML files)
+- **CommunityToolkit.Mvvm 8.x** (MVVM source generators)
 - **Mutagen 0.51.5** (Bethesda plugin parsing)
 - **Microsoft.Data.Sqlite** (database)
-- **xUnit** + **Moq** + **Avalonia.Headless.XUnit** (testing)
+- **xUnit** + **Moq** (testing)
 - **BenchmarkDotNet** (performance benchmarks)
 
 ## Architecture
 
-The solution has three projects in `FormID Database Manager.slnx`:
+The solution has four projects in `FormID Database Manager.slnx`:
 
-### Main App (`FormID Database Manager/`)
-- `MainWindow.axaml.cs` — UI event handlers, wires services together manually (no DI container)
-- `ViewModels/MainWindowViewModel.cs` — INotifyPropertyChanged ViewModel with plugin filtering, progress tracking, and thread-safe UI updates via `IThreadDispatcher`
+### Core (`FormID Database Manager.Core/`)
+- `ViewModels/MainWindowViewModel.cs` — CommunityToolkit.Mvvm ObservableObject ViewModel with plugin filtering, progress tracking, and thread-safe UI updates via `IThreadDispatcher`
 - `Services/` — All business logic:
   - `DatabaseService` — SQLite schema, CRUD, optimizations (WAL mode, covering indexes)
   - `PluginProcessingService` — Orchestrates plugin processing with cancellation support
@@ -54,9 +54,15 @@ The solution has three projects in `FormID Database Manager.slnx`:
   - `FormIdTextProcessor` — Parses pipe-delimited text files (`plugin|formid|entry`), batched inserts (10000/batch)
   - `PluginListManager` — Loads plugin lists from game directories on background thread
   - `GameDetectionService` — Detects game type from directory structure (master file presence)
-  - `WindowManager` — Avalonia file/folder picker dialogs
-  - `IThreadDispatcher` / `AvaloniaThreadDispatcher` — Abstraction for UI thread marshalling (testable)
-- `Models/` — `PluginListItem` (INotifyPropertyChanged), `ProcessingParameters`
+  - `IFileDialogService` — UI-neutral file/folder picker abstraction
+  - `IThreadDispatcher` / `ImmediateThreadDispatcher` / `QueuedThreadDispatcher` — Abstractions for UI thread marshalling (testable)
+- `Models/` — `PluginListItem` (CommunityToolkit.Mvvm ObservableObject), `ProcessingParameters`
+
+### Main App (`FormID Database Manager.WinUI/`)
+- `App.xaml.cs` — WinUI application startup
+- `MainWindow.xaml` / `MainWindow.xaml.cs` — WinUI workflow surface and event handlers
+- `Services/WinUiFileDialogService.cs` — Windows App SDK picker implementation
+- `Services/WinUiThreadDispatcher.cs` — WinUI dispatcher implementation
 
 ### Test Utilities (`FormID Database Manager.TestUtilities/`)
 - `Fixtures/DatabaseFixture` — Shared in-memory SQLite setup
@@ -69,25 +75,24 @@ The solution has three projects in `FormID Database Manager.slnx`:
 ### Tests (`FormID Database Manager.Tests/`)
 - `Unit/Services/` — Service unit tests
 - `Unit/ViewModels/` — ViewModel tests
-- `UI/` — Avalonia headless UI tests (use `[AvaloniaFact]`)
+- `Unit/Architecture/` — Core/WinUI source-boundary and wiring tests
 - `Integration/` — Tests with real database/Mutagen (some require game installations)
 - `Performance/` — Benchmarks, load tests, stress tests, regression tests
 
 ## Key Patterns
 
 - **Thread safety**: UI updates go through `IThreadDispatcher`. ViewModel uses `Interlocked` for filter reentrancy guard and `lock` for plugins collection access.
-- **SQL injection prevention**: `GetSafeTableName()` uses an explicit whitelist switch on `GameRelease` enum — this pattern is duplicated in `DatabaseService`, `ModProcessor`, and `FormIdTextProcessor.BatchInserter`.
+- **SQL injection prevention**: `GameReleaseHelper.GetSafeTableName()` uses an explicit whitelist switch on `GameRelease` enum.
 - **Cancellation**: All async processing supports `CancellationToken`. `PluginProcessingService` manages `CancellationTokenSource` lifecycle with a lock. Note: Mutagen's `CreateFromBinaryOverlay` is synchronous and not cancellable.
-- **Test collections**: Database and UI tests use `[Collection(...)]` for sequential execution. Unit tests run in parallel.
-- **InternalsVisibleTo**: The main project exposes internals to the test project.
+- **Test collections**: Database tests use `[Collection(...)]` for sequential execution. Unit tests run in parallel.
+- **InternalsVisibleTo**: The core project exposes internals to the test and WinUI projects.
 
 ## Testing Conventions
 
 - Test naming: `MethodName_StateUnderTest_ExpectedBehavior`
-- Use `SynchronousThreadDispatcher` in tests instead of `AvaloniaThreadDispatcher`
+- Use `SynchronousThreadDispatcher` in tests instead of platform dispatchers
 - Use in-memory SQLite via `DatabaseFixture` for database tests
 - Integration tests requiring game installations use `[RequiresGameInstallationFact]`
-- UI tests use `[AvaloniaFact]` attribute
 
 ## Important Notes
 

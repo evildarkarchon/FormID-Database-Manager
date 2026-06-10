@@ -222,7 +222,7 @@ public class MemoryBenchmarks
     }
 
     [Benchmark]
-    public async Task WindowManager_MultipleDialogs()
+    public async Task FileDialog_MultipleSelections()
     {
         var tasks = new List<Task<long>>();
 

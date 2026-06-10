@@ -1,5 +1,8 @@
 <Solution>
+  <Project Path="FormID Database Manager.Core/FormID Database Manager.Core.csproj" />
   <Project Path="FormID Database Manager.Tests/FormID Database Manager.Tests.csproj" />
   <Project Path="FormID Database Manager.TestUtilities/FormID Database Manager.TestUtilities.csproj" />
-  <Project Path="FormID Database Manager/FormID Database Manager.csproj" />
+  <Project Path="FormID Database Manager.WinUI/FormID Database Manager.WinUI.csproj">
+    <Platform Project="x86" />
+  </Project>
 </Solution>

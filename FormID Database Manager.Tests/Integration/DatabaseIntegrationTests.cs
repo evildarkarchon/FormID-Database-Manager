@@ -130,7 +130,7 @@ public class DatabaseIntegrationTests : IDisposable
                 cmd.Parameters.AddWithValue("@plugin", "Transactional.esp");
                 cmd.Parameters.AddWithValue("@formid", $"{i:X6}");
                 cmd.Parameters.AddWithValue("@entry", $"TransEntry{i}");
-                await cmd.ExecuteNonQueryAsync();
+                await cmd.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
             }
 
             // Rollback instead of commit
@@ -275,7 +275,7 @@ public class DatabaseIntegrationTests : IDisposable
                         $"Entry_{threadId}_{j}",
                         CancellationToken.None);
                 }
-            });
+            }, TestContext.Current.CancellationToken);
             tasks.Add(task);
         }
 
@@ -390,7 +390,7 @@ public class DatabaseIntegrationTests : IDisposable
             pluginParam.Value = $"Plugin{i % 10}.esp";
             formIdParam.Value = $"{i:X6}";
             entryParam.Value = $"Entry{i}";
-            await cmd.ExecuteNonQueryAsync();
+            await cmd.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
         }
 
         transaction.Commit();

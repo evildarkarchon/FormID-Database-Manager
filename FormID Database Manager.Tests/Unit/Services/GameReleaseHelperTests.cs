@@ -42,6 +42,16 @@ public class GameReleaseHelperTests
         Assert.Equal(gameDirectory, resolved);
     }
 
+    [Theory]
+    [InlineData("\\")]
+    [InlineData("/")]
+    public void ResolveDataPath_DataDirectoryInputWithTrailingSeparator_ReturnsUnchangedPath(string separator)
+    {
+        var gameDirectory = Path.Combine("C:\\Games", "SkyrimSE", "Data") + separator;
+        var resolved = GameReleaseHelper.ResolveDataPath(gameDirectory);
+        Assert.Equal(gameDirectory, resolved);
+    }
+
     [Fact]
     public void ResolveDataPath_GameRootInput_AppendsDataFolder()
     {

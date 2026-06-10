@@ -12,14 +12,20 @@ public class DatabaseFixture : IAsyncLifetime
 
     public string ConnectionString { get; private set; } = string.Empty;
 
-    public async Task InitializeAsync()
+    /// <summary>
+    /// Creates and opens the shared in-memory SQLite connection used by tests in this fixture.
+    /// </summary>
+    public async ValueTask InitializeAsync()
     {
         ConnectionString = "Data Source=:memory:";
         _connection = new SqliteConnection(ConnectionString);
         await _connection.OpenAsync();
     }
 
-    public async Task DisposeAsync()
+    /// <summary>
+    /// Closes and disposes the shared SQLite connection when xUnit tears down the fixture.
+    /// </summary>
+    public async ValueTask DisposeAsync()
     {
         if (_connection != null)
         {

@@ -4,13 +4,13 @@ using System.Diagnostics;
 using System.IO;
 using System.Threading.Tasks;
 using FormID_Database_Manager.Services;
+using FormID_Database_Manager.TestUtilities;
 using FormID_Database_Manager.TestUtilities.Fixtures;
 using FormID_Database_Manager.ViewModels;
 using Microsoft.Data.Sqlite;
 using Moq;
 using Mutagen.Bethesda;
 using Xunit;
-using Xunit.Abstractions;
 
 namespace FormID_Database_Manager.Tests.Performance;
 
@@ -18,6 +18,7 @@ namespace FormID_Database_Manager.Tests.Performance;
 ///     Performance regression tests to ensure operations stay within acceptable time bounds
 /// </summary>
 [Collection("Performance Tests")]
+[Trait("Category", "ManualPerformance")]
 public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
 {
     private readonly DatabaseFixture _fixture;
@@ -63,7 +64,7 @@ public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
         }
     }
 
-    [Fact]
+    [ManualPerformanceFact]
     [Trait("Category", "PerformanceRegression")]
     public async Task DatabaseInitialization_SingleGame_StaysWithinBaseline()
     {
@@ -74,7 +75,7 @@ public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
 
         // Act
         var stopwatch = Stopwatch.StartNew();
-        await service.InitializeDatabase(dbPath, GameRelease.SkyrimSE);
+        await service.InitializeDatabase(dbPath, GameRelease.SkyrimSE, TestContext.Current.CancellationToken);
         stopwatch.Stop();
 
         // Assert
@@ -85,7 +86,7 @@ public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
             $"Performance regression detected! Operation took {stopwatch.Elapsed.TotalMilliseconds:F2}ms, baseline is {baseline.TotalMilliseconds:F2}ms (20% tolerance)");
     }
 
-    [Fact]
+    [ManualPerformanceFact]
     [Trait("Category", "PerformanceRegression")]
     public async Task DatabaseInitialization_AllGames_StaysWithinBaseline()
     {
@@ -103,7 +104,7 @@ public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
         foreach (var game in games)
         {
             var dbPath = Path.Combine(_testDirectory, $"test_{game}.db");
-            await service.InitializeDatabase(dbPath, game);
+            await service.InitializeDatabase(dbPath, game, TestContext.Current.CancellationToken);
         }
 
         stopwatch.Stop();
@@ -116,7 +117,7 @@ public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
             $"Performance regression detected! Operation took {stopwatch.Elapsed.TotalMilliseconds:F2}ms, baseline is {baseline.TotalMilliseconds:F2}ms (20% tolerance)");
     }
 
-    [Theory]
+    [ManualPerformanceTheory]
     [Trait("Category", "PerformanceRegression")]
     [InlineData(1000, "BatchInsert_1000Records")]
     [InlineData(10000, "BatchInsert_10000Records")]
@@ -125,7 +126,7 @@ public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
         // Arrange
         var service = new DatabaseService();
         var dbPath = Path.Combine(_testDirectory, $"test_batch_{recordCount}.db");
-        await service.InitializeDatabase(dbPath, GameRelease.SkyrimSE);
+        await service.InitializeDatabase(dbPath, GameRelease.SkyrimSE, TestContext.Current.CancellationToken);
 
         var baseline = _performanceBaselines[baselineKey];
         var records = GenerateTestRecords(recordCount);
@@ -134,14 +135,14 @@ public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
         var stopwatch = Stopwatch.StartNew();
         using (var connection = new SqliteConnection($"Data Source={dbPath}"))
         {
-            await connection.OpenAsync();
+            await connection.OpenAsync(TestContext.Current.CancellationToken);
             // Simulate batch insert by inserting records in a transaction
             using (var transaction = connection.BeginTransaction())
             {
                 foreach (var record in records)
                 {
                     await service.InsertRecord(connection, GameRelease.SkyrimSE, record.plugin, record.formId,
-                        record.editorId);
+                        record.editorId, TestContext.Current.CancellationToken);
                 }
 
                 transaction.Commit();
@@ -159,7 +160,7 @@ public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
             $"Performance regression detected! Operation took {stopwatch.Elapsed.TotalMilliseconds:F2}ms, baseline is {baseline.TotalMilliseconds:F2}ms (20% tolerance)");
     }
 
-    [Fact]
+    [ManualPerformanceFact]
     [Trait("Category", "PerformanceRegression")]
     public void GameDetection_SimpleDirectory_StaysWithinBaseline()
     {
@@ -184,7 +185,7 @@ public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
             $"Performance regression detected! Operation took {stopwatch.Elapsed.TotalMilliseconds:F2}ms, baseline is {baseline.TotalMilliseconds:F2}ms (30% tolerance)");
     }
 
-    [Fact]
+    [ManualPerformanceFact]
     [Trait("Category", "PerformanceRegression")]
     public void GameDetection_ComplexDirectory_StaysWithinBaseline()
     {
@@ -215,7 +216,7 @@ public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
             $"Performance regression detected! Operation took {stopwatch.Elapsed.TotalMilliseconds:F2}ms, baseline is {baseline.TotalMilliseconds:F2}ms (30% tolerance)");
     }
 
-    [Theory]
+    [ManualPerformanceTheory]
     [Trait("Category", "PerformanceRegression")]
     [InlineData(10, "PluginListLoad_Small")]
     [InlineData(255, "PluginListLoad_Large")]
@@ -239,14 +240,14 @@ public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
             plugins.Add($"*Plugin{i:D3}.esp");
         }
 
-        await File.WriteAllLinesAsync(listPath, plugins);
+        await File.WriteAllLinesAsync(listPath, plugins, TestContext.Current.CancellationToken);
 
         var baseline = _performanceBaselines[baselineKey];
 
         // Act
         var stopwatch = Stopwatch.StartNew();
         // Simulate plugin list loading by reading the file
-        var pluginList = await File.ReadAllLinesAsync(listPath);
+        var pluginList = await File.ReadAllLinesAsync(listPath, TestContext.Current.CancellationToken);
         stopwatch.Stop();
 
         // Assert
@@ -257,7 +258,7 @@ public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
             $"Performance regression detected! Operation took {stopwatch.Elapsed.TotalMilliseconds:F2}ms, baseline is {baseline.TotalMilliseconds:F2}ms (20% tolerance)");
     }
 
-    [Theory]
+    [ManualPerformanceTheory]
     [Trait("Category", "PerformanceRegression")]
     [InlineData(100, "FormIdProcess_SmallFile")]
     [InlineData(10000, "FormIdProcess_LargeFile")]
@@ -276,11 +277,11 @@ public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
             lines.Add($"TestPlugin.esp|{i:X8}|TestItem{i}");
         }
 
-        await File.WriteAllLinesAsync(formIdFile, lines);
+        await File.WriteAllLinesAsync(formIdFile, lines, TestContext.Current.CancellationToken);
 
         // Setup database
         var dbService = new DatabaseService();
-        await dbService.InitializeDatabase(dbPath, GameRelease.SkyrimSE);
+        await dbService.InitializeDatabase(dbPath, GameRelease.SkyrimSE, TestContext.Current.CancellationToken);
 
         var baseline = _performanceBaselines[baselineKey];
 
@@ -289,13 +290,13 @@ public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
         // Open connection and process the file
         using (var connection = new SqliteConnection($"Data Source={dbPath}"))
         {
-            await connection.OpenAsync();
+            await connection.OpenAsync(TestContext.Current.CancellationToken);
             await processor.ProcessFormIdListFile(
                 formIdFile,
                 connection,
                 GameRelease.SkyrimSE,
                 false,
-                default
+                TestContext.Current.CancellationToken
             );
         }
 
@@ -310,14 +311,14 @@ public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
             $"Performance regression detected! Operation took {stopwatch.Elapsed.TotalMilliseconds:F2}ms, baseline is {baseline.TotalMilliseconds:F2}ms (30% tolerance)");
     }
 
-    [Fact]
+    [ManualPerformanceFact]
     [Trait("Category", "PerformanceRegression")]
     public async Task MemoryUsage_DatabaseOperations_StaysWithinLimits()
     {
         // Arrange
         var service = new DatabaseService();
         var dbPath = Path.Combine(_testDirectory, "memory_test.db");
-        await service.InitializeDatabase(dbPath, GameRelease.SkyrimSE);
+        await service.InitializeDatabase(dbPath, GameRelease.SkyrimSE, TestContext.Current.CancellationToken);
 
         var records = GenerateTestRecords(50000);
 
@@ -331,14 +332,14 @@ public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
         // Act
         using (var connection = new SqliteConnection($"Data Source={dbPath}"))
         {
-            await connection.OpenAsync();
+            await connection.OpenAsync(TestContext.Current.CancellationToken);
             // Simulate batch insert by inserting records in a transaction
             using (var transaction = connection.BeginTransaction())
             {
                 foreach (var record in records)
                 {
                     await service.InsertRecord(connection, GameRelease.SkyrimSE, record.plugin, record.formId,
-                        record.editorId);
+                        record.editorId, TestContext.Current.CancellationToken);
                 }
 
                 transaction.Commit();
@@ -357,7 +358,7 @@ public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
             $"Memory usage regression detected! Operation used {memoryIncrease:N0} bytes");
     }
 
-    [Fact]
+    [ManualPerformanceFact]
     [Trait("Category", "PerformanceRegression")]
     public void CpuUsage_IntensiveOperations_StaysReasonable()
     {

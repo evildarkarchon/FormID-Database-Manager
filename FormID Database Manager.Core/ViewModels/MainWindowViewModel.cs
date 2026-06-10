@@ -1,0 +1,438 @@
+using System;
+using System.Collections.Generic;
+using System.Collections.ObjectModel;
+using System.Collections.Specialized;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using CommunityToolkit.Mvvm.ComponentModel;
+using FormID_Database_Manager.Models;
+using FormID_Database_Manager.Services;
+using Mutagen.Bethesda;
+
+namespace FormID_Database_Manager.ViewModels;
+
+public partial class MainWindowViewModel : ObservableObject, IDisposable
+{
+    private readonly int _debounceMs;
+    private readonly IThreadDispatcher _dispatcher;
+    private readonly object _messagesLock = new();
+    private readonly object _pluginsLock = new();
+    private CancellationTokenSource? _debounceCts;
+
+    [ObservableProperty]
+    private string _databasePath = string.Empty;
+
+    [ObservableProperty]
+    private ObservableCollection<string> _detectedDirectories = [];
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasErrorMessages))]
+    private ObservableCollection<string> _errorMessages = [];
+
+    private ObservableCollection<PluginListItem> _filteredPlugins = [];
+
+    [ObservableProperty]
+    private string _formIdListPath = string.Empty;
+
+    [ObservableProperty]
+    private string _gameDirectory = string.Empty;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasInformationMessages))]
+    private ObservableCollection<string> _informationMessages = [];
+
+    private bool _filterSuspended;
+    private int _isApplyingFilter;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsProgressVisible))]
+    private bool _isProcessing;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsProgressVisible))]
+    private bool _isScanning;
+
+    [ObservableProperty]
+    private string _pluginFilter = string.Empty;
+
+    private ObservableCollection<PluginListItem> _plugins;
+
+    [ObservableProperty]
+    private string _progressStatus = string.Empty;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsGameSelected))]
+    private GameRelease? _selectedGame;
+
+    [ObservableProperty]
+    private double _progressValue;
+
+    public MainWindowViewModel(IThreadDispatcher? dispatcher = null) : this(dispatcher, 0)
+    {
+    }
+
+    public MainWindowViewModel(IThreadDispatcher? dispatcher, int debounceMs)
+    {
+        _dispatcher = dispatcher ?? new ImmediateThreadDispatcher();
+        _debounceMs = debounceMs;
+        _plugins = CreatePluginsCollection();
+        _plugins.CollectionChanged += OnPluginsCollectionChanged;
+
+        AvailableGames = new List<GameRelease>
+        {
+            GameRelease.Fallout4,
+            GameRelease.SkyrimSE,
+            GameRelease.SkyrimLE,
+            GameRelease.SkyrimVR,
+            GameRelease.SkyrimSEGog,
+            GameRelease.EnderalSE,
+            GameRelease.EnderalLE,
+            GameRelease.Fallout4VR,
+            GameRelease.Oblivion,
+            GameRelease.Starfield
+        }.AsReadOnly();
+
+        _detectedDirectories.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasMultipleDirectories));
+        _errorMessages.CollectionChanged += OnErrorMessagesCollectionChanged;
+        _informationMessages.CollectionChanged += OnInformationMessagesCollectionChanged;
+    }
+
+    private LockedObservableCollection<PluginListItem> CreatePluginsCollection(IEnumerable<PluginListItem>? source = null)
+    {
+        return source == null
+            ? new LockedObservableCollection<PluginListItem>(_pluginsLock)
+            : new LockedObservableCollection<PluginListItem>(_pluginsLock, source);
+    }
+
+    private void OnPluginsCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        ApplyFilter();
+    }
+
+    public IReadOnlyList<GameRelease> AvailableGames { get; }
+
+    public bool IsGameSelected => SelectedGame.HasValue;
+
+    public bool HasMultipleDirectories => DetectedDirectories.Count > 1;
+
+    public bool HasErrorMessages => ErrorMessages.Count > 0;
+
+    public bool HasInformationMessages => InformationMessages.Count > 0;
+
+    public bool IsProgressVisible => IsProcessing || IsScanning;
+
+    public ObservableCollection<PluginListItem> Plugins
+    {
+        get => _plugins;
+        set
+        {
+            if (ReferenceEquals(_plugins, value))
+            {
+                return;
+            }
+
+            var normalizedPlugins = value as LockedObservableCollection<PluginListItem> ?? CreatePluginsCollection(value);
+            var previousPlugins = _plugins;
+
+            if (SetProperty(ref _plugins, normalizedPlugins))
+            {
+                previousPlugins.CollectionChanged -= OnPluginsCollectionChanged;
+                _plugins.CollectionChanged += OnPluginsCollectionChanged;
+                ApplyFilter();
+            }
+        }
+    }
+
+    public ObservableCollection<PluginListItem> FilteredPlugins
+    {
+        get => _filteredPlugins;
+        // Keep this hand-written instead of using [ObservableProperty] so only the view model can replace the collection.
+        private set => SetProperty(ref _filteredPlugins, value);
+    }
+
+    partial void OnErrorMessagesChanging(ObservableCollection<string> value)
+    {
+        ErrorMessages.CollectionChanged -= OnErrorMessagesCollectionChanged;
+    }
+
+    partial void OnErrorMessagesChanged(ObservableCollection<string> value)
+    {
+        value.CollectionChanged += OnErrorMessagesCollectionChanged;
+        OnPropertyChanged(nameof(HasErrorMessages));
+    }
+
+    partial void OnInformationMessagesChanging(ObservableCollection<string> value)
+    {
+        InformationMessages.CollectionChanged -= OnInformationMessagesCollectionChanged;
+    }
+
+    partial void OnInformationMessagesChanged(ObservableCollection<string> value)
+    {
+        value.CollectionChanged += OnInformationMessagesCollectionChanged;
+        OnPropertyChanged(nameof(HasInformationMessages));
+    }
+
+    private void OnErrorMessagesCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        OnPropertyChanged(nameof(HasErrorMessages));
+    }
+
+    private void OnInformationMessagesCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        OnPropertyChanged(nameof(HasInformationMessages));
+    }
+
+    partial void OnPluginFilterChanged(string value)
+    {
+        if (_debounceMs <= 0)
+        {
+            ApplyFilter();
+        }
+        else
+        {
+            DebounceApplyFilter();
+        }
+    }
+
+    private void DebounceApplyFilter()
+    {
+        _debounceCts?.Cancel();
+        _debounceCts?.Dispose();
+        _debounceCts = new CancellationTokenSource();
+        var token = _debounceCts.Token;
+
+        Task.Delay(_debounceMs, token).ContinueWith(_ =>
+        {
+            if (!token.IsCancellationRequested)
+            {
+                _dispatcher.Post(() => ApplyFilter());
+            }
+        }, token, TaskContinuationOptions.OnlyOnRanToCompletion, TaskScheduler.Default);
+    }
+
+    public void SuspendFilter()
+    {
+        _filterSuspended = true;
+    }
+
+    public void ResumeFilter()
+    {
+        _filterSuspended = false;
+        ApplyFilter();
+    }
+
+    private void ApplyFilter()
+    {
+        // Skip filter application when suspended (during bulk loading)
+        if (_filterSuspended)
+        {
+            return;
+        }
+
+        // Prevent recursive calls using atomic compare-exchange for thread safety
+        if (Interlocked.CompareExchange(ref _isApplyingFilter, 1, 0) != 0)
+        {
+            return;
+        }
+
+        // Ensure filter operations happen on UI thread
+        if (!_dispatcher.CheckAccess())
+        {
+            _dispatcher.Post(() => ApplyFilter());
+            Interlocked.Exchange(ref _isApplyingFilter, 0);
+            return;
+        }
+
+        try
+        {
+            // Incremental update approach: modify existing collection instead of recreating
+            // This prevents O(n) allocations and excessive UI notifications on every filter change
+            // Note: All operations below run on the UI thread, providing implicit synchronization
+            // for _filteredPlugins. The lock only protects the _plugins snapshot.
+            List<PluginListItem> filtered;
+            lock (_pluginsLock)
+            {
+                filtered = string.IsNullOrWhiteSpace(PluginFilter)
+                    ? _plugins.ToList()
+                    : _plugins.Where(p => p.Name.Contains(PluginFilter, StringComparison.OrdinalIgnoreCase)).ToList();
+            }
+
+            // Use HashSet for O(1) lookup performance
+            var filteredSet = new HashSet<PluginListItem>(filtered);
+
+            // Remove items not in filtered set (iterate backwards to avoid index issues)
+            for (var i = _filteredPlugins.Count - 1; i >= 0; i--)
+            {
+                if (!filteredSet.Contains(_filteredPlugins[i]))
+                {
+                    _filteredPlugins.RemoveAt(i);
+                }
+            }
+
+            // Add new items that aren't already in the collection
+            // Create a snapshot to avoid collection modified exception during enumeration
+            var existingSet = new HashSet<PluginListItem>(_filteredPlugins.ToList());
+            foreach (var item in filtered)
+            {
+                if (!existingSet.Contains(item))
+                {
+                    _filteredPlugins.Add(item);
+                }
+            }
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _isApplyingFilter, 0);
+        }
+    }
+
+    public virtual void AddErrorMessage(string message, int maxMessages = 10)
+    {
+        // Ensure collection operations happen on UI thread
+        if (!_dispatcher.CheckAccess())
+        {
+            _dispatcher.Post(() => AddErrorMessage(message, maxMessages));
+            return;
+        }
+
+        lock (_messagesLock)
+        {
+            ErrorMessages.Add(message);
+
+            if (ErrorMessages.Count > maxMessages)
+            {
+                ErrorMessages.RemoveAt(0);
+            }
+        }
+    }
+
+    public virtual void AddInformationMessage(string message, int maxMessages = 10)
+    {
+        // Ensure collection operations happen on UI thread
+        if (!_dispatcher.CheckAccess())
+        {
+            _dispatcher.Post(() => AddInformationMessage(message, maxMessages));
+            return;
+        }
+
+        lock (_messagesLock)
+        {
+            InformationMessages.Add(message);
+
+            if (InformationMessages.Count > maxMessages)
+            {
+                InformationMessages.RemoveAt(0);
+            }
+        }
+    }
+
+    public void ResetProgress()
+    {
+        // Ensure collection operations happen on UI thread
+        if (!_dispatcher.CheckAccess())
+        {
+            _dispatcher.Post(() => ResetProgress());
+            return;
+        }
+
+        ProgressValue = 0;
+        ProgressStatus = string.Empty;
+        IsProcessing = false;
+        lock (_messagesLock)
+        {
+            ErrorMessages.Clear();
+            InformationMessages.Clear();
+        }
+    }
+
+    /// <summary>
+    /// Gets a thread-safe snapshot of selected plugins.
+    /// </summary>
+    /// <returns>A list of selected plugins at the time of the call.</returns>
+    public List<PluginListItem> GetSelectedPlugins()
+    {
+        lock (_pluginsLock)
+        {
+            return _plugins.Where(p => p.IsSelected).ToList();
+        }
+    }
+
+    public void UpdateProgress(string status, double? value = null)
+    {
+        // Ensure UI updates happen on UI thread
+        if (!_dispatcher.CheckAccess())
+        {
+            _dispatcher.Post(() => UpdateProgress(status, value));
+            return;
+        }
+
+        ProgressStatus = status;
+        if (value.HasValue)
+        {
+            ProgressValue = value.Value;
+        }
+    }
+
+    public void Dispose()
+    {
+        _debounceCts?.Cancel();
+        _debounceCts?.Dispose();
+        _debounceCts = null;
+    }
+
+    private sealed class LockedObservableCollection<T> : ObservableCollection<T>
+    {
+        private readonly object _syncRoot;
+
+        public LockedObservableCollection(object syncRoot)
+        {
+            _syncRoot = syncRoot;
+        }
+
+        public LockedObservableCollection(object syncRoot, IEnumerable<T> source) : base(source)
+        {
+            _syncRoot = syncRoot;
+        }
+
+        protected override void InsertItem(int index, T item)
+        {
+            lock (_syncRoot)
+            {
+                base.InsertItem(index, item);
+            }
+        }
+
+        protected override void RemoveItem(int index)
+        {
+            lock (_syncRoot)
+            {
+                base.RemoveItem(index);
+            }
+        }
+
+        protected override void SetItem(int index, T item)
+        {
+            lock (_syncRoot)
+            {
+                base.SetItem(index, item);
+            }
+        }
+
+        protected override void MoveItem(int oldIndex, int newIndex)
+        {
+            lock (_syncRoot)
+            {
+                base.MoveItem(oldIndex, newIndex);
+            }
+        }
+
+        protected override void ClearItems()
+        {
+            lock (_syncRoot)
+            {
+                base.ClearItems();
+            }
+        }
+    }
+}

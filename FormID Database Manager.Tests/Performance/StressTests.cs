@@ -14,7 +14,6 @@ using FormID_Database_Manager.ViewModels;
 using Microsoft.Data.Sqlite;
 using Mutagen.Bethesda;
 using Xunit;
-using Xunit.Abstractions;
 
 namespace FormID_Database_Manager.Tests.Performance;
 

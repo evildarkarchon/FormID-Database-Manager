@@ -62,7 +62,7 @@ public class ModProcessorTests : IDisposable
         var pluginPath = Path.Combine(gameDir, "TestPlugin.esp");
 
         // Create corrupted plugin that will fail processing
-        await File.WriteAllBytesAsync(pluginPath, new byte[] { 0xFF, 0xFF, 0xFF, 0xFF });
+        await File.WriteAllBytesAsync(pluginPath, new byte[] { 0xFF, 0xFF, 0xFF, 0xFF }, TestContext.Current.CancellationToken);
 
         var pluginItem = new PluginListItem { Name = "TestPlugin.esp", IsSelected = true };
         var mockModListing = CreateMockModListing("TestPlugin.esp");
@@ -331,11 +331,102 @@ public class ModProcessorTests : IDisposable
                 CancellationToken.None));
 
         // Assert
+        databaseServiceMock.Verify(x => x.GetPluginsWithEntries(
+            It.IsAny<SqliteConnection>(),
+            It.IsAny<GameRelease>(),
+            It.IsAny<CancellationToken>()), Times.Never);
         databaseServiceMock.Verify(x => x.ClearPluginEntries(
             _connection,
             GameRelease.SkyrimSE,
             "TestPlugin.esp",
             It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ProcessPlugin_UpdateModeWithEmptyExistingPluginCache_StillClearsPluginEntries()
+    {
+        // Arrange
+        var databaseServiceMock = new Mock<DatabaseService>();
+        databaseServiceMock.Setup(x => x.ClearPluginEntries(
+                It.IsAny<SqliteConnection>(),
+                It.IsAny<GameRelease>(),
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var errors = new List<string>();
+        var processor = new ModProcessor(databaseServiceMock.Object, errors.Add);
+
+        var gameDir = Path.Combine(Path.GetTempPath(), $"TestGame_{Guid.NewGuid():N}", "Data");
+        Directory.CreateDirectory(gameDir);
+        await CreateMinimalPluginFile(Path.Combine(gameDir, "TestPlugin.esp"));
+
+        var pluginItem = new PluginListItem { Name = "TestPlugin.esp", IsSelected = true };
+        var mockModListing = CreateMockModListing("TestPlugin.esp");
+        var loadOrder = CreateLoadOrderDictionary(mockModListing.Object);
+        var existingPlugins = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        // Act
+        await Assert.ThrowsAnyAsync<Exception>(async () =>
+            await processor.ProcessPlugin(
+                gameDir,
+                _connection,
+                GameRelease.SkyrimSE,
+                pluginItem,
+                loadOrder,
+                true,
+                CancellationToken.None,
+                existingPlugins));
+
+        // Assert
+        databaseServiceMock.Verify(x => x.ClearPluginEntries(
+            _connection,
+            GameRelease.SkyrimSE,
+            "TestPlugin.esp",
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ProcessPlugin_UpdateModeOffWithNullExistingPlugins_DoesNotClearPluginEntries()
+    {
+        // Arrange
+        var databaseServiceMock = new Mock<DatabaseService>();
+        databaseServiceMock.Setup(x => x.ClearPluginEntries(
+                It.IsAny<SqliteConnection>(),
+                It.IsAny<GameRelease>(),
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var errors = new List<string>();
+        var processor = new ModProcessor(databaseServiceMock.Object, errors.Add);
+
+        var gameDir = Path.Combine(Path.GetTempPath(), $"TestGame_{Guid.NewGuid():N}", "Data");
+        Directory.CreateDirectory(gameDir);
+        await CreateMinimalPluginFile(Path.Combine(gameDir, "TestPlugin.esp"));
+
+        var pluginItem = new PluginListItem { Name = "TestPlugin.esp", IsSelected = true };
+        var mockModListing = CreateMockModListing("TestPlugin.esp");
+        var loadOrder = CreateLoadOrderDictionary(mockModListing.Object);
+
+        // Act
+        await Assert.ThrowsAnyAsync<Exception>(async () =>
+            await processor.ProcessPlugin(
+                gameDir,
+                _connection,
+                GameRelease.SkyrimSE,
+                pluginItem,
+                loadOrder,
+                false,
+                CancellationToken.None,
+                existingPlugins: null));
+
+        // Assert
+        databaseServiceMock.Verify(x => x.ClearPluginEntries(
+            It.IsAny<SqliteConnection>(),
+            It.IsAny<GameRelease>(),
+            It.IsAny<string>(),
+            It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -366,6 +457,40 @@ public class ModProcessorTests : IDisposable
         Assert.NotNull(processor.CapturedReadParameters.MasterFlagsLookup);
     }
 
+    [Fact]
+    public async Task ProcessPlugin_StarfieldDictionaryLoadOrder_PassesMasterFlagsLookupToOverlayReads()
+    {
+        var errors = new List<string>();
+        var processor = new CapturingModProcessor(_databaseService, errors.Add);
+
+        var gameDir = Path.Combine(Path.GetTempPath(), "TestGame", "Data");
+        Directory.CreateDirectory(gameDir);
+        await CreateMinimalPluginFile(Path.Combine(gameDir, "TestPlugin.esm"));
+
+        var pluginItem = new PluginListItem { Name = "TestPlugin.esm", IsSelected = true };
+        var modKey = ModKey.FromNameAndExtension("TestPlugin.esm");
+        var mod = new Mock<IModGetter>();
+        mod.Setup(x => x.ModKey).Returns(modKey);
+        mod.Setup(x => x.MasterStyle).Returns(MasterStyle.Full);
+
+        var listing = new Mock<IModListingGetter<IModGetter>>();
+        listing.Setup(x => x.ModKey).Returns(modKey);
+        listing.Setup(x => x.Mod).Returns(mod.Object);
+        var loadOrder = CreateLoadOrderDictionary(listing.Object);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => processor.ProcessPlugin(
+            gameDir,
+            _connection,
+            GameRelease.Starfield,
+            pluginItem,
+            loadOrder,
+            false,
+            CancellationToken.None));
+
+        Assert.NotNull(processor.CapturedReadParameters);
+        Assert.NotNull(processor.CapturedReadParameters.MasterFlagsLookup);
+    }
+
     #endregion
 
     #region Error Handling Tests
@@ -379,7 +504,7 @@ public class ModProcessorTests : IDisposable
         var pluginPath = Path.Combine(gameDir, "Corrupted.esp");
 
         // Create corrupted plugin file
-        await File.WriteAllBytesAsync(pluginPath, new byte[] { 0xFF, 0xFF, 0xFF, 0xFF });
+        await File.WriteAllBytesAsync(pluginPath, new byte[] { 0xFF, 0xFF, 0xFF, 0xFF }, TestContext.Current.CancellationToken);
 
         var pluginItem = new PluginListItem { Name = "Corrupted.esp", IsSelected = true };
         var mockModListing = CreateMockModListing("Corrupted.esp");

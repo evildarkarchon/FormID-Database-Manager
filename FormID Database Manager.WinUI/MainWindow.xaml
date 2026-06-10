@@ -1,0 +1,242 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<Window
+    x:Class="FormID_Database_Manager.WinUI.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    Title="FormID Database Manager"
+    mc:Ignorable="d">
+
+    <Border
+        x:Name="Root"
+        Background="{ThemeResource ApplicationPageBackgroundThemeBrush}"
+        Padding="{StaticResource WindowContentMargin}">
+        <Grid RowDefinitions="Auto,Auto,*,Auto,Auto,Auto" RowSpacing="12">
+            <StackPanel Grid.Row="0" Spacing="2">
+                <TextBlock
+                    FontSize="22"
+                    FontWeight="SemiBold"
+                    Text="FormID Database Manager" />
+                <TextBlock
+                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                    Text="Build SQLite FormID lookup databases from Bethesda plugin data." />
+            </StackPanel>
+
+            <Grid
+                Grid.Row="1"
+                ColumnDefinitions="180,*,Auto"
+                ColumnSpacing="8"
+                RowDefinitions="Auto,Auto,Auto,Auto,Auto"
+                RowSpacing="8">
+                <TextBlock
+                    Grid.Row="0"
+                    Grid.Column="0"
+                    Style="{StaticResource FieldLabelTextBlockStyle}"
+                    Text="Game" />
+                <ComboBox
+                    x:Name="GameComboBox"
+                    Grid.Row="0"
+                    Grid.Column="1"
+                    HorizontalAlignment="Stretch"
+                    ItemsSource="{Binding AvailableGames}"
+                    PlaceholderText="Select a game"
+                    SelectedItem="{Binding SelectedGame, Mode=TwoWay}"
+                    SelectionChanged="GameComboBox_SelectionChanged" />
+
+                <TextBlock
+                    Grid.Row="1"
+                    Grid.Column="0"
+                    Style="{StaticResource FieldLabelTextBlockStyle}"
+                    Text="Game Directory" />
+                <Grid
+                    Grid.Row="1"
+                    Grid.Column="1"
+                    ColumnDefinitions="*,260"
+                    ColumnSpacing="8">
+                    <TextBox
+                        IsReadOnly="True"
+                        Style="{StaticResource PathTextBoxStyle}"
+                        Text="{Binding GameDirectory, Mode=TwoWay}" />
+                    <ComboBox
+                        x:Name="DirectoryComboBox"
+                        Grid.Column="1"
+                        HorizontalAlignment="Stretch"
+                        ItemsSource="{Binding DetectedDirectories}"
+                        PlaceholderText="Detected directories"
+                        SelectedItem="{Binding GameDirectory, Mode=TwoWay}"
+                        SelectionChanged="DirectoryComboBox_SelectionChanged" />
+                </Grid>
+                <Button
+                    x:Name="BrowseDirectoryButton"
+                    Grid.Row="1"
+                    Grid.Column="2"
+                    Click="BrowseDirectory_Click"
+                    Content="Browse..."
+                    Style="{StaticResource WorkflowButtonStyle}" />
+
+                <TextBlock
+                    Grid.Row="2"
+                    Grid.Column="0"
+                    Style="{StaticResource FieldLabelTextBlockStyle}"
+                    Text="Database File" />
+                <TextBox
+                    x:Name="DatabasePathTextBox"
+                    Grid.Row="2"
+                    Grid.Column="1"
+                    IsReadOnly="True"
+                    Style="{StaticResource PathTextBoxStyle}"
+                    Text="{Binding DatabasePath, Mode=TwoWay}" />
+                <Button
+                    x:Name="SelectDatabaseButton"
+                    Grid.Row="2"
+                    Grid.Column="2"
+                    Click="OnSelectDatabase_Click"
+                    Content="Select Database"
+                    Style="{StaticResource WorkflowButtonStyle}" />
+
+                <TextBlock
+                    Grid.Row="3"
+                    Grid.Column="0"
+                    Style="{StaticResource FieldLabelTextBlockStyle}"
+                    Text="FormID List File" />
+                <TextBox
+                    x:Name="FormIdListPathTextBox"
+                    Grid.Row="3"
+                    Grid.Column="1"
+                    IsReadOnly="True"
+                    Style="{StaticResource PathTextBoxStyle}"
+                    Text="{Binding FormIdListPath, Mode=TwoWay}" />
+                <Button
+                    x:Name="SelectListFileButton"
+                    Grid.Row="3"
+                    Grid.Column="2"
+                    Click="OnSelectFormIdList_Click"
+                    Content="Select List File"
+                    Style="{StaticResource WorkflowButtonStyle}" />
+
+                <TextBlock
+                    Grid.Row="4"
+                    Grid.Column="0"
+                    Style="{StaticResource FieldLabelTextBlockStyle}"
+                    Text="Filter Plugins" />
+                <TextBox
+                    Grid.Row="4"
+                    Grid.Column="1"
+                    Grid.ColumnSpan="2"
+                    PlaceholderText="Type to filter plugins"
+                    Text="{Binding PluginFilter, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+            </Grid>
+
+            <Grid
+                Grid.Row="2"
+                ColumnDefinitions="*,Auto"
+                ColumnSpacing="12">
+                <Border
+                    Grid.Column="0"
+                    Style="{StaticResource PluginListBorderStyle}">
+                    <ListView
+                        x:Name="PluginList"
+                        ItemsSource="{Binding FilteredPlugins}"
+                        SelectionMode="None">
+                        <ListView.ItemTemplate>
+                            <DataTemplate>
+                                <CheckBox
+                                    Margin="4,2"
+                                    Content="{Binding Name}"
+                                    IsChecked="{Binding IsSelected, Mode=TwoWay}" />
+                            </DataTemplate>
+                        </ListView.ItemTemplate>
+                    </ListView>
+                </Border>
+
+                <StackPanel Grid.Column="1" Spacing="8">
+                    <Button
+                        x:Name="SelectAllButton"
+                        Click="SelectAll_Click"
+                        Content="Select All"
+                        Style="{StaticResource WorkflowButtonStyle}" />
+                    <Button
+                        x:Name="SelectNoneButton"
+                        Click="SelectNone_Click"
+                        Content="Select None"
+                        Style="{StaticResource WorkflowButtonStyle}" />
+                </StackPanel>
+            </Grid>
+
+            <StackPanel
+                Grid.Row="3"
+                Orientation="Horizontal"
+                Spacing="16">
+                <CheckBox
+                    x:Name="UpdateModeCheckBox"
+                    Content="Update Mode (replaces existing entries)" />
+                <CheckBox
+                    x:Name="AdvancedModeCheckBox"
+                    Checked="AdvancedMode_CheckedChanged"
+                    Content="Show Base Game/DLC Files"
+                    Unchecked="AdvancedMode_CheckedChanged" />
+            </StackPanel>
+
+            <Grid
+                Grid.Row="4"
+                ColumnDefinitions="*,Auto"
+                ColumnSpacing="12"
+                RowDefinitions="Auto,Auto"
+                RowSpacing="6">
+                <TextBlock
+                    Grid.Row="0"
+                    Grid.Column="0"
+                    Text="{Binding ProgressStatus, Mode=OneWay}"
+                    TextWrapping="Wrap" />
+                <ProgressBar
+                    x:Name="ProcessingProgressBar"
+                    Grid.Row="1"
+                    Grid.Column="0"
+                    Maximum="100"
+                    Minimum="0"
+                    Value="{Binding ProgressValue, Mode=OneWay}" />
+                <Button
+                    x:Name="ProcessFormIdsButton"
+                    Grid.Row="0"
+                    Grid.RowSpan="2"
+                    Grid.Column="1"
+                    Click="ProcessFormIds_Click"
+                    Content="Process FormIDs"
+                    Style="{StaticResource WorkflowButtonStyle}" />
+            </Grid>
+
+            <StackPanel Grid.Row="5" Margin="0,0,0,4" Spacing="8">
+                <InfoBar
+                    CornerRadius="4"
+                    IsClosable="True"
+                    IsOpen="{Binding HasErrorMessages, Mode=OneWay}"
+                    Severity="Error"
+                    Title="Errors">
+                    <ItemsControl ItemsSource="{Binding ErrorMessages}" Margin="0,0,0,8">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding}" TextWrapping="Wrap" />
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </InfoBar>
+
+                <InfoBar
+                    CornerRadius="4"
+                    IsClosable="True"
+                    IsOpen="{Binding HasInformationMessages, Mode=OneWay}"
+                    Severity="Informational"
+                    Title="Information">
+                    <ItemsControl ItemsSource="{Binding InformationMessages}" Margin="0,0,0,8">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding}" TextWrapping="Wrap" />
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </InfoBar>
+            </StackPanel>
+        </Grid>
+    </Border>
+</Window>
