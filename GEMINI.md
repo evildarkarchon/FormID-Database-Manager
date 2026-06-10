@@ -13,7 +13,7 @@ FormID Database Manager is a WinUI desktop application that creates SQLite datab
 dotnet build "FormID Database Manager.slnx"
 
 # Run the application
-dotnet run --project "FormID Database Manager.WinUI" -p:Platform=x64
+dotnet run --project "FormID Database Manager.WinUI" -p:Platform=x64 -p:WindowsPackageType=None -p:WindowsAppSDKSelfContained=true
 
 # Run all tests
 dotnet test "FormID Database Manager.Tests"

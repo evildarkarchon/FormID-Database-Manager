@@ -71,10 +71,10 @@ dotnet build "FormID Database Manager.WinUI\FormID Database Manager.WinUI.csproj
 
 ### Run
 
-Debug CLI runs use an unpackaged, Windows App SDK self-contained path so the app can launch directly from `dotnet run`.
+Debug CLI runs pass unpackaged, Windows App SDK self-contained properties so the app can launch directly from `dotnet run`.
 
 ```bash
-dotnet run --project "FormID Database Manager.WinUI"
+dotnet run --project "FormID Database Manager.WinUI" -p:Platform=x64 -p:WindowsPackageType=None -p:WindowsAppSDKSelfContained=true
 ```
 
 ### Test
@@ -126,8 +126,9 @@ Runtime and distribution notes:
 
 - Packaged MSIX is the Phase 9 packaged lane for direct MSIX verification. Store submission, production certificate selection, AppInstaller feeds, and automatic update flow are not configured yet.
 - The packaged profile does not set `WindowsPackageType=None`; the base project remains MSIX-capable.
-- The unpackaged framework-dependent profile sets `WindowsPackageType=None` only in that profile. Target machines must have the matching .NET desktop runtime and Windows App SDK runtime installed.
-- The unpackaged self-contained profile sets `WindowsPackageType=None` and `WindowsAppSDKSelfContained=true` only in that profile. Its output carries the Windows App SDK runtime with the app and is larger than the framework-dependent output.
+- The debug run command sets `WindowsPackageType=None` and `WindowsAppSDKSelfContained=true` explicitly without changing the base project default.
+- The unpackaged framework-dependent publish profile sets `WindowsPackageType=None`; target machines must have the matching .NET desktop runtime and Windows App SDK runtime installed.
+- The unpackaged self-contained publish profile sets `WindowsPackageType=None` and `WindowsAppSDKSelfContained=true`. Its output carries the Windows App SDK runtime with the app and is larger than the framework-dependent output.
 - Single-file unpackaged output is not selected for Phase 9 because first-launch extraction behavior still needs clean-machine verification.
 - When no database path is selected, generated databases are written under `%LOCALAPPDATA%\FormID Database Manager\Databases`.
 

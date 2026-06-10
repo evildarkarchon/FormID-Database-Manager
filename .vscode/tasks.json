@@ -39,7 +39,9 @@
                 "run",
                 "--project",
                 "${workspaceFolder}/FormID Database Manager.WinUI/FormID Database Manager.WinUI.csproj",
-                "--property:Platform=x64"
+                "--property:Platform=x64",
+                "--property:WindowsPackageType=None",
+                "--property:WindowsAppSDKSelfContained=true"
             ],
             "problemMatcher": "$msCompile"
         }

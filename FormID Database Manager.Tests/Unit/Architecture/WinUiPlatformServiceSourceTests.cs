@@ -274,6 +274,36 @@ public class WinUiPlatformServiceSourceTests
     }
 
     /// <summary>
+    /// Verifies that command-line debug entry points opt into unpackaged WinUI execution explicitly.
+    /// </summary>
+    [Fact]
+    public void WinUiDebugCommands_UseUnpackagedSelfContainedProperties()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var expectedRunCommand =
+            "dotnet run --project \"FormID Database Manager.WinUI\" -p:Platform=x64 " +
+            "-p:WindowsPackageType=None -p:WindowsAppSDKSelfContained=true";
+        var documentationPaths = new[]
+        {
+            Path.Combine(repositoryRoot, "README.md"),
+            Path.Combine(repositoryRoot, "AGENTS.md"),
+            Path.Combine(repositoryRoot, "CLAUDE.md"),
+            Path.Combine(repositoryRoot, "GEMINI.md"),
+        };
+
+        foreach (var documentationPath in documentationPaths)
+        {
+            var documentation = File.ReadAllText(documentationPath);
+            Assert.Contains(expectedRunCommand, documentation, StringComparison.Ordinal);
+        }
+
+        var tasksJson = File.ReadAllText(Path.Combine(repositoryRoot, ".vscode", "tasks.json"));
+        Assert.Contains("--property:Platform=x64", tasksJson, StringComparison.Ordinal);
+        Assert.Contains("--property:WindowsPackageType=None", tasksJson, StringComparison.Ordinal);
+        Assert.Contains("--property:WindowsAppSDKSelfContained=true", tasksJson, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// Verifies that default solution builds remain intentionally Windows-only.
     /// </summary>
     [Fact]

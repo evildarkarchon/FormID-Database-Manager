@@ -272,12 +272,12 @@ Phase 7 verification checkpoint, 2026-06-09:
 
 - ViewModel tests now run as standard xUnit facts through `FormID Database Manager.Core` and `FormID Database Manager.TestUtilities` with `SynchronousThreadDispatcher` or focused fake dispatchers. The test project no longer references `Avalonia.Headless.XUnit`, `Avalonia`, `Avalonia.Themes.Fluent`, or the legacy Avalonia app project.
 - Avalonia-only test host files and UI tests were retired after replacement coverage was added or preserved. WinUI source tests now lock down `WinUiThreadDispatcher` delegation, `IFileDialogService` picker workflow consumption, migration-critical controls and handlers, binding-critical XAML, and platform-service wiring. Real WinUI picker behavior remains manual/smoke coverage because the automated test project does not host a live WinUI window.
-- Windows CI was added at `.github/workflows/windows-ci.yml`. It restores the solution, builds the WinUI project for x64, builds the solution, and runs `dotnet test "FormID Database Manager.Tests"` on `windows-latest` using existing skip attributes for manual performance, load, stress, and environment-specific tests.
+- Windows CI was added at `.github/workflows/windows-ci.yml`. It restores the solution, builds the WinUI project for x64, builds the solution, and runs the CI-safe test suite on `windows-latest` with manual performance, performance regression, load, and stress categories excluded. These performance suites remain opt-in through `RUN_MANUAL_PERFORMANCE_TESTS=1` or explicit local filters.
 - Final automated-headless search: `rg "AvaloniaFact|Avalonia.Headless|UiTestHost|TestInitialization|AvaloniaThreadDispatcher|using Avalonia|Avalonia.Themes|WindowManager" "FormID Database Manager.Tests"` found no automated headless dependencies. The only remaining Avalonia text in tests is the intentional `CoreProjectBoundaryTests` guard that asserts Core source files do not contain `using Avalonia`.
 - Focused Phase 7 tests passed: `dotnet test "FormID Database Manager.Tests" --filter "FullyQualifiedName~MainWindowViewModelTests|FullyQualifiedName~QueuedThreadDispatcherTests|FullyQualifiedName~ImmediateThreadDispatcherTests|FullyQualifiedName~WinUiPlatformServiceSourceTests|FullyQualifiedName~CoreProjectBoundaryTests"` completed with 85 passed, 0 skipped, and 0 failed.
 - `dotnet build "FormID Database Manager.WinUI\FormID Database Manager.WinUI.csproj" -p:Platform=x64` succeeded with 0 warnings and 0 errors.
 - `dotnet build "FormID Database Manager.slnx"` succeeded with 0 warnings and 0 errors.
-- `dotnet test "FormID Database Manager.Tests"` passed with 274 tests passed, 11 skipped, and 0 failed. The skipped tests remain the existing symbolic-link and manual performance/load/stress tests.
+- `dotnet test "FormID Database Manager.Tests"` passed with 274 tests passed, 11 skipped, and 0 failed. The skipped tests remain the existing symbolic-link and manual performance/load/stress tests; hardware-sensitive performance regression tests are treated as manual performance coverage for CI.
 
 ### Phase 8: Remove Avalonia
 
@@ -328,6 +328,7 @@ Phase 8 verification checkpoint, 2026-06-09:
 Phase 9 implementation checkpoint, 2026-06-10:
 
 - Tooling inspection resolved .NET SDK `10.0.300`, MSBuild `18.6.3`, and Windows App SDK package `1.8.260529003`. The base WinUI project evaluates `EnableMsixTooling=true` and `WindowsPackageType=MSIX`; it does not set `WindowsPackageType=None` globally.
+- Debug CLI commands pass `WindowsPackageType=None` and `WindowsAppSDKSelfContained=true` explicitly so `dotnet run` uses the advertised unpackaged self-contained path without changing the base project default.
 - Added explicit x64 publish profiles:
   - `win-x64-msix.pubxml` uses single-project MSIX packaging through `dotnet build` with `GenerateAppxPackageOnBuild=true`, `UapAppxPackageBuildMode=SideloadOnly`, and `AppxBundle=Never`. Single-project MSIX does not produce MSIX bundles directly, so any future bundle would need a separate bundling step.
   - `win-x64-unpackaged-framework-dependent.pubxml` scopes `WindowsPackageType=None`, `SelfContained=false`, and `WindowsAppSDKSelfContained=false` to the framework-dependent unpackaged lane. Target machines must install the matching .NET desktop runtime and Windows App SDK runtime.

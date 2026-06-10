@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Threading.Tasks;
 using FormID_Database_Manager.Services;
+using FormID_Database_Manager.TestUtilities;
 using FormID_Database_Manager.TestUtilities.Fixtures;
 using FormID_Database_Manager.ViewModels;
 using Microsoft.Data.Sqlite;
@@ -17,6 +18,7 @@ namespace FormID_Database_Manager.Tests.Performance;
 ///     Performance regression tests to ensure operations stay within acceptable time bounds
 /// </summary>
 [Collection("Performance Tests")]
+[Trait("Category", "ManualPerformance")]
 public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
 {
     private readonly DatabaseFixture _fixture;
@@ -62,7 +64,7 @@ public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
         }
     }
 
-    [Fact]
+    [ManualPerformanceFact]
     [Trait("Category", "PerformanceRegression")]
     public async Task DatabaseInitialization_SingleGame_StaysWithinBaseline()
     {
@@ -84,7 +86,7 @@ public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
             $"Performance regression detected! Operation took {stopwatch.Elapsed.TotalMilliseconds:F2}ms, baseline is {baseline.TotalMilliseconds:F2}ms (20% tolerance)");
     }
 
-    [Fact]
+    [ManualPerformanceFact]
     [Trait("Category", "PerformanceRegression")]
     public async Task DatabaseInitialization_AllGames_StaysWithinBaseline()
     {
@@ -115,7 +117,7 @@ public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
             $"Performance regression detected! Operation took {stopwatch.Elapsed.TotalMilliseconds:F2}ms, baseline is {baseline.TotalMilliseconds:F2}ms (20% tolerance)");
     }
 
-    [Theory]
+    [ManualPerformanceTheory]
     [Trait("Category", "PerformanceRegression")]
     [InlineData(1000, "BatchInsert_1000Records")]
     [InlineData(10000, "BatchInsert_10000Records")]
@@ -158,7 +160,7 @@ public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
             $"Performance regression detected! Operation took {stopwatch.Elapsed.TotalMilliseconds:F2}ms, baseline is {baseline.TotalMilliseconds:F2}ms (20% tolerance)");
     }
 
-    [Fact]
+    [ManualPerformanceFact]
     [Trait("Category", "PerformanceRegression")]
     public void GameDetection_SimpleDirectory_StaysWithinBaseline()
     {
@@ -183,7 +185,7 @@ public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
             $"Performance regression detected! Operation took {stopwatch.Elapsed.TotalMilliseconds:F2}ms, baseline is {baseline.TotalMilliseconds:F2}ms (30% tolerance)");
     }
 
-    [Fact]
+    [ManualPerformanceFact]
     [Trait("Category", "PerformanceRegression")]
     public void GameDetection_ComplexDirectory_StaysWithinBaseline()
     {
@@ -214,7 +216,7 @@ public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
             $"Performance regression detected! Operation took {stopwatch.Elapsed.TotalMilliseconds:F2}ms, baseline is {baseline.TotalMilliseconds:F2}ms (30% tolerance)");
     }
 
-    [Theory]
+    [ManualPerformanceTheory]
     [Trait("Category", "PerformanceRegression")]
     [InlineData(10, "PluginListLoad_Small")]
     [InlineData(255, "PluginListLoad_Large")]
@@ -256,7 +258,7 @@ public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
             $"Performance regression detected! Operation took {stopwatch.Elapsed.TotalMilliseconds:F2}ms, baseline is {baseline.TotalMilliseconds:F2}ms (20% tolerance)");
     }
 
-    [Theory]
+    [ManualPerformanceTheory]
     [Trait("Category", "PerformanceRegression")]
     [InlineData(100, "FormIdProcess_SmallFile")]
     [InlineData(10000, "FormIdProcess_LargeFile")]
@@ -309,7 +311,7 @@ public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
             $"Performance regression detected! Operation took {stopwatch.Elapsed.TotalMilliseconds:F2}ms, baseline is {baseline.TotalMilliseconds:F2}ms (30% tolerance)");
     }
 
-    [Fact]
+    [ManualPerformanceFact]
     [Trait("Category", "PerformanceRegression")]
     public async Task MemoryUsage_DatabaseOperations_StaysWithinLimits()
     {
@@ -356,7 +358,7 @@ public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
             $"Memory usage regression detected! Operation used {memoryIncrease:N0} bytes");
     }
 
-    [Fact]
+    [ManualPerformanceFact]
     [Trait("Category", "PerformanceRegression")]
     public void CpuUsage_IntensiveOperations_StaysReasonable()
     {

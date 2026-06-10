@@ -41,4 +41,7 @@ jobs:
         run: dotnet build "FormID Database Manager.slnx" --configuration Release --no-restore
 
       - name: Test
-        run: dotnet test "FormID Database Manager.Tests" --configuration Release --logger "trx;LogFileName=test-results.trx"
+        run: >
+          dotnet test "FormID Database Manager.Tests" --configuration Release
+          --filter "Category!=ManualPerformance&Category!=PerformanceRegression&Category!=LoadTest&Category!=StressTest"
+          --logger "trx;LogFileName=test-results.trx"
