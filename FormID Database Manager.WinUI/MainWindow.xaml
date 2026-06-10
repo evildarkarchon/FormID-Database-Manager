@@ -213,7 +213,7 @@
                     IsOpen="{Binding HasErrorMessages, Mode=OneWay}"
                     Severity="Error"
                     Title="Errors">
-                    <ItemsControl ItemsSource="{Binding ErrorMessages}" Margin="0,0,0,12">
+                    <ItemsControl ItemsSource="{Binding ErrorMessages}" Margin="0,0,0,8">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
                                 <TextBlock Text="{Binding}" TextWrapping="Wrap" />
@@ -228,7 +228,7 @@
                     IsOpen="{Binding HasInformationMessages, Mode=OneWay}"
                     Severity="Informational"
                     Title="Information">
-                    <ItemsControl ItemsSource="{Binding InformationMessages}" Margin="0,0,0,12">
+                    <ItemsControl ItemsSource="{Binding InformationMessages}" Margin="0,0,0,8">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
                                 <TextBlock Text="{Binding}" TextWrapping="Wrap" />

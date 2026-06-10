@@ -375,6 +375,7 @@ The migration is complete when:
 
 - `rg "Avalonia|axaml|AvaloniaFact|Headless"` finds no remaining required app/test dependencies.
 - `dotnet build "FormID Database Manager.slnx"` succeeds on Windows.
+- Linux/macOS solution builds are intentionally unsupported because the default solution includes the WinUI desktop shell.
 - `dotnet test "FormID Database Manager.Tests"` succeeds, excluding any explicitly manual game-installation tests.
 - The WinUI app launches from the chosen local workflow and shows the main window.
 - The app can process plugin files and optional FormID text files with output matching the Avalonia baseline.

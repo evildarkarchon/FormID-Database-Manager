@@ -1,5 +1,7 @@
 using System;
 using System.IO;
+using System.Linq;
+using System.Xml.Linq;
 using Xunit;
 
 namespace FormID_Database_Manager.Tests.Unit.Architecture;
@@ -269,6 +271,33 @@ public class WinUiPlatformServiceSourceTests
         Assert.Contains("<SelfContained>true</SelfContained>", selfContainedProfile, StringComparison.Ordinal);
         Assert.Contains("<WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>", selfContainedProfile, StringComparison.Ordinal);
         Assert.DoesNotContain("<PublishSingleFile>true</PublishSingleFile>", selfContainedProfile, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Verifies that default solution builds remain intentionally Windows-only.
+    /// </summary>
+    [Fact]
+    public void WinUiProject_KeepsDefaultSolutionBuildWindowsOnly()
+    {
+        var winUiDirectory = GetWinUiProjectDirectory();
+        var projectPath = Path.Combine(winUiDirectory, "FormID Database Manager.WinUI.csproj");
+
+        var projectSource = File.ReadAllText(projectPath);
+        var projectXml = XDocument.Parse(projectSource);
+        var targetFrameworks = projectXml.Descendants("TargetFramework")
+            .Select(element => element.Value)
+            .Concat(projectXml.Descendants("TargetFrameworks")
+                .SelectMany(element => element.Value.Split(
+                    ';',
+                    StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)))
+            .ToArray();
+
+        Assert.Contains(targetFrameworks, targetFramework => targetFramework.Contains("-windows", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain("<EnableWindowsTargeting>true</EnableWindowsTargeting>", projectSource, StringComparison.Ordinal);
+        Assert.Contains(
+            "EnableWindowsTargeting is intentionally omitted so default solution builds fail on non-Windows hosts.",
+            projectSource,
+            StringComparison.Ordinal);
     }
 
     private static string GetWinUiProjectDirectory()

@@ -53,8 +53,11 @@ Phase 0 was recorded on June 9, 2026 before extracting the UI-neutral core bound
 ### Prerequisites
 
 - [.NET SDK 10.0](https://dotnet.microsoft.com/download) or later
+- Windows 10/11 for default solution and WinUI desktop shell builds
 
 ### Build
+
+Default solution builds are intentionally Windows-only because the active desktop shell targets WinUI and the Windows App SDK. Linux/macOS solution builds are unsupported.
 
 ```bash
 dotnet build "FormID Database Manager.slnx"
