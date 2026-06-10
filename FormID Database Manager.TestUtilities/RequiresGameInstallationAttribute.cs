@@ -27,10 +27,10 @@ public sealed class RequiresGameInstallationFactAttribute : FactAttribute
     {
     }
 
-    private RequiresGameInstallationFactAttribute(
+    public RequiresGameInstallationFactAttribute(
         GameRelease[] requiredGames,
-        string? sourceFilePath,
-        int sourceLineNumber)
+        [CallerFilePath] string? sourceFilePath = null,
+        [CallerLineNumber] int sourceLineNumber = -1)
         : base(sourceFilePath, sourceLineNumber)
     {
         _requiredGames = requiredGames;
@@ -102,10 +102,10 @@ public sealed class RequiresGameInstallationTheoryAttribute : TheoryAttribute
     {
     }
 
-    private RequiresGameInstallationTheoryAttribute(
+    public RequiresGameInstallationTheoryAttribute(
         GameRelease[] requiredGames,
-        string? sourceFilePath,
-        int sourceLineNumber)
+        [CallerFilePath] string? sourceFilePath = null,
+        [CallerLineNumber] int sourceLineNumber = -1)
         : base(sourceFilePath, sourceLineNumber)
     {
         _requiredGames = requiredGames;

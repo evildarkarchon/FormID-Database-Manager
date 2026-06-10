@@ -31,13 +31,13 @@ public sealed partial class MainWindow : Window, IDisposable
     {
         var dispatcher = new WinUiThreadDispatcher(DispatcherQueue);
         ViewModel = new MainWindowViewModel(dispatcher);
-        _fileDialogService = new WinUiFileDialogService(AppWindow, ViewModel);
         _gameDetectionService = new GameDetectionService();
         _gameLocationService = new GameLocationService();
         _pluginListManager = new PluginListManager(_gameDetectionService, ViewModel, dispatcher);
         _pluginProcessingService = new PluginProcessingService(new DatabaseService(), ViewModel, dispatcher);
 
         InitializeWindow();
+        _fileDialogService = new WinUiFileDialogService(AppWindow, ViewModel);
     }
 
     /// <summary>
@@ -59,7 +59,6 @@ public sealed partial class MainWindow : Window, IDisposable
     {
         ViewModel = viewModel ?? throw new ArgumentNullException(nameof(viewModel));
         var dispatcher = new WinUiThreadDispatcher(DispatcherQueue);
-        _fileDialogService = fileDialogService ?? new WinUiFileDialogService(AppWindow, ViewModel);
         _gameDetectionService = gameDetectionService ?? new GameDetectionService();
         _gameLocationService = gameLocationService ?? new GameLocationService();
         _pluginListManager = pluginListManager ?? new PluginListManager(_gameDetectionService, ViewModel, dispatcher);
@@ -69,10 +68,11 @@ public sealed partial class MainWindow : Window, IDisposable
             dispatcher);
 
         InitializeWindow();
+        _fileDialogService = fileDialogService ?? new WinUiFileDialogService(AppWindow, ViewModel);
     }
 
     /// <summary>
-    /// Initializes XAML and attaches close-time cleanup after service fields are ready for early events.
+    /// Initializes XAML, assigns the root ViewModel, and attaches close-time cleanup.
     /// </summary>
     private void InitializeWindow()
     {
@@ -493,9 +493,7 @@ public sealed partial class MainWindow : Window, IDisposable
 
             if (string.IsNullOrEmpty(parameters.DatabasePath))
             {
-                parameters.DatabasePath = Path.Combine(
-                    Directory.GetCurrentDirectory(),
-                    $"{GameReleaseHelper.GetSafeTableName(gameRelease)}.db");
+                parameters.DatabasePath = DefaultDatabasePathProvider.CreateDefaultDatabasePath(gameRelease);
                 ViewModel.DatabasePath = parameters.DatabasePath;
             }
 

@@ -17,11 +17,19 @@
 
         <!-- App Options -->
         <UseRidGraph>true</UseRidGraph>
+        <!-- Packaged WinUI apphost builds cannot use AnyCPU, so default CLI builds to the primary local architecture. -->
+        <Platform Condition="'$(Platform)' == '' or '$(Platform)' == 'AnyCPU'">x64</Platform>
         <Platforms>x86;x64;ARM64</Platforms>
         <ApplicationManifest>app.manifest</ApplicationManifest>
         <PublishProfile>win-$(Platform).pubxml</PublishProfile>
         <RuntimeIdentifiers Condition="$([MSBuild]::GetTargetFrameworkVersion('$(TargetFramework)')) &gt;= 8">win-x86;win-x64;win-arm64</RuntimeIdentifiers>
         <RuntimeIdentifiers Condition="$([MSBuild]::GetTargetFrameworkVersion('$(TargetFramework)')) &lt; 8">win10-x86;win10-x64;win10-arm64</RuntimeIdentifiers>
+    </PropertyGroup>
+
+    <PropertyGroup Condition="'$(Configuration)' == 'Debug'">
+        <!-- Local CLI runs use the unpackaged bootstrapper path; Release remains MSIX-capable for packaging. -->
+        <WindowsPackageType>None</WindowsPackageType>
+        <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
     </PropertyGroup>
 
     <ItemGroup>

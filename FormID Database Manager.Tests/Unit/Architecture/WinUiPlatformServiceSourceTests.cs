@@ -79,7 +79,12 @@ public class WinUiPlatformServiceSourceTests
 
         Assert.Contains("private readonly IFileDialogService _fileDialogService;", source, StringComparison.Ordinal);
         Assert.Contains("IFileDialogService? fileDialogService", source, StringComparison.Ordinal);
+        Assert.Contains("_fileDialogService = new WinUiFileDialogService(AppWindow, ViewModel);", source, StringComparison.Ordinal);
         Assert.Contains("_fileDialogService = fileDialogService ?? new WinUiFileDialogService(AppWindow, ViewModel);", source, StringComparison.Ordinal);
+        Assert.True(
+            source.IndexOf("InitializeWindow();", StringComparison.Ordinal) <
+            source.IndexOf("_fileDialogService = new WinUiFileDialogService(AppWindow, ViewModel);", StringComparison.Ordinal),
+            "The production file-dialog service should be constructed after InitializeComponent creates the WinUI window.");
 
         Assert.Contains("await _fileDialogService.SelectGameDirectory()", source, StringComparison.Ordinal);
         Assert.Contains("await _fileDialogService.SelectDatabaseFile()", source, StringComparison.Ordinal);
@@ -152,7 +157,9 @@ public class WinUiPlatformServiceSourceTests
         Assert.Contains("\"Cancel Processing\"", source, StringComparison.Ordinal);
         Assert.Contains("new ProcessingParameters", source, StringComparison.Ordinal);
         Assert.Contains("GetSelectedPlugins", source, StringComparison.Ordinal);
-        Assert.Contains("GameReleaseHelper.GetSafeTableName", source, StringComparison.Ordinal);
+        Assert.Contains("DefaultDatabasePathProvider.CreateDefaultDatabasePath(gameRelease)", source, StringComparison.Ordinal);
+        Assert.Contains("ViewModel.DatabasePath = parameters.DatabasePath;", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("Directory.GetCurrentDirectory()", source, StringComparison.Ordinal);
         Assert.Contains("ViewModel.UpdateProgress", source, StringComparison.Ordinal);
         Assert.Contains("ProcessPlugins(parameters, progress)", source, StringComparison.Ordinal);
         Assert.Contains("\"Error processing FormIDs:", source, StringComparison.Ordinal);
@@ -204,9 +211,93 @@ public class WinUiPlatformServiceSourceTests
         Assert.Contains("processButton.Content = \"Process FormIDs\";", source, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// Verifies that bottom notifications are the last footer row so progress controls cannot cover them.
+    /// </summary>
+    [Fact]
+    public void WinUiMainWindow_KeepsBottomNotificationsAfterProcessingControls()
+    {
+        var winUiDirectory = GetWinUiProjectDirectory();
+        var mainWindowXamlPath = Path.Combine(winUiDirectory, "MainWindow.xaml");
+
+        var xaml = File.ReadAllText(mainWindowXamlPath);
+        var processButtonIndex = xaml.IndexOf("x:Name=\"ProcessFormIdsButton\"", StringComparison.Ordinal);
+        var informationBarIndex = xaml.IndexOf("IsOpen=\"{Binding HasInformationMessages, Mode=OneWay}\"", StringComparison.Ordinal);
+
+        Assert.Contains("<StackPanel Grid.Row=\"5\" Margin=\"0,0,0,4\" Spacing=\"8\">", xaml, StringComparison.Ordinal);
+        Assert.Equal(2, CountOccurrences(xaml, "CornerRadius=\"4\""));
+        Assert.Equal(2, CountOccurrences(xaml, "Margin=\"0,0,0,8\""));
+        Assert.True(
+            processButtonIndex >= 0 && processButtonIndex < informationBarIndex,
+            "The progress/action footer should be declared before the bottom notification bars.");
+    }
+
+    /// <summary>
+    /// Verifies that release publish lanes keep packaged MSIX support as the project default.
+    /// </summary>
+    [Fact]
+    public void WinUiProject_DefinesScopedReleasePublishProfiles()
+    {
+        var winUiDirectory = GetWinUiProjectDirectory();
+        var projectPath = Path.Combine(winUiDirectory, "FormID Database Manager.WinUI.csproj");
+        var publishProfilesDirectory = Path.Combine(winUiDirectory, "Properties", "PublishProfiles");
+        var packagedProfilePath = Path.Combine(publishProfilesDirectory, "win-x64-msix.pubxml");
+        var frameworkDependentProfilePath = Path.Combine(
+            publishProfilesDirectory,
+            "win-x64-unpackaged-framework-dependent.pubxml");
+        var selfContainedProfilePath = Path.Combine(
+            publishProfilesDirectory,
+            "win-x64-unpackaged-self-contained.pubxml");
+
+        var projectSource = File.ReadAllText(projectPath);
+        Assert.Contains("<EnableMsixTooling>true</EnableMsixTooling>", projectSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("<WindowsPackageType>None</WindowsPackageType>", projectSource, StringComparison.Ordinal);
+
+        var packagedProfile = File.ReadAllText(packagedProfilePath);
+        Assert.Contains("<GenerateAppxPackageOnBuild>true</GenerateAppxPackageOnBuild>", packagedProfile, StringComparison.Ordinal);
+        Assert.Contains("<AppxBundle>Never</AppxBundle>", packagedProfile, StringComparison.Ordinal);
+        Assert.DoesNotContain("<WindowsPackageType>None</WindowsPackageType>", packagedProfile, StringComparison.Ordinal);
+
+        var frameworkDependentProfile = File.ReadAllText(frameworkDependentProfilePath);
+        Assert.Contains("<WindowsPackageType>None</WindowsPackageType>", frameworkDependentProfile, StringComparison.Ordinal);
+        Assert.Contains("<SelfContained>false</SelfContained>", frameworkDependentProfile, StringComparison.Ordinal);
+        Assert.Contains("<WindowsAppSDKSelfContained>false</WindowsAppSDKSelfContained>", frameworkDependentProfile, StringComparison.Ordinal);
+        Assert.DoesNotContain("<PublishSingleFile>true</PublishSingleFile>", frameworkDependentProfile, StringComparison.Ordinal);
+
+        var selfContainedProfile = File.ReadAllText(selfContainedProfilePath);
+        Assert.Contains("<WindowsPackageType>None</WindowsPackageType>", selfContainedProfile, StringComparison.Ordinal);
+        Assert.Contains("<SelfContained>true</SelfContained>", selfContainedProfile, StringComparison.Ordinal);
+        Assert.Contains("<WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>", selfContainedProfile, StringComparison.Ordinal);
+        Assert.DoesNotContain("<PublishSingleFile>true</PublishSingleFile>", selfContainedProfile, StringComparison.Ordinal);
+    }
+
     private static string GetWinUiProjectDirectory()
     {
         return Path.Combine(FindRepositoryRoot(), "FormID Database Manager.WinUI");
+    }
+
+    /// <summary>
+    /// Counts exact source-text matches for architecture tests that pin XAML declarations.
+    /// </summary>
+    /// <param name="source">The source text to scan.</param>
+    /// <param name="value">The exact text to count.</param>
+    /// <returns>The number of non-overlapping occurrences of <paramref name="value"/>.</returns>
+    private static int CountOccurrences(string source, string value)
+    {
+        var count = 0;
+        var startIndex = 0;
+
+        while (true)
+        {
+            var foundIndex = source.IndexOf(value, startIndex, StringComparison.Ordinal);
+            if (foundIndex < 0)
+            {
+                return count;
+            }
+
+            count++;
+            startIndex = foundIndex + value.Length;
+        }
     }
 
     private static string FindRepositoryRoot()

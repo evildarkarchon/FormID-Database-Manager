@@ -178,38 +178,8 @@
                     Unchecked="AdvancedMode_CheckedChanged" />
             </StackPanel>
 
-            <StackPanel Grid.Row="4" Spacing="8">
-                <InfoBar
-                    IsClosable="True"
-                    IsOpen="{Binding HasErrorMessages, Mode=OneWay}"
-                    Severity="Error"
-                    Title="Errors">
-                    <ItemsControl ItemsSource="{Binding ErrorMessages}">
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate>
-                                <TextBlock Text="{Binding}" TextWrapping="Wrap" />
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                </InfoBar>
-
-                <InfoBar
-                    IsClosable="True"
-                    IsOpen="{Binding HasInformationMessages, Mode=OneWay}"
-                    Severity="Informational"
-                    Title="Information">
-                    <ItemsControl ItemsSource="{Binding InformationMessages}">
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate>
-                                <TextBlock Text="{Binding}" TextWrapping="Wrap" />
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                </InfoBar>
-            </StackPanel>
-
             <Grid
-                Grid.Row="5"
+                Grid.Row="4"
                 ColumnDefinitions="*,Auto"
                 ColumnSpacing="12"
                 RowDefinitions="Auto,Auto"
@@ -235,6 +205,38 @@
                     Content="Process FormIDs"
                     Style="{StaticResource WorkflowButtonStyle}" />
             </Grid>
+
+            <StackPanel Grid.Row="5" Margin="0,0,0,4" Spacing="8">
+                <InfoBar
+                    CornerRadius="4"
+                    IsClosable="True"
+                    IsOpen="{Binding HasErrorMessages, Mode=OneWay}"
+                    Severity="Error"
+                    Title="Errors">
+                    <ItemsControl ItemsSource="{Binding ErrorMessages}" Margin="0,0,0,12">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding}" TextWrapping="Wrap" />
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </InfoBar>
+
+                <InfoBar
+                    CornerRadius="4"
+                    IsClosable="True"
+                    IsOpen="{Binding HasInformationMessages, Mode=OneWay}"
+                    Severity="Informational"
+                    Title="Information">
+                    <ItemsControl ItemsSource="{Binding InformationMessages}" Margin="0,0,0,12">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding}" TextWrapping="Wrap" />
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </InfoBar>
+            </StackPanel>
         </Grid>
     </Border>
 </Window>

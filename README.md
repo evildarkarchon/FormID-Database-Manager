@@ -60,10 +60,18 @@ Phase 0 was recorded on June 9, 2026 before extracting the UI-neutral core bound
 dotnet build "FormID Database Manager.slnx"
 ```
 
-### Run
+Build only the WinUI desktop shell:
 
 ```bash
-dotnet run --project "FormID Database Manager.WinUI" -p:Platform=x64
+dotnet build "FormID Database Manager.WinUI\FormID Database Manager.WinUI.csproj" -p:Platform=x64
+```
+
+### Run
+
+Debug CLI runs use an unpackaged, Windows App SDK self-contained path so the app can launch directly from `dotnet run`.
+
+```bash
+dotnet run --project "FormID Database Manager.WinUI"
 ```
 
 ### Test
@@ -91,11 +99,34 @@ pwsh ./scripts/run-coverage.ps1 -OpenReport
 
 ### Publish
 
-```bash
-dotnet publish "FormID Database Manager.WinUI" -c Release -p:Platform=x64 -r win-x64
+The WinUI project keeps packaged MSIX support enabled by default. Use an explicit publish profile for each release lane.
+
+Packaged MSIX, x64:
+
+```powershell
+dotnet build "FormID Database Manager.WinUI\FormID Database Manager.WinUI.csproj" -c Release -p:Platform=x64 -p:PublishProfile=win-x64-msix.pubxml
 ```
 
-This produces the WinUI app's Windows publish output.
+Unpackaged framework-dependent, x64:
+
+```powershell
+dotnet publish "FormID Database Manager.WinUI\FormID Database Manager.WinUI.csproj" -c Release -p:Platform=x64 -p:PublishProfile=win-x64-unpackaged-framework-dependent.pubxml
+```
+
+Unpackaged self-contained, x64:
+
+```powershell
+dotnet publish "FormID Database Manager.WinUI\FormID Database Manager.WinUI.csproj" -c Release -p:Platform=x64 -p:PublishProfile=win-x64-unpackaged-self-contained.pubxml
+```
+
+Runtime and distribution notes:
+
+- Packaged MSIX is the Phase 9 packaged lane for direct MSIX verification. Store submission, production certificate selection, AppInstaller feeds, and automatic update flow are not configured yet.
+- The packaged profile does not set `WindowsPackageType=None`; the base project remains MSIX-capable.
+- The unpackaged framework-dependent profile sets `WindowsPackageType=None` only in that profile. Target machines must have the matching .NET desktop runtime and Windows App SDK runtime installed.
+- The unpackaged self-contained profile sets `WindowsPackageType=None` and `WindowsAppSDKSelfContained=true` only in that profile. Its output carries the Windows App SDK runtime with the app and is larger than the framework-dependent output.
+- Single-file unpackaged output is not selected for Phase 9 because first-launch extraction behavior still needs clean-machine verification.
+- When no database path is selected, generated databases are written under `%LOCALAPPDATA%\FormID Database Manager\Databases`.
 
 ---
 

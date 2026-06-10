@@ -306,17 +306,46 @@ Phase 8 verification checkpoint, 2026-06-09:
 
 ### Phase 9: Deployment and Publish
 
-- If packaged:
-  - Produce MSIX/MSIX bundle output.
+- Support both packaged and unpackaged release lanes from the WinUI project.
+- Keep the base project MSIX-capable; do not set `WindowsPackageType=None` globally.
+- Add explicit publish profiles or documented commands for:
+  - Packaged MSIX/MSIX bundle output.
+  - Unpackaged framework-dependent output, if a small download with a separately installed Windows App SDK runtime is desired.
+  - Unpackaged self-contained output, if the release should carry the Windows App SDK runtime with the app.
+  - Unpackaged single-file output only when using an eligible Windows App SDK version and the required self-contained properties.
+- For the packaged lane:
   - Decide Store, AppInstaller, or direct MSIX distribution.
   - Handle signing and update flow for the selected channel.
-- If unpackaged:
-  - Set the appropriate project properties for unpackaged Windows App SDK startup.
+- For the unpackaged lane:
+  - Set `WindowsPackageType=None` only in the unpackaged profile or command.
   - Decide framework-dependent vs self-contained.
-  - Verify whether `PublishSingleFile` remains supported for the selected Windows App SDK version and runtime model.
   - Include or install the Windows App SDK runtime as required.
+  - If using `PublishSingleFile`, set the required self-contained and self-extract properties and verify first-launch extraction behavior.
+- Fix default writable output locations before release verification so packaged launches do not default the database path to `C:\WINDOWS\system32` (or any other directory that requires escalated permissions).
 - Update README build/run/publish commands.
-- Verify release output on a clean Windows machine or VM.
+- Verify both release outputs on a clean Windows machine or VM.
+
+Phase 9 implementation checkpoint, 2026-06-10:
+
+- Tooling inspection resolved .NET SDK `10.0.300`, MSBuild `18.6.3`, and Windows App SDK package `1.8.260529003`. The base WinUI project evaluates `EnableMsixTooling=true` and `WindowsPackageType=MSIX`; it does not set `WindowsPackageType=None` globally.
+- Added explicit x64 publish profiles:
+  - `win-x64-msix.pubxml` uses single-project MSIX packaging through `dotnet build` with `GenerateAppxPackageOnBuild=true`, `UapAppxPackageBuildMode=SideloadOnly`, and `AppxBundle=Never`. Single-project MSIX does not produce MSIX bundles directly, so any future bundle would need a separate bundling step.
+  - `win-x64-unpackaged-framework-dependent.pubxml` scopes `WindowsPackageType=None`, `SelfContained=false`, and `WindowsAppSDKSelfContained=false` to the framework-dependent unpackaged lane. Target machines must install the matching .NET desktop runtime and Windows App SDK runtime.
+  - `win-x64-unpackaged-self-contained.pubxml` scopes `WindowsPackageType=None`, `SelfContained=true`, and `WindowsAppSDKSelfContained=true` to the self-contained unpackaged lane. The output carries the Windows App SDK runtime with the app.
+- The packaged lane targets direct MSIX verification for this phase. Microsoft Store submission, a production signing certificate, AppInstaller feed generation, and automatic update flow are deferred; local verification uses the current development manifest identity and records any signing or clean-machine installation blocker.
+- Single-file unpackaged output is not a Phase 9 release lane. Windows App SDK 1.8 supports it only for unpackaged self-contained apps with self-extraction, and this phase does not enable it because first-launch extraction behavior still needs clean-machine verification.
+- Empty WinUI database paths now resolve to `%LOCALAPPDATA%\FormID Database Manager\Databases\<SafeGameName>.db`; the directory is created before processing starts and the resolved path is assigned back to the ViewModel.
+
+Phase 9 verification checkpoint, 2026-06-10:
+
+- `dotnet build "FormID Database Manager.WinUI\FormID Database Manager.WinUI.csproj" -p:Platform=x64` succeeded with 0 warnings and 0 errors.
+- `dotnet build "FormID Database Manager.slnx"` succeeded with 0 warnings and 0 errors.
+- `dotnet test "FormID Database Manager.Tests"` passed with 285 tests passed, 11 skipped, and 0 failed. The skipped tests remain the existing symbolic-link and manual performance/load/stress tests.
+- Packaged MSIX lane: `dotnet build "FormID Database Manager.WinUI\FormID Database Manager.WinUI.csproj" -c Release -p:Platform=x64 -p:PublishProfile=win-x64-msix.pubxml` produced `FormID Database Manager.WinUI\bin\x64\Release\net10.0-windows10.0.19041.0\win-x64\AppPackages\FormID Database Manager.WinUI_1.0.0.0_x64_Test\FormID Database Manager.WinUI_1.0.0.0_x64.msix` (35,270,551 bytes). The build warned that `mspdbcmf.exe` was missing, so no symbols package was generated.
+- Packaged install/launch verification is blocked for this phase because the generated MSIX is unsigned (`Get-AuthenticodeSignature` returned `NotSigned`) and no production or trusted development signing certificate is configured. The package manifest depends on `Microsoft.WindowsAppRuntime.1.8` `MinVersion="8000.879.2017.0"`, and the generated package folder includes the matching x64 dependency MSIX.
+- Unpackaged framework-dependent lane: `dotnet publish "FormID Database Manager.WinUI\FormID Database Manager.WinUI.csproj" -c Release -p:Platform=x64 -p:PublishProfile=win-x64-unpackaged-framework-dependent.pubxml` produced `FormID Database Manager.WinUI\bin\Release\net10.0-windows10.0.19041.0\win-x64\publish\unpackaged-framework-dependent\`. Computer Use launch verification reached the Windows App Runtime prerequisite dialog; the machine had Windows App Runtime 1.8 installed only below the required package version, and the app requested `>= 8000.879.2017.0`.
+- Unpackaged self-contained lane: `dotnet publish "FormID Database Manager.WinUI\FormID Database Manager.WinUI.csproj" -c Release -p:Platform=x64 -p:PublishProfile=win-x64-unpackaged-self-contained.pubxml` produced `FormID Database Manager.WinUI\bin\Release\net10.0-windows10.0.19041.0\win-x64\publish\unpackaged-self-contained\`. Computer Use launch verification did not reach a targetable window; Windows logged an app crash in `Microsoft.UI.Xaml.dll` with exception code `0xc000027b` and WER fault bucket `2038938963162178728`.
+- Clean Windows machine or VM verification is blocked because this workspace does not expose a clean Windows VM. The exact local blockers are unsigned MSIX for packaged install, insufficient shared Windows App Runtime package version for framework-dependent launch, and the self-contained WinUI/XAML startup crash above.
 
 ### Phase 10: UX, Accessibility, and Final Polish
 
