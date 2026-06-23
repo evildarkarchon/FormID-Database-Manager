@@ -12,24 +12,27 @@
         x:Name="Root"
         Background="{ThemeResource ApplicationPageBackgroundThemeBrush}"
         Padding="{StaticResource WindowContentMargin}">
-        <Grid RowDefinitions="Auto,Auto,*,Auto,Auto,Auto" RowSpacing="12">
+        <Grid RowDefinitions="Auto,Auto,*,Auto,Auto,Auto" RowSpacing="10">
             <StackPanel Grid.Row="0" Spacing="2">
                 <TextBlock
                     FontSize="22"
                     FontWeight="SemiBold"
-                    Text="FormID Database Manager" />
+                    Text="FormID Database Manager"
+                    TextWrapping="WrapWholeWords" />
                 <TextBlock
                     Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                    Text="Build SQLite FormID lookup databases from Bethesda plugin data." />
+                    Text="Build SQLite FormID lookup databases from Bethesda plugin data."
+                    TextWrapping="WrapWholeWords" />
             </StackPanel>
 
             <Grid
                 Grid.Row="1"
-                ColumnDefinitions="180,*,Auto"
+                ColumnDefinitions="136,*,Auto"
                 ColumnSpacing="8"
                 RowDefinitions="Auto,Auto,Auto,Auto,Auto"
-                RowSpacing="8">
+                RowSpacing="6">
                 <TextBlock
+                    x:Name="GameLabel"
                     Grid.Row="0"
                     Grid.Column="0"
                     Style="{StaticResource FieldLabelTextBlockStyle}"
@@ -38,13 +41,18 @@
                     x:Name="GameComboBox"
                     Grid.Row="0"
                     Grid.Column="1"
+                    Grid.ColumnSpan="2"
+                    AutomationProperties.HelpText="Select the Bethesda game release used for plugin parsing."
+                    AutomationProperties.LabeledBy="{Binding ElementName=GameLabel}"
                     HorizontalAlignment="Stretch"
                     ItemsSource="{Binding AvailableGames}"
                     PlaceholderText="Select a game"
                     SelectedItem="{Binding SelectedGame, Mode=TwoWay}"
-                    SelectionChanged="GameComboBox_SelectionChanged" />
+                    SelectionChanged="GameComboBox_SelectionChanged"
+                    TabIndex="0" />
 
                 <TextBlock
+                    x:Name="GameDirectoryLabel"
                     Grid.Row="1"
                     Grid.Column="0"
                     Style="{StaticResource FieldLabelTextBlockStyle}"
@@ -52,30 +60,42 @@
                 <Grid
                     Grid.Row="1"
                     Grid.Column="1"
-                    ColumnDefinitions="*,260"
+                    Grid.ColumnSpan="2"
+                    ColumnDefinitions="2*,*,Auto"
                     ColumnSpacing="8">
                     <TextBox
+                        x:Name="GameDirectoryTextBox"
+                        AutomationProperties.HelpText="Selected game installation or data directory."
+                        AutomationProperties.LabeledBy="{Binding ElementName=GameDirectoryLabel}"
                         IsReadOnly="True"
                         Style="{StaticResource PathTextBoxStyle}"
+                        TabIndex="1"
                         Text="{Binding GameDirectory, Mode=TwoWay}" />
                     <ComboBox
                         x:Name="DirectoryComboBox"
                         Grid.Column="1"
+                        AutomationProperties.HelpText="Choose from installed directories detected for the selected game."
+                        AutomationProperties.Name="Detected installed directory"
                         HorizontalAlignment="Stretch"
                         ItemsSource="{Binding DetectedDirectories}"
+                        MinWidth="0"
                         PlaceholderText="Detected directories"
                         SelectedItem="{Binding GameDirectory, Mode=TwoWay}"
-                        SelectionChanged="DirectoryComboBox_SelectionChanged" />
+                        SelectionChanged="DirectoryComboBox_SelectionChanged"
+                        TabIndex="2" />
+                    <Button
+                        x:Name="BrowseDirectoryButton"
+                        Grid.Column="2"
+                        AccessKey="B"
+                        AutomationProperties.HelpText="Open a folder picker for a game installation or data directory."
+                        Click="BrowseDirectory_Click"
+                        Content="Browse..."
+                        Style="{StaticResource WorkflowButtonStyle}"
+                        TabIndex="3" />
                 </Grid>
-                <Button
-                    x:Name="BrowseDirectoryButton"
-                    Grid.Row="1"
-                    Grid.Column="2"
-                    Click="BrowseDirectory_Click"
-                    Content="Browse..."
-                    Style="{StaticResource WorkflowButtonStyle}" />
 
                 <TextBlock
+                    x:Name="DatabasePathLabel"
                     Grid.Row="2"
                     Grid.Column="0"
                     Style="{StaticResource FieldLabelTextBlockStyle}"
@@ -84,18 +104,25 @@
                     x:Name="DatabasePathTextBox"
                     Grid.Row="2"
                     Grid.Column="1"
+                    AutomationProperties.HelpText="SQLite database file to create or update."
+                    AutomationProperties.LabeledBy="{Binding ElementName=DatabasePathLabel}"
                     IsReadOnly="True"
                     Style="{StaticResource PathTextBoxStyle}"
+                    TabIndex="4"
                     Text="{Binding DatabasePath, Mode=TwoWay}" />
                 <Button
                     x:Name="SelectDatabaseButton"
                     Grid.Row="2"
                     Grid.Column="2"
+                    AccessKey="D"
+                    AutomationProperties.HelpText="Choose the SQLite database file."
                     Click="OnSelectDatabase_Click"
                     Content="Select Database"
-                    Style="{StaticResource WorkflowButtonStyle}" />
+                    Style="{StaticResource WorkflowButtonStyle}"
+                    TabIndex="5" />
 
                 <TextBlock
+                    x:Name="FormIdListPathLabel"
                     Grid.Row="3"
                     Grid.Column="0"
                     Style="{StaticResource FieldLabelTextBlockStyle}"
@@ -104,64 +131,111 @@
                     x:Name="FormIdListPathTextBox"
                     Grid.Row="3"
                     Grid.Column="1"
+                    AutomationProperties.HelpText="Optional pipe-delimited FormID text file to import instead of scanning selected plugins."
+                    AutomationProperties.LabeledBy="{Binding ElementName=FormIdListPathLabel}"
                     IsReadOnly="True"
                     Style="{StaticResource PathTextBoxStyle}"
+                    TabIndex="6"
                     Text="{Binding FormIdListPath, Mode=TwoWay}" />
                 <Button
                     x:Name="SelectListFileButton"
                     Grid.Row="3"
                     Grid.Column="2"
+                    AccessKey="L"
+                    AutomationProperties.HelpText="Choose an optional FormID text file."
                     Click="OnSelectFormIdList_Click"
                     Content="Select List File"
-                    Style="{StaticResource WorkflowButtonStyle}" />
+                    Style="{StaticResource WorkflowButtonStyle}"
+                    TabIndex="7" />
 
                 <TextBlock
+                    x:Name="PluginFilterLabel"
                     Grid.Row="4"
                     Grid.Column="0"
                     Style="{StaticResource FieldLabelTextBlockStyle}"
                     Text="Filter Plugins" />
                 <TextBox
+                    x:Name="PluginFilterTextBox"
                     Grid.Row="4"
                     Grid.Column="1"
                     Grid.ColumnSpan="2"
+                    AutomationProperties.HelpText="Filter the plugin list by plugin name."
+                    AutomationProperties.LabeledBy="{Binding ElementName=PluginFilterLabel}"
                     PlaceholderText="Type to filter plugins"
+                    TabIndex="8"
                     Text="{Binding PluginFilter, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
             </Grid>
 
             <Grid
                 Grid.Row="2"
-                ColumnDefinitions="*,Auto"
-                ColumnSpacing="12">
+                MinHeight="{StaticResource PluginListMinHeight}"
+                RowDefinitions="Auto,*"
+                RowSpacing="6">
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                    <TextBlock
+                        x:Name="PluginListLabel"
+                        Style="{StaticResource FieldLabelTextBlockStyle}"
+                        Text="Plugins" />
+                    <StackPanel
+                        x:Name="PluginCommandPanel"
+                        Grid.Column="1"
+                        Orientation="Horizontal"
+                        Spacing="8">
+                        <Button
+                            x:Name="SelectAllButton"
+                            AccessKey="A"
+                            Click="SelectAll_Click"
+                            Content="Select All"
+                            Style="{StaticResource WorkflowButtonStyle}"
+                            TabIndex="10" />
+                        <Button
+                            x:Name="SelectNoneButton"
+                            AccessKey="N"
+                            Click="SelectNone_Click"
+                            Content="Select None"
+                            Style="{StaticResource WorkflowButtonStyle}"
+                            TabIndex="11" />
+                    </StackPanel>
+                </Grid>
+
                 <Border
-                    Grid.Column="0"
+                    x:Name="PluginListBorder"
+                    Grid.Row="1"
                     Style="{StaticResource PluginListBorderStyle}">
                     <ListView
                         x:Name="PluginList"
+                        AutomationProperties.HelpText="Use the arrow keys to move through plugins and Space to toggle a plugin checkbox."
+                        AutomationProperties.Name="Plugin selection list"
                         ItemsSource="{Binding FilteredPlugins}"
-                        SelectionMode="None">
+                        SelectionMode="None"
+                        TabIndex="9">
+                        <ListView.ItemContainerStyle>
+                            <Style TargetType="ListViewItem">
+                                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                            </Style>
+                        </ListView.ItemContainerStyle>
                         <ListView.ItemTemplate>
                             <DataTemplate>
                                 <CheckBox
-                                    Margin="4,2"
+                                    AutomationProperties.Name="{Binding Name}"
                                     Content="{Binding Name}"
-                                    IsChecked="{Binding IsSelected, Mode=TwoWay}" />
+                                    HorizontalAlignment="Stretch"
+                                    HorizontalContentAlignment="Stretch"
+                                    IsChecked="{Binding IsSelected, Mode=TwoWay}"
+                                    Margin="4,2">
+                                    <CheckBox.ContentTemplate>
+                                        <DataTemplate>
+                                            <TextBlock
+                                                Text="{Binding}"
+                                                TextTrimming="CharacterEllipsis"
+                                                TextWrapping="NoWrap" />
+                                        </DataTemplate>
+                                    </CheckBox.ContentTemplate>
+                                </CheckBox>
                             </DataTemplate>
                         </ListView.ItemTemplate>
                     </ListView>
                 </Border>
-
-                <StackPanel Grid.Column="1" Spacing="8">
-                    <Button
-                        x:Name="SelectAllButton"
-                        Click="SelectAll_Click"
-                        Content="Select All"
-                        Style="{StaticResource WorkflowButtonStyle}" />
-                    <Button
-                        x:Name="SelectNoneButton"
-                        Click="SelectNone_Click"
-                        Content="Select None"
-                        Style="{StaticResource WorkflowButtonStyle}" />
-                </StackPanel>
             </Grid>
 
             <StackPanel
@@ -170,11 +244,15 @@
                 Spacing="16">
                 <CheckBox
                     x:Name="UpdateModeCheckBox"
-                    Content="Update Mode (replaces existing entries)" />
+                    AutomationProperties.HelpText="Replace existing database entries for matching FormIDs."
+                    Content="Update Mode (replaces existing entries)"
+                    TabIndex="12" />
                 <CheckBox
                     x:Name="AdvancedModeCheckBox"
+                    AutomationProperties.HelpText="Include base game and DLC plugins in the plugin list."
                     Checked="AdvancedMode_CheckedChanged"
                     Content="Show Base Game/DLC Files"
+                    TabIndex="13"
                     Unchecked="AdvancedMode_CheckedChanged" />
             </StackPanel>
 
@@ -185,14 +263,18 @@
                 RowDefinitions="Auto,Auto"
                 RowSpacing="6">
                 <TextBlock
+                    x:Name="ProgressStatusTextBlock"
                     Grid.Row="0"
                     Grid.Column="0"
+                    AutomationProperties.Name="Processing status"
                     Text="{Binding ProgressStatus, Mode=OneWay}"
-                    TextWrapping="Wrap" />
+                    TextWrapping="WrapWholeWords" />
                 <ProgressBar
                     x:Name="ProcessingProgressBar"
                     Grid.Row="1"
                     Grid.Column="0"
+                    AutomationProperties.HelpText="Shows current processing progress from zero to one hundred percent."
+                    AutomationProperties.Name="Processing progress"
                     Maximum="100"
                     Minimum="0"
                     Value="{Binding ProgressValue, Mode=OneWay}" />
@@ -201,13 +283,17 @@
                     Grid.Row="0"
                     Grid.RowSpan="2"
                     Grid.Column="1"
+                    AccessKey="P"
                     Click="ProcessFormIds_Click"
                     Content="Process FormIDs"
-                    Style="{StaticResource WorkflowButtonStyle}" />
+                    Style="{StaticResource PrimaryWorkflowButtonStyle}"
+                    TabIndex="14" />
             </Grid>
 
             <StackPanel Grid.Row="5" Margin="0,0,0,4" Spacing="8">
                 <InfoBar
+                    x:Name="ErrorMessagesInfoBar"
+                    AutomationProperties.Name="Error messages"
                     CornerRadius="4"
                     IsClosable="True"
                     IsOpen="{Binding HasErrorMessages, Mode=OneWay}"
@@ -216,13 +302,15 @@
                     <ItemsControl ItemsSource="{Binding ErrorMessages}" Margin="0,0,0,8">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
-                                <TextBlock Text="{Binding}" TextWrapping="Wrap" />
+                                <TextBlock Text="{Binding}" TextWrapping="WrapWholeWords" />
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
                 </InfoBar>
 
                 <InfoBar
+                    x:Name="InformationMessagesInfoBar"
+                    AutomationProperties.Name="Information messages"
                     CornerRadius="4"
                     IsClosable="True"
                     IsOpen="{Binding HasInformationMessages, Mode=OneWay}"
@@ -231,7 +319,7 @@
                     <ItemsControl ItemsSource="{Binding InformationMessages}" Margin="0,0,0,8">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
-                                <TextBlock Text="{Binding}" TextWrapping="Wrap" />
+                                <TextBlock Text="{Binding}" TextWrapping="WrapWholeWords" />
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>

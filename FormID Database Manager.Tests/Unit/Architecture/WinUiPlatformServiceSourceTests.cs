@@ -235,6 +235,166 @@ public class WinUiPlatformServiceSourceTests
     }
 
     /// <summary>
+    /// Verifies that Phase 10 records responsive-layout resources and uses them in the main shell.
+    /// </summary>
+    [Fact]
+    public void WinUiMainWindow_DefinesPhase10ResponsiveLayoutContract()
+    {
+        var winUiDirectory = GetWinUiProjectDirectory();
+        var appXamlPath = Path.Combine(winUiDirectory, "App.xaml");
+        var mainWindowXamlPath = Path.Combine(winUiDirectory, "MainWindow.xaml");
+
+        var appXaml = File.ReadAllText(appXamlPath);
+        var xaml = File.ReadAllText(mainWindowXamlPath);
+
+        Assert.Contains("x:Key=\"Phase10WideWidth\"", appXaml, StringComparison.Ordinal);
+        Assert.Contains("x:Key=\"Phase10MediumWidth\"", appXaml, StringComparison.Ordinal);
+        Assert.Contains("x:Key=\"Phase10NarrowWidth\"", appXaml, StringComparison.Ordinal);
+        Assert.Contains("x:Key=\"PluginListMinHeight\"", appXaml, StringComparison.Ordinal);
+        Assert.Contains("<Setter Property=\"MinWidth\" Value=\"0\" />", appXaml, StringComparison.Ordinal);
+
+        Assert.DoesNotContain("x:Name=\"WorkflowScrollViewer\"", xaml, StringComparison.Ordinal);
+        Assert.DoesNotContain("<ScrollViewer", xaml, StringComparison.Ordinal);
+        Assert.Contains("RowDefinitions=\"Auto,Auto,*,Auto,Auto,Auto\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("x:Name=\"GameDirectoryTextBox\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("ColumnDefinitions=\"2*,*,Auto\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("MinHeight=\"{StaticResource PluginListMinHeight}\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("x:Name=\"PluginCommandPanel\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("x:Name=\"ProgressStatusTextBlock\"", xaml, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Verifies that Phase 10 exposes UI Automation metadata for controls whose content is insufficient.
+    /// </summary>
+    [Fact]
+    public void WinUiMainWindow_DefinesPhase10AutomationMetadata()
+    {
+        var winUiDirectory = GetWinUiProjectDirectory();
+        var mainWindowXamlPath = Path.Combine(winUiDirectory, "MainWindow.xaml");
+
+        var xaml = File.ReadAllText(mainWindowXamlPath);
+
+        Assert.Contains("x:Name=\"GameLabel\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("AutomationProperties.LabeledBy=\"{Binding ElementName=GameLabel}\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("x:Name=\"GameDirectoryLabel\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("AutomationProperties.LabeledBy=\"{Binding ElementName=GameDirectoryLabel}\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("AutomationProperties.Name=\"Detected installed directory\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("x:Name=\"DatabasePathLabel\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("AutomationProperties.LabeledBy=\"{Binding ElementName=DatabasePathLabel}\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("x:Name=\"FormIdListPathLabel\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("AutomationProperties.LabeledBy=\"{Binding ElementName=FormIdListPathLabel}\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("x:Name=\"PluginFilterLabel\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("AutomationProperties.LabeledBy=\"{Binding ElementName=PluginFilterLabel}\"", xaml, StringComparison.Ordinal);
+
+        Assert.Contains("AutomationProperties.Name=\"Plugin selection list\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("AutomationProperties.HelpText=\"Use the arrow keys to move through plugins and Space to toggle a plugin checkbox.\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("AutomationProperties.Name=\"{Binding Name}\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("AutomationProperties.Name=\"Processing status\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("AutomationProperties.Name=\"Processing progress\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("AutomationProperties.Name=\"Error messages\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("AutomationProperties.Name=\"Information messages\"", xaml, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Verifies that Phase 10 keeps primary commands reachable through access keys and workflow tab order.
+    /// </summary>
+    [Fact]
+    public void WinUiMainWindow_DefinesPhase10KeyboardAccess()
+    {
+        var winUiDirectory = GetWinUiProjectDirectory();
+        var mainWindowXamlPath = Path.Combine(winUiDirectory, "MainWindow.xaml");
+
+        var xaml = File.ReadAllText(mainWindowXamlPath);
+
+        Assert.Contains("x:Name=\"GameComboBox\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("TabIndex=\"0\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("x:Name=\"BrowseDirectoryButton\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("AccessKey=\"B\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("x:Name=\"SelectDatabaseButton\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("AccessKey=\"D\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("x:Name=\"SelectListFileButton\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("AccessKey=\"L\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("x:Name=\"PluginList\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("TabIndex=\"9\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("x:Name=\"SelectAllButton\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("AccessKey=\"A\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("x:Name=\"SelectNoneButton\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("AccessKey=\"N\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("x:Name=\"ProcessFormIdsButton\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("AccessKey=\"P\"", xaml, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Verifies that Phase 10 leaves text scaling enabled and constrains long visible text.
+    /// </summary>
+    [Fact]
+    public void WinUiMainWindow_KeepsTextScalingAndLongTextResilient()
+    {
+        var winUiDirectory = GetWinUiProjectDirectory();
+        var appXamlPath = Path.Combine(winUiDirectory, "App.xaml");
+        var mainWindowXamlPath = Path.Combine(winUiDirectory, "MainWindow.xaml");
+
+        var source = File.ReadAllText(appXamlPath) + File.ReadAllText(mainWindowXamlPath);
+
+        Assert.DoesNotContain("IsTextScaleFactorEnabled=\"False\"", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("IsTextScaleFactorEnabled=\"false\"", source, StringComparison.Ordinal);
+        Assert.Contains("TextWrapping=\"WrapWholeWords\"", source, StringComparison.Ordinal);
+        Assert.Contains("TextTrimming=\"CharacterEllipsis\"", source, StringComparison.Ordinal);
+        Assert.Contains(
+            "<Setter Property=\"ScrollViewer.HorizontalScrollBarVisibility\" Value=\"Auto\" />",
+            source,
+            StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Verifies that Phase 10 keeps plugin selection on a constrained native ListView.
+    /// </summary>
+    [Fact]
+    public void WinUiMainWindow_KeepsPluginListVirtualizationFriendly()
+    {
+        var winUiDirectory = GetWinUiProjectDirectory();
+        var mainWindowXamlPath = Path.Combine(winUiDirectory, "MainWindow.xaml");
+
+        var xaml = File.ReadAllText(mainWindowXamlPath);
+        var pluginListIndex = xaml.IndexOf("x:Name=\"PluginList\"", StringComparison.Ordinal);
+        var pluginBorderIndex = xaml.LastIndexOf("x:Name=\"PluginListBorder\"", pluginListIndex, StringComparison.Ordinal);
+
+        Assert.True(pluginListIndex >= 0, "The plugin list should remain a named native WinUI ListView.");
+        Assert.True(pluginBorderIndex >= 0, "The plugin list should remain inside the named constrained border.");
+
+        var pluginContainerSegment = xaml[pluginBorderIndex..pluginListIndex];
+        Assert.DoesNotContain("<ScrollViewer", pluginContainerSegment, StringComparison.Ordinal);
+        Assert.Contains("<ListView", xaml, StringComparison.Ordinal);
+        Assert.Contains("ItemsSource=\"{Binding FilteredPlugins}\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("SelectionMode=\"None\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("Grid.Row=\"2\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("MinHeight=\"{StaticResource PluginListMinHeight}\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("IsChecked=\"{Binding IsSelected, Mode=TwoWay}\"", xaml, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Verifies that Phase 10 app surfaces stay resource-driven instead of introducing hard-coded colors.
+    /// </summary>
+    [Fact]
+    public void WinUiMainWindow_UsesThemeResourcesForPhase10Surfaces()
+    {
+        var winUiDirectory = GetWinUiProjectDirectory();
+        var appXamlPath = Path.Combine(winUiDirectory, "App.xaml");
+        var mainWindowXamlPath = Path.Combine(winUiDirectory, "MainWindow.xaml");
+
+        var source = File.ReadAllText(appXamlPath) + File.ReadAllText(mainWindowXamlPath);
+
+        Assert.Contains("Background=\"{ThemeResource ApplicationPageBackgroundThemeBrush}\"", source, StringComparison.Ordinal);
+        Assert.Contains("Foreground=\"{ThemeResource TextFillColorSecondaryBrush}\"", source, StringComparison.Ordinal);
+        Assert.Contains("{ThemeResource CardBackgroundFillColorDefaultBrush}", source, StringComparison.Ordinal);
+        Assert.Contains("{ThemeResource CardStrokeColorDefaultBrush}", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("Background=\"#", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("Foreground=\"#", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("BorderBrush=\"#", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("Fill=\"#", source, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// Verifies that release publish lanes keep packaged MSIX support as the project default.
     /// </summary>
     [Fact]

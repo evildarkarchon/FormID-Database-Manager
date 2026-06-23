@@ -358,6 +358,21 @@ Phase 9 verification checkpoint, 2026-06-10:
 - Confirm long plugin lists scroll smoothly and remain responsive during filtering.
 - Keep Windows-native controls and Fluent styling as the default; avoid custom chrome or custom controls unless a verified gap requires them.
 
+Phase 10 implementation checkpoint, 2026-06-10:
+
+- Main-window layout audit found the expected polish issues: fixed label and path widths, a fixed detected-directory column, right-side action columns, horizontal mode toggles, and missing explicit automation metadata for path fields, plugin filtering, progress, and message surfaces.
+- Representative Phase 10 verification widths are recorded in `App.xaml` resources as wide `1100`, medium `800`, and narrow `640` logical pixels. The plugin list sits in the root grid's star-sized row with a `120` logical-pixel minimum so ordinary non-maximized windows condense the list region instead of scrolling the whole workflow.
+- `MainWindow.xaml` now uses a compact root-grid workflow with flexible path/action grids, named visible labels, a constrained plugin-list border, horizontal mode toggles, side-by-side progress/action controls, and bottom `InfoBar` message surfaces. Path text boxes now have `MinWidth=0` and horizontal scrolling, long plugin names trim with ellipsis, and labels/messages/progress text wrap with text scaling enabled.
+- Accessibility metadata was added through visible-label relationships, explicit names/help text where native content is insufficient, plugin checkbox automation names, progress/message names, and access keys for the primary commands: Browse (`B`), Select Database (`D`), Select List File (`L`), Select All (`A`), Select None (`N`), and Process FormIDs (`P`). No custom controls, custom chrome, or custom automation peers were introduced.
+- Theme and high-contrast risk is kept low by continuing to use WinUI theme resources and native Fluent control states for app background, secondary text, plugin-list surface, borders, focus, buttons, progress, and `InfoBar` severity rendering.
+- Added WinUI source guardrails in `WinUiPlatformServiceSourceTests` for Phase 10 responsive resources, named controls, bindings, automation metadata, access keys/tab order, text scaling, plugin-list virtualization constraints, and theme-resource usage.
+- Focused Phase 10 source tests passed: `dotnet test "FormID Database Manager.Tests" --filter "FullyQualifiedName~WinUiPlatformServiceSourceTests"` completed with 16 passed, 0 skipped, and 0 failed after first confirming the new tests failed against the pre-Phase-10 shell.
+- `dotnet build "FormID Database Manager.WinUI\FormID Database Manager.WinUI.csproj" -p:Platform=x64` succeeded with 0 warnings and 0 errors.
+- `dotnet build "FormID Database Manager.slnx"` succeeded with 0 warnings and 0 errors.
+- `dotnet test "FormID Database Manager.Tests"` passed with 288 tests passed, 20 skipped, and 0 failed. The skipped tests remain existing symbolic-link and manual performance/load/stress/performance-regression coverage.
+- Local live desktop verification for wide/medium/narrow resize, light/dark/high contrast, keyboard-only activation, UI Automation metadata inspection, enlarged text scaling, and representative long-list scrolling/filtering is blocked in this environment because the Windows automation helper fails during setup before it can list apps: `Package subpath './dist/project/cua/sky_js/src/targets/windows/internal/computer_use_client_base.js' is not defined by "exports" in C:\Users\evild\AppData\Local\OpenAI\Codex\runtimes\cua_node\2f053e67fec2d258\bin\node_modules\@oai\sky\package.json`. Re-run these live checks with a working desktop automation layer or a manual Windows pass before treating Phase 10 as fully verified.
+- Manual visual verification after the layout condensation fix confirmed the selected width/layout, theme/readability, and enlarged-text/long-text behavior are satisfactory. Keyboard-only activation remains tracked separately from the visual pass.
+
 ## Risk Register
 
 | Risk | Impact | Mitigation |
