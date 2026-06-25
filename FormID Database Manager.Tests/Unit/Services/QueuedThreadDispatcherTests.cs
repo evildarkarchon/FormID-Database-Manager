@@ -119,8 +119,7 @@ public class QueuedThreadDispatcherTests
             _ => false,
             "Dispatcher rejected queued work.");
 
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => dispatcher.InvokeAsync(() => { }));
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => dispatcher.InvokeAsync(() => { }));
 
         Assert.Contains("Dispatcher rejected queued work", exception.Message, StringComparison.Ordinal);
     }

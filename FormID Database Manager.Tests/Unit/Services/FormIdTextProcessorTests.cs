@@ -15,7 +15,6 @@ namespace FormID_Database_Manager.Tests.Unit.Services;
 public class FormIdTextProcessorTests : IDisposable
 {
     private readonly SqliteConnection _connection;
-    private readonly DatabaseService _databaseService;
     private readonly FormIdTextProcessor _processor;
     private readonly string _testDbPath;
     private readonly string _testFilesDir;
@@ -26,8 +25,8 @@ public class FormIdTextProcessorTests : IDisposable
         _testFilesDir = Path.Combine(Path.GetTempPath(), $"test_files_{Guid.NewGuid()}");
         Directory.CreateDirectory(_testFilesDir);
 
-        _databaseService = new DatabaseService();
-        _processor = new FormIdTextProcessor(_databaseService);
+        var databaseService = new DatabaseService();
+        _processor = new FormIdTextProcessor(databaseService);
 
         // Create and open connection for tests
         _connection = new SqliteConnection($"Data Source={_testDbPath}");
@@ -42,15 +41,25 @@ public class FormIdTextProcessorTests : IDisposable
         if (File.Exists(_testDbPath))
         {
             try
-            { File.Delete(_testDbPath); }
-            catch { /* Ignore */ }
+            {
+                File.Delete(_testDbPath);
+            }
+            catch
+            {
+                /* Ignore */
+            }
         }
 
         if (Directory.Exists(_testFilesDir))
         {
             try
-            { Directory.Delete(_testFilesDir, true); }
-            catch { /* Ignore */ }
+            {
+                Directory.Delete(_testFilesDir, true);
+            }
+            catch
+            {
+                /* Ignore */
+            }
         }
     }
 
@@ -99,11 +108,7 @@ public class FormIdTextProcessorTests : IDisposable
     public async Task ProcessFormIdListFile_UpdateMode_InsertsNewPluginWithoutExistingRows()
     {
         var testFile = Path.Combine(_testFilesDir, "update_mode_new_plugin.txt");
-        var content = new[]
-        {
-            "BrandNewPlugin.esp|000001|Entry1",
-            "BrandNewPlugin.esp|000002|Entry2"
-        };
+        var content = new[] { "BrandNewPlugin.esp|000001|Entry1", "BrandNewPlugin.esp|000002|Entry2" };
         await File.WriteAllLinesAsync(testFile, content, TestContext.Current.CancellationToken);
 
         await _processor.ProcessFormIdListFile(
@@ -132,10 +137,7 @@ public class FormIdTextProcessorTests : IDisposable
         var processor = new FormIdTextProcessor(databaseServiceMock.Object);
 
         var testFile = Path.Combine(_testFilesDir, "update_mode_empty_cache.txt");
-        var content = new[]
-        {
-            "Plugin1.esp|000010|NewEntry1"
-        };
+        var content = new[] { "Plugin1.esp|000010|NewEntry1" };
         await File.WriteAllLinesAsync(testFile, content, TestContext.Current.CancellationToken);
 
         await processor.ProcessFormIdListFile(
@@ -148,7 +150,7 @@ public class FormIdTextProcessorTests : IDisposable
         var records = GetAllRecords();
         Assert.Single(records);
         Assert.DoesNotContain(records, r => r.entry == "OldEntry1");
-        Assert.Contains(records, r => r.plugin == "Plugin1.esp" && r.entry == "NewEntry1");
+        Assert.Contains(records, r => r is { plugin: "Plugin1.esp", entry: "NewEntry1" });
         databaseServiceMock.Verify(x => x.GetPluginsWithEntries(
             It.IsAny<SqliteConnection>(),
             It.IsAny<GameRelease>(),
@@ -161,10 +163,7 @@ public class FormIdTextProcessorTests : IDisposable
         await InsertTestRecord("Plugin1.esp", "000001", "OldEntry1");
 
         var testFile = Path.Combine(_testFilesDir, "update_mode_case_insensitive.txt");
-        var content = new[]
-        {
-            "PLUGIN1.ESP|000010|NewEntry1"
-        };
+        var content = new[] { "PLUGIN1.ESP|000010|NewEntry1" };
         await File.WriteAllLinesAsync(testFile, content, TestContext.Current.CancellationToken);
 
         await _processor.ProcessFormIdListFile(
@@ -177,7 +176,7 @@ public class FormIdTextProcessorTests : IDisposable
         var records = GetAllRecords();
         Assert.Single(records);
         Assert.DoesNotContain(records, r => r.entry == "OldEntry1");
-        Assert.Contains(records, r => r.plugin == "PLUGIN1.ESP" && r.entry == "NewEntry1");
+        Assert.Contains(records, r => r is { plugin: "PLUGIN1.ESP", entry: "NewEntry1" });
     }
 
     [Fact]
@@ -189,10 +188,7 @@ public class FormIdTextProcessorTests : IDisposable
         var processor = new FormIdTextProcessor(databaseServiceMock.Object);
 
         var testFile = Path.Combine(_testFilesDir, "update_mode_off_no_clear.txt");
-        var content = new[]
-        {
-            "Plugin1.esp|000002|NewEntry1"
-        };
+        var content = new[] { "Plugin1.esp|000002|NewEntry1" };
         await File.WriteAllLinesAsync(testFile, content, TestContext.Current.CancellationToken);
 
         await processor.ProcessFormIdListFile(
@@ -275,9 +271,9 @@ public class FormIdTextProcessorTests : IDisposable
         // Assert
         var records = GetAllRecords();
         Assert.Equal(3, records.Count);
-        Assert.Contains(records, r => r.plugin == "TestPlugin.esp" && r.formid == "000001" && r.entry == "TestWeapon");
-        Assert.Contains(records, r => r.plugin == "TestPlugin.esp" && r.formid == "000002" && r.entry == "TestArmor");
-        Assert.Contains(records, r => r.plugin == "TestPlugin2.esp" && r.formid == "000003" && r.entry == "TestSpell");
+        Assert.Contains(records, r => r is { plugin: "TestPlugin.esp", formid: "000001", entry: "TestWeapon" });
+        Assert.Contains(records, r => r is { plugin: "TestPlugin.esp", formid: "000002", entry: "TestArmor" });
+        Assert.Contains(records, r => r is { plugin: "TestPlugin2.esp", formid: "000003", entry: "TestSpell" });
     }
 
     [Fact]
@@ -307,8 +303,8 @@ public class FormIdTextProcessorTests : IDisposable
         // Assert
         var records = GetAllRecords();
         Assert.Equal(2, records.Count); // Only valid lines should be processed
-        Assert.Contains(records, r => r.plugin == "Plugin1.esp" && r.formid == "000001" && r.entry == "Entry1");
-        Assert.Contains(records, r => r.plugin == "Plugin2.esp" && r.formid == "000002" && r.entry == "Entry2");
+        Assert.Contains(records, r => r is { plugin: "Plugin1.esp", formid: "000001", entry: "Entry1" });
+        Assert.Contains(records, r => r is { plugin: "Plugin2.esp", formid: "000002", entry: "Entry2" });
     }
 
     [Fact]
@@ -364,7 +360,7 @@ public class FormIdTextProcessorTests : IDisposable
         await File.WriteAllLinesAsync(testFile, lines, TestContext.Current.CancellationToken);
 
         var progressReports = new List<(string Message, double? Value)>();
-        var progress = new SynchronousProgress<(string Message, double? Value)>(report => progressReports.Add(report));
+        var progress = new SynchronousProgress<(string Message, double? Value)>(progressReports.Add);
 
         // Act
         await _processor.ProcessFormIdListFile(
@@ -399,7 +395,7 @@ public class FormIdTextProcessorTests : IDisposable
         await File.WriteAllLinesAsync(testFile, lines, TestContext.Current.CancellationToken);
 
         var progressReports = new List<(string Message, double? Value)>();
-        var progress = new SynchronousProgress<(string Message, double? Value)>(report => progressReports.Add(report));
+        var progress = new SynchronousProgress<(string Message, double? Value)>(progressReports.Add);
 
         // Act
         await _processor.ProcessFormIdListFile(
@@ -458,7 +454,7 @@ public class FormIdTextProcessorTests : IDisposable
         const int pluginCount = 2;
         const int recordsPerPlugin = totalRecords / pluginCount;
 
-        using (var writer = new StreamWriter(testFile))
+        await using (var writer = new StreamWriter(testFile))
         {
             for (var pluginIndex = 0; pluginIndex < pluginCount; pluginIndex++)
             {
@@ -492,7 +488,7 @@ public class FormIdTextProcessorTests : IDisposable
     {
         // Arrange
         var testFile = Path.Combine(_testFilesDir, "empty.txt");
-        File.WriteAllText(testFile, string.Empty);
+        await File.WriteAllTextAsync(testFile, string.Empty, TestContext.Current.CancellationToken);
 
         // Act & Assert - Should not throw
         await _processor.ProcessFormIdListFile(
@@ -633,7 +629,7 @@ public class FormIdTextProcessorTests : IDisposable
         await File.WriteAllLinesAsync(testFile, content, TestContext.Current.CancellationToken);
 
         var progressReports = new List<(string Message, double? Value)>();
-        var progress = new SynchronousProgress<(string Message, double? Value)>(report => progressReports.Add(report));
+        var progress = new SynchronousProgress<(string Message, double? Value)>(progressReports.Add);
 
         // Act
         await _processor.ProcessFormIdListFile(
@@ -665,14 +661,13 @@ public class FormIdTextProcessorTests : IDisposable
         var testFile = Path.Combine(_testFilesDir, "case_insensitive.txt");
         var content = new[]
         {
-            "Plugin1.esp|000001|Entry1",
-            "plugin1.esp|000002|Entry2", // Same plugin, different case
-            "PLUGIN1.ESP|000003|Entry3"  // Same plugin, all caps
+            "Plugin1.esp|000001|Entry1", "plugin1.esp|000002|Entry2", // Same plugin, different case
+            "PLUGIN1.ESP|000003|Entry3" // Same plugin, all caps
         };
         await File.WriteAllLinesAsync(testFile, content, TestContext.Current.CancellationToken);
 
         var progressReports = new List<(string Message, double? Value)>();
-        var progress = new SynchronousProgress<(string Message, double? Value)>(report => progressReports.Add(report));
+        var progress = new SynchronousProgress<(string Message, double? Value)>(progressReports.Add);
 
         // Act
         await _processor.ProcessFormIdListFile(
@@ -747,9 +742,7 @@ public class FormIdTextProcessorTests : IDisposable
         var testFile = Path.Combine(_testFilesDir, "update_mode_cache.txt");
         var content = new[]
         {
-            "Plugin1.esp|000001|Entry1",
-            "PLUGIN1.ESP|000002|Entry2",
-            "Plugin2.esp|000003|Entry3",
+            "Plugin1.esp|000001|Entry1", "PLUGIN1.ESP|000002|Entry2", "Plugin2.esp|000003|Entry3",
             "Plugin1.esp|000004|Entry4"
         };
         await File.WriteAllLinesAsync(testFile, content, TestContext.Current.CancellationToken);
@@ -802,7 +795,8 @@ public class FormIdTextProcessorTests : IDisposable
         command.ExecuteNonQuery();
 
         // Create indices
-        command.CommandText = $"CREATE INDEX IF NOT EXISTS idx_{gameRelease}_plugin ON {gameRelease}(plugin COLLATE nocase)";
+        command.CommandText =
+            $"CREATE INDEX IF NOT EXISTS idx_{gameRelease}_plugin ON {gameRelease}(plugin COLLATE nocase)";
         command.ExecuteNonQuery();
         command.CommandText = $"CREATE INDEX IF NOT EXISTS idx_{gameRelease}_formid ON {gameRelease}(formid)";
         command.ExecuteNonQuery();
@@ -827,7 +821,7 @@ public class FormIdTextProcessorTests : IDisposable
 
     private async Task InsertTestRecord(string plugin, string formId, string entry)
     {
-        using var cmd = new SqliteCommand(
+        await using var cmd = new SqliteCommand(
             $"INSERT INTO {GameRelease.SkyrimSE} (plugin, formid, entry) VALUES (@plugin, @formid, @entry)",
             _connection);
         cmd.Parameters.AddWithValue("@plugin", plugin);

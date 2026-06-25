@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using FormID_Database_Manager.Services;
 using Mutagen.Bethesda;
 using Mutagen.Bethesda.Plugins;
-using Mutagen.Bethesda.Plugins.Masters;
 using Mutagen.Bethesda.Plugins.Order;
 using Mutagen.Bethesda.Plugins.Records;
 using Xunit;
@@ -28,7 +27,7 @@ public class GameLoadOrderProviderTests
             _ => true,
             (_, _) => throw new InvalidOperationException("Should not read master style"));
 
-        var snapshot = sut.BuildSnapshot(GameRelease.SkyrimSE, @"C:\Games\Skyrim\Data", false);
+        var snapshot = sut.BuildSnapshot(GameRelease.SkyrimSE, @"C:\Games\Skyrim\Data");
 
         Assert.Equal(["Skyrim.esm", "Update.esm", "MyPatch.esp"], snapshot.ListedPluginNames);
     }

@@ -99,12 +99,24 @@ public class PluginProcessingServiceTests : IDisposable
         };
     }
 
+    private static byte[] CreateMinimalTes4PluginBytes() =>
+    [
+        .."TES4"u8,
+        0x2B, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00
+    ];
+
     [Fact]
     public async Task ProcessPlugins_DryRun_ReportsWhatWouldBeDone()
     {
         var parameters = CreateTestParameters(true);
         var progressReports = new List<(string Message, double? Value)>();
-        var progress = new SynchronousProgress<(string Message, double? Value)>(report => progressReports.Add(report));
+        var progress = new SynchronousProgress<(string Message, double? Value)>(progressReports.Add);
 
         await _service.ProcessPlugins(parameters, progress);
 
@@ -120,7 +132,7 @@ public class PluginProcessingServiceTests : IDisposable
     {
         var parameters = CreateTestParameters(true, "C:\\Test\\formids.txt");
         var progressReports = new List<(string Message, double? Value)>();
-        var progress = new SynchronousProgress<(string Message, double? Value)>(report => progressReports.Add(report));
+        var progress = new SynchronousProgress<(string Message, double? Value)>(progressReports.Add);
 
         await _service.ProcessPlugins(parameters, progress);
 
@@ -146,7 +158,7 @@ public class PluginProcessingServiceTests : IDisposable
             FormIdListPath = parameters.FormIdListPath
         };
         var progressReports = new List<(string Message, double? Value)>();
-        var progress = new SynchronousProgress<(string Message, double? Value)>(report => progressReports.Add(report));
+        var progress = new SynchronousProgress<(string Message, double? Value)>(progressReports.Add);
 
         await _service.ProcessPlugins(parameters, progress);
 
@@ -166,25 +178,13 @@ public class PluginProcessingServiceTests : IDisposable
         var dataDir = Path.Combine(gameDir, "Data");
         Directory.CreateDirectory(dataDir);
 
-        var pluginPaths = new[]
-        {
-            Path.Combine(dataDir, "TestPlugin1.esp"),
-            Path.Combine(dataDir, "TestPlugin2.esp")
-        };
+        var pluginPaths = new[] { Path.Combine(dataDir, "TestPlugin1.esp"), Path.Combine(dataDir, "TestPlugin2.esp") };
 
         foreach (var pluginPath in pluginPaths)
         {
             await File.WriteAllBytesAsync(pluginPath,
-            [
-                0x54, 0x45, 0x53, 0x34,
-                0x2B, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00
-            ], TestContext.Current.CancellationToken);
+                CreateMinimalTes4PluginBytes(),
+                TestContext.Current.CancellationToken);
             _tempFiles.Add(pluginPath);
         }
 
@@ -250,16 +250,8 @@ public class PluginProcessingServiceTests : IDisposable
 
         var pluginPath = Path.Combine(dataDir, "TestPlugin1.esp");
         await File.WriteAllBytesAsync(pluginPath,
-        [
-            0x54, 0x45, 0x53, 0x34,
-            0x2B, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00
-        ], TestContext.Current.CancellationToken);
+            CreateMinimalTes4PluginBytes(),
+            TestContext.Current.CancellationToken);
         _tempFiles.Add(pluginPath);
 
         var parameters = CreateTestParameters(selectedPlugins:
@@ -312,25 +304,13 @@ public class PluginProcessingServiceTests : IDisposable
         var dataDir = Path.Combine(gameDir, "Data");
         Directory.CreateDirectory(dataDir);
 
-        var pluginPaths = new[]
-        {
-            Path.Combine(dataDir, "TestPlugin1.esp"),
-            Path.Combine(dataDir, "TestPlugin2.esp")
-        };
+        var pluginPaths = new[] { Path.Combine(dataDir, "TestPlugin1.esp"), Path.Combine(dataDir, "TestPlugin2.esp") };
 
         foreach (var pluginPath in pluginPaths)
         {
             await File.WriteAllBytesAsync(pluginPath,
-            [
-                0x54, 0x45, 0x53, 0x34,
-                0x2B, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00
-            ], TestContext.Current.CancellationToken);
+                CreateMinimalTes4PluginBytes(),
+                TestContext.Current.CancellationToken);
             _tempFiles.Add(pluginPath);
         }
 
@@ -359,11 +339,8 @@ public class PluginProcessingServiceTests : IDisposable
                 It.IsAny<SqliteConnection>(),
                 It.IsAny<GameRelease>(),
                 It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-            {
-                "TestPlugin1.esp",
-                "TestPlugin2.esp"
-            });
+            .ReturnsAsync(
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "TestPlugin1.esp", "TestPlugin2.esp" });
         _mockDatabaseService.Setup(x => x.ClearPluginEntries(
                 It.IsAny<SqliteConnection>(),
                 It.IsAny<GameRelease>(),
@@ -460,7 +437,7 @@ public class PluginProcessingServiceTests : IDisposable
         var progressReports = new List<(string Message, double? Value)>();
         // Use a synchronous IProgress implementation to avoid Progress<T>'s async callbacks
         // which can cause race conditions in unit tests
-        var progress = new SynchronousProgress<(string Message, double? Value)>(report => progressReports.Add(report));
+        var progress = new SynchronousProgress<(string Message, double? Value)>(progressReports.Add);
 
         _mockDatabaseService.Setup(x =>
                 x.InitializeDatabase(It.IsAny<string>(), It.IsAny<GameRelease>(), It.IsAny<CancellationToken>()))
@@ -491,12 +468,20 @@ public class PluginProcessingServiceTests : IDisposable
 
         var parameters = CreateTestParameters(selectedPlugins: []);
 
-        var callerTask = Task.Run(() =>
-        {
-            var processingTask = service.ProcessPlugins(parameters);
-            returnedFromCall.Set();
-            processingTask.GetAwaiter().GetResult();
-        }, TestContext.Current.CancellationToken);
+        var callerTask = Task.Factory.StartNew(
+            static state =>
+            {
+                var (processingService, processingParameters, returnedSignal) =
+                    ((PluginProcessingService Service, ProcessingParameters Parameters, ManualResetEventSlim ReturnedSignal))state!;
+
+                var processingTask = processingService.ProcessPlugins(processingParameters);
+                returnedSignal.Set();
+                processingTask.GetAwaiter().GetResult();
+            },
+            (service, parameters, returnedFromCall),
+            TestContext.Current.CancellationToken,
+            TaskCreationOptions.None,
+            TaskScheduler.Default);
 
         Assert.True(initializeEntered.Wait(TimeSpan.FromSeconds(1), TestContext.Current.CancellationToken));
         Assert.True(returnedFromCall.Wait(TimeSpan.FromSeconds(1), TestContext.Current.CancellationToken));
@@ -509,18 +494,11 @@ public class PluginProcessingServiceTests : IDisposable
     /// A synchronous IProgress implementation that invokes callbacks immediately on the calling thread,
     /// avoiding the async callback behavior of Progress&lt;T&gt; that can cause race conditions in tests.
     /// </summary>
-    private class SynchronousProgress<T> : IProgress<T>
+    private class SynchronousProgress<T>(Action<T> handler) : IProgress<T>
     {
-        private readonly Action<T> _handler;
-
-        public SynchronousProgress(Action<T> handler)
-        {
-            _handler = handler;
-        }
-
         public void Report(T value)
         {
-            _handler(value);
+            handler(value);
         }
     }
 
@@ -545,11 +523,11 @@ public class PluginProcessingServiceTests : IDisposable
         var parameters = CreateTestParameters();
         var tcs = new TaskCompletionSource<bool>();
         var progressReports = new List<(string Message, double? Value)>();
-        var progress = new Progress<(string Message, double? Value)>(report => progressReports.Add(report));
+        var progress = new Progress<(string Message, double? Value)>(progressReports.Add);
 
         _mockDatabaseService.Setup(x =>
                 x.InitializeDatabase(It.IsAny<string>(), It.IsAny<GameRelease>(), It.IsAny<CancellationToken>()))
-            .Returns(async (string path, GameRelease game, CancellationToken ct) =>
+            .Returns(async (string _, GameRelease _, CancellationToken ct) =>
             {
                 tcs.SetResult(true);
                 await Task.Delay(1000, ct);
@@ -585,10 +563,7 @@ public class PluginProcessingServiceTests : IDisposable
             .ThrowsAsync(new InvalidOperationException(expectedError));
 
         var progressReports = new List<(string Message, double? Value)>();
-        IProgress<(string Message, double? Value)> progress = new Progress<(string Message, double? Value)>(report =>
-        {
-            progressReports.Add(report);
-        });
+        IProgress<(string Message, double? Value)> progress = new Progress<(string Message, double? Value)>(progressReports.Add);
 
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             _service.ProcessPlugins(parameters, progress));
@@ -602,7 +577,7 @@ public class PluginProcessingServiceTests : IDisposable
     {
         var parameters = CreateTestParameters(formIdListPath: "C:\\Test\\formids.txt");
         var progressReports = new List<(string Message, double? Value)>();
-        var progress = new Progress<(string Message, double? Value)>(report => progressReports.Add(report));
+        var progress = new Progress<(string Message, double? Value)>(progressReports.Add);
 
         _mockDatabaseService.Setup(x =>
                 x.InitializeDatabase(It.IsAny<string>(), It.IsAny<GameRelease>(), It.IsAny<CancellationToken>()))
@@ -641,11 +616,17 @@ public class PluginProcessingServiceTests : IDisposable
 
         _mockDatabaseService.Setup(x =>
                 x.InitializeDatabase(It.IsAny<string>(), It.IsAny<GameRelease>(), It.IsAny<CancellationToken>()))
-            .Returns(async (string path, GameRelease game, CancellationToken ct) =>
+            .Returns(async (string _, GameRelease _, CancellationToken ct) =>
             {
-                firstStarted.SetResult(true);
-                await allowFirstToComplete.Task;
+                firstStarted.TrySetResult(true);
+                await allowFirstToComplete.Task.WaitAsync(ct);
             });
+        _mockDatabaseService.Setup(x => x.ConfigureConnection(
+                It.IsAny<SqliteConnection>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _mockDatabaseService.Setup(x => x.OptimizeDatabase(It.IsAny<SqliteConnection>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
 
         var firstTask = _service.ProcessPlugins(parameters);
         await firstStarted.Task;
@@ -666,43 +647,31 @@ public class PluginProcessingServiceTests : IDisposable
         {
             // Also expected - the cancellation token source might be disposed
         }
+
+        await secondTask;
     }
 
     [Fact]
     public async Task ProcessPlugins_ErrorCallback_AddsErrorMessages()
     {
         var parameters = CreateTestParameters();
-        var errorMessages = new List<string>();
-
-        _mockViewModel.Setup(x => x.AddErrorMessage(It.IsAny<string>(), It.IsAny<int>()))
-            .Callback<string, int>((msg, maxMessages) => errorMessages.Add(msg));
 
         _mockDatabaseService.Setup(x =>
                 x.InitializeDatabase(It.IsAny<string>(), It.IsAny<GameRelease>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
-
-        // Setup database to handle operations that might be called
-        _mockDatabaseService.Setup(x => x.InsertRecord(
+        _mockDatabaseService.Setup(x => x.ConfigureConnection(
                 It.IsAny<SqliteConnection>(),
-                It.IsAny<GameRelease>(),
-                It.IsAny<string>(),
-                It.IsAny<string>(),
-                It.IsAny<string>(),
                 It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
+        _mockDatabaseService.Setup(x => x.OptimizeDatabase(It.IsAny<SqliteConnection>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
 
-        try
-        {
-            await _service.ProcessPlugins(parameters);
-        }
-        catch (Exception ex) when (ex.Message.Contains("Could not find") || ex.Message.Contains("not found"))
-        {
-            // Expected - ModProcessor will fail without proper game installation
-        }
+        await _service.ProcessPlugins(parameters);
 
-        // Verify error message was attempted to be added
-        // Due to the way errors are handled, the callback might not always be invoked
-        // The test passes if no exception is thrown unexpectedly
+        _mockViewModel.Verify(x => x.AddErrorMessage(
+                It.Is<string>(message => message.Contains("Could not find plugin file", StringComparison.Ordinal)),
+                It.IsAny<int>()),
+            Times.AtLeastOnce);
     }
 
     [Fact]

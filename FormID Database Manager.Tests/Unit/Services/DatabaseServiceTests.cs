@@ -16,13 +16,12 @@ namespace FormID_Database_Manager.Tests.Unit.Services;
 [Collection("Database Tests")]
 public class DatabaseServiceTests(DatabaseFixture fixture) : IClassFixture<DatabaseFixture>, IAsyncLifetime
 {
-    private readonly DatabaseFixture _fixture = fixture;
     private readonly DatabaseService _service = new();
     private SqliteConnection? _connection;
 
     public async ValueTask InitializeAsync()
     {
-        _connection = await _fixture.CreateConnectionAsync();
+        _connection = await fixture.CreateConnectionAsync();
     }
 
     public async ValueTask DisposeAsync()
@@ -176,7 +175,7 @@ public class DatabaseServiceTests(DatabaseFixture fixture) : IClassFixture<Datab
     public async Task InsertRecord_InsertsDataCorrectly()
     {
         var gameRelease = GameRelease.SkyrimSE;
-        await _fixture.InitializeSchemaAsync(_connection!, gameRelease.ToString());
+        await fixture.InitializeSchemaAsync(_connection!, gameRelease.ToString());
 
         await _service.InsertRecord(_connection!, gameRelease, "TestPlugin.esp", "0x00000001", "TestNPC", TestContext.Current.CancellationToken);
 
@@ -199,7 +198,7 @@ public class DatabaseServiceTests(DatabaseFixture fixture) : IClassFixture<Datab
     public async Task InsertRecord_HandlesSpecialCharacters()
     {
         var gameRelease = GameRelease.SkyrimSE;
-        await _fixture.InitializeSchemaAsync(_connection!, gameRelease.ToString());
+        await fixture.InitializeSchemaAsync(_connection!, gameRelease.ToString());
 
         var specialEntry = "Test'Entry\"With;Special--Characters";
         await _service.InsertRecord(_connection!, gameRelease, "Plugin.esp", "0x00000001", specialEntry, TestContext.Current.CancellationToken);
@@ -215,7 +214,7 @@ public class DatabaseServiceTests(DatabaseFixture fixture) : IClassFixture<Datab
     public async Task ClearPluginEntries_RemovesOnlySpecifiedPlugin()
     {
         var gameRelease = GameRelease.SkyrimSE;
-        await _fixture.InitializeSchemaAsync(_connection!, gameRelease.ToString());
+        await fixture.InitializeSchemaAsync(_connection!, gameRelease.ToString());
 
         await _service.InsertRecord(_connection!, gameRelease, "Plugin1.esp", "0x00000001", "Entry1", TestContext.Current.CancellationToken);
         await _service.InsertRecord(_connection!, gameRelease, "Plugin1.esp", "0x00000002", "Entry2", TestContext.Current.CancellationToken);
@@ -238,7 +237,7 @@ public class DatabaseServiceTests(DatabaseFixture fixture) : IClassFixture<Datab
     public async Task ClearPluginEntries_HandlesNonExistentPlugin()
     {
         var gameRelease = GameRelease.SkyrimSE;
-        await _fixture.InitializeSchemaAsync(_connection!, gameRelease.ToString());
+        await fixture.InitializeSchemaAsync(_connection!, gameRelease.ToString());
 
         await _service.ClearPluginEntries(_connection!, gameRelease, "NonExistent.esp", TestContext.Current.CancellationToken);
     }
@@ -247,7 +246,7 @@ public class DatabaseServiceTests(DatabaseFixture fixture) : IClassFixture<Datab
     public async Task ClearPluginEntries_RemovesEntriesCaseInsensitively()
     {
         var gameRelease = GameRelease.SkyrimSE;
-        await _fixture.InitializeSchemaAsync(_connection!, gameRelease.ToString());
+        await fixture.InitializeSchemaAsync(_connection!, gameRelease.ToString());
 
         await _service.InsertRecord(_connection!, gameRelease, "Plugin1.esp", "0x00000001", "Entry1", TestContext.Current.CancellationToken);
         await _service.InsertRecord(_connection!, gameRelease, "PLUGIN1.ESP", "0x00000002", "Entry2", TestContext.Current.CancellationToken);
@@ -270,7 +269,7 @@ public class DatabaseServiceTests(DatabaseFixture fixture) : IClassFixture<Datab
     public async Task GetPluginsWithEntries_ReturnsCaseInsensitiveDistinctPlugins()
     {
         var gameRelease = GameRelease.SkyrimSE;
-        await _fixture.InitializeSchemaAsync(_connection!, gameRelease.ToString());
+        await fixture.InitializeSchemaAsync(_connection!, gameRelease.ToString());
 
         await _service.InsertRecord(_connection!, gameRelease, "Plugin1.esp", "0x00000001", "Entry1", TestContext.Current.CancellationToken);
         await _service.InsertRecord(_connection!, gameRelease, "PLUGIN1.ESP", "0x00000002", "Entry2", TestContext.Current.CancellationToken);
@@ -287,7 +286,7 @@ public class DatabaseServiceTests(DatabaseFixture fixture) : IClassFixture<Datab
     public async Task OptimizeDatabase_ExecutesSuccessfully()
     {
         var gameRelease = GameRelease.SkyrimSE;
-        await _fixture.InitializeSchemaAsync(_connection!, gameRelease.ToString());
+        await fixture.InitializeSchemaAsync(_connection!, gameRelease.ToString());
 
         for (var i = 0; i < 100; i++)
         {
@@ -304,7 +303,7 @@ public class DatabaseServiceTests(DatabaseFixture fixture) : IClassFixture<Datab
     public async Task BatchInsertPerformance_HandlesVariousSizes(int batchSize)
     {
         var gameRelease = GameRelease.SkyrimSE;
-        await _fixture.InitializeSchemaAsync(_connection!, gameRelease.ToString());
+        await fixture.InitializeSchemaAsync(_connection!, gameRelease.ToString());
 
         var tasks = new List<Task>();
         for (var i = 0; i < batchSize; i++)

@@ -1,6 +1,5 @@
 using System;
 using System.IO;
-using System.Linq;
 using FormID_Database_Manager.Services;
 using FormID_Database_Manager.TestUtilities.Builders;
 using Mutagen.Bethesda;
@@ -41,8 +40,7 @@ public class GameDetectionServiceTests : IDisposable
     {
         try
         {
-            var dirInfo = new DirectoryInfo(path);
-            dirInfo.Attributes = FileAttributes.Normal;
+            var dirInfo = new DirectoryInfo(path) { Attributes = FileAttributes.Normal };
 
             foreach (var file in dirInfo.GetFiles("*", SearchOption.AllDirectories))
             {
@@ -71,7 +69,7 @@ public class GameDetectionServiceTests : IDisposable
         }
     }
 
-    private (string gamePath, string dataPath, GameDetectionData detectionData) CreateStructureFromBuilder(
+    private (string gamePath, GameDetectionData detectionData) CreateStructureFromBuilder(
         string testName,
         GameDetectionBuilder builder)
     {
@@ -79,7 +77,7 @@ public class GameDetectionServiceTests : IDisposable
         var detectionData = builder.WithDirectory(gamePath).Build();
         var dataPath = Path.Combine(detectionData.DirectoryPath, "Data");
         CreateGameStructure(detectionData.DirectoryPath, dataPath, detectionData.PluginFiles.ToArray());
-        return (gamePath, dataPath, detectionData);
+        return (gamePath, detectionData);
     }
 
     [Fact]
@@ -179,7 +177,7 @@ public class GameDetectionServiceTests : IDisposable
         var builder = new GameDetectionBuilder()
             .WithGame(GameRelease.SkyrimLE)
             .AddPlugin("Skyrim.esm");
-        var (gamePath, _, detectionData) = CreateStructureFromBuilder("SkyrimLE_Builder", builder);
+        var (gamePath, detectionData) = CreateStructureFromBuilder("SkyrimLE_Builder", builder);
 
         var result = _service.DetectGame(gamePath);
 
@@ -192,7 +190,7 @@ public class GameDetectionServiceTests : IDisposable
         var builder = new GameDetectionBuilder()
             .WithGame(GameRelease.EnderalSE)
             .AddPlugins("Skyrim.esm", "Enderal - Forgotten Stories.esm");
-        var (gamePath, _, detectionData) = CreateStructureFromBuilder("EnderalSE_Builder", builder);
+        var (gamePath, detectionData) = CreateStructureFromBuilder("EnderalSE_Builder", builder);
         File.WriteAllText(Path.Combine(gamePath, "SkyrimSE.exe"), string.Empty);
 
         var result = _service.DetectGame(gamePath);
@@ -206,7 +204,7 @@ public class GameDetectionServiceTests : IDisposable
         var builder = new GameDetectionBuilder()
             .WithGame(GameRelease.EnderalLE)
             .AddPlugins("Skyrim.esm", "Enderal - Forgotten Stories.esm");
-        var (gamePath, _, detectionData) = CreateStructureFromBuilder("EnderalLE_Builder", builder);
+        var (gamePath, detectionData) = CreateStructureFromBuilder("EnderalLE_Builder", builder);
         File.WriteAllText(Path.Combine(gamePath, "TESV.exe"), string.Empty);
 
         var result = _service.DetectGame(gamePath);
@@ -264,8 +262,7 @@ public class GameDetectionServiceTests : IDisposable
 
         if (OperatingSystem.IsWindows())
         {
-            var dirInfo = new DirectoryInfo(restrictedPath);
-            dirInfo.Attributes = FileAttributes.ReadOnly;
+            File.SetAttributes(restrictedPath, FileAttributes.ReadOnly);
         }
 
         var result = _service.DetectGame(restrictedPath);
@@ -292,26 +289,26 @@ public class GameDetectionServiceTests : IDisposable
     [Fact]
     public void GetBaseGamePlugins_ReturnsSkyrimPlugins_ForAllSkyrimVariants()
     {
-        var skyrimSE = _service.GetBaseGamePlugins(GameRelease.SkyrimSE);
-        var skyrimVR = _service.GetBaseGamePlugins(GameRelease.SkyrimVR);
-        var skyrimGOG = _service.GetBaseGamePlugins(GameRelease.SkyrimSEGog);
+        var skyrimSe = _service.GetBaseGamePlugins(GameRelease.SkyrimSE);
+        var skyrimVr = _service.GetBaseGamePlugins(GameRelease.SkyrimVR);
+        var skyrimGog = _service.GetBaseGamePlugins(GameRelease.SkyrimSEGog);
 
-        Assert.Equal(skyrimSE, skyrimVR);
-        Assert.Equal(skyrimSE, skyrimGOG);
-        Assert.Contains("Skyrim.esm", skyrimSE);
-        Assert.Contains("Update.esm", skyrimSE);
-        Assert.Contains("Dawnguard.esm", skyrimSE);
-        Assert.Contains("HearthFires.esm", skyrimSE);
-        Assert.Contains("Dragonborn.esm", skyrimSE);
+        Assert.Equal(skyrimSe, skyrimVr);
+        Assert.Equal(skyrimSe, skyrimGog);
+        Assert.Contains("Skyrim.esm", skyrimSe);
+        Assert.Contains("Update.esm", skyrimSe);
+        Assert.Contains("Dawnguard.esm", skyrimSe);
+        Assert.Contains("HearthFires.esm", skyrimSe);
+        Assert.Contains("Dragonborn.esm", skyrimSe);
     }
 
     [Fact]
     public void GetBaseGamePlugins_ReturnsFalloutPlugins_ForAllFalloutVariants()
     {
         var fallout4 = _service.GetBaseGamePlugins(GameRelease.Fallout4);
-        var fallout4VR = _service.GetBaseGamePlugins(GameRelease.Fallout4VR);
+        var fallout4Vr = _service.GetBaseGamePlugins(GameRelease.Fallout4VR);
 
-        Assert.Equal(fallout4, fallout4VR);
+        Assert.Equal(fallout4, fallout4Vr);
         Assert.Contains("Fallout4.esm", fallout4);
         Assert.Contains("DLCRobot.esm", fallout4);
         Assert.Contains("DLCCoast.esm", fallout4);

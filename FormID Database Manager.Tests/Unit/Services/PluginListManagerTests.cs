@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
@@ -32,7 +31,8 @@ public class PluginListManagerTests : IDisposable
             .Callback<Action>(action => action());
         _dispatcher.Setup(d => d.CheckAccess()).Returns(true);
 
-        _gameDetectionService = FormID_Database_Manager.TestUtilities.Mocks.MockFactory.CreateGameDetectionServiceMock();
+        _gameDetectionService =
+            FormID_Database_Manager.TestUtilities.Mocks.MockFactory.CreateGameDetectionServiceMock();
         _loadOrderProvider = new Mock<IGameLoadOrderProvider>();
         _viewModel = new MainWindowViewModel(_dispatcher.Object);
         _plugins = [];
@@ -233,8 +233,7 @@ public class PluginListManagerTests : IDisposable
     {
         var plugins = new ObservableCollection<PluginListItem>
         {
-            new() { Name = "A.esp", IsSelected = false },
-            new() { Name = "B.esp", IsSelected = false }
+            new() { Name = "A.esp", IsSelected = false }, new() { Name = "B.esp", IsSelected = false }
         };
 
         CreateSut().SelectAll(plugins);
@@ -247,8 +246,7 @@ public class PluginListManagerTests : IDisposable
     {
         var plugins = new ObservableCollection<PluginListItem>
         {
-            new() { Name = "A.esp", IsSelected = true },
-            new() { Name = "B.esp", IsSelected = true }
+            new() { Name = "A.esp", IsSelected = true }, new() { Name = "B.esp", IsSelected = true }
         };
 
         CreateSut().SelectNone(plugins);

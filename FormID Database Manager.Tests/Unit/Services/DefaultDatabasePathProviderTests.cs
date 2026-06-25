@@ -24,7 +24,8 @@ public class DefaultDatabasePathProviderTests
 
             var expectedDirectory = Path.Combine(appDataRoot, "FormID Database Manager", "Databases");
             Assert.Equal(Path.Combine(expectedDirectory, "Fallout4VR.db"), databasePath);
-            Assert.True(Directory.Exists(expectedDirectory), $"Expected generated directory to exist: {expectedDirectory}");
+            Assert.True(Directory.Exists(expectedDirectory),
+                $"Expected generated directory to exist: {expectedDirectory}");
         }
         finally
         {
@@ -51,7 +52,8 @@ public class DefaultDatabasePathProviderTests
                 appDataRoot);
 
             Assert.StartsWith(appDataRoot, databasePath, StringComparison.OrdinalIgnoreCase);
-            Assert.EndsWith(Path.Combine("Databases", "SkyrimSEGog.db"), databasePath, StringComparison.OrdinalIgnoreCase);
+            Assert.EndsWith(Path.Combine("Databases", "SkyrimSEGog.db"), databasePath,
+                StringComparison.OrdinalIgnoreCase);
             Assert.False(databasePath.StartsWith(currentDirectory, StringComparison.OrdinalIgnoreCase));
             Assert.False(databasePath.StartsWith(Environment.SystemDirectory, StringComparison.OrdinalIgnoreCase));
         }

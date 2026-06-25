@@ -6,7 +6,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using FormID_Database_Manager.Models;
 using FormID_Database_Manager.Services;
-using FormID_Database_Manager.TestUtilities;
 using Microsoft.Data.Sqlite;
 using Moq;
 using Mutagen.Bethesda;
@@ -62,7 +61,7 @@ public class ModProcessorTests : IDisposable
         var pluginPath = Path.Combine(gameDir, "TestPlugin.esp");
 
         // Create corrupted plugin that will fail processing
-        await File.WriteAllBytesAsync(pluginPath, new byte[] { 0xFF, 0xFF, 0xFF, 0xFF }, TestContext.Current.CancellationToken);
+        await File.WriteAllBytesAsync(pluginPath, [0xFF, 0xFF, 0xFF, 0xFF], TestContext.Current.CancellationToken);
 
         var pluginItem = new PluginListItem { Name = "TestPlugin.esp", IsSelected = true };
         var mockModListing = CreateMockModListing("TestPlugin.esp");
@@ -258,7 +257,7 @@ public class ModProcessorTests : IDisposable
         var mockModListing = CreateMockModListing("TestPlugin.esp");
         var loadOrder = CreateLoadOrderDictionary(mockModListing.Object);
         using var cts = new CancellationTokenSource();
-        cts.Cancel();
+        await cts.CancelAsync();
 
         // Act / Assert
         await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
@@ -364,7 +363,6 @@ public class ModProcessorTests : IDisposable
         var pluginItem = new PluginListItem { Name = "TestPlugin.esp", IsSelected = true };
         var mockModListing = CreateMockModListing("TestPlugin.esp");
         var loadOrder = CreateLoadOrderDictionary(mockModListing.Object);
-        var existingPlugins = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         // Act
         await Assert.ThrowsAnyAsync<Exception>(async () =>
@@ -376,7 +374,7 @@ public class ModProcessorTests : IDisposable
                 loadOrder,
                 true,
                 CancellationToken.None,
-                existingPlugins));
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase)));
 
         // Assert
         databaseServiceMock.Verify(x => x.ClearPluginEntries(
@@ -504,7 +502,7 @@ public class ModProcessorTests : IDisposable
         var pluginPath = Path.Combine(gameDir, "Corrupted.esp");
 
         // Create corrupted plugin file
-        await File.WriteAllBytesAsync(pluginPath, new byte[] { 0xFF, 0xFF, 0xFF, 0xFF }, TestContext.Current.CancellationToken);
+        await File.WriteAllBytesAsync(pluginPath, [0xFF, 0xFF, 0xFF, 0xFF], TestContext.Current.CancellationToken);
 
         var pluginItem = new PluginListItem { Name = "Corrupted.esp", IsSelected = true };
         var mockModListing = CreateMockModListing("Corrupted.esp");
@@ -583,8 +581,8 @@ public class ModProcessorTests : IDisposable
         var mockModListing = CreateMockModListing("TestPlugin.esp");
         var loadOrder = CreateLoadOrderDictionary(mockModListing.Object);
 
-        var cts = new CancellationTokenSource();
-        cts.Cancel(); // Cancel immediately
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync(); // Cancel immediately
 
         // Act & Assert
         await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
@@ -609,7 +607,7 @@ public class ModProcessorTests : IDisposable
             BindingFlags.NonPublic | BindingFlags.Static);
         Assert.NotNull(batchSizeField);
 
-        var batchSize = (int)batchSizeField.GetValue(null);
+        var batchSize = Assert.IsType<int>(batchSizeField!.GetValue(null));
         Assert.Equal(1000, batchSize);
 
         await Task.CompletedTask;
@@ -797,7 +795,6 @@ public class ModProcessorTests : IDisposable
         {
             ".esm" => ModType.Master,
             ".esl" => ModType.Light,
-            ".esp" => ModType.Plugin,
             _ => ModType.Plugin
         };
         var modKey = new ModKey(modName, modType);
