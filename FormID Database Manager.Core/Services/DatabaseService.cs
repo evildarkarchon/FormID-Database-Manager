@@ -1,9 +1,5 @@
 // Services/DatabaseService.cs
 
-using System;
-using System.Collections.Generic;
-using System.Threading;
-using System.Threading.Tasks;
 using Microsoft.Data.Sqlite;
 using Mutagen.Bethesda;
 
@@ -82,11 +78,13 @@ public class DatabaseService
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
 
         // Covering index for SELECT queries (formid + plugin + entry covers typical lookups)
-        command.CommandText = $"CREATE INDEX IF NOT EXISTS {tableName}_covering_idx ON {tableName}(formid, plugin COLLATE nocase, entry)";
+        command.CommandText =
+            $"CREATE INDEX IF NOT EXISTS {tableName}_covering_idx ON {tableName}(formid, plugin COLLATE nocase, entry)";
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
 
         // Plugin-only index for DELETE performance (WHERE plugin = @plugin)
-        command.CommandText = $"CREATE INDEX IF NOT EXISTS {tableName}_plugin_idx ON {tableName}(plugin COLLATE nocase)";
+        command.CommandText =
+            $"CREATE INDEX IF NOT EXISTS {tableName}_plugin_idx ON {tableName}(plugin COLLATE nocase)";
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
 
         // Drop legacy redundant index if it exists (covered by covering_idx)

@@ -45,3 +45,13 @@ jobs:
           dotnet test "FormID Database Manager.Tests" --configuration Release
           --filter "Category!=ManualPerformance&Category!=PerformanceRegression&Category!=LoadTest&Category!=StressTest"
           --logger "trx;LogFileName=test-results.trx"
+
+      - name: Publish portable
+        shell: pwsh
+        run: ./scripts/publish-portable.ps1 -Configuration Release
+
+      - name: Upload portable artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: portable-win-x64
+          path: publish/FormID-Database-Manager-portable-win-x64.zip

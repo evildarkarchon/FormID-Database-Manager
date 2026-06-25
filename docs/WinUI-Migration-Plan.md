@@ -398,3 +398,9 @@ The migration is complete when:
 - Cancel, progress, errors, and information messages behave correctly.
 - The release package or executable is produced through the documented publish workflow.
 - Manual verification covers light/dark theme, keyboard navigation, narrow resize, and at least one real game-directory flow.
+
+## Post-Phase-9 Deployment Addendum
+
+After Phase 9 verification exposed unsigned MSIX friction, framework-dependent runtime prerequisites, and the self-contained launch blocker, the release strategy changed to a portable unpackaged app as the only supported distribution lane. The WinUI project now sets `WindowsPackageType=None` and `WindowsAppSDKSelfContained=true` globally, removes MSIX tooling and `Package.appxmanifest`, and keeps self-contained publish settings scoped to publish profiles so debug builds remain fast.
+
+The primary release output is the x64 unpackaged self-contained directory plus `publish/FormID-Database-Manager-portable-win-x64.zip`, produced by `scripts/publish-portable.ps1`. Single-file publishing is intentionally omitted because the WinUI single-file lane requires MSIX tooling for self-extraction validation, which conflicts with the no-MSIX release policy. The app is unsigned, so SmartScreen warnings are expected until a signing flow is added.

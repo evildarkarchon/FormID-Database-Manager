@@ -395,54 +395,57 @@ public class WinUiPlatformServiceSourceTests
     }
 
     /// <summary>
-    /// Verifies that release publish lanes keep packaged MSIX support as the project default.
+    /// Verifies the unpackaged self-contained release lane is defined in the base project config and that
+    /// legacy publish profiles and MSIX artifacts are removed (the portable release uses publish-portable.ps1).
     /// </summary>
     [Fact]
     public void WinUiProject_DefinesScopedReleasePublishProfiles()
     {
         var winUiDirectory = GetWinUiProjectDirectory();
         var projectPath = Path.Combine(winUiDirectory, "FormID Database Manager.WinUI.csproj");
+        var packageManifestPath = Path.Combine(winUiDirectory, "Package.appxmanifest");
         var publishProfilesDirectory = Path.Combine(winUiDirectory, "Properties", "PublishProfiles");
         var packagedProfilePath = Path.Combine(publishProfilesDirectory, "win-x64-msix.pubxml");
+        var genericX64ProfilePath = Path.Combine(publishProfilesDirectory, "win-x64.pubxml");
+        var genericX86ProfilePath = Path.Combine(publishProfilesDirectory, "win-x86.pubxml");
+        var genericArm64ProfilePath = Path.Combine(publishProfilesDirectory, "win-arm64.pubxml");
         var frameworkDependentProfilePath = Path.Combine(
             publishProfilesDirectory,
             "win-x64-unpackaged-framework-dependent.pubxml");
         var selfContainedProfilePath = Path.Combine(
             publishProfilesDirectory,
             "win-x64-unpackaged-self-contained.pubxml");
+        var singleFileProfilePath = Path.Combine(
+            publishProfilesDirectory,
+            "win-x64-unpackaged-single-file.pubxml");
 
         var projectSource = File.ReadAllText(projectPath);
-        Assert.Contains("<EnableMsixTooling>true</EnableMsixTooling>", projectSource, StringComparison.Ordinal);
-        Assert.DoesNotContain("<WindowsPackageType>None</WindowsPackageType>", projectSource, StringComparison.Ordinal);
-
-        var packagedProfile = File.ReadAllText(packagedProfilePath);
-        Assert.Contains("<GenerateAppxPackageOnBuild>true</GenerateAppxPackageOnBuild>", packagedProfile, StringComparison.Ordinal);
-        Assert.Contains("<AppxBundle>Never</AppxBundle>", packagedProfile, StringComparison.Ordinal);
-        Assert.DoesNotContain("<WindowsPackageType>None</WindowsPackageType>", packagedProfile, StringComparison.Ordinal);
-
-        var frameworkDependentProfile = File.ReadAllText(frameworkDependentProfilePath);
-        Assert.Contains("<WindowsPackageType>None</WindowsPackageType>", frameworkDependentProfile, StringComparison.Ordinal);
-        Assert.Contains("<SelfContained>false</SelfContained>", frameworkDependentProfile, StringComparison.Ordinal);
-        Assert.Contains("<WindowsAppSDKSelfContained>false</WindowsAppSDKSelfContained>", frameworkDependentProfile, StringComparison.Ordinal);
-        Assert.DoesNotContain("<PublishSingleFile>true</PublishSingleFile>", frameworkDependentProfile, StringComparison.Ordinal);
-
-        var selfContainedProfile = File.ReadAllText(selfContainedProfilePath);
-        Assert.Contains("<WindowsPackageType>None</WindowsPackageType>", selfContainedProfile, StringComparison.Ordinal);
-        Assert.Contains("<SelfContained>true</SelfContained>", selfContainedProfile, StringComparison.Ordinal);
-        Assert.Contains("<WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>", selfContainedProfile, StringComparison.Ordinal);
-        Assert.DoesNotContain("<PublishSingleFile>true</PublishSingleFile>", selfContainedProfile, StringComparison.Ordinal);
+        Assert.Contains("<WindowsPackageType>None</WindowsPackageType>", projectSource, StringComparison.Ordinal);
+        Assert.Contains("<WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>", projectSource, StringComparison.Ordinal);
+        Assert.Contains("<WindowsAppSdkDeploymentManagerInitialize>false</WindowsAppSdkDeploymentManagerInitialize>", projectSource, StringComparison.Ordinal);
+        Assert.Contains("<WindowsAppSdkUndockedRegFreeWinRTInitialize>true</WindowsAppSdkUndockedRegFreeWinRTInitialize>", projectSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("<EnableMsixTooling>true</EnableMsixTooling>", projectSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("<HasPackageAndPublishMenu>true</HasPackageAndPublishMenu>", projectSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("<ProjectCapability Include=\"Msix\" />", projectSource, StringComparison.Ordinal);
+        Assert.False(File.Exists(packageManifestPath), "MSIX package manifest should be removed for portable unpackaged releases.");
+        Assert.False(File.Exists(packagedProfilePath), "MSIX publish profile should be removed.");
+        Assert.False(File.Exists(genericX64ProfilePath), "Generic x64 publish profile should be removed in favor of the explicit portable profile.");
+        Assert.False(File.Exists(genericX86ProfilePath), "x86 publish profile should not exist because releases are x64-only.");
+        Assert.False(File.Exists(genericArm64ProfilePath), "ARM64 publish profile should not exist because releases are x64-only.");
+        Assert.False(File.Exists(frameworkDependentProfilePath), "Framework-dependent profile should be removed because portable releases carry runtimes.");
+        Assert.False(File.Exists(singleFileProfilePath), "Single-file profile should not exist because the WinUI single-file lane requires MSIX tooling.");
+        Assert.False(File.Exists(selfContainedProfilePath), "Self-contained publish profile should be removed because the portable release is produced by the build-based publish-portable.ps1 script (dotnet publish omits the XAML resources and crashes on launch in this SDK).");
     }
 
     /// <summary>
-    /// Verifies that command-line debug entry points opt into unpackaged WinUI execution explicitly.
+    /// Verifies that command-line debug and publish entry points use the unpackaged self-contained defaults.
     /// </summary>
     [Fact]
     public void WinUiDebugCommands_UseUnpackagedSelfContainedProperties()
     {
         var repositoryRoot = FindRepositoryRoot();
         var expectedRunCommand =
-            "dotnet run --project \"FormID Database Manager.WinUI\" -p:Platform=x64 " +
-            "-p:WindowsPackageType=None -p:WindowsAppSDKSelfContained=true";
+            "dotnet run --project \"FormID Database Manager.WinUI\" -p:Platform=x64";
         var documentationPaths = new[]
         {
             Path.Combine(repositoryRoot, "README.md"),
@@ -458,9 +461,10 @@ public class WinUiPlatformServiceSourceTests
         }
 
         var tasksJson = File.ReadAllText(Path.Combine(repositoryRoot, ".vscode", "tasks.json"));
+        Assert.Contains("${workspaceFolder}/scripts/publish-portable.ps1", tasksJson, StringComparison.Ordinal);
         Assert.Contains("--property:Platform=x64", tasksJson, StringComparison.Ordinal);
-        Assert.Contains("--property:WindowsPackageType=None", tasksJson, StringComparison.Ordinal);
-        Assert.Contains("--property:WindowsAppSDKSelfContained=true", tasksJson, StringComparison.Ordinal);
+        Assert.DoesNotContain("--property:WindowsPackageType=None", tasksJson, StringComparison.Ordinal);
+        Assert.DoesNotContain("--property:WindowsAppSDKSelfContained=true", tasksJson, StringComparison.Ordinal);
     }
 
     /// <summary>

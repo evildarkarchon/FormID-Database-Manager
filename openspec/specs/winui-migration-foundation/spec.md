@@ -7,7 +7,7 @@ The system SHALL record the current migration branch, build baseline, test basel
 
 #### Scenario: Baseline record is available to future migration phases
 - **WHEN** a developer reviews the migration documentation after Phase 0
-- **THEN** the documentation identifies the current branch/checkpoint, baseline build result, baseline test result, WinUI template status, and packaged MSIX as the selected target deployment model for later WinUI phases
+- **THEN** the documentation identifies the current branch/checkpoint, baseline build result, baseline test result, WinUI template status, and the selected target deployment model for later WinUI phases
 
 ---
 
@@ -40,16 +40,16 @@ The system SHALL preserve existing Mutagen parsing, SQLite writing, plugin loadi
 - **WHEN** the full test suite is run after Phase 1 extraction
 - **THEN** UI-independent service and ViewModel tests continue to validate the same behavior through the core project reference
 
-### Requirement: Packaged WinUI shell project is scaffolded
-The system SHALL include a new template-first C# WinUI shell project for Phase 2 that uses the packaged deployment model selected in Phase 0.
+### Requirement: WinUI shell project is scaffolded
+The system SHALL include a new template-first C# WinUI shell project for Phase 2.
 
 #### Scenario: WinUI shell project is present
 - **WHEN** a developer inspects the solution after Phase 2
-- **THEN** `FormID Database Manager.WinUI` exists as a WinUI project with generated startup files, package manifest assets, and Windows App SDK project configuration
+- **THEN** `FormID Database Manager.WinUI` exists as a WinUI project with generated startup files and Windows App SDK project configuration
 
-#### Scenario: Packaged model is explicit
-- **WHEN** a developer inspects the WinUI shell project after scaffolding
-- **THEN** the project is configured for packaged MSIX behavior rather than inheriting an unpackaged template default
+#### Scenario: Portable model is explicit
+- **WHEN** a developer inspects the WinUI shell project after deployment cleanup
+- **THEN** the project is configured for unpackaged self-contained portable output without MSIX tooling
 
 ### Requirement: WinUI shell consumes the UI-neutral core
 The system SHALL reference `FormID Database Manager.Core` from the WinUI shell and use the extracted core ViewModel/model types as the state source for the Phase 3 main-window UI.

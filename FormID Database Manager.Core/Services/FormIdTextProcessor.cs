@@ -1,9 +1,4 @@
-using System;
-using System.Collections.Generic;
-using System.IO;
 using System.Text;
-using System.Threading;
-using System.Threading.Tasks;
 using Microsoft.Data.Sqlite;
 using Mutagen.Bethesda;
 
@@ -25,6 +20,7 @@ public class FormIdTextProcessor(DatabaseService databaseService)
     ///     and needs smaller batches to manage memory during heavy object instantiation.
     /// </summary>
     private const int BatchSize = 10000;
+
     private const int UiUpdateInterval = 1000; // Update UI every 1000 records
 
     /// <summary>
@@ -202,7 +198,8 @@ public class FormIdTextProcessor(DatabaseService databaseService)
             if (_insertCommand == null)
             {
                 _insertCommand = conn.CreateCommand();
-                _insertCommand.CommandText = $"INSERT INTO {_tableName} (plugin, formid, entry) VALUES (@plugin, @formid, @entry)";
+                _insertCommand.CommandText =
+                    $"INSERT INTO {_tableName} (plugin, formid, entry) VALUES (@plugin, @formid, @entry)";
                 _insertCommand.Parameters.Add(new SqliteParameter { ParameterName = "@plugin" });
                 _insertCommand.Parameters.Add(new SqliteParameter { ParameterName = "@formid" });
                 _insertCommand.Parameters.Add(new SqliteParameter { ParameterName = "@entry" });

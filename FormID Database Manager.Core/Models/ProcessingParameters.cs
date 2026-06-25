@@ -1,4 +1,3 @@
-using System.Collections.Generic;
 using Mutagen.Bethesda;
 
 namespace FormID_Database_Manager.Models;

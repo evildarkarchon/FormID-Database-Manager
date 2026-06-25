@@ -1,9 +1,4 @@
-using System;
-using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
-using System.Linq;
-using System.Threading;
-using System.Threading.Tasks;
 using FormID_Database_Manager.Models;
 using FormID_Database_Manager.ViewModels;
 using Microsoft.Data.Sqlite;
@@ -15,7 +10,7 @@ namespace FormID_Database_Manager.Services;
 /// </summary>
 public class PluginProcessingService : IDisposable
 {
-    private readonly object _cancellationLock = new();
+    private readonly Lock _cancellationLock = new();
     private readonly DatabaseService _databaseService;
     private readonly ModProcessor _modProcessor;
     private readonly FormIdTextProcessor _textProcessor;
@@ -90,7 +85,8 @@ public class PluginProcessingService : IDisposable
     ///     A task representing the asynchronous operation of processing plugins, allowing cancellation or exception handling
     ///     when required.
     /// </returns>
-    [RequiresUnreferencedCode("Uses reflection-based name extraction for Mutagen records via ModProcessor.ProcessPlugin.")]
+    [RequiresUnreferencedCode(
+        "Uses reflection-based name extraction for Mutagen records via ModProcessor.ProcessPlugin.")]
     public async Task ProcessPlugins(
         ProcessingParameters parameters,
         IProgress<(string Message, double? Value)>? progress = null)
@@ -103,11 +99,13 @@ public class PluginProcessingService : IDisposable
             cancellationTokenSource = _cancellationTokenSource;
         }
 
-        await Task.Run(() => ProcessPluginsCore(parameters, progress, cancellationTokenSource))
+        await Task.Run(() => ProcessPluginsCore(parameters, progress, cancellationTokenSource),
+                cancellationTokenSource.Token)
             .ConfigureAwait(false);
     }
 
-    [RequiresUnreferencedCode("Uses reflection-based name extraction for Mutagen records via ModProcessor.ProcessPlugin.")]
+    [RequiresUnreferencedCode(
+        "Uses reflection-based name extraction for Mutagen records via ModProcessor.ProcessPlugin.")]
     private async Task ProcessPluginsCore(
         ProcessingParameters parameters,
         IProgress<(string Message, double? Value)>? progress,

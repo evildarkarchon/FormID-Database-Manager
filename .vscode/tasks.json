@@ -15,18 +15,10 @@
         },
         {
             "label": "publish",
-            "command": "dotnet",
+            "command": "pwsh",
             "type": "process",
             "args": [
-                "publish",
-                "${workspaceFolder}/FormID Database Manager.WinUI/FormID Database Manager.WinUI.csproj",
-                "-c",
-                "Release",
-                "-p:Platform=x64",
-                "-r",
-                "win-x64",
-                "/property:GenerateFullPaths=true",
-                "/consoleloggerparameters:NoSummary;ForceNoAlign"
+                "${workspaceFolder}/scripts/publish-portable.ps1"
             ],
             "problemMatcher": "$msCompile"
         },
@@ -39,9 +31,7 @@
                 "run",
                 "--project",
                 "${workspaceFolder}/FormID Database Manager.WinUI/FormID Database Manager.WinUI.csproj",
-                "--property:Platform=x64",
-                "--property:WindowsPackageType=None",
-                "--property:WindowsAppSDKSelfContained=true"
+                "--property:Platform=x64"
             ],
             "problemMatcher": "$msCompile"
         }

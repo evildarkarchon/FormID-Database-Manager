@@ -1,11 +1,5 @@
-using System;
 using System.Collections.Concurrent;
-using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
-using System.IO;
-using System.Linq;
-using System.Threading;
-using System.Threading.Tasks;
 using FormID_Database_Manager.Models;
 using Microsoft.Data.Sqlite;
 using Mutagen.Bethesda;
@@ -63,7 +57,8 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
     /// <param name="cancellationToken">The cancellation token to handle processing termination requests.</param>
     /// <param name="existingPlugins">Ignored legacy cache parameter; update mode always clears the plugin before inserting.</param>
     /// <returns>A task that processes the plugin asynchronously and manages its database entries accordingly.</returns>
-    [RequiresUnreferencedCode("Uses reflection to discover INamedGetter interface and Name/String properties on Mutagen record types for name extraction.")]
+    [RequiresUnreferencedCode(
+        "Uses reflection to discover INamedGetter interface and Name/String properties on Mutagen record types for name extraction.")]
     public async Task ProcessPlugin(
         string gameDir,
         SqliteConnection conn,
@@ -107,7 +102,8 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
     /// <param name="cancellationToken">The cancellation token to handle processing termination requests.</param>
     /// <param name="existingPlugins">Ignored legacy cache parameter; update mode always clears the plugin before inserting.</param>
     /// <returns>A task that processes the plugin asynchronously and manages its database entries accordingly.</returns>
-    [RequiresUnreferencedCode("Uses reflection to discover INamedGetter interface and Name/String properties on Mutagen record types for name extraction.")]
+    [RequiresUnreferencedCode(
+        "Uses reflection to discover INamedGetter interface and Name/String properties on Mutagen record types for name extraction.")]
     public async Task ProcessPlugin(
         string gameDir,
         SqliteConnection conn,
@@ -312,7 +308,6 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
                 errorCallback($"Warning: Failed to insert final batch in {pluginName}: {ex.Message}");
             }
         }
-
     }
 
     /// <summary>
@@ -340,7 +335,8 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
     /// </summary>
     /// <param name="record">The major record for which the name is to be retrieved.</param>
     /// <returns>A string representing the name of the record, or a formatted fallback string if no name or editor ID is found.</returns>
-    [RequiresUnreferencedCode("Uses reflection to discover INamedGetter interface and Name/String properties on Mutagen record types.")]
+    [RequiresUnreferencedCode(
+        "Uses reflection to discover INamedGetter interface and Name/String properties on Mutagen record types.")]
     private string GetRecordName(IMajorRecordGetter record)
     {
         if (!string.IsNullOrEmpty(record.EditorID))
@@ -393,7 +389,8 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
                 catch (Exception ex)
                 {
                     // Log for diagnostics but don't propagate - returning null triggers fallback naming
-                    System.Diagnostics.Debug.WriteLine($"Name extraction failed for {rec.GetType().Name}: {ex.Message}");
+                    System.Diagnostics.Debug.WriteLine(
+                        $"Name extraction failed for {rec.GetType().Name}: {ex.Message}");
                     return null;
                 }
             };

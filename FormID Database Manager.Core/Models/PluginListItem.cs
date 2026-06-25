@@ -5,11 +5,9 @@ namespace FormID_Database_Manager.Models;
 
 public partial class PluginListItem : ObservableObject, IDataErrorInfo
 {
-    [ObservableProperty]
-    private string _name = string.Empty;
+    [ObservableProperty] private string _name = string.Empty;
 
-    [ObservableProperty]
-    private bool _isSelected;
+    [ObservableProperty] private bool _isSelected;
 
     // IDataErrorInfo implementation to prevent error states
     // Note: IDataErrorInfo predates nullable reference types and expects null/"" for no error.

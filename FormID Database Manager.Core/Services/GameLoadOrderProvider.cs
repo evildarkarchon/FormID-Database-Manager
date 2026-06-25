@@ -1,7 +1,3 @@
-using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
 using Mutagen.Bethesda;
 using Mutagen.Bethesda.Plugins;
 using Mutagen.Bethesda.Plugins.Meta;
@@ -19,7 +15,8 @@ public class GameLoadOrderProvider : IGameLoadOrderProvider
 
     public GameLoadOrderProvider()
         : this(
-            (release, dataPath) => LoadOrder.GetLoadOrderListings(release, dataPath, throwOnMissingMods: false).ToList(),
+            (release, dataPath) =>
+                LoadOrder.GetLoadOrderListings(release, dataPath, throwOnMissingMods: false).ToList(),
             release => GameConstants.Get(release).SeparateMasterLoadOrders,
             File.Exists,
             (modPath, release) => KeyedMasterStyle.FromPath(modPath, release))

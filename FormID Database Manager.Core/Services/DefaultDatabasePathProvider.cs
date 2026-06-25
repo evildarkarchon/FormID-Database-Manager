@@ -1,5 +1,3 @@
-using System;
-using System.IO;
 using Mutagen.Bethesda;
 
 namespace FormID_Database_Manager.Services;
@@ -21,7 +19,8 @@ internal static class DefaultDatabasePathProvider
 
         if (string.IsNullOrWhiteSpace(localApplicationDataRoot))
         {
-            throw new InvalidOperationException("Could not resolve the local application data directory for the current user.");
+            throw new InvalidOperationException(
+                "Could not resolve the local application data directory for the current user.");
         }
 
         return CreateDefaultDatabasePath(gameRelease, localApplicationDataRoot);

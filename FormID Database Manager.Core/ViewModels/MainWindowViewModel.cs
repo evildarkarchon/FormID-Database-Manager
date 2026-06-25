@@ -1,10 +1,5 @@
-using System;
-using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
-using System.Linq;
-using System.Threading;
-using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using FormID_Database_Manager.Models;
 using FormID_Database_Manager.Services;
@@ -16,57 +11,45 @@ public partial class MainWindowViewModel : ObservableObject, IDisposable
 {
     private readonly int _debounceMs;
     private readonly IThreadDispatcher _dispatcher;
-    private readonly object _messagesLock = new();
+    private readonly Lock _messagesLock = new();
     private readonly object _pluginsLock = new();
     private CancellationTokenSource? _debounceCts;
 
-    [ObservableProperty]
-    private string _databasePath = string.Empty;
+    [ObservableProperty] private string _databasePath = string.Empty;
 
-    [ObservableProperty]
-    private ObservableCollection<string> _detectedDirectories = [];
+    [ObservableProperty] private ObservableCollection<string> _detectedDirectories = [];
 
-    [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(HasErrorMessages))]
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(HasErrorMessages))]
     private ObservableCollection<string> _errorMessages = [];
 
     private ObservableCollection<PluginListItem> _filteredPlugins = [];
 
-    [ObservableProperty]
-    private string _formIdListPath = string.Empty;
+    [ObservableProperty] private string _formIdListPath = string.Empty;
 
-    [ObservableProperty]
-    private string _gameDirectory = string.Empty;
+    [ObservableProperty] private string _gameDirectory = string.Empty;
 
-    [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(HasInformationMessages))]
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(HasInformationMessages))]
     private ObservableCollection<string> _informationMessages = [];
 
     private bool _filterSuspended;
     private int _isApplyingFilter;
 
-    [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(IsProgressVisible))]
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(IsProgressVisible))]
     private bool _isProcessing;
 
-    [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(IsProgressVisible))]
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(IsProgressVisible))]
     private bool _isScanning;
 
-    [ObservableProperty]
-    private string _pluginFilter = string.Empty;
+    [ObservableProperty] private string _pluginFilter = string.Empty;
 
     private ObservableCollection<PluginListItem> _plugins;
 
-    [ObservableProperty]
-    private string _progressStatus = string.Empty;
+    [ObservableProperty] private string _progressStatus = string.Empty;
 
-    [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(IsGameSelected))]
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(IsGameSelected))]
     private GameRelease? _selectedGame;
 
-    [ObservableProperty]
-    private double _progressValue;
+    [ObservableProperty] private double _progressValue;
 
     public MainWindowViewModel(IThreadDispatcher? dispatcher = null) : this(dispatcher, 0)
     {
@@ -98,7 +81,8 @@ public partial class MainWindowViewModel : ObservableObject, IDisposable
         _informationMessages.CollectionChanged += OnInformationMessagesCollectionChanged;
     }
 
-    private LockedObservableCollection<PluginListItem> CreatePluginsCollection(IEnumerable<PluginListItem>? source = null)
+    private LockedObservableCollection<PluginListItem> CreatePluginsCollection(
+        IEnumerable<PluginListItem>? source = null)
     {
         return source == null
             ? new LockedObservableCollection<PluginListItem>(_pluginsLock)
@@ -124,35 +108,46 @@ public partial class MainWindowViewModel : ObservableObject, IDisposable
 
     public ObservableCollection<PluginListItem> Plugins
     {
-        get => _plugins;
+        get
+        {
+            lock (_pluginsLock)
+            {
+                return _plugins;
+            }
+        }
+
         set
         {
-            if (ReferenceEquals(_plugins, value))
+            lock (_pluginsLock)
             {
-                return;
-            }
+                if (ReferenceEquals(_plugins, value))
+                {
+                    return;
+                }
 
-            var normalizedPlugins = value as LockedObservableCollection<PluginListItem> ?? CreatePluginsCollection(value);
-            var previousPlugins = _plugins;
+                var normalizedPlugins =
+                    value as LockedObservableCollection<PluginListItem> ?? CreatePluginsCollection(value);
+                var previousPlugins = _plugins;
 
-            if (SetProperty(ref _plugins, normalizedPlugins))
-            {
-                previousPlugins.CollectionChanged -= OnPluginsCollectionChanged;
-                _plugins.CollectionChanged += OnPluginsCollectionChanged;
-                ApplyFilter();
+                if (SetProperty(ref _plugins, normalizedPlugins))
+                {
+                    previousPlugins.CollectionChanged -= OnPluginsCollectionChanged;
+                    _plugins.CollectionChanged += OnPluginsCollectionChanged;
+                    ApplyFilter();
+                }
             }
         }
     }
 
-    public ObservableCollection<PluginListItem> FilteredPlugins
-    {
-        get => _filteredPlugins;
-        // Keep this hand-written instead of using [ObservableProperty] so only the view model can replace the collection.
-        private set => SetProperty(ref _filteredPlugins, value);
-    }
+    public ObservableCollection<PluginListItem> FilteredPlugins => _filteredPlugins;
 
     partial void OnErrorMessagesChanging(ObservableCollection<string> value)
     {
+        if (ReferenceEquals(ErrorMessages, value))
+        {
+            return;
+        }
+
         ErrorMessages.CollectionChanged -= OnErrorMessagesCollectionChanged;
     }
 
@@ -164,6 +159,11 @@ public partial class MainWindowViewModel : ObservableObject, IDisposable
 
     partial void OnInformationMessagesChanging(ObservableCollection<string> value)
     {
+        if (ReferenceEquals(InformationMessages, value))
+        {
+            return;
+        }
+
         InformationMessages.CollectionChanged -= OnInformationMessagesCollectionChanged;
     }
 
@@ -187,7 +187,7 @@ public partial class MainWindowViewModel : ObservableObject, IDisposable
     {
         if (_debounceMs <= 0)
         {
-            ApplyFilter();
+            ApplyFilter(value);
         }
         else
         {
@@ -206,7 +206,7 @@ public partial class MainWindowViewModel : ObservableObject, IDisposable
         {
             if (!token.IsCancellationRequested)
             {
-                _dispatcher.Post(() => ApplyFilter());
+                _dispatcher.Post(ApplyFilter);
             }
         }, token, TaskContinuationOptions.OnlyOnRanToCompletion, TaskScheduler.Default);
     }
@@ -224,6 +224,11 @@ public partial class MainWindowViewModel : ObservableObject, IDisposable
 
     private void ApplyFilter()
     {
+        ApplyFilter(PluginFilter);
+    }
+
+    private void ApplyFilter(string pluginFilter)
+    {
         // Skip filter application when suspended (during bulk loading)
         if (_filterSuspended)
         {
@@ -239,7 +244,7 @@ public partial class MainWindowViewModel : ObservableObject, IDisposable
         // Ensure filter operations happen on UI thread
         if (!_dispatcher.CheckAccess())
         {
-            _dispatcher.Post(() => ApplyFilter());
+            _dispatcher.Post(ApplyFilter);
             Interlocked.Exchange(ref _isApplyingFilter, 0);
             return;
         }
@@ -253,9 +258,9 @@ public partial class MainWindowViewModel : ObservableObject, IDisposable
             List<PluginListItem> filtered;
             lock (_pluginsLock)
             {
-                filtered = string.IsNullOrWhiteSpace(PluginFilter)
+                filtered = string.IsNullOrWhiteSpace(pluginFilter)
                     ? _plugins.ToList()
-                    : _plugins.Where(p => p.Name.Contains(PluginFilter, StringComparison.OrdinalIgnoreCase)).ToList();
+                    : _plugins.Where(p => p.Name.Contains(pluginFilter, StringComparison.OrdinalIgnoreCase)).ToList();
             }
 
             // Use HashSet for O(1) lookup performance
@@ -332,7 +337,7 @@ public partial class MainWindowViewModel : ObservableObject, IDisposable
         // Ensure collection operations happen on UI thread
         if (!_dispatcher.CheckAccess())
         {
-            _dispatcher.Post(() => ResetProgress());
+            _dispatcher.Post(ResetProgress);
             return;
         }
 

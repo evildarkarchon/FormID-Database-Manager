@@ -44,7 +44,7 @@ Phase 0 was recorded on June 9, 2026 before extracting the UI-neutral core bound
 - Baseline build: `dotnet build "FormID Database Manager.slnx"` succeeded with `0` warnings and `0` errors.
 - Baseline tests: `dotnet test "FormID Database Manager.Tests"` passed with `272` passed and `11` skipped.
 - WinUI template status: `dotnet new list winui` exposes the C# `WinUI 3 App`, `WinUI 3 Blazor App`, and `WinUI 3 Class Library` templates.
-- Target deployment model: packaged MSIX is selected for the staged WinUI migration. The WinUI project is now the supported desktop shell.
+- Target deployment model: unpackaged self-contained portable WinUI app. The WinUI project is now the supported desktop shell.
 
 ---
 
@@ -71,10 +71,10 @@ dotnet build "FormID Database Manager.WinUI\FormID Database Manager.WinUI.csproj
 
 ### Run
 
-Debug CLI runs pass unpackaged, Windows App SDK self-contained properties so the app can launch directly from `dotnet run`.
+Debug CLI runs use the WinUI project's unpackaged self-contained defaults so the app can launch directly from `dotnet run`.
 
 ```bash
-dotnet run --project "FormID Database Manager.WinUI" -p:Platform=x64 -p:WindowsPackageType=None -p:WindowsAppSDKSelfContained=true
+dotnet run --project "FormID Database Manager.WinUI" -p:Platform=x64
 ```
 
 ### Test
@@ -102,34 +102,24 @@ pwsh ./scripts/run-coverage.ps1 -OpenReport
 
 ### Publish
 
-The WinUI project keeps packaged MSIX support enabled by default. Use an explicit publish profile for each release lane.
-
-Packaged MSIX, x64:
+Portable self-contained, x64 (primary):
 
 ```powershell
-dotnet build "FormID Database Manager.WinUI\FormID Database Manager.WinUI.csproj" -c Release -p:Platform=x64 -p:PublishProfile=win-x64-msix.pubxml
+pwsh ./scripts/publish-portable.ps1
 ```
 
-Unpackaged framework-dependent, x64:
+Underlying build command:
 
 ```powershell
-dotnet publish "FormID Database Manager.WinUI\FormID Database Manager.WinUI.csproj" -c Release -p:Platform=x64 -p:PublishProfile=win-x64-unpackaged-framework-dependent.pubxml
-```
-
-Unpackaged self-contained, x64:
-
-```powershell
-dotnet publish "FormID Database Manager.WinUI\FormID Database Manager.WinUI.csproj" -c Release -p:Platform=x64 -p:PublishProfile=win-x64-unpackaged-self-contained.pubxml
+dotnet build "FormID Database Manager.WinUI\FormID Database Manager.WinUI.csproj" -c Release -p:Platform=x64
 ```
 
 Runtime and distribution notes:
 
-- Packaged MSIX is the Phase 9 packaged lane for direct MSIX verification. Store submission, production certificate selection, AppInstaller feeds, and automatic update flow are not configured yet.
-- The packaged profile does not set `WindowsPackageType=None`; the base project remains MSIX-capable.
-- The debug run command sets `WindowsPackageType=None` and `WindowsAppSDKSelfContained=true` explicitly without changing the base project default.
-- The unpackaged framework-dependent publish profile sets `WindowsPackageType=None`; target machines must have the matching .NET desktop runtime and Windows App SDK runtime installed.
-- The unpackaged self-contained publish profile sets `WindowsPackageType=None` and `WindowsAppSDKSelfContained=true`. Its output carries the Windows App SDK runtime with the app and is larger than the framework-dependent output.
-- Single-file unpackaged output is not selected for Phase 9 because first-launch extraction behavior still needs clean-machine verification.
+- Portable output carries the .NET and Windows App SDK runtimes with the app; no installer or separate runtime installation is required.
+- Unzip the portable package and run `FormID Database Manager.WinUI.exe` from the extracted folder.
+- The app is unsigned, so Windows SmartScreen warnings are expected until code signing is configured.
+- Single-file publishing is intentionally not provided because the Windows App SDK single-file lane requires MSIX tooling for WinUI self-extraction validation.
 - When no database path is selected, generated databases are written under `%LOCALAPPDATA%\FormID Database Manager\Databases`.
 
 ---
