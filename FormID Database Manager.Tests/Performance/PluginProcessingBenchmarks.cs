@@ -22,6 +22,7 @@ namespace FormID_Database_Manager.Tests.Performance;
 [MemoryDiagnoser]
 public class PluginProcessingBenchmarks : IDisposable
 {
+    private readonly Consumer _consumer = new();
     private SqliteConnection _connection = null!;
     private string _databasePath = null!;
     private DatabaseService _databaseService = null!;
@@ -70,7 +71,14 @@ public class PluginProcessingBenchmarks : IDisposable
             {
                 Directory.Delete(_testDirectory, true);
             }
-            catch { }
+            catch (IOException)
+            {
+                // Benchmark cleanup is best-effort; temp files can remain locked briefly.
+            }
+            catch (UnauthorizedAccessException)
+            {
+                // Benchmark cleanup is best-effort; temp files can remain locked briefly.
+            }
         }
     }
 
@@ -83,7 +91,7 @@ public class PluginProcessingBenchmarks : IDisposable
         }
 
         var plugin = _testPlugins[0];
-        var loadOrder = CreateLoadOrder(new[] { plugin });
+        var loadOrder = CreateLoadOrder([plugin]);
 
         await _modProcessor.ProcessPlugin(
             _testDirectory,
@@ -122,15 +130,8 @@ public class PluginProcessingBenchmarks : IDisposable
         }
 
         var plugin = _testPlugins[0];
-        var loadOrder = CreateLoadOrder(new[] { plugin });
-        var cts = new CancellationTokenSource();
-
-        // Cancel after a short delay
-        _ = Task.Run(async () =>
-        {
-            await Task.Delay(50);
-            cts.Cancel();
-        });
+        var loadOrder = CreateLoadOrder([plugin]);
+        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
 
         try
         {
@@ -158,7 +159,7 @@ public class PluginProcessingBenchmarks : IDisposable
         }
 
         var plugin = _testPlugins[0];
-        var loadOrder = CreateLoadOrder(new[] { plugin });
+        var loadOrder = CreateLoadOrder([plugin]);
 
         // First insert some data
         await _modProcessor.ProcessPlugin(
@@ -217,6 +218,8 @@ public class PluginProcessingBenchmarks : IDisposable
                 entries.Add((formId, entry));
             }
         }
+
+        _consumer.Consume(entries);
     }
 
     private List<PluginListItem> CreateTestPlugins(int count)

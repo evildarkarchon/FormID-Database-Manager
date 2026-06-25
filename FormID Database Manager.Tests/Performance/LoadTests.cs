@@ -49,7 +49,10 @@ public class LoadTests : IDisposable
                     File.Delete(file);
                 }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                _output.WriteLine($"Failed to delete test file '{file}': {ex.Message}");
+            }
         }
 
         // Clean up test directory
@@ -59,7 +62,10 @@ public class LoadTests : IDisposable
             {
                 Directory.Delete(_testDirectory, true);
             }
-            catch { }
+            catch (Exception ex)
+            {
+                _output.WriteLine($"Failed to delete test directory '{_testDirectory}': {ex.Message}");
+            }
         }
     }
 
@@ -106,9 +112,9 @@ public class LoadTests : IDisposable
         _output.WriteLine($"Average time per plugin: {stopwatch.Elapsed.TotalMilliseconds / pluginCount:F2} ms");
 
         // Verify all plugins were processed
-        using var conn = new SqliteConnection($"Data Source={dbPath}");
+        await using var conn = new SqliteConnection($"Data Source={dbPath}");
         await conn.OpenAsync();
-        using var cmd = new SqliteCommand($"SELECT COUNT(DISTINCT plugin) FROM {GameRelease.SkyrimSE}", conn);
+        await using var cmd = new SqliteCommand($"SELECT COUNT(DISTINCT plugin) FROM {GameRelease.SkyrimSE}", conn);
         var processedCount = Convert.ToInt64(await cmd.ExecuteScalarAsync());
 
         // Plugins may fail to parse under stress conditions; this test focuses on throughput and stability.
@@ -137,7 +143,7 @@ public class LoadTests : IDisposable
 
         // Act
         var stopwatch = Stopwatch.StartNew();
-        using var conn = new SqliteConnection($"Data Source={dbPath}");
+        await using var conn = new SqliteConnection($"Data Source={dbPath}");
         await conn.OpenAsync();
 
         var modProcessor = new ModProcessor(_databaseService, msg => _output.WriteLine($"Error: {msg}"));
@@ -162,7 +168,7 @@ public class LoadTests : IDisposable
         _output.WriteLine($"Processed {formIdCount} FormIDs in {stopwatch.Elapsed.TotalSeconds:F2} seconds");
         _output.WriteLine($"Processing rate: {formIdCount / stopwatch.Elapsed.TotalSeconds:F0} FormIDs/second");
 
-        using var countCmd = new SqliteCommand($"SELECT COUNT(*) FROM {GameRelease.SkyrimSE}", conn);
+        await using var countCmd = new SqliteCommand($"SELECT COUNT(*) FROM {GameRelease.SkyrimSE}", conn);
         var actualCount = Convert.ToInt64(await countCmd.ExecuteScalarAsync());
 
         Assert.True(actualCount > 0, "No records were inserted");
@@ -195,7 +201,7 @@ public class LoadTests : IDisposable
             {
                 try
                 {
-                    using var conn = new SqliteConnection($"Data Source={dbPath}");
+                    await using var conn = new SqliteConnection($"Data Source={dbPath}");
                     await conn.OpenAsync();
 
                     for (var j = 0; j < operationsPerThread; j++)
@@ -240,9 +246,9 @@ public class LoadTests : IDisposable
             // since SQLite's locking behavior is expected
         }
 
-        using var conn = new SqliteConnection($"Data Source={dbPath}");
+        await using var conn = new SqliteConnection($"Data Source={dbPath}");
         await conn.OpenAsync();
-        using var cmd = new SqliteCommand($"SELECT COUNT(*) FROM {GameRelease.SkyrimSE}", conn);
+        await using var cmd = new SqliteCommand($"SELECT COUNT(*) FROM {GameRelease.SkyrimSE}", conn);
         var totalRecords = Convert.ToInt64(await cmd.ExecuteScalarAsync());
 
         // Due to SQLite locking, we may not get all records inserted

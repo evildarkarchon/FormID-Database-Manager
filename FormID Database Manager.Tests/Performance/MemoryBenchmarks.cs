@@ -43,12 +43,21 @@ public class MemoryBenchmarks
             {
                 Directory.Delete(_testDirectory, true);
             }
-            catch { }
+            catch (IOException ex)
+            {
+                Console.Error.WriteLine(
+                    $"Failed to delete temporary benchmark directory '{_testDirectory}': {ex.Message}");
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                Console.Error.WriteLine(
+                    $"Failed to delete temporary benchmark directory '{_testDirectory}': {ex.Message}");
+            }
         }
     }
 
     [Benchmark(Baseline = true)]
-    public void PluginCollection_Memory()
+    public int PluginCollection_Memory()
     {
         var plugins = new ObservableCollection<PluginListItem>();
 
@@ -56,8 +65,7 @@ public class MemoryBenchmarks
         {
             plugins.Add(new PluginListItem
             {
-                Name = $"Plugin_{i:D6}.esp",
-                IsSelected = i % 2 == 0
+                Name = $"Plugin_{i:D6}.esp", IsSelected = i % 2 == 0
                 // LoadIndex not available
             });
         }
@@ -66,6 +74,8 @@ public class MemoryBenchmarks
         GC.Collect();
         GC.WaitForPendingFinalizers();
         GC.Collect();
+
+        return plugins.Count;
     }
 
     [Benchmark]
@@ -77,8 +87,7 @@ public class MemoryBenchmarks
         {
             viewModel.Plugins.Add(new PluginListItem
             {
-                Name = $"Plugin_{i:D6}.esp",
-                IsSelected = i % 2 == 0
+                Name = $"Plugin_{i:D6}.esp", IsSelected = i % 2 == 0
                 // LoadIndex not available
             });
         }
@@ -95,7 +104,7 @@ public class MemoryBenchmarks
     }
 
     [Benchmark]
-    public void ErrorMessages_LargeCollection()
+    public int ErrorMessages_LargeCollection()
     {
         var viewModel = new MainWindowViewModel();
 
@@ -111,6 +120,8 @@ public class MemoryBenchmarks
         GC.Collect();
         GC.WaitForPendingFinalizers();
         GC.Collect();
+
+        return viewModel.ErrorMessages.Count;
     }
 
     [Benchmark]
@@ -121,27 +132,26 @@ public class MemoryBenchmarks
 
         await databaseService.InitializeDatabase(dbPath, GameRelease.SkyrimSE);
 
-        using var conn = new SqliteConnection($"Data Source={dbPath}");
-        await conn.OpenAsync();
-
-        // Simulate large batch insert
-        var entries = new List<(string plugin, string formid, string entry)>();
-        for (var i = 0; i < ItemCount; i++)
+        await using (var conn = new SqliteConnection($"Data Source={dbPath}"))
         {
-            entries.Add(("Plugin.esp", $"{i:X8}", $"Entry_{i}"));
+            await conn.OpenAsync();
+
+            // Simulate large batch insert
+            var entries = new List<(string plugin, string formid, string entry)>();
+            for (var i = 0; i < ItemCount; i++)
+            {
+                entries.Add(("Plugin.esp", $"{i:X8}", $"Entry_{i}"));
+            }
+
+            // Insert in batches
+            await using var transaction = conn.BeginTransaction();
+            foreach (var entry in entries)
+            {
+                await databaseService.InsertRecord(conn, GameRelease.SkyrimSE, entry.plugin, entry.formid, entry.entry);
+            }
+
+            await transaction.CommitAsync();
         }
-
-        // Insert in batches
-        using var transaction = conn.BeginTransaction();
-        foreach (var entry in entries)
-        {
-            await databaseService.InsertRecord(conn, GameRelease.SkyrimSE, entry.plugin, entry.formid, entry.entry);
-        }
-
-        transaction.Commit();
-
-        conn.Dispose();
-        // DatabaseService cleaned up
 
         // Clean up
         if (File.Exists(dbPath))
@@ -173,7 +183,7 @@ public class MemoryBenchmarks
     }
 
     [Benchmark]
-    public void ProcessingParameters_LargePluginList()
+    public int ProcessingParameters_LargePluginList()
     {
         var parameters = new ProcessingParameters
         {
@@ -189,8 +199,7 @@ public class MemoryBenchmarks
         {
             parameters.SelectedPlugins.Add(new PluginListItem
             {
-                Name = $"Plugin_{i:D6}.esp",
-                IsSelected = true
+                Name = $"Plugin_{i:D6}.esp", IsSelected = true
                 // LoadIndex not available
             });
         }
@@ -198,10 +207,12 @@ public class MemoryBenchmarks
         GC.Collect();
         GC.WaitForPendingFinalizers();
         GC.Collect();
+
+        return parameters.SelectedPlugins.Count;
     }
 
     [Benchmark]
-    public void StringConcatenation_FormIdEntries()
+    public int StringConcatenation_FormIdEntries()
     {
         var entries = new List<string>(ItemCount);
 
@@ -213,22 +224,25 @@ public class MemoryBenchmarks
 
             // Simulate the string concatenation done during processing
             var entry = string.IsNullOrEmpty(name) ? editorId : $"{editorId} - {name}";
-            entries.Add(entry);
+            entries.Add($"{formId}|{entry}");
         }
 
         GC.Collect();
         GC.WaitForPendingFinalizers();
         GC.Collect();
+
+        return entries.Count;
     }
 
     [Benchmark]
-    public async Task FileDialog_MultipleSelections()
+    public async Task<long> FileDialog_MultipleSelections()
     {
         var tasks = new List<Task<long>>();
 
         // Simulate memory usage of multiple dialog operations
         for (var i = 0; i < 10; i++)
         {
+            var dialogIndex = i;
             tasks.Add(Task.Run(() =>
             {
                 var before = GC.GetTotalMemory(false);
@@ -236,22 +250,25 @@ public class MemoryBenchmarks
                 // Simulate dialog data
                 var dialogData = new Dictionary<string, object>
                 {
-                    ["Title"] = $"Dialog {i}",
-                    ["Path"] = Path.Combine(_testDirectory, $"file_{i}.txt"),
+                    ["Title"] = $"Dialog {dialogIndex}",
+                    ["Path"] = Path.Combine(_testDirectory, $"file_{dialogIndex}.txt"),
                     ["Filters"] = new[] { "*.txt", "*.esp", "*.esm", "*.esl" },
                     ["Items"] = Enumerable.Range(0, ItemCount / 10).Select(j => $"Item_{j}").ToList()
                 };
 
+                GC.KeepAlive(dialogData);
                 var after = GC.GetTotalMemory(false);
                 return after - before;
             }));
         }
 
-        await Task.WhenAll(tasks);
+        var memoryDeltas = await Task.WhenAll(tasks);
 
         GC.Collect();
         GC.WaitForPendingFinalizers();
         GC.Collect();
+
+        return memoryDeltas.Sum();
     }
 
     public class MemoryConfig : ManualConfig
