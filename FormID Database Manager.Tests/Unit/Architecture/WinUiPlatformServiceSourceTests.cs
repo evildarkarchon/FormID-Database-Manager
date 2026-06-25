@@ -63,7 +63,7 @@ public class WinUiPlatformServiceSourceTests
         Assert.Contains("DirectoryComboBox_SelectionChanged", source, StringComparison.Ordinal);
 
         var xaml = File.ReadAllText(mainWindowXamlPath);
-        Assert.Contains("x:Name=\"DirectoryComboBox\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("AutomationProperties.AutomationId=\"DirectoryComboBox\"", xaml, StringComparison.Ordinal);
         Assert.Contains("SelectionChanged=\"DirectoryComboBox_SelectionChanged\"", xaml, StringComparison.Ordinal);
     }
 
@@ -119,17 +119,17 @@ public class WinUiPlatformServiceSourceTests
         var xaml = File.ReadAllText(mainWindowXamlPath);
 
         Assert.Contains("Title=\"FormID Database Manager\"", xaml, StringComparison.Ordinal);
-        Assert.Contains("x:Name=\"GameComboBox\"", xaml, StringComparison.Ordinal);
-        Assert.Contains("x:Name=\"BrowseDirectoryButton\"", xaml, StringComparison.Ordinal);
-        Assert.Contains("x:Name=\"DatabasePathTextBox\"", xaml, StringComparison.Ordinal);
-        Assert.Contains("x:Name=\"FormIdListPathTextBox\"", xaml, StringComparison.Ordinal);
-        Assert.Contains("x:Name=\"PluginList\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("AutomationProperties.AutomationId=\"GameComboBox\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("AutomationProperties.AutomationId=\"BrowseDirectoryButton\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("AutomationProperties.AutomationId=\"DatabasePathTextBox\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("AutomationProperties.AutomationId=\"FormIdListPathTextBox\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("AutomationProperties.AutomationId=\"PluginList\"", xaml, StringComparison.Ordinal);
         Assert.Contains("x:Name=\"AdvancedModeCheckBox\"", xaml, StringComparison.Ordinal);
         Assert.Contains("x:Name=\"UpdateModeCheckBox\"", xaml, StringComparison.Ordinal);
-        Assert.Contains("x:Name=\"SelectAllButton\"", xaml, StringComparison.Ordinal);
-        Assert.Contains("x:Name=\"SelectNoneButton\"", xaml, StringComparison.Ordinal);
-        Assert.Contains("x:Name=\"ProcessFormIdsButton\"", xaml, StringComparison.Ordinal);
-        Assert.Contains("x:Name=\"ProcessingProgressBar\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("AutomationProperties.AutomationId=\"SelectAllButton\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("AutomationProperties.AutomationId=\"SelectNoneButton\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("AutomationProperties.AutomationId=\"ProcessFormIdsButton\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("AutomationProperties.AutomationId=\"ProcessingProgressBar\"", xaml, StringComparison.Ordinal);
 
         Assert.Contains("Click=\"SelectAll_Click\"", xaml, StringComparison.Ordinal);
         Assert.Contains("Click=\"SelectNone_Click\"", xaml, StringComparison.Ordinal);
@@ -229,7 +229,9 @@ public class WinUiPlatformServiceSourceTests
         var mainWindowXamlPath = Path.Combine(winUiDirectory, "MainWindow.xaml");
 
         var xaml = File.ReadAllText(mainWindowXamlPath);
-        var processButtonIndex = xaml.IndexOf("x:Name=\"ProcessFormIdsButton\"", StringComparison.Ordinal);
+        var processButtonIndex = xaml.IndexOf(
+            "AutomationProperties.AutomationId=\"ProcessFormIdsButton\"",
+            StringComparison.Ordinal);
         var informationBarIndex = xaml.IndexOf("IsOpen=\"{Binding HasInformationMessages, Mode=OneWay}\"",
             StringComparison.Ordinal);
 
@@ -263,11 +265,11 @@ public class WinUiPlatformServiceSourceTests
         Assert.DoesNotContain("x:Name=\"WorkflowScrollViewer\"", xaml, StringComparison.Ordinal);
         Assert.DoesNotContain("<ScrollViewer", xaml, StringComparison.Ordinal);
         Assert.Contains("RowDefinitions=\"Auto,Auto,*,Auto,Auto,Auto\"", xaml, StringComparison.Ordinal);
-        Assert.Contains("x:Name=\"GameDirectoryTextBox\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("AutomationProperties.AutomationId=\"GameDirectoryTextBox\"", xaml, StringComparison.Ordinal);
         Assert.Contains("ColumnDefinitions=\"2*,*,Auto\"", xaml, StringComparison.Ordinal);
         Assert.Contains("MinHeight=\"{StaticResource PluginListMinHeight}\"", xaml, StringComparison.Ordinal);
-        Assert.Contains("x:Name=\"PluginCommandPanel\"", xaml, StringComparison.Ordinal);
-        Assert.Contains("x:Name=\"ProgressStatusTextBlock\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("Orientation=\"Horizontal\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("AutomationProperties.AutomationId=\"ProgressStatusTextBlock\"", xaml, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -320,21 +322,21 @@ public class WinUiPlatformServiceSourceTests
 
         var xaml = File.ReadAllText(mainWindowXamlPath);
 
-        Assert.Contains("x:Name=\"GameComboBox\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("AutomationProperties.AutomationId=\"GameComboBox\"", xaml, StringComparison.Ordinal);
         Assert.Contains("TabIndex=\"0\"", xaml, StringComparison.Ordinal);
-        Assert.Contains("x:Name=\"BrowseDirectoryButton\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("AutomationProperties.AutomationId=\"BrowseDirectoryButton\"", xaml, StringComparison.Ordinal);
         Assert.Contains("AccessKey=\"B\"", xaml, StringComparison.Ordinal);
-        Assert.Contains("x:Name=\"SelectDatabaseButton\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("AutomationProperties.AutomationId=\"SelectDatabaseButton\"", xaml, StringComparison.Ordinal);
         Assert.Contains("AccessKey=\"D\"", xaml, StringComparison.Ordinal);
-        Assert.Contains("x:Name=\"SelectListFileButton\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("AutomationProperties.AutomationId=\"SelectListFileButton\"", xaml, StringComparison.Ordinal);
         Assert.Contains("AccessKey=\"L\"", xaml, StringComparison.Ordinal);
-        Assert.Contains("x:Name=\"PluginList\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("AutomationProperties.AutomationId=\"PluginList\"", xaml, StringComparison.Ordinal);
         Assert.Contains("TabIndex=\"9\"", xaml, StringComparison.Ordinal);
-        Assert.Contains("x:Name=\"SelectAllButton\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("AutomationProperties.AutomationId=\"SelectAllButton\"", xaml, StringComparison.Ordinal);
         Assert.Contains("AccessKey=\"A\"", xaml, StringComparison.Ordinal);
-        Assert.Contains("x:Name=\"SelectNoneButton\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("AutomationProperties.AutomationId=\"SelectNoneButton\"", xaml, StringComparison.Ordinal);
         Assert.Contains("AccessKey=\"N\"", xaml, StringComparison.Ordinal);
-        Assert.Contains("x:Name=\"ProcessFormIdsButton\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("AutomationProperties.AutomationId=\"ProcessFormIdsButton\"", xaml, StringComparison.Ordinal);
         Assert.Contains("AccessKey=\"P\"", xaml, StringComparison.Ordinal);
     }
 
@@ -370,12 +372,18 @@ public class WinUiPlatformServiceSourceTests
         var mainWindowXamlPath = Path.Combine(winUiDirectory, "MainWindow.xaml");
 
         var xaml = File.ReadAllText(mainWindowXamlPath);
-        var pluginListIndex = xaml.IndexOf("x:Name=\"PluginList\"", StringComparison.Ordinal);
+        var pluginListIndex = xaml.IndexOf(
+            "AutomationProperties.AutomationId=\"PluginList\"",
+            StringComparison.Ordinal);
         var pluginBorderIndex =
-            xaml.LastIndexOf("x:Name=\"PluginListBorder\"", pluginListIndex, StringComparison.Ordinal);
+            xaml.LastIndexOf(
+                "Style=\"{StaticResource PluginListBorderStyle}\"",
+                pluginListIndex,
+                StringComparison.Ordinal);
 
-        Assert.True(pluginListIndex >= 0, "The plugin list should remain a named native WinUI ListView.");
-        Assert.True(pluginBorderIndex >= 0, "The plugin list should remain inside the named constrained border.");
+        Assert.True(pluginListIndex >= 0,
+            "The plugin list should remain an automation-addressable native WinUI ListView.");
+        Assert.True(pluginBorderIndex >= 0, "The plugin list should remain inside the constrained styled border.");
 
         var pluginContainerSegment = xaml[pluginBorderIndex..pluginListIndex];
         Assert.DoesNotContain("<ScrollViewer", pluginContainerSegment, StringComparison.Ordinal);

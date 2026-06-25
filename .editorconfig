@@ -62,6 +62,11 @@ dotnet_naming_style.prefix_interface_with_i.capitalization = pascal_case
 [*.{csproj,vbproj,vcxproj,vcxproj.filters,proj,projitems,shproj}]
 indent_size = 2
 
+# WinUI XAML files
+[FormID Database Manager.WinUI/*.xaml]
+# ReSharper reports WinUI runtime {Binding} markup extensions as constructor warnings.
+resharper_xaml_constructor_warning_highlighting = none
+
 # JSON files
 [*.json]
 indent_size = 2

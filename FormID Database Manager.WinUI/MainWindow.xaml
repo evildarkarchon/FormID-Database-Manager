@@ -38,7 +38,7 @@
                     Style="{StaticResource FieldLabelTextBlockStyle}"
                     Text="Game" />
                 <ComboBox
-                    x:Name="GameComboBox"
+                    AutomationProperties.AutomationId="GameComboBox"
                     Grid.Row="0"
                     Grid.Column="1"
                     Grid.ColumnSpan="2"
@@ -64,7 +64,7 @@
                     ColumnDefinitions="2*,*,Auto"
                     ColumnSpacing="8">
                     <TextBox
-                        x:Name="GameDirectoryTextBox"
+                        AutomationProperties.AutomationId="GameDirectoryTextBox"
                         AutomationProperties.HelpText="Selected game installation or data directory."
                         AutomationProperties.LabeledBy="{Binding ElementName=GameDirectoryLabel}"
                         IsReadOnly="True"
@@ -72,7 +72,7 @@
                         TabIndex="1"
                         Text="{Binding GameDirectory, Mode=TwoWay}" />
                     <ComboBox
-                        x:Name="DirectoryComboBox"
+                        AutomationProperties.AutomationId="DirectoryComboBox"
                         Grid.Column="1"
                         AutomationProperties.HelpText="Choose from installed directories detected for the selected game."
                         AutomationProperties.Name="Detected installed directory"
@@ -84,7 +84,7 @@
                         SelectionChanged="DirectoryComboBox_SelectionChanged"
                         TabIndex="2" />
                     <Button
-                        x:Name="BrowseDirectoryButton"
+                        AutomationProperties.AutomationId="BrowseDirectoryButton"
                         Grid.Column="2"
                         AccessKey="B"
                         AutomationProperties.HelpText="Open a folder picker for a game installation or data directory."
@@ -101,7 +101,7 @@
                     Style="{StaticResource FieldLabelTextBlockStyle}"
                     Text="Database File" />
                 <TextBox
-                    x:Name="DatabasePathTextBox"
+                    AutomationProperties.AutomationId="DatabasePathTextBox"
                     Grid.Row="2"
                     Grid.Column="1"
                     AutomationProperties.HelpText="SQLite database file to create or update."
@@ -111,7 +111,7 @@
                     TabIndex="4"
                     Text="{Binding DatabasePath, Mode=TwoWay}" />
                 <Button
-                    x:Name="SelectDatabaseButton"
+                    AutomationProperties.AutomationId="SelectDatabaseButton"
                     Grid.Row="2"
                     Grid.Column="2"
                     AccessKey="D"
@@ -128,7 +128,7 @@
                     Style="{StaticResource FieldLabelTextBlockStyle}"
                     Text="FormID List File" />
                 <TextBox
-                    x:Name="FormIdListPathTextBox"
+                    AutomationProperties.AutomationId="FormIdListPathTextBox"
                     Grid.Row="3"
                     Grid.Column="1"
                     AutomationProperties.HelpText="Optional pipe-delimited FormID text file to import instead of scanning selected plugins."
@@ -138,7 +138,7 @@
                     TabIndex="6"
                     Text="{Binding FormIdListPath, Mode=TwoWay}" />
                 <Button
-                    x:Name="SelectListFileButton"
+                    AutomationProperties.AutomationId="SelectListFileButton"
                     Grid.Row="3"
                     Grid.Column="2"
                     AccessKey="L"
@@ -155,7 +155,7 @@
                     Style="{StaticResource FieldLabelTextBlockStyle}"
                     Text="Filter Plugins" />
                 <TextBox
-                    x:Name="PluginFilterTextBox"
+                    AutomationProperties.AutomationId="PluginFilterTextBox"
                     Grid.Row="4"
                     Grid.Column="1"
                     Grid.ColumnSpan="2"
@@ -173,23 +173,21 @@
                 RowSpacing="6">
                 <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
                     <TextBlock
-                        x:Name="PluginListLabel"
                         Style="{StaticResource FieldLabelTextBlockStyle}"
                         Text="Plugins" />
                     <StackPanel
-                        x:Name="PluginCommandPanel"
                         Grid.Column="1"
                         Orientation="Horizontal"
                         Spacing="8">
                         <Button
-                            x:Name="SelectAllButton"
+                            AutomationProperties.AutomationId="SelectAllButton"
                             AccessKey="A"
                             Click="SelectAll_Click"
                             Content="Select All"
                             Style="{StaticResource WorkflowButtonStyle}"
                             TabIndex="10" />
                         <Button
-                            x:Name="SelectNoneButton"
+                            AutomationProperties.AutomationId="SelectNoneButton"
                             AccessKey="N"
                             Click="SelectNone_Click"
                             Content="Select None"
@@ -199,11 +197,10 @@
                 </Grid>
 
                 <Border
-                    x:Name="PluginListBorder"
                     Grid.Row="1"
                     Style="{StaticResource PluginListBorderStyle}">
                     <ListView
-                        x:Name="PluginList"
+                        AutomationProperties.AutomationId="PluginList"
                         AutomationProperties.HelpText="Use the arrow keys to move through plugins and Space to toggle a plugin checkbox."
                         AutomationProperties.Name="Plugin selection list"
                         ItemsSource="{Binding FilteredPlugins}"
@@ -263,14 +260,14 @@
                 RowDefinitions="Auto,Auto"
                 RowSpacing="6">
                 <TextBlock
-                    x:Name="ProgressStatusTextBlock"
+                    AutomationProperties.AutomationId="ProgressStatusTextBlock"
                     Grid.Row="0"
                     Grid.Column="0"
                     AutomationProperties.Name="Processing status"
                     Text="{Binding ProgressStatus, Mode=OneWay}"
                     TextWrapping="WrapWholeWords" />
                 <ProgressBar
-                    x:Name="ProcessingProgressBar"
+                    AutomationProperties.AutomationId="ProcessingProgressBar"
                     Grid.Row="1"
                     Grid.Column="0"
                     AutomationProperties.HelpText="Shows current processing progress from zero to one hundred percent."
@@ -279,7 +276,7 @@
                     Minimum="0"
                     Value="{Binding ProgressValue, Mode=OneWay}" />
                 <Button
-                    x:Name="ProcessFormIdsButton"
+                    AutomationProperties.AutomationId="ProcessFormIdsButton"
                     Grid.Row="0"
                     Grid.RowSpan="2"
                     Grid.Column="1"
@@ -292,7 +289,7 @@
 
             <StackPanel Grid.Row="5" Margin="0,0,0,4" Spacing="8">
                 <InfoBar
-                    x:Name="ErrorMessagesInfoBar"
+                    AutomationProperties.AutomationId="ErrorMessagesInfoBar"
                     AutomationProperties.Name="Error messages"
                     CornerRadius="4"
                     IsClosable="True"
@@ -309,7 +306,7 @@
                 </InfoBar>
 
                 <InfoBar
-                    x:Name="InformationMessagesInfoBar"
+                    AutomationProperties.AutomationId="InformationMessagesInfoBar"
                     AutomationProperties.Name="Information messages"
                     CornerRadius="4"
                     IsClosable="True"
