@@ -1,9 +1,7 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Runtime.CompilerServices;
 using Mutagen.Bethesda;
-using Mutagen.Bethesda.Environments;
 using Xunit;
 
 namespace FormID_Database_Manager.TestUtilities;
@@ -17,12 +15,12 @@ public sealed class ExpectsGameEnvironmentFailureFactAttribute : FactAttribute
     public ExpectsGameEnvironmentFailureFactAttribute(
         [CallerFilePath] string? sourceFilePath = null,
         [CallerLineNumber] int sourceLineNumber = -1)
-        : this(GetDefaultGames(), IsGameInstalled, sourceFilePath, sourceLineNumber)
+        : this(GetDefaultGames(), GameInstallationHelper.IsGameInstalled, sourceFilePath, sourceLineNumber)
     {
     }
 
     public ExpectsGameEnvironmentFailureFactAttribute(GameRelease game, params GameRelease[] additionalGames)
-        : this(BuildGameList(game, additionalGames), IsGameInstalled, null, -1)
+        : this(BuildGameList(game, additionalGames), GameInstallationHelper.IsGameInstalled, null, -1)
     {
     }
 
@@ -64,18 +62,5 @@ public sealed class ExpectsGameEnvironmentFailureFactAttribute : FactAttribute
         games[0] = firstGame;
         Array.Copy(additionalGames, 0, games, 1, additionalGames.Length);
         return games;
-    }
-
-    private static bool IsGameInstalled(GameRelease gameRelease)
-    {
-        try
-        {
-            var env = GameEnvironment.Typical.Construct(gameRelease);
-            return Directory.Exists(env.DataFolderPath);
-        }
-        catch
-        {
-            return false;
-        }
     }
 }

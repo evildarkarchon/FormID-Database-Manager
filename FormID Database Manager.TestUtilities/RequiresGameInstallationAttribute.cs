@@ -1,9 +1,7 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Runtime.CompilerServices;
 using Mutagen.Bethesda;
-using Mutagen.Bethesda.Environments;
 using Xunit;
 
 namespace FormID_Database_Manager.TestUtilities;
@@ -16,12 +14,12 @@ public sealed class RequiresGameInstallationFactAttribute : FactAttribute
     public RequiresGameInstallationFactAttribute(
         [CallerFilePath] string? sourceFilePath = null,
         [CallerLineNumber] int sourceLineNumber = -1)
-        : this(GetDefaultRequiredGames(), IsGameInstalled, sourceFilePath, sourceLineNumber)
+        : this(GetDefaultRequiredGames(), GameInstallationHelper.IsGameInstalled, sourceFilePath, sourceLineNumber)
     {
     }
 
     public RequiresGameInstallationFactAttribute(GameRelease requiredGame, params GameRelease[] additionalRequiredGames)
-        : this(requiredGame, additionalRequiredGames, IsGameInstalled, null, -1)
+        : this(requiredGame, additionalRequiredGames, GameInstallationHelper.IsGameInstalled, null, -1)
     {
     }
 
@@ -29,7 +27,7 @@ public sealed class RequiresGameInstallationFactAttribute : FactAttribute
         GameRelease[] requiredGames,
         [CallerFilePath] string? sourceFilePath = null,
         [CallerLineNumber] int sourceLineNumber = -1)
-        : this(requiredGames, IsGameInstalled, sourceFilePath, sourceLineNumber)
+        : this(requiredGames, GameInstallationHelper.IsGameInstalled, sourceFilePath, sourceLineNumber)
     {
     }
 
@@ -82,21 +80,6 @@ public sealed class RequiresGameInstallationFactAttribute : FactAttribute
         Array.Copy(additionalGames, 0, games, 1, additionalGames.Length);
         return games;
     }
-
-    private static bool IsGameInstalled(GameRelease gameRelease)
-    {
-        try
-        {
-            // Try to get the game environment - this will fail if the game isn't installed
-            var env = GameEnvironment.Typical.Construct(gameRelease);
-            return Directory.Exists(env.DataFolderPath);
-        }
-        catch
-        {
-            // If we can't construct the environment, the game isn't installed
-            return false;
-        }
-    }
 }
 
 /// <summary>
@@ -107,13 +90,13 @@ public sealed class RequiresGameInstallationTheoryAttribute : TheoryAttribute
     public RequiresGameInstallationTheoryAttribute(
         [CallerFilePath] string? sourceFilePath = null,
         [CallerLineNumber] int sourceLineNumber = -1)
-        : this(GetDefaultRequiredGames(), IsGameInstalled, sourceFilePath, sourceLineNumber)
+        : this(GetDefaultRequiredGames(), GameInstallationHelper.IsGameInstalled, sourceFilePath, sourceLineNumber)
     {
     }
 
     public RequiresGameInstallationTheoryAttribute(GameRelease requiredGame,
         params GameRelease[] additionalRequiredGames)
-        : this(requiredGame, additionalRequiredGames, IsGameInstalled, null, -1)
+        : this(requiredGame, additionalRequiredGames, GameInstallationHelper.IsGameInstalled, null, -1)
     {
     }
 
@@ -121,7 +104,7 @@ public sealed class RequiresGameInstallationTheoryAttribute : TheoryAttribute
         GameRelease[] requiredGames,
         [CallerFilePath] string? sourceFilePath = null,
         [CallerLineNumber] int sourceLineNumber = -1)
-        : this(requiredGames, IsGameInstalled, sourceFilePath, sourceLineNumber)
+        : this(requiredGames, GameInstallationHelper.IsGameInstalled, sourceFilePath, sourceLineNumber)
     {
     }
 
@@ -172,18 +155,5 @@ public sealed class RequiresGameInstallationTheoryAttribute : TheoryAttribute
         games[0] = firstGame;
         Array.Copy(additionalGames, 0, games, 1, additionalGames.Length);
         return games;
-    }
-
-    private static bool IsGameInstalled(GameRelease gameRelease)
-    {
-        try
-        {
-            var env = GameEnvironment.Typical.Construct(gameRelease);
-            return Directory.Exists(env.DataFolderPath);
-        }
-        catch
-        {
-            return false;
-        }
     }
 }

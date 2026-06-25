@@ -38,35 +38,7 @@ public class LoadTests : IDisposable
     public void Dispose()
     {
         // Cleanup database service
-
-        // Clean up created files
-        foreach (var file in _createdFiles)
-        {
-            try
-            {
-                if (File.Exists(file))
-                {
-                    File.Delete(file);
-                }
-            }
-            catch (Exception ex)
-            {
-                _output.WriteLine($"Failed to delete test file '{file}': {ex.Message}");
-            }
-        }
-
-        // Clean up test directory
-        if (Directory.Exists(_testDirectory))
-        {
-            try
-            {
-                Directory.Delete(_testDirectory, true);
-            }
-            catch (Exception ex)
-            {
-                _output.WriteLine($"Failed to delete test directory '{_testDirectory}': {ex.Message}");
-            }
-        }
+        TestCleanupHelper.DeleteTestFilesAndDirectory(_createdFiles, _testDirectory, _output);
     }
 
     [ManualPerformanceFact]
