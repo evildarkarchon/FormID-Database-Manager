@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
-using System.Linq;
 using System.Security.Principal;
 using System.Threading;
 using System.Threading.Tasks;
@@ -34,22 +33,32 @@ public class GameDetectionIntegrationTests : IDisposable
 
     public void Dispose()
     {
-        foreach (var dir in _testDirectories.Where(Directory.Exists))
+        foreach (var dir in _testDirectories)
         {
-            try
-            {
-                Directory.Delete(dir, true);
-            }
-            catch { }
+            TryDeleteDirectory(dir);
         }
 
-        if (Directory.Exists(_testRoot))
+        TryDeleteDirectory(_testRoot);
+    }
+
+    private static void TryDeleteDirectory(string directory)
+    {
+        if (!Directory.Exists(directory))
         {
-            try
-            {
-                Directory.Delete(_testRoot, true);
-            }
-            catch { }
+            return;
+        }
+
+        try
+        {
+            Directory.Delete(directory, true);
+        }
+        catch (IOException ex)
+        {
+            Debug.WriteLine($"Failed to delete test directory '{directory}': {ex}");
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            Debug.WriteLine($"Failed to delete test directory '{directory}': {ex}");
         }
     }
 
@@ -222,10 +231,7 @@ public class GameDetectionIntegrationTests : IDisposable
             {
                 GameRelease = GameRelease.Starfield,
                 ExpectedBase =
-                    new[]
-                    {
-                        "Starfield.esm", "Constellation.esm", "OldMars.esm", "BlueprintShips-Starfield.esm"
-                    }
+                    new[] { "Starfield.esm", "Constellation.esm", "OldMars.esm", "BlueprintShips-Starfield.esm" }
             },
             new { GameRelease = GameRelease.Oblivion, ExpectedBase = new[] { "Oblivion.esm" } }
         };

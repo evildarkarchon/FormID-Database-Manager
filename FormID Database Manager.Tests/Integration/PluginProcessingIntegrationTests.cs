@@ -1,11 +1,11 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using FormID_Database_Manager.Models;
 using FormID_Database_Manager.Services;
-using FormID_Database_Manager.TestUtilities;
 using FormID_Database_Manager.TestUtilities.Mocks;
 using FormID_Database_Manager.ViewModels;
 using Microsoft.Data.Sqlite;
@@ -21,12 +21,9 @@ namespace FormID_Database_Manager.Tests.Integration;
 [Collection("Integration Tests")]
 public class PluginProcessingIntegrationTests : IDisposable
 {
-    private readonly DatabaseService _databaseService;
     private readonly PluginProcessingService _processingService;
     private readonly List<string> _tempFiles;
     private readonly string _testDirectory;
-    private readonly MainWindowViewModel _viewModel;
-    private readonly SynchronousThreadDispatcher _dispatcher;
 
     public PluginProcessingIntegrationTests()
     {
@@ -35,10 +32,10 @@ public class PluginProcessingIntegrationTests : IDisposable
 
         // Use SynchronousThreadDispatcher so integration tests exercise the core workflow
         // without depending on a desktop UI message pump.
-        _dispatcher = new SynchronousThreadDispatcher();
-        _viewModel = new MainWindowViewModel(_dispatcher);
-        _databaseService = new DatabaseService();
-        _processingService = new PluginProcessingService(_databaseService, _viewModel, _dispatcher);
+        var dispatcher = new SynchronousThreadDispatcher();
+        var viewModel = new MainWindowViewModel(dispatcher);
+        var databaseService = new DatabaseService();
+        _processingService = new PluginProcessingService(databaseService, viewModel, dispatcher);
 
         Directory.CreateDirectory(_testDirectory);
         Directory.CreateDirectory(Path.Combine(_testDirectory, "Data"));
@@ -54,7 +51,14 @@ public class PluginProcessingIntegrationTests : IDisposable
             {
                 File.Delete(file);
             }
-            catch { }
+            catch (IOException exception)
+            {
+                Debug.WriteLine($"Failed to delete temporary file '{file}': {exception.Message}");
+            }
+            catch (UnauthorizedAccessException exception)
+            {
+                Debug.WriteLine($"Failed to delete temporary file '{file}': {exception.Message}");
+            }
         }
 
         if (Directory.Exists(_testDirectory))
@@ -63,7 +67,14 @@ public class PluginProcessingIntegrationTests : IDisposable
             {
                 Directory.Delete(_testDirectory, true);
             }
-            catch { }
+            catch (IOException exception)
+            {
+                Debug.WriteLine($"Failed to delete temporary directory '{_testDirectory}': {exception.Message}");
+            }
+            catch (UnauthorizedAccessException exception)
+            {
+                Debug.WriteLine($"Failed to delete temporary directory '{_testDirectory}': {exception.Message}");
+            }
         }
     }
 
@@ -97,7 +108,7 @@ public class PluginProcessingIntegrationTests : IDisposable
         };
 
         var progressReports = new List<(string Message, double? Value)>();
-        var progress = new SynchronousProgress<(string Message, double? Value)>(report => progressReports.Add(report));
+        var progress = new SynchronousProgress<(string Message, double? Value)>(progressReports.Add);
 
         // Act
         await _processingService.ProcessPlugins(parameters, progress);
@@ -106,9 +117,9 @@ public class PluginProcessingIntegrationTests : IDisposable
         Assert.Contains(progressReports, r => r.Message.Contains("Processing completed successfully"));
 
         // Verify database contains FormID list data
-        using var connection = new SqliteConnection($"Data Source={dbPath}");
+        await using var connection = new SqliteConnection($"Data Source={dbPath}");
         connection.Open();
-        using var cmd = new SqliteCommand($"SELECT COUNT(*) FROM {GameRelease.SkyrimSE}", connection);
+        await using var cmd = new SqliteCommand($"SELECT COUNT(*) FROM {GameRelease.SkyrimSE}", connection);
         var count = Convert.ToInt32(cmd.ExecuteScalar());
         Assert.Equal(3, count);
     }
@@ -141,7 +152,7 @@ public class PluginProcessingIntegrationTests : IDisposable
         };
 
         var progressReports = new List<(string Message, double? Value)>();
-        var progress = new SynchronousProgress<(string Message, double? Value)>(report => progressReports.Add(report));
+        var progress = new SynchronousProgress<(string Message, double? Value)>(progressReports.Add);
 
         // Act
         await _processingService.ProcessPlugins(parameters, progress);
@@ -189,9 +200,9 @@ public class PluginProcessingIntegrationTests : IDisposable
         Assert.True(fileInfo.Length > 0);
 
         // Verify database is in good state
-        using var connection = new SqliteConnection($"Data Source={dbPath}");
+        await using var connection = new SqliteConnection($"Data Source={dbPath}");
         connection.Open();
-        using var cmd = new SqliteCommand("PRAGMA integrity_check", connection);
+        await using var cmd = new SqliteCommand("PRAGMA integrity_check", connection);
         var result = cmd.ExecuteScalar() as string;
         Assert.Equal("ok", result);
     }
@@ -227,7 +238,7 @@ public class PluginProcessingIntegrationTests : IDisposable
         };
 
         var progressReports = new List<(string Message, double? Value)>();
-        var progress = new SynchronousProgress<(string Message, double? Value)>(report => progressReports.Add(report));
+        var progress = new SynchronousProgress<(string Message, double? Value)>(progressReports.Add);
 
         // Act
         await _processingService.ProcessPlugins(parameters, progress);
@@ -237,9 +248,9 @@ public class PluginProcessingIntegrationTests : IDisposable
             r => r.Message.Contains("Completed processing 2 plugins") && r.Message.Contains("3 total records"));
         Assert.Contains(progressReports, r => r.Message.Contains("Processing completed successfully"));
 
-        using var connection = new SqliteConnection($"Data Source={dbPath}");
+        await using var connection = new SqliteConnection($"Data Source={dbPath}");
         connection.Open();
-        using var countCmd = new SqliteCommand($"SELECT COUNT(*) FROM {GameRelease.SkyrimSE}", connection);
+        await using var countCmd = new SqliteCommand($"SELECT COUNT(*) FROM {GameRelease.SkyrimSE}", connection);
         var count = Convert.ToInt32(countCmd.ExecuteScalar());
         Assert.Equal(3, count);
     }
@@ -276,9 +287,9 @@ public class PluginProcessingIntegrationTests : IDisposable
             await _processingService.ProcessPlugins(parameters);
 
             // Assert
-            using var connection = new SqliteConnection($"Data Source={dbPath}");
+            await using var connection = new SqliteConnection($"Data Source={dbPath}");
             connection.Open();
-            using var countCmd = new SqliteCommand($"SELECT COUNT(*) FROM {gameRelease}", connection);
+            await using var countCmd = new SqliteCommand($"SELECT COUNT(*) FROM {gameRelease}", connection);
             var count = Convert.ToInt32(countCmd.ExecuteScalar());
             Assert.Equal(1, count);
         }
@@ -331,23 +342,23 @@ public class PluginProcessingIntegrationTests : IDisposable
         await _processingService.ProcessPlugins(updateParameters);
 
         // Assert
-        using var connection = new SqliteConnection($"Data Source={dbPath}");
+        await using var connection = new SqliteConnection($"Data Source={dbPath}");
         connection.Open();
 
-        using var pluginCountCmd = new SqliteCommand(
+        await using var pluginCountCmd = new SqliteCommand(
             $"SELECT COUNT(*) FROM {GameRelease.SkyrimSE} WHERE plugin = @plugin", connection);
         pluginCountCmd.Parameters.AddWithValue("@plugin", "UpdateTest.esp");
         var pluginCount = Convert.ToInt32(pluginCountCmd.ExecuteScalar());
         Assert.Equal(1, pluginCount);
 
-        using var oldRecordCmd = new SqliteCommand(
+        await using var oldRecordCmd = new SqliteCommand(
             $"SELECT COUNT(*) FROM {GameRelease.SkyrimSE} WHERE plugin = @plugin AND formid = @formid", connection);
         oldRecordCmd.Parameters.AddWithValue("@plugin", "UpdateTest.esp");
         oldRecordCmd.Parameters.AddWithValue("@formid", "000001");
         var oldRecordCount = Convert.ToInt32(oldRecordCmd.ExecuteScalar());
         Assert.Equal(0, oldRecordCount);
 
-        using var newRecordCmd = new SqliteCommand(
+        await using var newRecordCmd = new SqliteCommand(
             $"SELECT COUNT(*) FROM {GameRelease.SkyrimSE} WHERE plugin = @plugin AND formid = @formid", connection);
         newRecordCmd.Parameters.AddWithValue("@plugin", "UpdateTest.esp");
         newRecordCmd.Parameters.AddWithValue("@formid", "000010");
@@ -400,27 +411,27 @@ public class PluginProcessingIntegrationTests : IDisposable
         await _processingService.ProcessPlugins(initialParameters);
         await _processingService.ProcessPlugins(updateParameters);
 
-        using var connection = new SqliteConnection($"Data Source={dbPath}");
+        await using var connection = new SqliteConnection($"Data Source={dbPath}");
         connection.Open();
 
-        using var existingPluginCountCmd = new SqliteCommand(
+        await using var existingPluginCountCmd = new SqliteCommand(
             $"SELECT COUNT(*) FROM {GameRelease.SkyrimSE} WHERE plugin = @plugin", connection);
         existingPluginCountCmd.Parameters.AddWithValue("@plugin", "ExistingPlugin.esp");
         var existingPluginCount = Convert.ToInt32(existingPluginCountCmd.ExecuteScalar());
 
-        using var oldExistingRecordCmd = new SqliteCommand(
+        await using var oldExistingRecordCmd = new SqliteCommand(
             $"SELECT COUNT(*) FROM {GameRelease.SkyrimSE} WHERE plugin = @plugin AND formid = @formid", connection);
         oldExistingRecordCmd.Parameters.AddWithValue("@plugin", "ExistingPlugin.esp");
         oldExistingRecordCmd.Parameters.AddWithValue("@formid", "000001");
         var oldExistingRecordCount = Convert.ToInt32(oldExistingRecordCmd.ExecuteScalar());
 
-        using var updatedExistingRecordCmd = new SqliteCommand(
+        await using var updatedExistingRecordCmd = new SqliteCommand(
             $"SELECT COUNT(*) FROM {GameRelease.SkyrimSE} WHERE plugin = @plugin AND formid = @formid", connection);
         updatedExistingRecordCmd.Parameters.AddWithValue("@plugin", "ExistingPlugin.esp");
         updatedExistingRecordCmd.Parameters.AddWithValue("@formid", "000010");
         var updatedExistingRecordCount = Convert.ToInt32(updatedExistingRecordCmd.ExecuteScalar());
 
-        using var brandNewRecordCmd = new SqliteCommand(
+        await using var brandNewRecordCmd = new SqliteCommand(
             $"SELECT COUNT(*) FROM {GameRelease.SkyrimSE} WHERE plugin = @plugin AND formid = @formid", connection);
         brandNewRecordCmd.Parameters.AddWithValue("@plugin", "BrandNewPlugin.esp");
         brandNewRecordCmd.Parameters.AddWithValue("@formid", "000020");
@@ -457,7 +468,7 @@ public class PluginProcessingIntegrationTests : IDisposable
         };
 
         var progressReports = new List<(string Message, double? Value)>();
-        var progress = new SynchronousProgress<(string Message, double? Value)>(report => progressReports.Add(report));
+        var progress = new SynchronousProgress<(string Message, double? Value)>(progressReports.Add);
 
         // Act
         await _processingService.ProcessPlugins(parameters, progress);
@@ -476,7 +487,7 @@ public class PluginProcessingIntegrationTests : IDisposable
         var formIdListPath = Path.Combine(_testDirectory, "formids.txt");
         _tempFiles.Add(formIdListPath);
 
-        File.WriteAllText(formIdListPath, "Test content");
+        await File.WriteAllTextAsync(formIdListPath, "Test content", TestContext.Current.CancellationToken);
 
         var parameters = new ProcessingParameters
         {
@@ -488,7 +499,7 @@ public class PluginProcessingIntegrationTests : IDisposable
         };
 
         var progressReports = new List<(string Message, double? Value)>();
-        var progress = new SynchronousProgress<(string Message, double? Value)>(report => progressReports.Add(report));
+        var progress = new SynchronousProgress<(string Message, double? Value)>(progressReports.Add);
 
         // Act
         await _processingService.ProcessPlugins(parameters, progress);
@@ -532,7 +543,7 @@ public class PluginProcessingIntegrationTests : IDisposable
         };
 
         var progressReports = new List<(string Message, double? Value)>();
-        var progress = new SynchronousProgress<(string Message, double? Value)>(report => progressReports.Add(report));
+        var progress = new SynchronousProgress<(string Message, double? Value)>(progressReports.Add);
 
         // Act
         await _processingService.ProcessPlugins(parameters, progress);
@@ -543,9 +554,9 @@ public class PluginProcessingIntegrationTests : IDisposable
         Assert.Contains(progressReports,
             r => r.Message.Contains("Processing completed successfully"));
 
-        using var connection = new SqliteConnection($"Data Source={dbPath}");
+        await using var connection = new SqliteConnection($"Data Source={dbPath}");
         connection.Open();
-        using var countCmd = new SqliteCommand($"SELECT COUNT(*) FROM {GameRelease.SkyrimSE}", connection);
+        await using var countCmd = new SqliteCommand($"SELECT COUNT(*) FROM {GameRelease.SkyrimSE}", connection);
         var count = Convert.ToInt32(countCmd.ExecuteScalar());
         Assert.Equal(2, count);
     }
@@ -604,9 +615,9 @@ public class PluginProcessingIntegrationTests : IDisposable
         await _processingService.ProcessPlugins(parameters);
 
         // Assert
-        using var connection = new SqliteConnection($"Data Source={dbPath}");
+        await using var connection = new SqliteConnection($"Data Source={dbPath}");
         connection.Open();
-        using var countCmd = new SqliteCommand($"SELECT COUNT(*) FROM {GameRelease.SkyrimSE}", connection);
+        await using var countCmd = new SqliteCommand($"SELECT COUNT(*) FROM {GameRelease.SkyrimSE}", connection);
         var count = Convert.ToInt32(countCmd.ExecuteScalar());
         Assert.Equal(1, count);
     }
@@ -661,16 +672,16 @@ public class PluginProcessingIntegrationTests : IDisposable
         await _processingService.ProcessPlugins(updatedParameters);
 
         // Assert - service still processes correctly after repeated cancels
-        using var connection = new SqliteConnection($"Data Source={dbPath}");
+        await using var connection = new SqliteConnection($"Data Source={dbPath}");
         connection.Open();
 
-        using var countCmd = new SqliteCommand(
+        await using var countCmd = new SqliteCommand(
             $"SELECT COUNT(*) FROM {GameRelease.SkyrimSE} WHERE plugin = @plugin", connection);
         countCmd.Parameters.AddWithValue("@plugin", "MultiCancel.esp");
         var count = Convert.ToInt32(countCmd.ExecuteScalar());
         Assert.Equal(1, count);
 
-        using var formIdCmd = new SqliteCommand(
+        await using var formIdCmd = new SqliteCommand(
             $"SELECT COUNT(*) FROM {GameRelease.SkyrimSE} WHERE plugin = @plugin AND formid = @formid", connection);
         formIdCmd.Parameters.AddWithValue("@plugin", "MultiCancel.esp");
         formIdCmd.Parameters.AddWithValue("@formid", "000002");
@@ -696,14 +707,6 @@ public class PluginProcessingIntegrationTests : IDisposable
             0x00, 0x00, 0x00, 0x00 // Version info
         };
         File.WriteAllBytes(filePath, header);
-    }
-
-    private void CreateCorruptedPlugin(string directory, string fileName)
-    {
-        var filePath = Path.Combine(directory, fileName);
-        // Create corrupted file
-        var corruptedData = new byte[] { 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00 };
-        File.WriteAllBytes(filePath, corruptedData);
     }
 
     #endregion
