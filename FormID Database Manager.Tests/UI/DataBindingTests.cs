@@ -14,7 +14,7 @@ public class DataBindingTests
     public void ViewModel_ImplementsINotifyPropertyChanged()
     {
         var viewModel = new MainWindowViewModel(new SynchronousThreadDispatcher());
-        Assert.IsAssignableFrom<INotifyPropertyChanged>(viewModel);
+        Assert.IsType<INotifyPropertyChanged>(viewModel, exactMatch: false);
     }
 
     [Fact]
@@ -39,14 +39,15 @@ public class DataBindingTests
 
         viewModel.PropertyChanged += (_, e) =>
         {
-            if (e.PropertyName == nameof(MainWindowViewModel.ProgressValue))
+            switch (e.PropertyName)
             {
-                progressValueChanged = true;
-            }
+                case nameof(MainWindowViewModel.ProgressValue):
 
-            if (e.PropertyName == nameof(MainWindowViewModel.ProgressStatus))
-            {
-                progressStatusChanged = true;
+                    progressValueChanged = true;
+                    break;
+                case nameof(MainWindowViewModel.ProgressStatus):
+                    progressStatusChanged = true;
+                    break;
             }
         };
 

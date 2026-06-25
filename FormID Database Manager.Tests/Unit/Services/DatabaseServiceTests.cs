@@ -14,17 +14,11 @@ using Xunit;
 namespace FormID_Database_Manager.Tests.Unit.Services;
 
 [Collection("Database Tests")]
-public class DatabaseServiceTests : IClassFixture<DatabaseFixture>, IAsyncLifetime
+public class DatabaseServiceTests(DatabaseFixture fixture) : IClassFixture<DatabaseFixture>, IAsyncLifetime
 {
-    private readonly DatabaseFixture _fixture;
-    private readonly DatabaseService _service;
+    private readonly DatabaseFixture _fixture = fixture;
+    private readonly DatabaseService _service = new();
     private SqliteConnection? _connection;
-
-    public DatabaseServiceTests(DatabaseFixture fixture)
-    {
-        _fixture = fixture;
-        _service = new DatabaseService();
-    }
 
     public async ValueTask InitializeAsync()
     {
@@ -36,7 +30,7 @@ public class DatabaseServiceTests : IClassFixture<DatabaseFixture>, IAsyncLifeti
         if (_connection != null)
         {
             await _connection.CloseAsync();
-            _connection.Dispose();
+            await _connection.DisposeAsync();
         }
     }
 
@@ -53,11 +47,11 @@ public class DatabaseServiceTests : IClassFixture<DatabaseFixture>, IAsyncLifeti
         {
             await _service.InitializeDatabase(tempDbPath, gameRelease, TestContext.Current.CancellationToken);
 
-            using (var conn = new SqliteConnection($"Data Source={tempDbPath}"))
+            await using (var conn = new SqliteConnection($"Data Source={tempDbPath}"))
             {
                 await conn.OpenAsync(TestContext.Current.CancellationToken);
 
-                using var command = conn.CreateCommand();
+                await using var command = conn.CreateCommand();
                 command.CommandText = $"SELECT name FROM sqlite_master WHERE type='table' AND name='{gameRelease}'";
 
                 var tableName = await command.ExecuteScalarAsync(TestContext.Current.CancellationToken);
@@ -90,16 +84,16 @@ public class DatabaseServiceTests : IClassFixture<DatabaseFixture>, IAsyncLifeti
         {
             await _service.InitializeDatabase(tempDbPath, gameRelease, TestContext.Current.CancellationToken);
 
-            using (var conn = new SqliteConnection($"Data Source={tempDbPath}"))
+            await using (var conn = new SqliteConnection($"Data Source={tempDbPath}"))
             {
                 await conn.OpenAsync(TestContext.Current.CancellationToken);
 
-                using var command = conn.CreateCommand();
+                await using var command = conn.CreateCommand();
                 command.CommandText = "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name=@table";
                 command.Parameters.AddWithValue("@table", gameRelease.ToString());
 
                 var indices = new List<string>();
-                using var reader = await command.ExecuteReaderAsync(TestContext.Current.CancellationToken);
+                await using var reader = await command.ExecuteReaderAsync(TestContext.Current.CancellationToken);
                 while (await reader.ReadAsync(TestContext.Current.CancellationToken))
                 {
                     indices.Add(reader.GetString(0));
@@ -158,8 +152,8 @@ public class DatabaseServiceTests : IClassFixture<DatabaseFixture>, IAsyncLifeti
         var tempDbPath = Path.Combine(Path.GetTempPath(), $"test_{Guid.NewGuid()}.db");
         try
         {
-            var cts = new CancellationTokenSource();
-            cts.Cancel();
+            using var cts = new CancellationTokenSource();
+            await cts.CancelAsync();
 
             await Assert.ThrowsAsync<TaskCanceledException>(() =>
                 _service.InitializeDatabase(tempDbPath, GameRelease.SkyrimSE, cts.Token));
@@ -193,7 +187,7 @@ public class DatabaseServiceTests : IClassFixture<DatabaseFixture>, IAsyncLifeti
         Assert.Equal(1, count);
 
         command.CommandText = $"SELECT plugin, formid, entry FROM {gameRelease} WHERE formid = '0x00000001'";
-        using var reader = await command.ExecuteReaderAsync(TestContext.Current.CancellationToken);
+        await using var reader = await command.ExecuteReaderAsync(TestContext.Current.CancellationToken);
 
         Assert.True(await reader.ReadAsync(TestContext.Current.CancellationToken));
         Assert.Equal("TestPlugin.esp", reader.GetString(0));
@@ -261,7 +255,7 @@ public class DatabaseServiceTests : IClassFixture<DatabaseFixture>, IAsyncLifeti
 
         await _service.ClearPluginEntries(_connection!, gameRelease, "plugin1.esp", TestContext.Current.CancellationToken);
 
-        var command = _connection!.CreateCommand();
+        await using var command = _connection!.CreateCommand();
         command.CommandText = $"SELECT COUNT(*) FROM {gameRelease} WHERE plugin COLLATE NOCASE = 'plugin1.esp'";
         var plugin1Count = Convert.ToInt32(await command.ExecuteScalarAsync(TestContext.Current.CancellationToken));
 
@@ -342,22 +336,23 @@ public class DatabaseServiceTests : IClassFixture<DatabaseFixture>, IAsyncLifeti
 
             for (var i = 0; i < 5; i++)
             {
-                var pluginName = $"ConcurrentPlugin{i}.esp";
+                var pluginIndex = i;
+                var pluginName = $"ConcurrentPlugin{pluginIndex}.esp";
                 tasks.Add(Task.Run(async () =>
                 {
-                    using var conn = new SqliteConnection($"Data Source={tempDbPath}");
+                    await using var conn = new SqliteConnection($"Data Source={tempDbPath}");
                     await conn.OpenAsync(TestContext.Current.CancellationToken);
                     for (var j = 0; j < 20; j++)
                     {
-                        await _service.InsertRecord(conn, gameRelease, pluginName, $"0x{i:X4}{j:X4}",
-                            $"Entry_{i}_{j}", TestContext.Current.CancellationToken);
+                        await _service.InsertRecord(conn, gameRelease, pluginName, $"0x{pluginIndex:X4}{j:X4}",
+                            $"Entry_{pluginIndex}_{j}", TestContext.Current.CancellationToken);
                     }
                 }, TestContext.Current.CancellationToken));
             }
 
             await Task.WhenAll(tasks);
 
-            using var verifyConn = new SqliteConnection($"Data Source={tempDbPath}");
+            await using var verifyConn = new SqliteConnection($"Data Source={tempDbPath}");
             await verifyConn.OpenAsync(TestContext.Current.CancellationToken);
             var command = verifyConn.CreateCommand();
             command.CommandText = $"SELECT COUNT(*) FROM {gameRelease}";

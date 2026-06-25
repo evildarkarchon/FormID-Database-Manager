@@ -5,8 +5,6 @@ using System.IO;
 using System.Threading.Tasks;
 using FormID_Database_Manager.Services;
 using FormID_Database_Manager.TestUtilities;
-using FormID_Database_Manager.TestUtilities.Fixtures;
-using FormID_Database_Manager.ViewModels;
 using Microsoft.Data.Sqlite;
 using Moq;
 using Mutagen.Bethesda;
@@ -19,17 +17,15 @@ namespace FormID_Database_Manager.Tests.Performance;
 /// </summary>
 [Collection("Performance Tests")]
 [Trait("Category", "ManualPerformance")]
-public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
+public class RegressionTests : IDisposable
 {
-    private readonly DatabaseFixture _fixture;
     private readonly ITestOutputHelper _output;
     private readonly Dictionary<string, TimeSpan> _performanceBaselines;
     private readonly string _testDirectory;
 
-    public RegressionTests(ITestOutputHelper output, DatabaseFixture fixture)
+    public RegressionTests(ITestOutputHelper output)
     {
         _output = output;
-        _fixture = fixture;
         _testDirectory = Path.Combine(Path.GetTempPath(), $"PerfRegression_{Guid.NewGuid():N}");
         Directory.CreateDirectory(_testDirectory);
 
@@ -133,11 +129,11 @@ public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
 
         // Act
         var stopwatch = Stopwatch.StartNew();
-        using (var connection = new SqliteConnection($"Data Source={dbPath}"))
+        await using (var connection = new SqliteConnection($"Data Source={dbPath}"))
         {
             await connection.OpenAsync(TestContext.Current.CancellationToken);
             // Simulate batch insert by inserting records in a transaction
-            using (var transaction = connection.BeginTransaction())
+            await using (var transaction = connection.BeginTransaction())
             {
                 foreach (var record in records)
                 {
@@ -145,7 +141,7 @@ public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
                         record.editorId, TestContext.Current.CancellationToken);
                 }
 
-                transaction.Commit();
+                await transaction.CommitAsync(TestContext.Current.CancellationToken);
             }
         }
 
@@ -167,8 +163,10 @@ public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
         // Arrange
         var service = new GameDetectionService();
         var testDir = Path.Combine(_testDirectory, "Skyrim Special Edition");
-        Directory.CreateDirectory(testDir);
+        var dataDir = Path.Combine(testDir, "Data");
+        Directory.CreateDirectory(dataDir);
         File.WriteAllText(Path.Combine(testDir, "SkyrimSE.exe"), "dummy");
+        File.WriteAllText(Path.Combine(dataDir, "Skyrim.esm"), "dummy");
 
         var baseline = _performanceBaselines["GameDetection_SimpleDirectory"];
 
@@ -181,6 +179,7 @@ public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
         _output.WriteLine($"Game detection (simple) took: {stopwatch.Elapsed.TotalMilliseconds:F2}ms");
         _output.WriteLine($"Baseline: {baseline.TotalMilliseconds:F2}ms");
 
+        Assert.Equal(GameRelease.SkyrimSE, result);
         Assert.True(stopwatch.Elapsed < baseline.Add(TimeSpan.FromMilliseconds(baseline.TotalMilliseconds * 0.3)),
             $"Performance regression detected! Operation took {stopwatch.Elapsed.TotalMilliseconds:F2}ms, baseline is {baseline.TotalMilliseconds:F2}ms (30% tolerance)");
     }
@@ -201,6 +200,8 @@ public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
             File.WriteAllText(Path.Combine(dataDir, $"file{i}.esm"), "dummy");
         }
 
+        File.WriteAllText(Path.Combine(dataDir, "Fallout4.esm"), "dummy");
+
         var baseline = _performanceBaselines["GameDetection_ComplexDirectory"];
 
         // Act
@@ -212,6 +213,7 @@ public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
         _output.WriteLine($"Game detection (complex) took: {stopwatch.Elapsed.TotalMilliseconds:F2}ms");
         _output.WriteLine($"Baseline: {baseline.TotalMilliseconds:F2}ms");
 
+        Assert.Equal(GameRelease.Fallout4, result);
         Assert.True(stopwatch.Elapsed < baseline.Add(TimeSpan.FromMilliseconds(baseline.TotalMilliseconds * 0.3)),
             $"Performance regression detected! Operation took {stopwatch.Elapsed.TotalMilliseconds:F2}ms, baseline is {baseline.TotalMilliseconds:F2}ms (30% tolerance)");
     }
@@ -223,15 +225,6 @@ public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
     public async Task PluginListLoad_StaysWithinBaseline(int pluginCount, string baselineKey)
     {
         // Arrange
-        // Create mock dependencies for PluginListManager
-        var mockGameDetection = new Mock<GameDetectionService>();
-        var mockDispatcher = new Mock<IThreadDispatcher>();
-        var viewModel = new MainWindowViewModel(mockDispatcher.Object);
-        var service = new PluginListManager(
-            mockGameDetection.Object,
-            viewModel,
-            mockDispatcher.Object);
-
         var listPath = Path.Combine(_testDirectory, "plugins.txt");
 
         var plugins = new List<string>();
@@ -254,6 +247,7 @@ public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
         _output.WriteLine($"Plugin list load ({pluginCount} plugins) took: {stopwatch.Elapsed.TotalMilliseconds:F2}ms");
         _output.WriteLine($"Baseline: {baseline.TotalMilliseconds:F2}ms");
 
+        Assert.Equal(pluginCount, pluginList.Length);
         Assert.True(stopwatch.Elapsed < baseline.Add(TimeSpan.FromMilliseconds(baseline.TotalMilliseconds * 0.2)),
             $"Performance regression detected! Operation took {stopwatch.Elapsed.TotalMilliseconds:F2}ms, baseline is {baseline.TotalMilliseconds:F2}ms (20% tolerance)");
     }
@@ -288,7 +282,7 @@ public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
         // Act
         var stopwatch = Stopwatch.StartNew();
         // Open connection and process the file
-        using (var connection = new SqliteConnection($"Data Source={dbPath}"))
+        await using (var connection = new SqliteConnection($"Data Source={dbPath}"))
         {
             await connection.OpenAsync(TestContext.Current.CancellationToken);
             await processor.ProcessFormIdListFile(
@@ -330,11 +324,11 @@ public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
         var memoryBefore = GC.GetTotalMemory(false);
 
         // Act
-        using (var connection = new SqliteConnection($"Data Source={dbPath}"))
+        await using (var connection = new SqliteConnection($"Data Source={dbPath}"))
         {
             await connection.OpenAsync(TestContext.Current.CancellationToken);
             // Simulate batch insert by inserting records in a transaction
-            using (var transaction = connection.BeginTransaction())
+            await using (var transaction = connection.BeginTransaction())
             {
                 foreach (var record in records)
                 {
@@ -342,7 +336,7 @@ public class RegressionTests : IClassFixture<DatabaseFixture>, IDisposable
                         record.editorId, TestContext.Current.CancellationToken);
                 }
 
-                transaction.Commit();
+                await transaction.CommitAsync(TestContext.Current.CancellationToken);
             }
         }
 

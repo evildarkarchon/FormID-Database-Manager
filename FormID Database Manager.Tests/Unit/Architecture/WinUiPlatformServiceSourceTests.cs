@@ -28,7 +28,8 @@ public class WinUiPlatformServiceSourceTests
         Assert.Contains("HasThreadAccess", dispatcherSource, StringComparison.Ordinal);
         Assert.Contains("TryEnqueue", dispatcherSource, StringComparison.Ordinal);
         Assert.Contains("new QueuedThreadDispatcher", dispatcherSource, StringComparison.Ordinal);
-        Assert.Contains("\"The WinUI dispatcher rejected queued work. The window may be closing.\"", dispatcherSource, StringComparison.Ordinal);
+        Assert.Contains("\"The WinUI dispatcher rejected queued work. The window may be closing.\"", dispatcherSource,
+            StringComparison.Ordinal);
 
         var pickerSource = File.ReadAllText(pickerPath);
         Assert.Contains("public sealed class WinUiFileDialogService", pickerSource, StringComparison.Ordinal);
@@ -81,11 +82,14 @@ public class WinUiPlatformServiceSourceTests
 
         Assert.Contains("private readonly IFileDialogService _fileDialogService;", source, StringComparison.Ordinal);
         Assert.Contains("IFileDialogService? fileDialogService", source, StringComparison.Ordinal);
-        Assert.Contains("_fileDialogService = new WinUiFileDialogService(AppWindow, ViewModel);", source, StringComparison.Ordinal);
-        Assert.Contains("_fileDialogService = fileDialogService ?? new WinUiFileDialogService(AppWindow, ViewModel);", source, StringComparison.Ordinal);
+        Assert.Contains("_fileDialogService = new WinUiFileDialogService(AppWindow, ViewModel);", source,
+            StringComparison.Ordinal);
+        Assert.Contains("_fileDialogService = fileDialogService ?? new WinUiFileDialogService(AppWindow, ViewModel);",
+            source, StringComparison.Ordinal);
         Assert.True(
             source.IndexOf("InitializeWindow();", StringComparison.Ordinal) <
-            source.IndexOf("_fileDialogService = new WinUiFileDialogService(AppWindow, ViewModel);", StringComparison.Ordinal),
+            source.IndexOf("_fileDialogService = new WinUiFileDialogService(AppWindow, ViewModel);",
+                StringComparison.Ordinal),
             "The production file-dialog service should be constructed after InitializeComponent creates the WinUI window.");
 
         Assert.Contains("await _fileDialogService.SelectGameDirectory()", source, StringComparison.Ordinal);
@@ -159,7 +163,8 @@ public class WinUiPlatformServiceSourceTests
         Assert.Contains("\"Cancel Processing\"", source, StringComparison.Ordinal);
         Assert.Contains("new ProcessingParameters", source, StringComparison.Ordinal);
         Assert.Contains("GetSelectedPlugins", source, StringComparison.Ordinal);
-        Assert.Contains("DefaultDatabasePathProvider.CreateDefaultDatabasePath(gameRelease)", source, StringComparison.Ordinal);
+        Assert.Contains("DefaultDatabasePathProvider.CreateDefaultDatabasePath(gameRelease)", source,
+            StringComparison.Ordinal);
         Assert.Contains("ViewModel.DatabasePath = parameters.DatabasePath;", source, StringComparison.Ordinal);
         Assert.DoesNotContain("Directory.GetCurrentDirectory()", source, StringComparison.Ordinal);
         Assert.Contains("ViewModel.UpdateProgress", source, StringComparison.Ordinal);
@@ -195,7 +200,8 @@ public class WinUiPlatformServiceSourceTests
         Assert.Contains("ItemsSource=\"{Binding DetectedDirectories}\"", xaml, StringComparison.Ordinal);
         Assert.Contains("Text=\"{Binding DatabasePath, Mode=TwoWay}\"", xaml, StringComparison.Ordinal);
         Assert.Contains("Text=\"{Binding FormIdListPath, Mode=TwoWay}\"", xaml, StringComparison.Ordinal);
-        Assert.Contains("Text=\"{Binding PluginFilter, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("Text=\"{Binding PluginFilter, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}\"", xaml,
+            StringComparison.Ordinal);
 
         Assert.Contains("ItemsSource=\"{Binding FilteredPlugins}\"", xaml, StringComparison.Ordinal);
         Assert.Contains("Content=\"{Binding Name}\"", xaml, StringComparison.Ordinal);
@@ -224,7 +230,8 @@ public class WinUiPlatformServiceSourceTests
 
         var xaml = File.ReadAllText(mainWindowXamlPath);
         var processButtonIndex = xaml.IndexOf("x:Name=\"ProcessFormIdsButton\"", StringComparison.Ordinal);
-        var informationBarIndex = xaml.IndexOf("IsOpen=\"{Binding HasInformationMessages, Mode=OneWay}\"", StringComparison.Ordinal);
+        var informationBarIndex = xaml.IndexOf("IsOpen=\"{Binding HasInformationMessages, Mode=OneWay}\"",
+            StringComparison.Ordinal);
 
         Assert.Contains("<StackPanel Grid.Row=\"5\" Margin=\"0,0,0,4\" Spacing=\"8\">", xaml, StringComparison.Ordinal);
         Assert.Equal(2, CountOccurrences(xaml, "CornerRadius=\"4\""));
@@ -275,19 +282,26 @@ public class WinUiPlatformServiceSourceTests
         var xaml = File.ReadAllText(mainWindowXamlPath);
 
         Assert.Contains("x:Name=\"GameLabel\"", xaml, StringComparison.Ordinal);
-        Assert.Contains("AutomationProperties.LabeledBy=\"{Binding ElementName=GameLabel}\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("AutomationProperties.LabeledBy=\"{Binding ElementName=GameLabel}\"", xaml,
+            StringComparison.Ordinal);
         Assert.Contains("x:Name=\"GameDirectoryLabel\"", xaml, StringComparison.Ordinal);
-        Assert.Contains("AutomationProperties.LabeledBy=\"{Binding ElementName=GameDirectoryLabel}\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("AutomationProperties.LabeledBy=\"{Binding ElementName=GameDirectoryLabel}\"", xaml,
+            StringComparison.Ordinal);
         Assert.Contains("AutomationProperties.Name=\"Detected installed directory\"", xaml, StringComparison.Ordinal);
         Assert.Contains("x:Name=\"DatabasePathLabel\"", xaml, StringComparison.Ordinal);
-        Assert.Contains("AutomationProperties.LabeledBy=\"{Binding ElementName=DatabasePathLabel}\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("AutomationProperties.LabeledBy=\"{Binding ElementName=DatabasePathLabel}\"", xaml,
+            StringComparison.Ordinal);
         Assert.Contains("x:Name=\"FormIdListPathLabel\"", xaml, StringComparison.Ordinal);
-        Assert.Contains("AutomationProperties.LabeledBy=\"{Binding ElementName=FormIdListPathLabel}\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("AutomationProperties.LabeledBy=\"{Binding ElementName=FormIdListPathLabel}\"", xaml,
+            StringComparison.Ordinal);
         Assert.Contains("x:Name=\"PluginFilterLabel\"", xaml, StringComparison.Ordinal);
-        Assert.Contains("AutomationProperties.LabeledBy=\"{Binding ElementName=PluginFilterLabel}\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("AutomationProperties.LabeledBy=\"{Binding ElementName=PluginFilterLabel}\"", xaml,
+            StringComparison.Ordinal);
 
         Assert.Contains("AutomationProperties.Name=\"Plugin selection list\"", xaml, StringComparison.Ordinal);
-        Assert.Contains("AutomationProperties.HelpText=\"Use the arrow keys to move through plugins and Space to toggle a plugin checkbox.\"", xaml, StringComparison.Ordinal);
+        Assert.Contains(
+            "AutomationProperties.HelpText=\"Use the arrow keys to move through plugins and Space to toggle a plugin checkbox.\"",
+            xaml, StringComparison.Ordinal);
         Assert.Contains("AutomationProperties.Name=\"{Binding Name}\"", xaml, StringComparison.Ordinal);
         Assert.Contains("AutomationProperties.Name=\"Processing status\"", xaml, StringComparison.Ordinal);
         Assert.Contains("AutomationProperties.Name=\"Processing progress\"", xaml, StringComparison.Ordinal);
@@ -357,7 +371,8 @@ public class WinUiPlatformServiceSourceTests
 
         var xaml = File.ReadAllText(mainWindowXamlPath);
         var pluginListIndex = xaml.IndexOf("x:Name=\"PluginList\"", StringComparison.Ordinal);
-        var pluginBorderIndex = xaml.LastIndexOf("x:Name=\"PluginListBorder\"", pluginListIndex, StringComparison.Ordinal);
+        var pluginBorderIndex =
+            xaml.LastIndexOf("x:Name=\"PluginListBorder\"", pluginListIndex, StringComparison.Ordinal);
 
         Assert.True(pluginListIndex >= 0, "The plugin list should remain a named native WinUI ListView.");
         Assert.True(pluginBorderIndex >= 0, "The plugin list should remain inside the named constrained border.");
@@ -384,7 +399,8 @@ public class WinUiPlatformServiceSourceTests
 
         var source = File.ReadAllText(appXamlPath) + File.ReadAllText(mainWindowXamlPath);
 
-        Assert.Contains("Background=\"{ThemeResource ApplicationPageBackgroundThemeBrush}\"", source, StringComparison.Ordinal);
+        Assert.Contains("Background=\"{ThemeResource ApplicationPageBackgroundThemeBrush}\"", source,
+            StringComparison.Ordinal);
         Assert.Contains("Foreground=\"{ThemeResource TextFillColorSecondaryBrush}\"", source, StringComparison.Ordinal);
         Assert.Contains("{ThemeResource CardBackgroundFillColorDefaultBrush}", source, StringComparison.Ordinal);
         Assert.Contains("{ThemeResource CardStrokeColorDefaultBrush}", source, StringComparison.Ordinal);
@@ -421,20 +437,32 @@ public class WinUiPlatformServiceSourceTests
 
         var projectSource = File.ReadAllText(projectPath);
         Assert.Contains("<WindowsPackageType>None</WindowsPackageType>", projectSource, StringComparison.Ordinal);
-        Assert.Contains("<WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>", projectSource, StringComparison.Ordinal);
-        Assert.Contains("<WindowsAppSdkDeploymentManagerInitialize>false</WindowsAppSdkDeploymentManagerInitialize>", projectSource, StringComparison.Ordinal);
-        Assert.Contains("<WindowsAppSdkUndockedRegFreeWinRTInitialize>true</WindowsAppSdkUndockedRegFreeWinRTInitialize>", projectSource, StringComparison.Ordinal);
+        Assert.Contains("<WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>", projectSource,
+            StringComparison.Ordinal);
+        Assert.Contains("<WindowsAppSdkDeploymentManagerInitialize>false</WindowsAppSdkDeploymentManagerInitialize>",
+            projectSource, StringComparison.Ordinal);
+        Assert.Contains(
+            "<WindowsAppSdkUndockedRegFreeWinRTInitialize>true</WindowsAppSdkUndockedRegFreeWinRTInitialize>",
+            projectSource, StringComparison.Ordinal);
         Assert.DoesNotContain("<EnableMsixTooling>true</EnableMsixTooling>", projectSource, StringComparison.Ordinal);
-        Assert.DoesNotContain("<HasPackageAndPublishMenu>true</HasPackageAndPublishMenu>", projectSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("<HasPackageAndPublishMenu>true</HasPackageAndPublishMenu>", projectSource,
+            StringComparison.Ordinal);
         Assert.DoesNotContain("<ProjectCapability Include=\"Msix\" />", projectSource, StringComparison.Ordinal);
-        Assert.False(File.Exists(packageManifestPath), "MSIX package manifest should be removed for portable unpackaged releases.");
+        Assert.False(File.Exists(packageManifestPath),
+            "MSIX package manifest should be removed for portable unpackaged releases.");
         Assert.False(File.Exists(packagedProfilePath), "MSIX publish profile should be removed.");
-        Assert.False(File.Exists(genericX64ProfilePath), "Generic x64 publish profile should be removed in favor of the explicit portable profile.");
-        Assert.False(File.Exists(genericX86ProfilePath), "x86 publish profile should not exist because releases are x64-only.");
-        Assert.False(File.Exists(genericArm64ProfilePath), "ARM64 publish profile should not exist because releases are x64-only.");
-        Assert.False(File.Exists(frameworkDependentProfilePath), "Framework-dependent profile should be removed because portable releases carry runtimes.");
-        Assert.False(File.Exists(singleFileProfilePath), "Single-file profile should not exist because the WinUI single-file lane requires MSIX tooling.");
-        Assert.False(File.Exists(selfContainedProfilePath), "Self-contained publish profile should be removed because the portable release is produced by the build-based publish-portable.ps1 script (dotnet publish omits the XAML resources and crashes on launch in this SDK).");
+        Assert.False(File.Exists(genericX64ProfilePath),
+            "Generic x64 publish profile should be removed in favor of the explicit portable profile.");
+        Assert.False(File.Exists(genericX86ProfilePath),
+            "x86 publish profile should not exist because releases are x64-only.");
+        Assert.False(File.Exists(genericArm64ProfilePath),
+            "ARM64 publish profile should not exist because releases are x64-only.");
+        Assert.False(File.Exists(frameworkDependentProfilePath),
+            "Framework-dependent profile should be removed because portable releases carry runtimes.");
+        Assert.False(File.Exists(singleFileProfilePath),
+            "Single-file profile should not exist because the WinUI single-file lane requires MSIX tooling.");
+        Assert.False(File.Exists(selfContainedProfilePath),
+            "Self-contained publish profile should be removed because the portable release is produced by the build-based publish-portable.ps1 script (dotnet publish omits the XAML resources and crashes on launch in this SDK).");
     }
 
     /// <summary>
@@ -448,10 +476,8 @@ public class WinUiPlatformServiceSourceTests
             "dotnet run --project \"FormID Database Manager.WinUI\" -p:Platform=x64";
         var documentationPaths = new[]
         {
-            Path.Combine(repositoryRoot, "README.md"),
-            Path.Combine(repositoryRoot, "AGENTS.md"),
-            Path.Combine(repositoryRoot, "CLAUDE.md"),
-            Path.Combine(repositoryRoot, "GEMINI.md"),
+            Path.Combine(repositoryRoot, "README.md"), Path.Combine(repositoryRoot, "AGENTS.md"),
+            Path.Combine(repositoryRoot, "CLAUDE.md"), Path.Combine(repositoryRoot, "GEMINI.md"),
         };
 
         foreach (var documentationPath in documentationPaths)
@@ -486,8 +512,10 @@ public class WinUiPlatformServiceSourceTests
                     StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)))
             .ToArray();
 
-        Assert.Contains(targetFrameworks, targetFramework => targetFramework.Contains("-windows", StringComparison.OrdinalIgnoreCase));
-        Assert.DoesNotContain("<EnableWindowsTargeting>true</EnableWindowsTargeting>", projectSource, StringComparison.Ordinal);
+        Assert.Contains(targetFrameworks,
+            targetFramework => targetFramework.Contains("-windows", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain("<EnableWindowsTargeting>true</EnableWindowsTargeting>", projectSource,
+            StringComparison.Ordinal);
         Assert.Contains(
             "EnableWindowsTargeting is intentionally omitted so default solution builds fail on non-Windows hosts.",
             projectSource,

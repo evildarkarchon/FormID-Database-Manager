@@ -46,13 +46,16 @@ public class CoreProjectBoundaryTests
             packageName.Contains(legacyDesktopPackagePrefix, StringComparison.OrdinalIgnoreCase));
 
         var sourceFiles = Directory.EnumerateFiles(coreProjectDirectory, "*.cs", SearchOption.AllDirectories)
-            .Where(path => !path.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase))
-            .Where(path => !path.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase));
+            .Where(path => !path.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}",
+                StringComparison.OrdinalIgnoreCase))
+            .Where(path => !path.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}",
+                StringComparison.OrdinalIgnoreCase));
 
         foreach (var sourceFile in sourceFiles)
         {
             var source = File.ReadAllText(sourceFile);
-            Assert.DoesNotContain(string.Concat("using ", legacyDesktopPackagePrefix), source, StringComparison.Ordinal);
+            Assert.DoesNotContain(string.Concat("using ", legacyDesktopPackagePrefix), source,
+                StringComparison.Ordinal);
         }
     }
 

@@ -1,11 +1,9 @@
 #nullable enable
 using System;
 using System.Collections.Generic;
-using System.Data;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
-using System.Threading;
 using System.Threading.Tasks;
 using FormID_Database_Manager.Models;
 using FormID_Database_Manager.Services;
@@ -43,7 +41,10 @@ public class StressTests : IDisposable
                     File.Delete(file);
                 }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                _output.WriteLine($"Failed to delete test file '{file}': {ex.Message}");
+            }
         }
 
         // Clean up test directory
@@ -53,7 +54,10 @@ public class StressTests : IDisposable
             {
                 Directory.Delete(_testDirectory, true);
             }
-            catch { }
+            catch (Exception ex)
+            {
+                _output.WriteLine($"Failed to delete test directory '{_testDirectory}': {ex.Message}");
+            }
         }
     }
 
@@ -66,9 +70,10 @@ public class StressTests : IDisposable
         const int cancellationAttempts = 50;
         var dbPath = Path.Combine(_testDirectory, "cancel_stress.db");
         _createdFiles.Add(dbPath);
+        var testCancellationToken = TestContext.Current.CancellationToken;
 
         var databaseService = new DatabaseService();
-        await databaseService.InitializeDatabase(dbPath, GameRelease.SkyrimSE);
+        await databaseService.InitializeDatabase(dbPath, GameRelease.SkyrimSE, testCancellationToken);
 
         var viewModel = new MainWindowViewModel();
         var pluginProcessingService = new PluginProcessingService(databaseService, viewModel);
@@ -76,11 +81,11 @@ public class StressTests : IDisposable
         var cancelledCount = 0;
         var completedCount = 0;
         var errorCount = 0;
+        var cancellationTasks = new List<Task>();
 
         // Act
         for (var i = 0; i < cancellationAttempts; i++)
         {
-            var cts = new CancellationTokenSource();
             var parameters = new ProcessingParameters
             {
                 GameDirectory = _testDirectory,
@@ -95,11 +100,12 @@ public class StressTests : IDisposable
 
             // Cancel after random delay
             var cancelDelay = Random.Shared.Next(1, 50);
-            _ = Task.Run(async () =>
+            var cancellationTask = Task.Run(async () =>
             {
-                await Task.Delay(cancelDelay);
+                await Task.Delay(cancelDelay, testCancellationToken);
                 pluginProcessingService.CancelProcessing();
-            });
+            }, testCancellationToken);
+            cancellationTasks.Add(cancellationTask);
 
             try
             {
@@ -116,6 +122,8 @@ public class StressTests : IDisposable
                 _output.WriteLine($"Error during cancellation test {i}: {ex.Message}");
             }
         }
+
+        await Task.WhenAll(cancellationTasks);
 
         // Assert
         _output.WriteLine("Cancellation stress test results:");
@@ -136,9 +144,10 @@ public class StressTests : IDisposable
         const int maxConnections = 100;
         var dbPath = Path.Combine(_testDirectory, "connection_stress.db");
         _createdFiles.Add(dbPath);
+        var testCancellationToken = TestContext.Current.CancellationToken;
 
         var databaseService = new DatabaseService();
-        await databaseService.InitializeDatabase(dbPath, GameRelease.SkyrimSE);
+        await databaseService.InitializeDatabase(dbPath, GameRelease.SkyrimSE, testCancellationToken);
 
         var connections = new List<SqliteConnection>();
         var tasks = new List<Task>();
@@ -158,7 +167,7 @@ public class StressTests : IDisposable
                 {
                     try
                     {
-                        await conn.OpenAsync();
+                        await conn.OpenAsync(testCancellationToken);
 
                         // Perform some operations
                         for (var j = 0; j < 10; j++)
@@ -168,7 +177,8 @@ public class StressTests : IDisposable
                                 GameRelease.SkyrimSE,
                                 $"Plugin_{connIndex}.esp",
                                 $"{connIndex:X4}{j:X4}",
-                                $"Entry_{connIndex}_{j}");
+                                $"Entry_{connIndex}_{j}",
+                                testCancellationToken);
                         }
                     }
                     catch (Exception ex)
@@ -178,7 +188,7 @@ public class StressTests : IDisposable
                             errors.Add(ex);
                         }
                     }
-                }));
+                }, testCancellationToken));
             }
 
             await Task.WhenAll(tasks);
@@ -188,7 +198,7 @@ public class StressTests : IDisposable
             // Cleanup connections
             foreach (var conn in connections)
             {
-                conn?.Dispose();
+                await conn.DisposeAsync();
             }
         }
 
@@ -290,9 +300,10 @@ public class StressTests : IDisposable
         // Arrange
         var dbPath = Path.Combine(_testDirectory, "large_stress.db");
         _createdFiles.Add(dbPath);
+        var testCancellationToken = TestContext.Current.CancellationToken;
 
         var databaseService = new DatabaseService();
-        await databaseService.InitializeDatabase(dbPath, GameRelease.SkyrimSE);
+        await databaseService.InitializeDatabase(dbPath, GameRelease.SkyrimSE, testCancellationToken);
 
         const int recordCount = 1_000_000;
         const int batchSize = 10000;
@@ -301,11 +312,11 @@ public class StressTests : IDisposable
 
         // Act
         var stopwatch = Stopwatch.StartNew();
-        using var conn = new SqliteConnection($"Data Source={dbPath}");
-        await conn.OpenAsync();
+        await using var conn = new SqliteConnection($"Data Source={dbPath}");
+        await conn.OpenAsync(testCancellationToken);
 
         var transaction = conn.BeginTransaction();
-        using var command = conn.CreateCommand();
+        await using var command = conn.CreateCommand();
         command.CommandText =
             $"INSERT INTO {GameRelease.SkyrimSE} (plugin, formid, entry) VALUES (@plugin, @formid, @entry)";
         command.Transaction = transaction;
@@ -324,32 +335,32 @@ public class StressTests : IDisposable
             formidParam.Value = $"{i:X8}";
             entryParam.Value = $"Entry_{i}";
 
-            await command.ExecuteNonQueryAsync();
+            await command.ExecuteNonQueryAsync(testCancellationToken);
 
             if (i % batchSize == 0 && i > 0)
             {
-                transaction.Commit();
-                transaction.Dispose();
+                await transaction.CommitAsync(testCancellationToken);
+                await transaction.DisposeAsync();
 
                 transaction = conn.BeginTransaction();
                 command.Transaction = transaction;
             }
         }
 
-        transaction?.Commit();
-        transaction?.Dispose();
+        await transaction.CommitAsync(testCancellationToken);
+        await transaction.DisposeAsync();
         command.Transaction = null;
         stopwatch.Stop();
 
         // Test database performance with large file
         var searchStopwatch = Stopwatch.StartNew();
         command.CommandText = $"SELECT COUNT(*) FROM {GameRelease.SkyrimSE} WHERE formid LIKE '0000%'";
-        var searchResult = await command.ExecuteScalarAsync();
+        var searchResult = await command.ExecuteScalarAsync(testCancellationToken);
         searchStopwatch.Stop();
 
         // Optimize and measure
         var optimizeStopwatch = Stopwatch.StartNew();
-        await databaseService.OptimizeDatabase(conn);
+        await databaseService.OptimizeDatabase(conn, testCancellationToken);
         optimizeStopwatch.Stop();
 
         // Assert
@@ -359,6 +370,7 @@ public class StressTests : IDisposable
         _output.WriteLine($"Insert time: {stopwatch.Elapsed.TotalSeconds:F2} seconds");
         _output.WriteLine($"Insert rate: {recordCount / stopwatch.Elapsed.TotalSeconds:F0} records/second");
         _output.WriteLine($"Database file size: {fileInfo.Length / 1024.0 / 1024.0:F2} MB");
+        _output.WriteLine($"Search result count: {searchResult}");
         _output.WriteLine($"Search time: {searchStopwatch.ElapsedMilliseconds} ms");
         _output.WriteLine($"Optimize time: {optimizeStopwatch.Elapsed.TotalSeconds:F2} seconds");
 

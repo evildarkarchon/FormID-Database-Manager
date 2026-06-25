@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using System.IO;
 using Xunit;
 
@@ -7,21 +6,18 @@ namespace FormID_Database_Manager.Tests.Unit.Architecture;
 
 public class TestCollectionDefinitionTests
 {
-    public static TheoryData<string> SerializedCollectionNames => new()
-    {
-        "Database Tests",
-        "Integration Tests",
-        "Performance Tests",
-        "UI Tests"
-    };
+    public static TheoryData<string> SerializedCollectionNames =>
+        ["Database Tests", "Integration Tests", "Performance Tests", "UI Tests"];
 
     [Theory]
     [MemberData(nameof(SerializedCollectionNames))]
     public void TestCollectionDefinitions_DisableParallelExecution(string collectionName)
     {
-        var testCollectionsPath = Path.Combine(FindRepositoryRoot(), "FormID Database Manager.Tests", "TestCollections.cs");
+        var testCollectionsPath =
+            Path.Combine(FindRepositoryRoot(), "FormID Database Manager.Tests", "TestCollections.cs");
 
-        Assert.True(File.Exists(testCollectionsPath), $"Test collection definitions were not found at {testCollectionsPath}.");
+        Assert.True(File.Exists(testCollectionsPath),
+            $"Test collection definitions were not found at {testCollectionsPath}.");
 
         var source = File.ReadAllText(testCollectionsPath);
 
