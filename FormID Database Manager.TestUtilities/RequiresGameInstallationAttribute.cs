@@ -13,17 +13,15 @@ namespace FormID_Database_Manager.TestUtilities;
 /// </summary>
 public sealed class RequiresGameInstallationFactAttribute : FactAttribute
 {
-    private readonly GameRelease[] _requiredGames;
-
     public RequiresGameInstallationFactAttribute(
         [CallerFilePath] string? sourceFilePath = null,
         [CallerLineNumber] int sourceLineNumber = -1)
-        : this(GetDefaultRequiredGames(), sourceFilePath, sourceLineNumber)
+        : this(GetDefaultRequiredGames(), IsGameInstalled, sourceFilePath, sourceLineNumber)
     {
     }
 
     public RequiresGameInstallationFactAttribute(GameRelease requiredGame, params GameRelease[] additionalRequiredGames)
-        : this(BuildGameList(requiredGame, additionalRequiredGames), null, -1)
+        : this(requiredGame, additionalRequiredGames, IsGameInstalled, null, -1)
     {
     }
 
@@ -31,13 +29,31 @@ public sealed class RequiresGameInstallationFactAttribute : FactAttribute
         GameRelease[] requiredGames,
         [CallerFilePath] string? sourceFilePath = null,
         [CallerLineNumber] int sourceLineNumber = -1)
+        : this(requiredGames, IsGameInstalled, sourceFilePath, sourceLineNumber)
+    {
+    }
+
+    private RequiresGameInstallationFactAttribute(
+        GameRelease requiredGame,
+        GameRelease[] additionalRequiredGames,
+        Func<GameRelease, bool> isGameInstalled,
+        string? sourceFilePath,
+        int sourceLineNumber)
+        : this(BuildGameList(requiredGame, additionalRequiredGames), isGameInstalled, sourceFilePath, sourceLineNumber)
+    {
+    }
+
+    private RequiresGameInstallationFactAttribute(
+        GameRelease[] requiredGames,
+        Func<GameRelease, bool> isGameInstalled,
+        string? sourceFilePath,
+        int sourceLineNumber)
         : base(sourceFilePath, sourceLineNumber)
     {
-        _requiredGames = requiredGames;
         var availableGames = new List<GameRelease>();
-        foreach (var game in _requiredGames)
+        foreach (var game in requiredGames)
         {
-            if (IsGameInstalled(game))
+            if (isGameInstalled(game))
             {
                 availableGames.Add(game);
             }
@@ -45,7 +61,7 @@ public sealed class RequiresGameInstallationFactAttribute : FactAttribute
 
         if (availableGames.Count == 0)
         {
-            Skip = $"Requires one of the following games to be installed: {string.Join(", ", _requiredGames)}";
+            Skip = $"Requires one of the following games to be installed: {string.Join(", ", requiredGames)}";
         }
     }
 
@@ -73,7 +89,7 @@ public sealed class RequiresGameInstallationFactAttribute : FactAttribute
         {
             // Try to get the game environment - this will fail if the game isn't installed
             var env = GameEnvironment.Typical.Construct(gameRelease);
-            return env != null && Directory.Exists(env.DataFolderPath);
+            return Directory.Exists(env.DataFolderPath);
         }
         catch
         {
@@ -88,17 +104,16 @@ public sealed class RequiresGameInstallationFactAttribute : FactAttribute
 /// </summary>
 public sealed class RequiresGameInstallationTheoryAttribute : TheoryAttribute
 {
-    private readonly GameRelease[] _requiredGames;
-
     public RequiresGameInstallationTheoryAttribute(
         [CallerFilePath] string? sourceFilePath = null,
         [CallerLineNumber] int sourceLineNumber = -1)
-        : this(GetDefaultRequiredGames(), sourceFilePath, sourceLineNumber)
+        : this(GetDefaultRequiredGames(), IsGameInstalled, sourceFilePath, sourceLineNumber)
     {
     }
 
-    public RequiresGameInstallationTheoryAttribute(GameRelease requiredGame, params GameRelease[] additionalRequiredGames)
-        : this(BuildGameList(requiredGame, additionalRequiredGames), null, -1)
+    public RequiresGameInstallationTheoryAttribute(GameRelease requiredGame,
+        params GameRelease[] additionalRequiredGames)
+        : this(requiredGame, additionalRequiredGames, IsGameInstalled, null, -1)
     {
     }
 
@@ -106,13 +121,31 @@ public sealed class RequiresGameInstallationTheoryAttribute : TheoryAttribute
         GameRelease[] requiredGames,
         [CallerFilePath] string? sourceFilePath = null,
         [CallerLineNumber] int sourceLineNumber = -1)
+        : this(requiredGames, IsGameInstalled, sourceFilePath, sourceLineNumber)
+    {
+    }
+
+    private RequiresGameInstallationTheoryAttribute(
+        GameRelease requiredGame,
+        GameRelease[] additionalRequiredGames,
+        Func<GameRelease, bool> isGameInstalled,
+        string? sourceFilePath,
+        int sourceLineNumber)
+        : this(BuildGameList(requiredGame, additionalRequiredGames), isGameInstalled, sourceFilePath, sourceLineNumber)
+    {
+    }
+
+    private RequiresGameInstallationTheoryAttribute(
+        GameRelease[] requiredGames,
+        Func<GameRelease, bool> isGameInstalled,
+        string? sourceFilePath,
+        int sourceLineNumber)
         : base(sourceFilePath, sourceLineNumber)
     {
-        _requiredGames = requiredGames;
         var availableGames = new List<GameRelease>();
-        foreach (var game in _requiredGames)
+        foreach (var game in requiredGames)
         {
-            if (IsGameInstalled(game))
+            if (isGameInstalled(game))
             {
                 availableGames.Add(game);
             }
@@ -120,7 +153,7 @@ public sealed class RequiresGameInstallationTheoryAttribute : TheoryAttribute
 
         if (availableGames.Count == 0)
         {
-            Skip = $"Requires one of the following games to be installed: {string.Join(", ", _requiredGames)}";
+            Skip = $"Requires one of the following games to be installed: {string.Join(", ", requiredGames)}";
         }
     }
 
@@ -146,7 +179,7 @@ public sealed class RequiresGameInstallationTheoryAttribute : TheoryAttribute
         try
         {
             var env = GameEnvironment.Typical.Construct(gameRelease);
-            return env != null && Directory.Exists(env.DataFolderPath);
+            return Directory.Exists(env.DataFolderPath);
         }
         catch
         {

@@ -33,54 +33,11 @@ public class GameDetectionBuilder
         return this;
     }
 
-    public GameDetectionBuilder SetupForSkyrimSE()
-    {
-        _expectedGame = GameRelease.SkyrimSE;
-        _pluginFiles.Clear();
-        _pluginFiles.AddRange(
-            new[] { "Skyrim.esm", "Update.esm", "Dawnguard.esm", "HearthFires.esm", "Dragonborn.esm" });
-        return this;
-    }
-
-    public GameDetectionBuilder SetupForSkyrimVR()
-    {
-        _expectedGame = GameRelease.SkyrimVR;
-        _pluginFiles.Clear();
-        _pluginFiles.AddRange(new[] { "Skyrim.esm", "Update.esm", "SkyrimVR.esm" });
-        return this;
-    }
-
-    public GameDetectionBuilder SetupForFallout4()
-    {
-        _expectedGame = GameRelease.Fallout4;
-        _pluginFiles.Clear();
-        _pluginFiles.AddRange(new[] { "Fallout4.esm", "DLCRobot.esm", "DLCworkshop01.esm" });
-        return this;
-    }
-
-    public GameDetectionBuilder SetupForStarfield()
-    {
-        _expectedGame = GameRelease.Starfield;
-        _pluginFiles.Clear();
-        _pluginFiles.AddRange(new[] { "Starfield.esm", "BlueprintShips-Starfield.esm" });
-        return this;
-    }
-
-    public GameDetectionBuilder SetupForOblivion()
-    {
-        _expectedGame = GameRelease.Oblivion;
-        _pluginFiles.Clear();
-        _pluginFiles.AddRange(new[] { "Oblivion.esm" });
-        return this;
-    }
-
     public GameDetectionData Build()
     {
         return new GameDetectionData
         {
-            DirectoryPath = _directoryPath,
-            PluginFiles = new List<string>(_pluginFiles),
-            ExpectedGame = _expectedGame
+            DirectoryPath = _directoryPath, PluginFiles = [.._pluginFiles], ExpectedGame = _expectedGame
         };
     }
 }

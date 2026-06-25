@@ -1,5 +1,3 @@
-#nullable enable
-
 using System.Threading.Tasks;
 using Microsoft.Data.Sqlite;
 using Xunit;
@@ -34,13 +32,6 @@ public class DatabaseFixture : IAsyncLifetime
         }
     }
 
-    public SqliteConnection CreateConnection()
-    {
-        var connection = new SqliteConnection(ConnectionString);
-        connection.Open();
-        return connection;
-    }
-
     public async Task<SqliteConnection> CreateConnectionAsync()
     {
         var connection = new SqliteConnection(ConnectionString);
@@ -60,27 +51,5 @@ public class DatabaseFixture : IAsyncLifetime
                 entry TEXT
             )";
         await createTableCommand.ExecuteNonQueryAsync();
-    }
-
-    public async Task SeedDataAsync(SqliteConnection connection, string tableName, int recordCount = 10)
-    {
-        using var transaction = connection.BeginTransaction();
-
-        for (var i = 0; i < recordCount; i++)
-        {
-            var command = connection.CreateCommand();
-            command.Transaction = transaction;
-            command.CommandText = $@"
-                INSERT INTO {tableName} (plugin, formid, entry)
-                VALUES (@plugin, @formid, @entry)";
-
-            command.Parameters.AddWithValue("@plugin", $"TestPlugin{i}.esp");
-            command.Parameters.AddWithValue("@formid", $"0x{i:X8}");
-            command.Parameters.AddWithValue("@entry", $"TestEntry{i}");
-
-            await command.ExecuteNonQueryAsync();
-        }
-
-        await transaction.CommitAsync();
     }
 }

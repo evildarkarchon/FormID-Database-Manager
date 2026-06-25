@@ -19,12 +19,7 @@ namespace FormID_Database_Manager.Tests.Unit.ViewModels;
 
 public class MainWindowViewModelTests
 {
-    private readonly MainWindowViewModel _viewModel;
-
-    public MainWindowViewModelTests()
-    {
-        _viewModel = new MainWindowViewModel(new SynchronousThreadDispatcher());
-    }
+    private readonly MainWindowViewModel _viewModel = new(new SynchronousThreadDispatcher());
 
     #region Property Change Notification Tests
 
@@ -33,7 +28,7 @@ public class MainWindowViewModelTests
     {
         // Arrange
         var propertyName = string.Empty;
-        _viewModel.PropertyChanged += (sender, args) => propertyName = args.PropertyName;
+        _viewModel.PropertyChanged += (_, args) => propertyName = args.PropertyName;
 
         // Act
         _viewModel.GameDirectory = @"C:\Games\Skyrim";
@@ -48,7 +43,7 @@ public class MainWindowViewModelTests
     {
         // Arrange
         var propertyName = string.Empty;
-        _viewModel.PropertyChanged += (sender, args) => propertyName = args.PropertyName;
+        _viewModel.PropertyChanged += (_, args) => propertyName = args.PropertyName;
 
         // Act
         _viewModel.DatabasePath = @"C:\Database\formids.db";
@@ -63,7 +58,7 @@ public class MainWindowViewModelTests
     {
         // Arrange
         var propertyName = string.Empty;
-        _viewModel.PropertyChanged += (sender, args) => propertyName = args.PropertyName;
+        _viewModel.PropertyChanged += (_, args) => propertyName = args.PropertyName;
 
         // Act
         _viewModel.FormIdListPath = @"C:\Lists\formids.txt";
@@ -78,7 +73,7 @@ public class MainWindowViewModelTests
     {
         // Arrange
         var notifiedProperties = new System.Collections.Generic.List<string>();
-        _viewModel.PropertyChanged += (sender, args) =>
+        _viewModel.PropertyChanged += (_, args) =>
         {
             if (args.PropertyName != null)
             {
@@ -184,7 +179,7 @@ public class MainWindowViewModelTests
     {
         // Arrange
         var notifiedProperties = new System.Collections.Generic.List<string>();
-        _viewModel.PropertyChanged += (sender, args) =>
+        _viewModel.PropertyChanged += (_, args) =>
         {
             if (args.PropertyName != null)
             {
@@ -205,7 +200,7 @@ public class MainWindowViewModelTests
     {
         // Arrange
         var notifiedProperties = new System.Collections.Generic.List<string>();
-        _viewModel.PropertyChanged += (sender, args) =>
+        _viewModel.PropertyChanged += (_, args) =>
         {
             if (args.PropertyName != null)
             {
@@ -226,7 +221,7 @@ public class MainWindowViewModelTests
     {
         // Arrange
         var propertyName = string.Empty;
-        _viewModel.PropertyChanged += (sender, args) => propertyName = args.PropertyName;
+        _viewModel.PropertyChanged += (_, args) => propertyName = args.PropertyName;
 
         // Act
         _viewModel.ProgressValue = 75.5;
@@ -241,7 +236,7 @@ public class MainWindowViewModelTests
     {
         // Arrange
         var propertyName = string.Empty;
-        _viewModel.PropertyChanged += (sender, args) => propertyName = args.PropertyName;
+        _viewModel.PropertyChanged += (_, args) => propertyName = args.PropertyName;
 
         // Act
         _viewModel.ProgressStatus = "Processing plugins...";
@@ -257,7 +252,7 @@ public class MainWindowViewModelTests
         // Arrange
         _viewModel.GameDirectory = "TestPath";
         var eventRaised = false;
-        _viewModel.PropertyChanged += (sender, args) => eventRaised = true;
+        _viewModel.PropertyChanged += (_, _) => eventRaised = true;
 
         // Act
         _viewModel.GameDirectory = "TestPath"; // Same value
@@ -579,12 +574,13 @@ public class MainWindowViewModelTests
         // Arrange
         var tcs = new TaskCompletionSource<bool>();
 
-        _viewModel.PropertyChanged += (s, e) =>
+        _viewModel.PropertyChanged += (_, e) =>
         {
-            if (e.PropertyName == nameof(MainWindowViewModel.ProgressStatus) ||
-                e.PropertyName == nameof(MainWindowViewModel.ProgressValue))
+            if (e.PropertyName is nameof(MainWindowViewModel.ProgressStatus) or
+                nameof(MainWindowViewModel.ProgressValue))
             {
-                if (_viewModel.ProgressStatus == "Background update" && _viewModel.ProgressValue == 25)
+                if (_viewModel.ProgressStatus == "Background update" &&
+                    Math.Abs(_viewModel.ProgressValue - 25) < 0.0001)
                 {
                     tcs.TrySetResult(true);
                 }
@@ -676,7 +672,7 @@ public class MainWindowViewModelTests
     {
         // Arrange
         var notifiedProperties = new System.Collections.Generic.List<string>();
-        _viewModel.PropertyChanged += (sender, args) =>
+        _viewModel.PropertyChanged += (_, args) =>
         {
             if (args.PropertyName != null)
             {
@@ -697,7 +693,7 @@ public class MainWindowViewModelTests
     {
         // Arrange
         var notifiedProperties = new System.Collections.Generic.List<string>();
-        _viewModel.PropertyChanged += (sender, args) =>
+        _viewModel.PropertyChanged += (_, args) =>
         {
             if (args.PropertyName != null)
             {
@@ -718,7 +714,7 @@ public class MainWindowViewModelTests
     {
         // Arrange
         var notifiedProperties = new System.Collections.Generic.List<string>();
-        _viewModel.PropertyChanged += (sender, args) =>
+        _viewModel.PropertyChanged += (_, args) =>
         {
             if (args.PropertyName != null)
             {
@@ -747,7 +743,7 @@ public class MainWindowViewModelTests
     {
         // Arrange
         var notifiedProperties = new System.Collections.Generic.List<string>();
-        _viewModel.PropertyChanged += (sender, args) =>
+        _viewModel.PropertyChanged += (_, args) =>
         {
             if (args.PropertyName != null)
             {
@@ -778,7 +774,7 @@ public class MainWindowViewModelTests
         var replacement = new ObservableCollection<string>();
         var notifiedProperties = new System.Collections.Generic.List<string>();
         _viewModel.ErrorMessages = replacement;
-        _viewModel.PropertyChanged += (sender, args) =>
+        _viewModel.PropertyChanged += (_, args) =>
         {
             if (args.PropertyName != null)
             {
@@ -809,7 +805,7 @@ public class MainWindowViewModelTests
         var replacement = new ObservableCollection<string>();
         var notifiedProperties = new System.Collections.Generic.List<string>();
         _viewModel.InformationMessages = replacement;
-        _viewModel.PropertyChanged += (sender, args) =>
+        _viewModel.PropertyChanged += (_, args) =>
         {
             if (args.PropertyName != null)
             {
@@ -947,21 +943,15 @@ public class MainWindowViewModelTests
     public void SuspendFilter_PreventsApplyFilterDuringBulkAdd()
     {
         // Arrange
-        var filterCallCount = 0;
-        _viewModel.PropertyChanged += (s, e) =>
-        {
-            if (e.PropertyName == nameof(MainWindowViewModel.FilteredPlugins))
-            {
-                filterCallCount++;
-            }
-        };
-
         // Act - Suspend, add many plugins, resume
         _viewModel.SuspendFilter();
         for (var i = 0; i < 100; i++)
         {
             _viewModel.Plugins.Add(new PluginListItem { Name = $"Plugin{i}.esp" });
         }
+
+        Assert.Empty(_viewModel.FilteredPlugins);
+
         _viewModel.ResumeFilter();
 
         // Assert - All plugins should be in filtered list
@@ -994,7 +984,7 @@ public class MainWindowViewModelTests
     {
         // Arrange
         var eventRaised = false;
-        _viewModel.PropertyChanged += (sender, args) =>
+        _viewModel.PropertyChanged += (_, _) =>
         {
             eventRaised = true;
             // Should not throw on null property name
@@ -1006,7 +996,7 @@ public class MainWindowViewModelTests
             binder: null,
             [typeof(string)],
             modifiers: null);
-        method?.Invoke(_viewModel, new object?[] { null });
+        method?.Invoke(_viewModel, [null]);
 
         // Assert
         Assert.True(eventRaised);
@@ -1052,7 +1042,7 @@ public class MainWindowViewModelTests
         // Arrange
         const int threadCount = 8;
         const int perThreadMessages = 200;
-        const int maxMessages = 10;
+        const int defaultMaxMessages = 10;
         var errors = new ConcurrentQueue<Exception>();
 
         // Act
@@ -1063,7 +1053,7 @@ public class MainWindowViewModelTests
                 {
                     try
                     {
-                        _viewModel.AddErrorMessage($"T{threadId}:{i}", maxMessages);
+                        _viewModel.AddErrorMessage($"T{threadId}:{i}");
                     }
                     catch (Exception ex)
                     {
@@ -1076,7 +1066,7 @@ public class MainWindowViewModelTests
         await Task.WhenAll(tasks);
         // Assert
         Assert.Empty(errors);
-        Assert.Equal(maxMessages, _viewModel.ErrorMessages.Count);
+        Assert.Equal(defaultMaxMessages, _viewModel.ErrorMessages.Count);
     }
 
     [Fact]
@@ -1136,7 +1126,7 @@ public class MainWindowViewModelTests
 
         // Act - Test that setting the same value doesn't raise PropertyChanged
         var eventRaised = false;
-        _viewModel.PropertyChanged += (sender, args) => eventRaised = true;
+        _viewModel.PropertyChanged += (_, _) => eventRaised = true;
         _viewModel.GameDirectory = "TestPath"; // Same value
 
         // Assert
@@ -1184,7 +1174,7 @@ public class MainWindowViewModelTests
     {
         // Arrange
         var notifiedProperties = new System.Collections.Generic.List<string>();
-        _viewModel.PropertyChanged += (sender, args) =>
+        _viewModel.PropertyChanged += (_, args) =>
         {
             if (args.PropertyName != null)
             {
@@ -1204,7 +1194,7 @@ public class MainWindowViewModelTests
     {
         // Arrange
         var notifiedProperties = new System.Collections.Generic.List<string>();
-        _viewModel.PropertyChanged += (sender, args) =>
+        _viewModel.PropertyChanged += (_, args) =>
         {
             if (args.PropertyName != null)
             {

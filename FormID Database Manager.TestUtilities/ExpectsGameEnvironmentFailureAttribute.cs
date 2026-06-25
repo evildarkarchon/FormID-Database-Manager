@@ -14,32 +14,32 @@ namespace FormID_Database_Manager.TestUtilities;
 /// </summary>
 public sealed class ExpectsGameEnvironmentFailureFactAttribute : FactAttribute
 {
-    private readonly GameRelease[] _games;
-
     public ExpectsGameEnvironmentFailureFactAttribute(
         [CallerFilePath] string? sourceFilePath = null,
         [CallerLineNumber] int sourceLineNumber = -1)
-        : this(GetDefaultGames(), sourceFilePath, sourceLineNumber)
+        : this(GetDefaultGames(), IsGameInstalled, sourceFilePath, sourceLineNumber)
     {
     }
 
     public ExpectsGameEnvironmentFailureFactAttribute(GameRelease game, params GameRelease[] additionalGames)
-        : this(BuildGameList(game, additionalGames), null, -1)
+        : this(BuildGameList(game, additionalGames), IsGameInstalled, null, -1)
     {
     }
 
+    // xUnit stores source metadata in caller-info parameters; forwarding captured values is intentional here.
+    // ReSharper disable ExplicitCallerInfoArgument
     private ExpectsGameEnvironmentFailureFactAttribute(
         GameRelease[] games,
+        Func<GameRelease, bool> isGameInstalled,
         string? sourceFilePath,
         int sourceLineNumber)
         : base(sourceFilePath, sourceLineNumber)
     {
-        _games = games;
         // Check if any of the games are actually installed
         var installedGames = new List<GameRelease>();
-        foreach (var game in _games)
+        foreach (var game in games)
         {
-            if (IsGameInstalled(game))
+            if (isGameInstalled(game))
             {
                 installedGames.Add(game);
             }
@@ -51,6 +51,7 @@ public sealed class ExpectsGameEnvironmentFailureFactAttribute : FactAttribute
                 $"Test expects GameEnvironment failures but these games are installed: {string.Join(", ", installedGames)}";
         }
     }
+    // ReSharper restore ExplicitCallerInfoArgument
 
     private static GameRelease[] GetDefaultGames()
     {
@@ -70,7 +71,7 @@ public sealed class ExpectsGameEnvironmentFailureFactAttribute : FactAttribute
         try
         {
             var env = GameEnvironment.Typical.Construct(gameRelease);
-            return env != null && Directory.Exists(env.DataFolderPath);
+            return Directory.Exists(env.DataFolderPath);
         }
         catch
         {
