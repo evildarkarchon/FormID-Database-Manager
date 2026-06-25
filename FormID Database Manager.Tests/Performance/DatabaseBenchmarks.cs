@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Data;
 using System.IO;
 using System.Threading.Tasks;
 using BenchmarkDotNet.Attributes;
@@ -36,26 +35,28 @@ public class DatabaseBenchmarks : IDisposable
         _testData = GenerateTestData(RecordCount);
 
         // Initialize database
-        _databaseService.InitializeDatabase(_databasePath, GameRelease.SkyrimSE).Wait();
+        _databaseService.InitializeDatabase(_databasePath, GameRelease.SkyrimSE).GetAwaiter().GetResult();
     }
 
     [GlobalCleanup]
     public void Cleanup()
     {
-        if (File.Exists(_databasePath))
+        if (string.IsNullOrWhiteSpace(_databasePath))
         {
-            try
-            {
-                File.Delete(_databasePath);
-            }
-            catch { }
+            return;
         }
+
+        SqliteConnection.ClearAllPools();
+
+        DeleteTemporaryDatabaseFile(_databasePath);
+        DeleteTemporaryDatabaseFile(_databasePath + "-wal");
+        DeleteTemporaryDatabaseFile(_databasePath + "-shm");
     }
 
     [Benchmark(Baseline = true)]
     public async Task SingleInsert()
     {
-        using var conn = new SqliteConnection($"Data Source={_databasePath}");
+        await using var conn = new SqliteConnection($"Data Source={_databasePath}");
         await conn.OpenAsync();
 
         // Clear existing data
@@ -71,14 +72,14 @@ public class DatabaseBenchmarks : IDisposable
     [Benchmark]
     public async Task BatchInsert_WithTransaction()
     {
-        using var conn = new SqliteConnection($"Data Source={_databasePath}");
+        await using var conn = new SqliteConnection($"Data Source={_databasePath}");
         await conn.OpenAsync();
 
         // Clear existing data
         await ClearAllData(conn, GameRelease.SkyrimSE);
 
         // Insert all records in a transaction
-        using var transaction = conn.BeginTransaction();
+        await using var transaction = conn.BeginTransaction();
         try
         {
             foreach (var (plugin, formid, entry) in _testData)
@@ -98,15 +99,15 @@ public class DatabaseBenchmarks : IDisposable
     [Benchmark]
     public async Task BatchInsert_PreparedStatement()
     {
-        using var conn = new SqliteConnection($"Data Source={_databasePath}");
+        await using var conn = new SqliteConnection($"Data Source={_databasePath}");
         await conn.OpenAsync();
 
         // Clear existing data
         await ClearAllData(conn, GameRelease.SkyrimSE);
 
         // Use prepared statement for better performance
-        using var transaction = conn.BeginTransaction();
-        using var command = conn.CreateCommand();
+        await using var transaction = conn.BeginTransaction();
+        await using var command = conn.CreateCommand();
         command.Transaction = transaction;
         command.CommandText =
             $"INSERT INTO {GameRelease.SkyrimSE} (plugin, formid, entry) VALUES (@plugin, @formid, @entry)";
@@ -142,7 +143,7 @@ public class DatabaseBenchmarks : IDisposable
     [Benchmark]
     public async Task ClearPluginEntries()
     {
-        using var conn = new SqliteConnection($"Data Source={_databasePath}");
+        await using var conn = new SqliteConnection($"Data Source={_databasePath}");
         await conn.OpenAsync();
 
         // Ensure data exists
@@ -162,7 +163,7 @@ public class DatabaseBenchmarks : IDisposable
     [Benchmark]
     public async Task SearchFormId()
     {
-        using var conn = new SqliteConnection($"Data Source={_databasePath}");
+        await using var conn = new SqliteConnection($"Data Source={_databasePath}");
         await conn.OpenAsync();
 
         // Ensure data exists
@@ -173,7 +174,7 @@ public class DatabaseBenchmarks : IDisposable
 
         // Search for random FormIDs
         var random = new Random(42);
-        using var command = conn.CreateCommand();
+        await using var command = conn.CreateCommand();
         command.CommandText = $"SELECT * FROM {GameRelease.SkyrimSE} WHERE formid = @formid";
         var formidParam = new SqliteParameter("@formid", SqliteType.Text);
         command.Parameters.Add(formidParam);
@@ -182,7 +183,7 @@ public class DatabaseBenchmarks : IDisposable
         {
             var index = random.Next(_testData.Count);
             formidParam.Value = _testData[index].formid;
-            using var reader = await command.ExecuteReaderAsync();
+            await using var reader = await command.ExecuteReaderAsync();
             while (await reader.ReadAsync())
             {
             }
@@ -192,7 +193,7 @@ public class DatabaseBenchmarks : IDisposable
     [Benchmark]
     public async Task OptimizeDatabase()
     {
-        using var conn = new SqliteConnection($"Data Source={_databasePath}");
+        await using var conn = new SqliteConnection($"Data Source={_databasePath}");
         await conn.OpenAsync();
 
         // Ensure data exists
@@ -206,7 +207,7 @@ public class DatabaseBenchmarks : IDisposable
 
     private async Task<long> GetRecordCount(SqliteConnection conn, GameRelease gameRelease)
     {
-        using var command = conn.CreateCommand();
+        await using var command = conn.CreateCommand();
         command.CommandText = $"SELECT COUNT(*) FROM {gameRelease}";
         var result = await command.ExecuteScalarAsync();
         return Convert.ToInt64(result);
@@ -214,14 +215,35 @@ public class DatabaseBenchmarks : IDisposable
 
     private async Task ClearAllData(SqliteConnection conn, GameRelease gameRelease)
     {
-        using var command = conn.CreateCommand();
+        await using var command = conn.CreateCommand();
         command.CommandText = $"DELETE FROM {gameRelease}";
         await command.ExecuteNonQueryAsync();
     }
 
+    private static void DeleteTemporaryDatabaseFile(string path)
+    {
+        if (!File.Exists(path))
+        {
+            return;
+        }
+
+        try
+        {
+            File.Delete(path);
+        }
+        catch (IOException ex)
+        {
+            Console.Error.WriteLine($"Failed to delete temporary benchmark database file '{path}': {ex.Message}");
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            Console.Error.WriteLine($"Failed to delete temporary benchmark database file '{path}': {ex.Message}");
+        }
+    }
+
     private async Task InsertTestData(SqliteConnection conn)
     {
-        using var transaction = conn.BeginTransaction();
+        await using var transaction = conn.BeginTransaction();
         foreach (var (plugin, formid, entry) in _testData)
         {
             await _databaseService.InsertRecord(conn, GameRelease.SkyrimSE, plugin, formid, entry);
