@@ -54,7 +54,7 @@ public class DatabaseIntegrationTests : IDisposable
         // Arrange - Create initial database
         await _databaseService.InitializeDatabase(_testDbPath, GameRelease.SkyrimSE, CancellationToken.None);
 
-        using (var connection = new SqliteConnection($"Data Source={_testDbPath}"))
+        await using (var connection = new SqliteConnection($"Data Source={_testDbPath}"))
         {
             connection.Open();
 
@@ -72,7 +72,7 @@ public class DatabaseIntegrationTests : IDisposable
         }
 
         // Act - Simulate recovery by re-initializing
-        using (var newConnection = new SqliteConnection($"Data Source={_testDbPath}"))
+        await using (var newConnection = new SqliteConnection($"Data Source={_testDbPath}"))
         {
             newConnection.Open();
 
@@ -107,7 +107,7 @@ public class DatabaseIntegrationTests : IDisposable
         // Arrange
         await _databaseService.InitializeDatabase(_testDbPath, GameRelease.SkyrimSE, CancellationToken.None);
 
-        using var connection = new SqliteConnection($"Data Source={_testDbPath}");
+        await using var connection = new SqliteConnection($"Data Source={_testDbPath}");
         connection.Open();
 
         // Insert initial data
@@ -117,9 +117,9 @@ public class DatabaseIntegrationTests : IDisposable
         var initialCount = GetRecordCount(connection, GameRelease.SkyrimSE);
 
         // Act - Start transaction, insert data, then rollback
-        using (var transaction = connection.BeginTransaction())
+        await using (var transaction = connection.BeginTransaction())
         {
-            using var cmd = connection.CreateCommand();
+            await using var cmd = connection.CreateCommand();
             cmd.Transaction = transaction;
             cmd.CommandText = $@"INSERT INTO {GameRelease.SkyrimSE} (plugin, formid, entry) 
                                VALUES (@plugin, @formid, @entry)";
@@ -162,7 +162,7 @@ public class DatabaseIntegrationTests : IDisposable
             await _databaseService.InitializeDatabase(_testDbPath, gameRelease, CancellationToken.None);
         }
 
-        using var connection = new SqliteConnection($"Data Source={_testDbPath}");
+        await using var connection = new SqliteConnection($"Data Source={_testDbPath}");
         connection.Open();
 
         foreach (var gameRelease in gameReleases)
@@ -176,18 +176,18 @@ public class DatabaseIntegrationTests : IDisposable
             }
 
             // Query and verify
-            using var cmd = new SqliteCommand($"SELECT COUNT(*) FROM {gameRelease}", connection);
+            await using var cmd = new SqliteCommand($"SELECT COUNT(*) FROM {gameRelease}", connection);
             var count = Convert.ToInt32(cmd.ExecuteScalar());
             Assert.Equal(100, count);
 
             // Verify data integrity
-            using var queryCmd = new SqliteCommand(
+            await using var queryCmd = new SqliteCommand(
                 $"SELECT plugin, formid, entry FROM {gameRelease} WHERE plugin = @plugin", connection);
             queryCmd.Parameters.AddWithValue("@plugin", $"{gameRelease}_Plugin1.esp");
 
-            using var reader = queryCmd.ExecuteReader();
+            await using var reader = await queryCmd.ExecuteReaderAsync(TestContext.Current.CancellationToken);
             var recordCount = 0;
-            while (reader.Read())
+            while (await reader.ReadAsync(TestContext.Current.CancellationToken))
             {
                 recordCount++;
                 Assert.NotNull(reader.GetString(0)); // plugin
@@ -212,7 +212,7 @@ public class DatabaseIntegrationTests : IDisposable
         // Arrange
         await _databaseService.InitializeDatabase(_testDbPath, GameRelease.SkyrimSE, CancellationToken.None);
 
-        using var connection = new SqliteConnection($"Data Source={_testDbPath}");
+        await using var connection = new SqliteConnection($"Data Source={_testDbPath}");
         connection.Open();
 
         // Initial data
@@ -234,8 +234,8 @@ public class DatabaseIntegrationTests : IDisposable
         // Assert
         var records = GetAllRecords(connection, GameRelease.SkyrimSE);
         Assert.Equal(2, records.Count);
-        Assert.Contains(records, r => r.formid == "000001" && r.entry == "NewEntry1");
-        Assert.Contains(records, r => r.formid == "000003" && r.entry == "NewEntry3");
+        Assert.Contains(records, r => r is { formid: "000001", entry: "NewEntry1" });
+        Assert.Contains(records, r => r is { formid: "000003", entry: "NewEntry3" });
         Assert.DoesNotContain(records, r => r.entry.StartsWith("Old"));
     }
 
@@ -249,7 +249,7 @@ public class DatabaseIntegrationTests : IDisposable
         // Arrange
         await _databaseService.InitializeDatabase(_testDbPath, GameRelease.SkyrimSE, CancellationToken.None);
 
-        using var connection = new SqliteConnection($"Data Source={_testDbPath}");
+        await using var connection = new SqliteConnection($"Data Source={_testDbPath}");
         connection.Open();
 
         const int threadCount = 5;
@@ -262,7 +262,7 @@ public class DatabaseIntegrationTests : IDisposable
             var threadId = i;
             var task = Task.Run(async () =>
             {
-                using var threadConnection = new SqliteConnection($"Data Source={_testDbPath}");
+                await using var threadConnection = new SqliteConnection($"Data Source={_testDbPath}");
                 threadConnection.Open();
 
                 for (var j = 0; j < recordsPerThread; j++)
@@ -299,7 +299,7 @@ public class DatabaseIntegrationTests : IDisposable
         // Arrange
         await _databaseService.InitializeDatabase(_testDbPath, GameRelease.SkyrimSE, CancellationToken.None);
 
-        using var connection = new SqliteConnection($"Data Source={_testDbPath}");
+        await using var connection = new SqliteConnection($"Data Source={_testDbPath}");
         connection.Open();
 
         var writeConnectionString = new SqliteConnectionStringBuilder
@@ -307,7 +307,7 @@ public class DatabaseIntegrationTests : IDisposable
             DataSource = _testDbPath,
             DefaultTimeout = 2
         }.ToString();
-        using var writeConnection = new SqliteConnection(writeConnectionString);
+        await using var writeConnection = new SqliteConnection(writeConnectionString);
         writeConnection.Open();
 
         var readConnectionString = new SqliteConnectionStringBuilder
@@ -315,7 +315,7 @@ public class DatabaseIntegrationTests : IDisposable
             DataSource = _testDbPath,
             DefaultTimeout = 2
         }.ToString();
-        using var readConnection = new SqliteConnection(readConnectionString);
+        await using var readConnection = new SqliteConnection(readConnectionString);
         readConnection.Open();
 
         const int recordCount = 1000;
@@ -364,15 +364,15 @@ public class DatabaseIntegrationTests : IDisposable
         // Arrange
         await _databaseService.InitializeDatabase(_testDbPath, GameRelease.SkyrimSE, CancellationToken.None);
 
-        using var connection = new SqliteConnection($"Data Source={_testDbPath}");
+        await using var connection = new SqliteConnection($"Data Source={_testDbPath}");
         connection.Open();
 
         const int recordCount = 100000;
         var startTime = DateTime.UtcNow;
 
         // Act - Insert large number of records
-        using var transaction = connection.BeginTransaction();
-        using var cmd = connection.CreateCommand();
+        await using var transaction = connection.BeginTransaction();
+        await using var cmd = connection.CreateCommand();
         cmd.Transaction = transaction;
         cmd.CommandText = $@"INSERT INTO {GameRelease.SkyrimSE} (plugin, formid, entry) 
                            VALUES (@plugin, @formid, @entry)";
@@ -398,7 +398,7 @@ public class DatabaseIntegrationTests : IDisposable
 
         // Query performance test
         startTime = DateTime.UtcNow;
-        using var queryCmd = new SqliteCommand(
+        await using var queryCmd = new SqliteCommand(
             $"SELECT COUNT(*) FROM {GameRelease.SkyrimSE} WHERE plugin = @plugin", connection);
         queryCmd.Parameters.AddWithValue("@plugin", "Plugin5.esp");
         var queryCount = Convert.ToInt32(queryCmd.ExecuteScalar());
@@ -417,7 +417,7 @@ public class DatabaseIntegrationTests : IDisposable
         // Arrange
         await _databaseService.InitializeDatabase(_testDbPath, GameRelease.SkyrimSE, CancellationToken.None);
 
-        using var connection = new SqliteConnection($"Data Source={_testDbPath}");
+        await using var connection = new SqliteConnection($"Data Source={_testDbPath}");
         connection.Open();
 
         // Insert and delete many records to create fragmentation
@@ -433,14 +433,14 @@ public class DatabaseIntegrationTests : IDisposable
         }
 
         // Delete half the records
-        using (var deleteCmd = new SqliteCommand(
+        await using (var deleteCmd = new SqliteCommand(
                    $"DELETE FROM {GameRelease.SkyrimSE} WHERE CAST(SUBSTR(formid, -1) AS INTEGER) % 2 = 0", connection))
         {
             deleteCmd.ExecuteNonQuery();
         }
 
         // Verify database is accessible before optimization
-        using (var cmd = new SqliteCommand($"SELECT COUNT(*) FROM {GameRelease.SkyrimSE}", connection))
+        await using (var cmd = new SqliteCommand($"SELECT COUNT(*) FROM {GameRelease.SkyrimSE}", connection))
         {
             cmd.ExecuteScalar();
         }
@@ -449,7 +449,7 @@ public class DatabaseIntegrationTests : IDisposable
         await _databaseService.OptimizeDatabase(connection, CancellationToken.None);
 
         // Verify database is accessible after optimization
-        using (var cmd = new SqliteCommand($"SELECT COUNT(*) FROM {GameRelease.SkyrimSE}", connection))
+        await using (var cmd = new SqliteCommand($"SELECT COUNT(*) FROM {GameRelease.SkyrimSE}", connection))
         {
             cmd.ExecuteScalar();
         }
