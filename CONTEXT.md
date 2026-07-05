@@ -26,3 +26,7 @@ _Avoid_: List file, text import.
 **FormID Record Store**:
 The persisted collection of FormID records for a single GameRelease, regardless of whether records came from plugin ingestion or a FormID text file.
 _Avoid_: Database writer, write path.
+
+**Update Mode**:
+An ingestion mode that replaces existing FormID records for each Plugin encountered in the current run before storing the new records for that Plugin. Plugin matching is case-insensitive, while stored Plugin values preserve their source casing.
+_Avoid_: Full database refresh, exact-case replacement.

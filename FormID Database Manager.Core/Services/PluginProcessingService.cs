@@ -12,7 +12,6 @@ public class PluginProcessingService : IDisposable
     private readonly Lock _cancellationLock = new();
     private readonly DatabaseService _databaseService;
     private readonly ModProcessor _modProcessor;
-    private readonly FormIdTextProcessor _textProcessor;
     private readonly MainWindowViewModel _viewModel;
     private CancellationTokenSource? _cancellationTokenSource;
     private readonly IThreadDispatcher _dispatcher;
@@ -36,7 +35,6 @@ public class PluginProcessingService : IDisposable
         _viewModel = viewModel;
         _dispatcher = dispatcher ?? new ImmediateThreadDispatcher();
         _loadOrderProvider = loadOrderProvider ?? new GameLoadOrderProvider();
-        _textProcessor = new FormIdTextProcessor();
         _modProcessor = new ModProcessor(AddErrorMessage);
     }
 
@@ -138,12 +136,11 @@ public class PluginProcessingService : IDisposable
             // Process text file if specified
             if (!string.IsNullOrEmpty(parameters.FormIdListPath))
             {
-                await _textProcessor.ProcessFormIdListFile(
+                await recordStore.ImportFormIdTextFileAsync(
                     parameters.FormIdListPath,
-                    recordStore,
-                    parameters.UpdateMode,
-                    cancellationTokenSource.Token,
-                    progress).ConfigureAwait(false);
+                    parameters.UpdateMode ? UpdateMode.ReplacePluginRecords : UpdateMode.Append,
+                    CreateStoreProgressAdapter(progress),
+                    cancellationTokenSource.Token).ConfigureAwait(false);
 
                 if (!cancellationTokenSource.Token.IsCancellationRequested)
                 {
@@ -244,6 +241,21 @@ public class PluginProcessingService : IDisposable
                     _cancellationTokenSource = null;
                 }
             }
+        }
+    }
+
+    private static IProgress<FormIdStoreProgress>? CreateStoreProgressAdapter(
+        IProgress<(string Message, double? Value)>? progress)
+    {
+        return progress is null ? null : new StoreProgressAdapter(progress);
+    }
+
+    private sealed class StoreProgressAdapter(IProgress<(string Message, double? Value)> inner)
+        : IProgress<FormIdStoreProgress>
+    {
+        public void Report(FormIdStoreProgress value)
+        {
+            inner.Report((value.Message, value.Value));
         }
     }
 

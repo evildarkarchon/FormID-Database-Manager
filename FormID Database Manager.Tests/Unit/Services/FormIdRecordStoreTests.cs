@@ -32,14 +32,14 @@ public sealed class FormIdRecordStoreTests : IDisposable
     }
 
     [Fact]
-    public async Task WritePluginRecordsAsync_AppendMode_AppendsRowsForPlugin()
+    public async Task WritePluginAsync_AppendMode_AppendsRowsForPlugin()
     {
         await using var store = await OpenStoreAsync();
 
-        await store.WritePluginRecordsAsync(
+        await store.WritePluginAsync(
             "Plugin.esp",
             [new FormIdRecord("000001", "Entry1"), new FormIdRecord("000002", "Entry2")],
-            replaceExistingPluginRows: false,
+            UpdateMode.Append,
             TestContext.Current.CancellationToken);
 
         var records = await GetAllRecordsAsync();
@@ -50,16 +50,16 @@ public sealed class FormIdRecordStoreTests : IDisposable
     }
 
     [Fact]
-    public async Task WritePluginRecordsAsync_ReplaceMode_ReplacesOnePluginCaseInsensitively()
+    public async Task WritePluginAsync_ReplaceMode_ReplacesOnePluginCaseInsensitively()
     {
         await InsertTestRecordAsync("Plugin.esp", "000001", "OldEntry");
         await InsertTestRecordAsync("Other.esp", "000002", "OtherEntry");
         await using var store = await OpenStoreAsync();
 
-        await store.WritePluginRecordsAsync(
+        await store.WritePluginAsync(
             "PLUGIN.ESP",
             [new FormIdRecord("000010", "NewEntry")],
-            replaceExistingPluginRows: true,
+            UpdateMode.ReplacePluginRecords,
             TestContext.Current.CancellationToken);
 
         var records = await GetAllRecordsAsync();
@@ -71,16 +71,16 @@ public sealed class FormIdRecordStoreTests : IDisposable
     }
 
     [Fact]
-    public async Task WritePluginRecordsAsync_ReplaceInsertFails_RollsBackOldRows()
+    public async Task WritePluginAsync_ReplaceInsertFails_RollsBackOldRows()
     {
         await InsertTestRecordAsync("Plugin.esp", "000001", "OldEntry");
         await CreateFailingInsertTriggerAsync("BadEntry");
         await using var store = await OpenStoreAsync();
 
-        await Assert.ThrowsAsync<SqliteException>(() => store.WritePluginRecordsAsync(
+        await Assert.ThrowsAsync<SqliteException>(() => store.WritePluginAsync(
             "Plugin.esp",
             [new FormIdRecord("000010", "GoodEntry"), new FormIdRecord("000011", "BadEntry")],
-            replaceExistingPluginRows: true,
+            UpdateMode.ReplacePluginRecords,
             TestContext.Current.CancellationToken));
 
         var records = await GetAllRecordsAsync();
@@ -159,15 +159,15 @@ public sealed class FormIdRecordStoreTests : IDisposable
     }
 
     [Fact]
-    public async Task WritePluginRecordsAsync_SpecialCharactersInEntry_PreservesValue()
+    public async Task WritePluginAsync_SpecialCharactersInEntry_PreservesValue()
     {
         var specialEntry = "Entry 'with' quotes, semicolon; brackets [x], and slash / value";
         await using var store = await OpenStoreAsync();
 
-        await store.WritePluginRecordsAsync(
+        await store.WritePluginAsync(
             "Plugin.esp",
             [new FormIdRecord("000001", specialEntry)],
-            replaceExistingPluginRows: false,
+            UpdateMode.Append,
             TestContext.Current.CancellationToken);
 
         var records = await GetAllRecordsAsync();
@@ -180,10 +180,98 @@ public sealed class FormIdRecordStoreTests : IDisposable
     public async Task OpenAsync_UnsupportedGameRelease_UsesSafeTableNameWhitelist()
     {
         await Assert.ThrowsAsync<ArgumentException>(() => FormIdRecordStore.OpenAsync(
-            _databaseService,
             _testDbPath,
             (GameRelease)999,
             TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    public async Task ReadRecordsAsync_PluginQuery_MatchesPluginCaseInsensitively()
+    {
+        await using var store = await OpenStoreAsync();
+        await store.WritePluginAsync(
+            "Plugin.esp",
+            [new FormIdRecord("000001", "Entry1"), new FormIdRecord("000002", "Entry2")],
+            UpdateMode.Append,
+            TestContext.Current.CancellationToken);
+        await store.WritePluginAsync(
+            "Other.esp",
+            [new FormIdRecord("000003", "OtherEntry")],
+            UpdateMode.Append,
+            TestContext.Current.CancellationToken);
+
+        var records = await store.ReadRecordsAsync(
+            new FormIdRecordQuery { PluginName = "PLUGIN.ESP" },
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(2, records.Count);
+        Assert.All(records, record => Assert.Equal("Plugin.esp", record.Plugin));
+    }
+
+    [Fact]
+    public async Task ReadPluginsWithEntriesAsync_ReturnsCaseInsensitiveDistinctPlugins()
+    {
+        await using var store = await OpenStoreAsync();
+        await store.WritePluginAsync(
+            "Plugin.esp",
+            [new FormIdRecord("000001", "Entry1")],
+            UpdateMode.Append,
+            TestContext.Current.CancellationToken);
+        await store.WritePluginAsync(
+            "PLUGIN.ESP",
+            [new FormIdRecord("000002", "Entry2")],
+            UpdateMode.Append,
+            TestContext.Current.CancellationToken);
+        await store.WritePluginAsync(
+            "Other.esp",
+            [new FormIdRecord("000003", "OtherEntry")],
+            UpdateMode.Append,
+            TestContext.Current.CancellationToken);
+
+        var plugins = await store.ReadPluginsWithEntriesAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(2, plugins.Count);
+        Assert.Contains("plugin.esp", plugins);
+        Assert.Contains("Other.esp", plugins);
+    }
+
+    [Fact]
+    public async Task ImportFormIdTextFileAsync_UpdateMode_ReplacesPluginsAndReportsResult()
+    {
+        await InsertTestRecordAsync("Plugin1.esp", "000001", "OldEntry");
+        var testFile = Path.Combine(Path.GetTempPath(), $"record_store_import_{Guid.NewGuid():N}.txt");
+
+        try
+        {
+            await File.WriteAllLinesAsync(testFile,
+                ["Plugin1.esp|000010|NewEntry1", "PLUGIN1.ESP|000011|NewEntry2"],
+                TestContext.Current.CancellationToken);
+            await using var store = await OpenStoreAsync();
+            var progressReports = new List<FormIdStoreProgress>();
+            var progress = new SynchronousProgress<FormIdStoreProgress>(progressReports.Add);
+
+            var result = await store.ImportFormIdTextFileAsync(
+                testFile,
+                UpdateMode.ReplacePluginRecords,
+                progress,
+                TestContext.Current.CancellationToken);
+
+            var records = await store.ReadRecordsAsync(FormIdRecordQuery.All, TestContext.Current.CancellationToken);
+
+            Assert.Equal(new FormIdTextFileImportResult(1, 2), result);
+            Assert.Equal(2, records.Count);
+            Assert.DoesNotContain(records, record => record.Entry == "OldEntry");
+            Assert.Contains(records, record => record is { Plugin: "Plugin1.esp", FormId: "000010", Entry: "NewEntry1" });
+            Assert.Contains(records, record => record is { Plugin: "PLUGIN1.ESP", FormId: "000011", Entry: "NewEntry2" });
+            Assert.Contains(progressReports, report => report.Message.Contains("Completed processing 1 plugins", StringComparison.Ordinal));
+        }
+        finally
+        {
+            if (File.Exists(testFile))
+            {
+                File.Delete(testFile);
+            }
+        }
     }
 
     private Task<FormIdRecordStore> OpenStoreAsync()
@@ -197,19 +285,12 @@ public sealed class FormIdRecordStoreTests : IDisposable
 
     private async Task InsertTestRecordAsync(string plugin, string formId, string entry)
     {
-        await _databaseService.InitializeDatabase(
-            _testDbPath,
-            GameRelease.SkyrimSE,
+        await using var store = await OpenStoreAsync();
+        await store.WritePluginAsync(
+            plugin,
+            [new FormIdRecord(formId, entry)],
+            UpdateMode.Append,
             TestContext.Current.CancellationToken);
-
-        await using var connection = new SqliteConnection(DatabaseService.GetOptimizedConnectionString(_testDbPath));
-        await connection.OpenAsync(TestContext.Current.CancellationToken);
-        await using var command = connection.CreateCommand();
-        command.CommandText = $"INSERT INTO {GameRelease.SkyrimSE} (plugin, formid, entry) VALUES (@plugin, @formid, @entry)";
-        command.Parameters.AddWithValue("@plugin", plugin);
-        command.Parameters.AddWithValue("@formid", formId);
-        command.Parameters.AddWithValue("@entry", entry);
-        await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
     }
 
     private async Task CreateFailingInsertTriggerAsync(string failingEntry)
@@ -236,17 +317,22 @@ public sealed class FormIdRecordStoreTests : IDisposable
     private async Task<List<(string plugin, string formid, string entry)>> GetAllRecordsAsync()
     {
         var records = new List<(string plugin, string formid, string entry)>();
-        await using var connection = new SqliteConnection(DatabaseService.GetOptimizedConnectionString(_testDbPath));
-        await connection.OpenAsync(TestContext.Current.CancellationToken);
-        await using var command = connection.CreateCommand();
-        command.CommandText = $"SELECT plugin, formid, entry FROM {GameRelease.SkyrimSE} ORDER BY id";
-        await using var reader = await command.ExecuteReaderAsync(TestContext.Current.CancellationToken);
+        await using var store = await OpenStoreAsync();
+        var storedRecords = await store.ReadRecordsAsync(FormIdRecordQuery.All, TestContext.Current.CancellationToken);
 
-        while (await reader.ReadAsync(TestContext.Current.CancellationToken))
+        foreach (var record in storedRecords)
         {
-            records.Add((reader.GetString(0), reader.GetString(1), reader.GetString(2)));
+            records.Add((record.Plugin!, record.FormId!, record.Entry!));
         }
 
         return records;
+    }
+
+    private sealed class SynchronousProgress<T>(Action<T> handler) : IProgress<T>
+    {
+        public void Report(T value)
+        {
+            handler(value);
+        }
     }
 }

@@ -1,4 +1,5 @@
 using System.Runtime.ExceptionServices;
+using System.Text;
 using Microsoft.Data.Sqlite;
 using Mutagen.Bethesda;
 
@@ -12,6 +13,65 @@ namespace FormID_Database_Manager.Services;
 public readonly record struct FormIdRecord(string FormId, string Entry);
 
 /// <summary>
+///     Controls how newly ingested FormID records are applied to existing Plugin rows.
+/// </summary>
+public enum UpdateMode
+{
+    /// <summary>
+    ///     Keep existing rows and append the newly ingested rows.
+    /// </summary>
+    Append,
+
+    /// <summary>
+    ///     Replace existing rows for each ingested Plugin, matching Plugin names case-insensitively.
+    /// </summary>
+    ReplacePluginRecords
+}
+
+/// <summary>
+///     A stored FormID row read from the FormID Record Store.
+/// </summary>
+/// <param name="Plugin">The Plugin value stored with the row.</param>
+/// <param name="FormId">The FormID value stored with the row.</param>
+/// <param name="Entry">The Entry value stored with the row.</param>
+public readonly record struct FormIdStoredRecord(string? Plugin, string? FormId, string? Entry);
+
+/// <summary>
+///     Query parameters for reading FormID records from the store.
+/// </summary>
+public sealed record FormIdRecordQuery
+{
+    /// <summary>
+    ///     A query that returns all records for the store's GameRelease table.
+    /// </summary>
+    public static FormIdRecordQuery All { get; } = new();
+
+    /// <summary>
+    ///     Optional case-insensitive Plugin filter.
+    /// </summary>
+    public string? PluginName { get; init; }
+
+    /// <summary>
+    ///     Optional exact FormID filter.
+    /// </summary>
+    public string? FormId { get; init; }
+}
+
+/// <summary>
+///     Progress reported while importing a FormID text file.
+/// </summary>
+/// <param name="Message">The user-facing progress message.</param>
+/// <param name="Value">The optional progress percentage.</param>
+public readonly record struct FormIdStoreProgress(string Message, double? Value);
+
+/// <summary>
+///     Result of importing a FormID text file into the store.
+/// </summary>
+/// <param name="PluginCount">The number of distinct Plugins encountered, matched case-insensitively.</param>
+/// <param name="RecordCount">The number of valid FormID text rows imported.</param>
+public readonly record struct FormIdTextFileImportResult(int PluginCount, int RecordCount);
+
+/// <summary>
 ///     Owns SQLite writes for the FormID Record Store during one processing run.
 /// </summary>
 /// <remarks>
@@ -21,6 +81,7 @@ public readonly record struct FormIdRecord(string FormId, string Entry);
 public sealed class FormIdRecordStore : IAsyncDisposable
 {
     private const int PluginBatchSize = 1000;
+    private const int TextProgressInterval = 1000;
     private const int TextStagingBatchSize = 10000;
     private const string StagingTableName = "temp_formid_record_staging";
 
@@ -35,6 +96,21 @@ public sealed class FormIdRecordStore : IAsyncDisposable
         _databaseService = databaseService;
         _connection = connection;
         _tableName = GameReleaseHelper.GetSafeTableName(gameRelease);
+    }
+
+    /// <summary>
+    ///     Opens a run-scoped SQLite FormID Record Store for the specified database and GameRelease.
+    /// </summary>
+    /// <param name="databasePath">The SQLite database path.</param>
+    /// <param name="gameRelease">The GameRelease whose FormID table will be used.</param>
+    /// <param name="cancellationToken">Token to monitor for cancellation.</param>
+    /// <returns>An opened FormID Record Store that must be disposed after the processing run.</returns>
+    public static Task<FormIdRecordStore> OpenAsync(
+        string databasePath,
+        GameRelease gameRelease,
+        CancellationToken cancellationToken = default)
+    {
+        return OpenAsync(new DatabaseService(), databasePath, gameRelease, cancellationToken);
     }
 
     /// <summary>
@@ -81,9 +157,163 @@ public sealed class FormIdRecordStore : IAsyncDisposable
     /// </summary>
     /// <param name="pluginName">The Plugin whose rows are being written.</param>
     /// <param name="records">The FormID records to insert for the Plugin.</param>
-    /// <param name="replaceExistingPluginRows">Whether existing rows for this Plugin should be replaced case-insensitively.</param>
+    /// <param name="updateMode">Controls whether rows are appended or replace existing rows for the Plugin.</param>
     /// <param name="cancellationToken">Token to monitor for cancellation.</param>
-    public async Task WritePluginRecordsAsync(
+    public Task WritePluginAsync(
+        string pluginName,
+        IEnumerable<FormIdRecord> records,
+        UpdateMode updateMode,
+        CancellationToken cancellationToken = default)
+    {
+        return WritePluginRecordsCoreAsync(
+            pluginName,
+            records,
+            ShouldReplacePluginRows(updateMode),
+            cancellationToken);
+    }
+
+    /// <summary>
+    ///     Imports a FormID text file into the store using store-owned staging and Plugin-scoped commits.
+    /// </summary>
+    /// <param name="formIdTextFilePath">The FormID text file to import.</param>
+    /// <param name="updateMode">Controls whether rows are appended or replace existing rows for each encountered Plugin.</param>
+    /// <param name="progress">Optional progress reporter for user-facing import status.</param>
+    /// <param name="cancellationToken">Token to monitor for cancellation.</param>
+    /// <returns>Counts describing the imported valid records and distinct Plugins.</returns>
+    public async Task<FormIdTextFileImportResult> ImportFormIdTextFileAsync(
+        string formIdTextFilePath,
+        UpdateMode updateMode,
+        IProgress<FormIdStoreProgress>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(formIdTextFilePath);
+
+        var processedPlugins = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var recordCount = 0;
+
+        // Use stream position for progress tracking; it avoids per-line UTF-8 byte counting on large files.
+        var fileInfo = new FileInfo(formIdTextFilePath);
+        var totalBytes = fileInfo.Length;
+
+        progress?.Report(new FormIdStoreProgress("Starting processing...", 0));
+
+        await using var stream = new FileStream(formIdTextFilePath, FileMode.Open, FileAccess.Read, FileShare.Read, 81920);
+        using var reader = new StreamReader(stream, Encoding.UTF8);
+
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var line = await reader.ReadLineAsync(cancellationToken).ConfigureAwait(false);
+            if (line == null)
+            {
+                break;
+            }
+
+            var bytesRead = stream.Position;
+
+            if (string.IsNullOrWhiteSpace(line))
+            {
+                continue;
+            }
+
+            if (!TryParseFormIdTextLine(line, out var pluginName, out var formId, out var entry))
+            {
+                continue;
+            }
+
+            recordCount++;
+
+            if (recordCount % TextProgressInterval == 0)
+            {
+                var progressPercent = totalBytes > 0 ? (double)bytesRead / totalBytes * 100 : 0;
+                progress?.Report(new FormIdStoreProgress(
+                    $"Processing: {progressPercent:F1}% ({recordCount:N0} records)",
+                    progressPercent));
+            }
+
+            if (processedPlugins.Add(pluginName) && updateMode == UpdateMode.ReplacePluginRecords)
+            {
+                progress?.Report(new FormIdStoreProgress($"Processing plugin: {pluginName}", null));
+            }
+
+            await StageTextRecordAsync(pluginName, formId, entry, cancellationToken).ConfigureAwait(false);
+        }
+
+        await CommitStagedTextRecordsAsync(ShouldReplacePluginRows(updateMode), cancellationToken).ConfigureAwait(false);
+
+        progress?.Report(new FormIdStoreProgress(
+            $"Completed processing {processedPlugins.Count} plugins ({recordCount:N0} total records)",
+            100));
+
+        return new FormIdTextFileImportResult(processedPlugins.Count, recordCount);
+    }
+
+    /// <summary>
+    ///     Reads records from the store's GameRelease table using store-owned query behavior.
+    /// </summary>
+    /// <param name="query">The query filter to apply.</param>
+    /// <param name="cancellationToken">Token to monitor for cancellation.</param>
+    /// <returns>The matching records in insertion order.</returns>
+    public async Task<IReadOnlyList<FormIdStoredRecord>> ReadRecordsAsync(
+        FormIdRecordQuery query,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+
+        var records = new List<FormIdStoredRecord>();
+        await using var command = _connection.CreateCommand();
+        var filters = new List<string>();
+
+        if (!string.IsNullOrWhiteSpace(query.PluginName))
+        {
+            filters.Add("plugin COLLATE NOCASE = @plugin");
+            command.Parameters.AddWithValue("@plugin", query.PluginName);
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.FormId))
+        {
+            filters.Add("formid = @formid");
+            command.Parameters.AddWithValue("@formid", query.FormId);
+        }
+
+        var whereClause = filters.Count > 0 ? $" WHERE {string.Join(" AND ", filters)}" : string.Empty;
+        command.CommandText = $"SELECT plugin, formid, entry FROM {_tableName}{whereClause} ORDER BY id";
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            records.Add(new FormIdStoredRecord(
+                GetNullableString(reader, 0),
+                GetNullableString(reader, 1),
+                GetNullableString(reader, 2)));
+        }
+
+        return records;
+    }
+
+    /// <summary>
+    ///     Reads the distinct Plugins that currently have at least one stored FormID record.
+    /// </summary>
+    /// <param name="cancellationToken">Token to monitor for cancellation.</param>
+    /// <returns>A case-insensitive set of Plugin names.</returns>
+    public async Task<IReadOnlySet<string>> ReadPluginsWithEntriesAsync(CancellationToken cancellationToken = default)
+    {
+        var plugins = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        await using var command = _connection.CreateCommand();
+        command.CommandText = $"SELECT DISTINCT plugin FROM {_tableName} WHERE plugin IS NOT NULL ORDER BY plugin COLLATE NOCASE";
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            plugins.Add(reader.GetString(0));
+        }
+
+        return plugins;
+    }
+
+    private async Task WritePluginRecordsCoreAsync(
         string pluginName,
         IEnumerable<FormIdRecord> records,
         bool replaceExistingPluginRows,
@@ -134,7 +364,7 @@ public sealed class FormIdRecordStore : IAsyncDisposable
     /// <param name="formId">The FormID value from the FormID text row.</param>
     /// <param name="entry">The Entry value from the FormID text row.</param>
     /// <param name="cancellationToken">Token to monitor for cancellation.</param>
-    public async Task StageTextRecordAsync(
+    internal async Task StageTextRecordAsync(
         string pluginName,
         string formId,
         string entry,
@@ -159,7 +389,7 @@ public sealed class FormIdRecordStore : IAsyncDisposable
     /// </summary>
     /// <param name="replaceExistingPluginRows">Whether existing rows for staged Plugins should be replaced case-insensitively.</param>
     /// <param name="cancellationToken">Token to monitor for cancellation.</param>
-    public async Task CommitStagedTextRecordsAsync(
+    internal async Task CommitStagedTextRecordsAsync(
         bool replaceExistingPluginRows,
         CancellationToken cancellationToken = default)
     {
@@ -237,6 +467,62 @@ public sealed class FormIdRecordStore : IAsyncDisposable
                 entry TEXT NOT NULL
             )";
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private static bool TryParseFormIdTextLine(
+        string line,
+        out string pluginName,
+        out string formId,
+        out string entry)
+    {
+        var span = line.AsSpan();
+        var firstPipe = span.IndexOf('|');
+        if (firstPipe < 0)
+        {
+            pluginName = string.Empty;
+            formId = string.Empty;
+            entry = string.Empty;
+            return false;
+        }
+
+        var rest = span[(firstPipe + 1)..];
+        var secondPipe = rest.IndexOf('|');
+        if (secondPipe < 0)
+        {
+            pluginName = string.Empty;
+            formId = string.Empty;
+            entry = string.Empty;
+            return false;
+        }
+
+        var afterSecond = rest[(secondPipe + 1)..];
+        if (afterSecond.IndexOf('|') >= 0)
+        {
+            pluginName = string.Empty;
+            formId = string.Empty;
+            entry = string.Empty;
+            return false;
+        }
+
+        pluginName = span[..firstPipe].Trim().ToString();
+        formId = rest[..secondPipe].Trim().ToString();
+        entry = afterSecond.Trim().ToString();
+        return true;
+    }
+
+    private static bool ShouldReplacePluginRows(UpdateMode updateMode)
+    {
+        return updateMode switch
+        {
+            UpdateMode.Append => false,
+            UpdateMode.ReplacePluginRecords => true,
+            _ => throw new ArgumentOutOfRangeException(nameof(updateMode), updateMode, "Unsupported update mode.")
+        };
+    }
+
+    private static string? GetNullableString(SqliteDataReader reader, int ordinal)
+    {
+        return reader.IsDBNull(ordinal) ? null : reader.GetString(ordinal);
     }
 
     private SqliteCommand CreateTargetInsertCommand(SqliteTransaction transaction)

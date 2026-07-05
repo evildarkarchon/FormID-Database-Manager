@@ -10,7 +10,7 @@ public static class GameReleaseHelper
     /// <param name="release">The game release whose table name is needed.</param>
     /// <returns>The safe table name used by database commands.</returns>
     /// <exception cref="ArgumentException">Thrown when the game release is not supported by the database schema.</exception>
-    public static string GetSafeTableName(GameRelease release) => release switch
+    internal static string GetSafeTableName(GameRelease release) => release switch
     {
         GameRelease.SkyrimSE => "SkyrimSE",
         GameRelease.SkyrimSEGog => "SkyrimSEGog",

@@ -127,10 +127,10 @@ public class ModProcessor(Action<string> errorCallback)
 
             using var mod = CreateOverlay(pluginPath, gameRelease, loadOrderSnapshot.ReadParameters);
 
-            await recordStore.WritePluginRecordsAsync(
+            await recordStore.WritePluginAsync(
                     pluginItem.Name,
                     EnumerateModRecords(pluginItem.Name, mod, cancellationToken),
-                    updateMode,
+                    updateMode ? UpdateMode.ReplacePluginRecords : UpdateMode.Append,
                     cancellationToken)
                 .ConfigureAwait(false);
         }
