@@ -5,49 +5,44 @@ using FormID_Database_Manager.ViewModels;
 namespace FormID_Database_Manager.Services;
 
 /// <summary>
-///     Provides functionality to process game plugins using various parameters and services.
+///     Compatibility adapter for callers that still use <see cref="ProcessingParameters" />.
 /// </summary>
+/// <remarks>
+///     New production workflow code should call <see cref="ProcessingRun" /> directly. This adapter keeps older tests,
+///     benchmarks, and integration surfaces working while the nullable parameter bag is retired incrementally.
+/// </remarks>
 public class PluginProcessingService : IDisposable
 {
-    private readonly Lock _cancellationLock = new();
-    private readonly DatabaseService _databaseService;
-    private readonly ModProcessor _modProcessor;
-    private readonly MainWindowViewModel _viewModel;
-    private CancellationTokenSource? _cancellationTokenSource;
     private readonly IThreadDispatcher _dispatcher;
-    private readonly IGameLoadOrderProvider _loadOrderProvider;
+    private readonly ProcessingRun _processingRun;
+    private readonly MainWindowViewModel _viewModel;
 
     /// <summary>
-    ///     Service responsible for processing game plugins, utilizing various modules such as
-    ///     database operations, form ID text processing, and mod-specific logic.
+    ///     Creates the legacy processing adapter.
     /// </summary>
-    /// <remarks>
-    ///     This service integrates multiple components to handle plugin processing for different
-    ///     scenarios, including adding error messages and allowing cancellation of ongoing tasks.
-    /// </remarks>
+    /// <param name="databaseService">The database module used by the Processing Run.</param>
+    /// <param name="viewModel">The UI state object that receives legacy error callbacks.</param>
+    /// <param name="dispatcher">Optional dispatcher used to marshal legacy error callbacks.</param>
+    /// <param name="loadOrderProvider">Optional Plugin load-order provider used by the Processing Run.</param>
     public PluginProcessingService(
         DatabaseService databaseService,
         MainWindowViewModel viewModel,
         IThreadDispatcher? dispatcher = null,
         IGameLoadOrderProvider? loadOrderProvider = null)
     {
-        _databaseService = databaseService;
-        _viewModel = viewModel;
+        _viewModel = viewModel ?? throw new ArgumentNullException(nameof(viewModel));
         _dispatcher = dispatcher ?? new ImmediateThreadDispatcher();
-        _loadOrderProvider = loadOrderProvider ?? new GameLoadOrderProvider();
-        _modProcessor = new ModProcessor(AddErrorMessage);
+        _processingRun = new ProcessingRun(
+            databaseService ?? throw new ArgumentNullException(nameof(databaseService)),
+            loadOrderProvider);
     }
 
     /// <summary>
-    ///     Disposes of the resources used by the PluginProcessingService.
+    ///     Disposes the underlying Processing Run module.
     /// </summary>
     public virtual void Dispose()
     {
-        lock (_cancellationLock)
-        {
-            _cancellationTokenSource?.Dispose();
-            _cancellationTokenSource = null;
-        }
+        _processingRun.Dispose();
     }
 
     /// <summary>
@@ -56,7 +51,7 @@ public class PluginProcessingService : IDisposable
     /// <param name="message">The error message to be added.</param>
     internal void AddErrorMessage(string message)
     {
-        // Use Dispatcher to ensure UI thread update
+        // Use Dispatcher to ensure UI thread update.
         if (!_dispatcher.CheckAccess())
         {
             _dispatcher.Post(() => _viewModel.AddErrorMessage(message));
@@ -68,210 +63,66 @@ public class PluginProcessingService : IDisposable
     }
 
     /// <summary>
-    ///     Processes game plugins based on the provided parameters, handling actions such as database initialization,
-    ///     plugin processing, and optional text file processing.
+    ///     Processes game plugins using the legacy parameter bag.
     /// </summary>
-    /// <param name="parameters">
-    ///     The parameters that specify how the plugin processing should be conducted, including game directory,
-    ///     selected plugins, and database path.
-    /// </param>
-    /// <param name="progress">
-    ///     Optional progress reporter to report the current status and progress value during the processing.
-    /// </param>
-    /// <returns>
-    ///     A task representing the asynchronous operation of processing plugins, allowing cancellation or exception handling
-    ///     when required.
-    /// </returns>
+    /// <param name="parameters">The legacy processing parameters to adapt into a Processing Run request.</param>
+    /// <param name="progress">Optional legacy progress reporter.</param>
+    /// <returns>A task that completes when the adapted Processing Run completes, fails, or observes cancellation.</returns>
     [RequiresUnreferencedCode(
         "Uses reflection-based name extraction for Mutagen records via ModProcessor.ProcessPlugin.")]
-    public virtual async Task ProcessPlugins(
+    public virtual Task ProcessPlugins(
         ProcessingParameters parameters,
         IProgress<(string Message, double? Value)>? progress = null)
     {
-        CancellationTokenSource cancellationTokenSource;
-        lock (_cancellationLock)
-        {
-            _cancellationTokenSource?.Dispose();
-            _cancellationTokenSource = new CancellationTokenSource();
-            cancellationTokenSource = _cancellationTokenSource;
-        }
-
-        await Task.Run(() => ProcessPluginsCore(parameters, progress, cancellationTokenSource),
-                cancellationTokenSource.Token)
-            .ConfigureAwait(false);
-    }
-
-    [RequiresUnreferencedCode(
-        "Uses reflection-based name extraction for Mutagen records via ModProcessor.ProcessPlugin.")]
-    private async Task ProcessPluginsCore(
-        ProcessingParameters parameters,
-        IProgress<(string Message, double? Value)>? progress,
-        CancellationTokenSource cancellationTokenSource)
-    {
-        if (parameters.DryRun)
-        {
-            if (!string.IsNullOrEmpty(parameters.FormIdListPath))
-            {
-                progress?.Report(($"Would process FormID list file: {parameters.FormIdListPath}", null));
-                return;
-            }
-
-            foreach (var plugin in parameters.SelectedPlugins)
-            {
-                progress?.Report(($"Would process {plugin.Name}", null));
-            }
-
-            return;
-        }
-
-        await using var recordStore = await FormIdRecordStore.OpenAsync(
-                _databaseService,
-                parameters.DatabasePath,
-                parameters.GameRelease,
-                cancellationTokenSource.Token)
-            .ConfigureAwait(false);
-
-        try
-        {
-            // Process text file if specified
-            if (!string.IsNullOrEmpty(parameters.FormIdListPath))
-            {
-                await recordStore.ImportFormIdTextFileAsync(
-                    parameters.FormIdListPath,
-                    parameters.UpdateMode ? UpdateMode.ReplacePluginRecords : UpdateMode.Append,
-                    CreateStoreProgressAdapter(progress),
-                    cancellationTokenSource.Token).ConfigureAwait(false);
-
-                if (!cancellationTokenSource.Token.IsCancellationRequested)
-                {
-                    await recordStore.OptimizeAsync(cancellationTokenSource.Token).ConfigureAwait(false);
-                    progress?.Report(("Processing completed successfully!", 100));
-                }
-
-                return;
-            }
-
-            // Process plugins
-            progress?.Report(("Initializing plugin processing...", 0));
-
-            var pluginList = new List<PluginListItem>(parameters.SelectedPlugins);
-            var loadOrderSnapshot = GameLoadOrderSnapshot.Empty;
-
-            if (pluginList.Count > 0)
-            {
-                var dataPath = GameReleaseHelper.ResolveDataPath(parameters.GameDirectory!);
-                loadOrderSnapshot = _loadOrderProvider.BuildSnapshot(
-                    parameters.GameRelease,
-                    dataPath,
-                    includeMasterFlagsLookup: true);
-            }
-
-            var successfulPlugins = 0;
-            var failedPlugins = 0;
-
-            for (var i = 0; i < pluginList.Count; i++)
-            {
-                if (cancellationTokenSource.Token.IsCancellationRequested)
-                {
-                    break;
-                }
-
-                var pluginItem = pluginList[i];
-                var progressPercent = (double)(i + 1) / pluginList.Count * 100;
-                progress?.Report(($"Processing plugin {i + 1} of {pluginList.Count}: {pluginItem.Name}",
-                    progressPercent));
-
-                try
-                {
-                    await _modProcessor.ProcessPlugin(
-                        parameters.GameDirectory!,
-                        recordStore,
-                        parameters.GameRelease,
-                        pluginItem,
-                        loadOrderSnapshot,
-                        parameters.UpdateMode,
-                        cancellationTokenSource.Token).ConfigureAwait(false);
-                    successfulPlugins++;
-                }
-                catch (Exception ex)
-                {
-                    failedPlugins++;
-                    AddErrorMessage($"Failed to process plugin {pluginItem.Name}: {ex.Message}");
-                    progress?.Report(($"Error processing plugin {pluginItem.Name}: {ex.Message}", null));
-                    AddErrorMessage("Continuing with next plugin...");
-                }
-            }
-
-            if (!cancellationTokenSource.Token.IsCancellationRequested)
-            {
-                await recordStore.OptimizeAsync(cancellationTokenSource.Token).ConfigureAwait(false);
-                if (failedPlugins > 0)
-                {
-                    progress?.Report(
-                        ($"Processing completed with {successfulPlugins} successful and {failedPlugins} failed plugins.",
-                            100));
-                }
-                else
-                {
-                    progress?.Report(("Processing completed successfully!", 100));
-                }
-            }
-            else
-            {
-                progress?.Report(("Processing cancelled.", null));
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            progress?.Report(("Processing cancelled.", null));
-            throw;
-        }
-        catch (Exception ex)
-        {
-            progress?.Report(($"Error during processing: {ex.Message}", null));
-            throw;
-        }
-        finally
-        {
-            lock (_cancellationLock)
-            {
-                if (_cancellationTokenSource == cancellationTokenSource)
-                {
-                    _cancellationTokenSource?.Dispose();
-                    _cancellationTokenSource = null;
-                }
-            }
-        }
-    }
-
-    private static IProgress<FormIdStoreProgress>? CreateStoreProgressAdapter(
-        IProgress<(string Message, double? Value)>? progress)
-    {
-        return progress is null ? null : new StoreProgressAdapter(progress);
-    }
-
-    private sealed class StoreProgressAdapter(IProgress<(string Message, double? Value)> inner)
-        : IProgress<FormIdStoreProgress>
-    {
-        public void Report(FormIdStoreProgress value)
-        {
-            inner.Report((value.Message, value.Value));
-        }
+        var request = CreateRequest(parameters);
+        return _processingRun.ExecuteAsync(request, new LegacyProgressAdapter(progress, AddErrorMessage));
     }
 
     /// <summary>
-    ///     Cancels the ongoing plugin processing operation, if one is in progress.
+    ///     Cancels the ongoing Processing Run, if one is in progress.
     /// </summary>
-    /// <remarks>
-    ///     This method signals the cancellation token source associated with the current
-    ///     plugin processing task, allowing the operation to terminate gracefully. If no
-    ///     processing task is active, the method has no effect.
-    /// </remarks>
     public virtual void CancelProcessing()
     {
-        lock (_cancellationLock)
+        _processingRun.Cancel();
+    }
+
+    private static ProcessingRunRequest CreateRequest(ProcessingParameters parameters)
+    {
+        ArgumentNullException.ThrowIfNull(parameters);
+
+        var updateMode = parameters.UpdateMode ? UpdateMode.ReplacePluginRecords : UpdateMode.Append;
+        if (!string.IsNullOrWhiteSpace(parameters.FormIdListPath))
         {
-            _cancellationTokenSource?.Cancel();
+            return new FormIdTextProcessingRunRequest(
+                parameters.FormIdListPath,
+                parameters.DatabasePath,
+                parameters.GameRelease,
+                updateMode,
+                parameters.DryRun);
+        }
+
+        return new PluginProcessingRunRequest(
+            parameters.GameDirectory,
+            parameters.DatabasePath,
+            parameters.GameRelease,
+            parameters.SelectedPlugins.Select(plugin => plugin.Name),
+            updateMode,
+            parameters.DryRun);
+    }
+
+    private sealed class LegacyProgressAdapter(
+        IProgress<(string Message, double? Value)>? progress,
+        Action<string> reportError)
+        : IProgress<ProcessingRunEvent>
+    {
+        public void Report(ProcessingRunEvent value)
+        {
+            if (value.Kind == ProcessingRunEventKind.Error)
+            {
+                reportError(value.Message);
+            }
+
+            progress?.Report((value.Message, value.Value));
         }
     }
 }

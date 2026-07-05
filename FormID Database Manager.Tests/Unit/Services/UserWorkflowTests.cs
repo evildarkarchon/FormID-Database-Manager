@@ -27,8 +27,8 @@ public class UserWorkflowTests
     private readonly Mock<GameDetectionService> _gameDetectionService;
     private readonly Mock<IGameLocationService> _gameLocationService = new();
     private readonly RecordingPluginListManager _pluginListManager;
-    private readonly RecordingPluginProcessingService _pluginProcessingService;
-    private readonly List<ProcessingParameters> _processingRuns = [];
+    private readonly RecordingProcessingRun _processingRun;
+    private readonly List<ProcessingRunRequest> _processingRuns = [];
     private readonly List<(string Directory, GameRelease Game, bool Advanced)> _refreshes = [];
     private readonly MainWindowViewModel _viewModel;
 
@@ -41,10 +41,7 @@ public class UserWorkflowTests
             _viewModel,
             _dispatcher,
             _refreshes);
-        _pluginProcessingService = new RecordingPluginProcessingService(
-            _viewModel,
-            _dispatcher,
-            _processingRuns);
+        _processingRun = new RecordingProcessingRun(_processingRuns);
     }
 
     [Fact]
@@ -211,9 +208,8 @@ public class UserWorkflowTests
         var sut = CreateSut();
         await sut.ProcessFormIdsAsync();
 
-        var run = Assert.Single(_processingRuns);
+        var run = Assert.IsType<FormIdTextProcessingRunRequest>(Assert.Single(_processingRuns));
         Assert.Equal(FormIdListPath, run.FormIdListPath);
-        Assert.Empty(run.SelectedPlugins);
     }
 
     [Fact]
@@ -226,10 +222,27 @@ public class UserWorkflowTests
         var sut = CreateSut();
         await sut.ProcessFormIdsAsync();
 
-        var run = Assert.Single(_processingRuns);
+        var run = Assert.IsType<PluginProcessingRunRequest>(Assert.Single(_processingRuns));
         Assert.Equal(DefaultDatabasePathProvider.CreateDefaultDatabasePath(GameRelease.SkyrimSE), _viewModel.DatabasePath);
         Assert.Equal(_viewModel.DatabasePath, run.DatabasePath);
         Assert.Equal("SkyrimSE.db", Path.GetFileName(run.DatabasePath));
+        Assert.Equal(["User.esp"], run.PluginNames);
+    }
+
+    [Fact]
+    public async Task ProcessFormIdsAsync_UpdateModeOn_CreatesReplaceModeRunRequest()
+    {
+        _viewModel.SelectedGame = GameRelease.SkyrimSE;
+        _viewModel.GameDirectory = GameDirectory;
+        _viewModel.DatabasePath = DatabasePath;
+        _viewModel.UpdateMode = true;
+        _viewModel.Plugins.Add(new PluginListItem { Name = "User.esp", IsSelected = true });
+
+        var sut = CreateSut();
+        await sut.ProcessFormIdsAsync();
+
+        var run = Assert.IsType<PluginProcessingRunRequest>(Assert.Single(_processingRuns));
+        Assert.Equal(UpdateMode.ReplacePluginRecords, run.UpdateMode);
     }
 
     [Fact]
@@ -240,7 +253,7 @@ public class UserWorkflowTests
         var sut = CreateSut();
         await sut.ProcessFormIdsAsync();
 
-        Assert.True(_pluginProcessingService.Cancelled);
+        Assert.True(_processingRun.Cancelled);
         Assert.True(_viewModel.IsProcessing);
         Assert.Equal("Cancelling...", _viewModel.ProgressStatus);
     }
@@ -267,29 +280,23 @@ public class UserWorkflowTests
             _gameDetectionService.Object,
             _gameLocationService.Object,
             _pluginListManager,
-            _pluginProcessingService);
+            _processingRun);
     }
 
-    private sealed class RecordingPluginProcessingService(
-        MainWindowViewModel viewModel,
-        IThreadDispatcher dispatcher,
-        List<ProcessingParameters> processingRuns)
-        : PluginProcessingService(
-            FormID_Database_Manager.TestUtilities.Mocks.MockFactory.CreateDatabaseServiceMock().Object,
-            viewModel,
-            dispatcher)
+    private sealed class RecordingProcessingRun(List<ProcessingRunRequest> processingRuns)
+        : ProcessingRun(FormID_Database_Manager.TestUtilities.Mocks.MockFactory.CreateDatabaseServiceMock().Object)
     {
         public bool Cancelled { get; private set; }
 
-        public override Task ProcessPlugins(
-            ProcessingParameters parameters,
-            IProgress<(string Message, double? Value)>? progress = null)
+        public override Task ExecuteAsync(
+            ProcessingRunRequest request,
+            IProgress<ProcessingRunEvent>? progress = null)
         {
-            processingRuns.Add(parameters);
+            processingRuns.Add(request);
             return Task.CompletedTask;
         }
 
-        public override void CancelProcessing()
+        public override void Cancel()
         {
             Cancelled = true;
         }

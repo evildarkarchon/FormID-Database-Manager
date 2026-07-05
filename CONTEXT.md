@@ -39,6 +39,10 @@ _Avoid_: Database writer, write path.
 An ingestion mode that replaces existing FormID records for each Plugin encountered in the current run before storing the new records for that Plugin. Plugin matching is case-insensitive, while stored Plugin values preserve their source casing.
 _Avoid_: Full database refresh, exact-case replacement.
 
+**Processing Run**:
+A single execution that turns either selected Plugins or one FormID text file into records in a FormID Record Store for one GameRelease. A Processing Run is scoped by its Update Mode and ends as completed, cancelled, or failed.
+_Avoid_: Processing job, import task, plugin processing.
+
 **User Workflow**:
 The end-to-end user interaction that turns a selected GameRelease, a game directory or FormID text file, Plugin selections, database path, and Update Mode into one FormID processing run.
 _Avoid_: UI event flow, MainWindow logic.

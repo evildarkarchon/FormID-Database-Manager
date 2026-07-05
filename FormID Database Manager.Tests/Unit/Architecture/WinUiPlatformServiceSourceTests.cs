@@ -62,7 +62,7 @@ public class WinUiPlatformServiceSourceTests
         Assert.Contains("UserWorkflow", source, StringComparison.Ordinal);
         Assert.Contains("new UserWorkflow(", source, StringComparison.Ordinal);
         Assert.Contains("PluginListManager", source, StringComparison.Ordinal);
-        Assert.Contains("PluginProcessingService", source, StringComparison.Ordinal);
+        Assert.Contains("ProcessingRun", source, StringComparison.Ordinal);
         Assert.Contains("DirectoryComboBox_SelectionChanged", source, StringComparison.Ordinal);
 
         var xaml = File.ReadAllText(mainWindowXamlPath);

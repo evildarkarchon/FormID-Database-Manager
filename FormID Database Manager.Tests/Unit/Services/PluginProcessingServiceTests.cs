@@ -345,16 +345,6 @@ public class PluginProcessingServiceTests : IDisposable
     public async Task ProcessPlugins_InitializesDatabase()
     {
         var parameters = CreateTestParameters();
-        parameters = new ProcessingParameters
-        {
-            GameDirectory = parameters.GameDirectory,
-            DatabasePath = parameters.DatabasePath,
-            GameRelease = parameters.GameRelease,
-            SelectedPlugins = [],
-            UpdateMode = parameters.UpdateMode,
-            DryRun = parameters.DryRun,
-            FormIdListPath = parameters.FormIdListPath
-        };
 
         _mockDatabaseService.Setup(x =>
                 x.InitializeDatabase(It.IsAny<string>(), It.IsAny<GameRelease>(), It.IsAny<CancellationToken>()))
@@ -374,16 +364,6 @@ public class PluginProcessingServiceTests : IDisposable
     public async Task ProcessPlugins_OptimizesDatabaseAfterProcessing()
     {
         var parameters = CreateTestParameters();
-        parameters = new ProcessingParameters
-        {
-            GameDirectory = parameters.GameDirectory,
-            DatabasePath = parameters.DatabasePath,
-            GameRelease = parameters.GameRelease,
-            SelectedPlugins = [],
-            UpdateMode = parameters.UpdateMode,
-            DryRun = parameters.DryRun,
-            FormIdListPath = parameters.FormIdListPath
-        };
 
         _mockDatabaseService.Setup(x =>
                 x.InitializeDatabase(It.IsAny<string>(), It.IsAny<GameRelease>(), It.IsAny<CancellationToken>()))
@@ -402,16 +382,6 @@ public class PluginProcessingServiceTests : IDisposable
     public async Task ProcessPlugins_ReportsProgress()
     {
         var parameters = CreateTestParameters();
-        parameters = new ProcessingParameters
-        {
-            GameDirectory = parameters.GameDirectory,
-            DatabasePath = parameters.DatabasePath,
-            GameRelease = parameters.GameRelease,
-            SelectedPlugins = [],
-            UpdateMode = parameters.UpdateMode,
-            DryRun = parameters.DryRun,
-            FormIdListPath = parameters.FormIdListPath
-        };
         var progressReports = new List<(string Message, double? Value)>();
         // Use a synchronous IProgress implementation to avoid Progress<T>'s async callbacks
         // which can cause race conditions in unit tests
@@ -444,7 +414,7 @@ public class PluginProcessingServiceTests : IDisposable
             _mockDispatcher.Object,
             _mockLoadOrderProvider.Object);
 
-        var parameters = CreateTestParameters(selectedPlugins: []);
+        var parameters = CreateTestParameters();
 
         var callerTask = Task.Factory.StartNew(
             static state =>

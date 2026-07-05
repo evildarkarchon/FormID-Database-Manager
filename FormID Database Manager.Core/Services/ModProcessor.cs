@@ -70,9 +70,9 @@ public class ModProcessor(Action<string> errorCallback)
             gameDir,
             recordStore,
             gameRelease,
-            pluginItem,
+            pluginItem.Name,
             snapshot,
-            updateMode,
+            ToStoreUpdateMode(updateMode),
             cancellationToken).ConfigureAwait(false);
     }
 
@@ -99,17 +99,53 @@ public class ModProcessor(Action<string> errorCallback)
         bool updateMode,
         CancellationToken cancellationToken)
     {
-        ArgumentNullException.ThrowIfNull(recordStore);
+        ArgumentNullException.ThrowIfNull(pluginItem);
 
-        if (!loadOrderSnapshot.ContainsPlugin(pluginItem.Name))
+        await ProcessPlugin(
+            gameDir,
+            recordStore,
+            gameRelease,
+            pluginItem.Name,
+            loadOrderSnapshot,
+            ToStoreUpdateMode(updateMode),
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    ///     Processes the specified plugin file, updates the database with its entries,
+    ///     and provides error handling during processing.
+    /// </summary>
+    /// <param name="gameDir">The root directory of the game where the plugin resides.</param>
+    /// <param name="recordStore">The run-scoped FormID Record Store used for plugin writes.</param>
+    /// <param name="gameRelease">The specific game release associated with the plugin.</param>
+    /// <param name="pluginName">The Plugin name to process.</param>
+    /// <param name="loadOrderSnapshot">The run-scoped load order snapshot for membership and read parameters.</param>
+    /// <param name="updateMode">Controls whether rows are appended or replace existing rows for the Plugin.</param>
+    /// <param name="cancellationToken">The cancellation token to handle processing termination requests.</param>
+    /// <returns>A task that processes the plugin asynchronously and manages its database entries accordingly.</returns>
+    [RequiresUnreferencedCode(
+        "Uses reflection to discover INamedGetter interface and Name/String properties on Mutagen record types for name extraction.")]
+    public async Task ProcessPlugin(
+        string gameDir,
+        FormIdRecordStore recordStore,
+        GameRelease gameRelease,
+        string pluginName,
+        GameLoadOrderSnapshot loadOrderSnapshot,
+        UpdateMode updateMode,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(recordStore);
+        ArgumentException.ThrowIfNullOrWhiteSpace(pluginName);
+
+        if (!loadOrderSnapshot.ContainsPlugin(pluginName))
         {
-            errorCallback($"Warning: Could not find plugin in load order: {pluginItem.Name}");
+            errorCallback($"Warning: Could not find plugin in load order: {pluginName}");
             return;
         }
 
         var dataPath = GameReleaseHelper.ResolveDataPath(gameDir);
 
-        var pluginPath = Path.Combine(dataPath, pluginItem.Name);
+        var pluginPath = Path.Combine(dataPath, pluginName);
 
         if (!File.Exists(pluginPath))
         {
@@ -128,15 +164,19 @@ public class ModProcessor(Action<string> errorCallback)
             using var mod = CreateOverlay(pluginPath, gameRelease, loadOrderSnapshot.ReadParameters);
 
             await recordStore.WritePluginAsync(
-                    pluginItem.Name,
-                    EnumerateModRecords(pluginItem.Name, mod, cancellationToken),
-                    updateMode ? UpdateMode.ReplacePluginRecords : UpdateMode.Append,
+                    pluginName,
+                    EnumerateModRecords(pluginName, mod, cancellationToken),
+                    updateMode,
                     cancellationToken)
                 .ConfigureAwait(false);
         }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
-            errorCallback($"Error processing {pluginItem.Name}: {ex.Message}");
+            errorCallback($"Error processing {pluginName}: {ex.Message}");
             throw;
         }
     }
@@ -313,5 +353,10 @@ public class ModProcessor(Action<string> errorCallback)
 
         var name = extractor(record);
         return !string.IsNullOrEmpty(name) ? name : $"[{record.GetType().Name}_{record.FormKey.ID:X6}]";
+    }
+
+    private static UpdateMode ToStoreUpdateMode(bool updateMode)
+    {
+        return updateMode ? UpdateMode.ReplacePluginRecords : UpdateMode.Append;
     }
 }

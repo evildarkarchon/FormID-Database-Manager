@@ -14,7 +14,7 @@ public sealed class UserWorkflow : IDisposable
     private readonly GameDetectionService _gameDetectionService;
     private readonly IGameLocationService _gameLocationService;
     private readonly PluginListManager _pluginListManager;
-    private readonly PluginProcessingService _pluginProcessingService;
+    private readonly ProcessingRun _processingRun;
     private readonly MainWindowViewModel _viewModel;
     private bool _disposed;
     private int _gameSelectionVersion;
@@ -29,22 +29,21 @@ public sealed class UserWorkflow : IDisposable
     /// <param name="gameDetectionService">The game detection module.</param>
     /// <param name="gameLocationService">The installed-location lookup adapter.</param>
     /// <param name="pluginListManager">The plugin list module.</param>
-    /// <param name="pluginProcessingService">The processing run module.</param>
+    /// <param name="processingRun">The Processing Run module.</param>
     public UserWorkflow(
         MainWindowViewModel viewModel,
         IFileDialogService fileDialogService,
         GameDetectionService gameDetectionService,
         IGameLocationService gameLocationService,
         PluginListManager pluginListManager,
-        PluginProcessingService pluginProcessingService)
+        ProcessingRun processingRun)
     {
         _viewModel = viewModel ?? throw new ArgumentNullException(nameof(viewModel));
         _fileDialogService = fileDialogService ?? throw new ArgumentNullException(nameof(fileDialogService));
         _gameDetectionService = gameDetectionService ?? throw new ArgumentNullException(nameof(gameDetectionService));
         _gameLocationService = gameLocationService ?? throw new ArgumentNullException(nameof(gameLocationService));
         _pluginListManager = pluginListManager ?? throw new ArgumentNullException(nameof(pluginListManager));
-        _pluginProcessingService = pluginProcessingService ??
-                                  throw new ArgumentNullException(nameof(pluginProcessingService));
+        _processingRun = processingRun ?? throw new ArgumentNullException(nameof(processingRun));
     }
 
     /// <summary>
@@ -212,7 +211,7 @@ public sealed class UserWorkflow : IDisposable
         if (_viewModel.IsProcessing)
         {
             _viewModel.ProgressStatus = "Cancelling...";
-            _pluginProcessingService.CancelProcessing();
+            _processingRun.Cancel();
             return;
         }
 
@@ -230,42 +229,21 @@ public sealed class UserWorkflow : IDisposable
                 return;
             }
 
-            var parameters = new ProcessingParameters
+            var databasePath = _viewModel.DatabasePath;
+            if (string.IsNullOrEmpty(databasePath))
             {
-                GameDirectory = _viewModel.GameDirectory,
-                DatabasePath = _viewModel.DatabasePath,
-                GameRelease = gameRelease,
-                SelectedPlugins = _viewModel.GetSelectedPlugins(),
-                UpdateMode = _viewModel.UpdateMode,
-                FormIdListPath = _viewModel.FormIdListPath
-            };
-
-            var usingTextFile = !string.IsNullOrEmpty(parameters.FormIdListPath);
-
-            if (!usingTextFile && string.IsNullOrEmpty(parameters.GameDirectory))
-            {
-                _viewModel.AddErrorMessage("Game directory must be specified when processing plugins");
-                return;
+                databasePath = DefaultDatabasePathProvider.CreateDefaultDatabasePath(gameRelease);
+                _viewModel.DatabasePath = databasePath;
             }
 
-            if (!usingTextFile && !parameters.SelectedPlugins.Any())
-            {
-                _viewModel.AddErrorMessage("No plugins selected");
-                return;
-            }
+            var request = CreateProcessingRunRequest(gameRelease, databasePath);
+            var progress = new Progress<ProcessingRunEvent>(ApplyProcessingRunEvent);
 
-            if (string.IsNullOrEmpty(parameters.DatabasePath))
-            {
-                parameters.DatabasePath = DefaultDatabasePathProvider.CreateDefaultDatabasePath(gameRelease);
-                _viewModel.DatabasePath = parameters.DatabasePath;
-            }
-
-            var progress = new Progress<(string Message, double? Value)>(update =>
-            {
-                _viewModel.UpdateProgress(update.Message, update.Value);
-            });
-
-            await _pluginProcessingService.ProcessPlugins(parameters, progress);
+            await _processingRun.ExecuteAsync(request, progress);
+        }
+        catch (ProcessingRunValidationException ex)
+        {
+            _viewModel.AddErrorMessage(ex.Message);
         }
         catch (OperationCanceledException)
         {
@@ -294,8 +272,8 @@ public sealed class UserWorkflow : IDisposable
         }
 
         _disposed = true;
-        _pluginProcessingService.CancelProcessing();
-        _pluginProcessingService.Dispose();
+        _processingRun.Cancel();
+        _processingRun.Dispose();
     }
 
     private static bool IsFailure(FileDialogResult result)
@@ -352,5 +330,37 @@ public sealed class UserWorkflow : IDisposable
     {
         _programmaticDirectorySelectionToIgnore = path;
         _viewModel.GameDirectory = path;
+    }
+
+    private ProcessingRunRequest CreateProcessingRunRequest(GameRelease gameRelease, string databasePath)
+    {
+        var updateMode = _viewModel.UpdateMode ? UpdateMode.ReplacePluginRecords : UpdateMode.Append;
+
+        if (!string.IsNullOrWhiteSpace(_viewModel.FormIdListPath))
+        {
+            return new FormIdTextProcessingRunRequest(
+                _viewModel.FormIdListPath,
+                databasePath,
+                gameRelease,
+                updateMode);
+        }
+
+        return new PluginProcessingRunRequest(
+            _viewModel.GameDirectory,
+            databasePath,
+            gameRelease,
+            _viewModel.GetSelectedPlugins().Select(plugin => plugin.Name),
+            updateMode);
+    }
+
+    private void ApplyProcessingRunEvent(ProcessingRunEvent runEvent)
+    {
+        if (runEvent.Kind == ProcessingRunEventKind.Error)
+        {
+            _viewModel.AddErrorMessage(runEvent.Message);
+            return;
+        }
+
+        _viewModel.UpdateProgress(runEvent.Message, runEvent.Value);
     }
 }

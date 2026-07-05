@@ -21,7 +21,7 @@ public sealed partial class MainWindow : Window, IDisposable
         var gameDetectionService = new GameDetectionService();
         var gameLocationService = new GameLocationService();
         var pluginListManager = new PluginListManager(gameDetectionService, ViewModel, dispatcher);
-        var pluginProcessingService = new PluginProcessingService(new DatabaseService(), ViewModel, dispatcher);
+        var processingRun = new ProcessingRun(new DatabaseService());
 
         InitializeWindow();
         _userWorkflow = new UserWorkflow(
@@ -30,7 +30,7 @@ public sealed partial class MainWindow : Window, IDisposable
             gameDetectionService,
             gameLocationService,
             pluginListManager,
-            pluginProcessingService);
+            processingRun);
     }
 
     /// <summary>
@@ -41,25 +41,22 @@ public sealed partial class MainWindow : Window, IDisposable
     /// <param name="gameDetectionService">The service used to detect a game from a browsed directory.</param>
     /// <param name="gameLocationService">The service used to find installed game folders.</param>
     /// <param name="pluginListManager">The service used to load and select plugins.</param>
-    /// <param name="pluginProcessingService">The owned processing service canceled during window close.</param>
+    /// <param name="processingRun">The owned Processing Run module canceled during window close.</param>
     internal MainWindow(
         MainWindowViewModel viewModel,
         IFileDialogService? fileDialogService,
         GameDetectionService? gameDetectionService,
         IGameLocationService? gameLocationService,
         PluginListManager? pluginListManager,
-        PluginProcessingService? pluginProcessingService)
+        ProcessingRun? processingRun)
     {
         ViewModel = viewModel ?? throw new ArgumentNullException(nameof(viewModel));
         var dispatcher = new WinUiThreadDispatcher(DispatcherQueue);
         var effectiveGameDetectionService = gameDetectionService ?? new GameDetectionService();
         var effectiveGameLocationService = gameLocationService ?? new GameLocationService();
         var effectivePluginListManager = pluginListManager ??
-                                         new PluginListManager(effectiveGameDetectionService, ViewModel, dispatcher);
-        var effectivePluginProcessingService = pluginProcessingService ?? new PluginProcessingService(
-            new DatabaseService(),
-            ViewModel,
-            dispatcher);
+                                          new PluginListManager(effectiveGameDetectionService, ViewModel, dispatcher);
+        var effectiveProcessingRun = processingRun ?? new ProcessingRun(new DatabaseService());
 
         InitializeWindow();
         _userWorkflow = new UserWorkflow(
@@ -68,7 +65,7 @@ public sealed partial class MainWindow : Window, IDisposable
             effectiveGameDetectionService,
             effectiveGameLocationService,
             effectivePluginListManager,
-            effectivePluginProcessingService);
+            effectiveProcessingRun);
     }
 
     /// <summary>
