@@ -8,7 +8,6 @@ using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Engines;
 using FormID_Database_Manager.Models;
 using FormID_Database_Manager.Services;
-using Microsoft.Data.Sqlite;
 using Moq;
 using Mutagen.Bethesda;
 using Mutagen.Bethesda.Plugins;
@@ -23,7 +22,7 @@ namespace FormID_Database_Manager.Tests.Performance;
 public class PluginProcessingBenchmarks : IDisposable
 {
     private readonly Consumer _consumer = new();
-    private SqliteConnection _connection = null!;
+    private FormIdRecordStore _recordStore = null!;
     private string _databasePath = null!;
     private DatabaseService _databaseService = null!;
     private ModProcessor _modProcessor = null!;
@@ -47,7 +46,7 @@ public class PluginProcessingBenchmarks : IDisposable
         // Create database
         _databasePath = Path.Combine(_testDirectory, "benchmark.db");
         _databaseService = new DatabaseService();
-        _modProcessor = new ModProcessor(_databaseService, _ => { });
+        _modProcessor = new ModProcessor(_ => { });
 
         // Initialize database
         _databaseService.InitializeDatabase(_databasePath, GameRelease.SkyrimSE).Wait();
@@ -55,15 +54,16 @@ public class PluginProcessingBenchmarks : IDisposable
         // Create test plugins
         _testPlugins = CreateTestPlugins(PluginCount);
 
-        // Setup connection
-        _connection = new SqliteConnection($"Data Source={_databasePath}");
-        _connection.Open();
+        _recordStore = FormIdRecordStore
+            .OpenAsync(_databaseService, _databasePath, GameRelease.SkyrimSE)
+            .GetAwaiter()
+            .GetResult();
     }
 
     [GlobalCleanup]
     public void Cleanup()
     {
-        _connection?.Dispose();
+        _recordStore?.DisposeAsync().AsTask().GetAwaiter().GetResult();
 
         if (Directory.Exists(_testDirectory))
         {
@@ -95,7 +95,7 @@ public class PluginProcessingBenchmarks : IDisposable
 
         await _modProcessor.ProcessPlugin(
             _testDirectory,
-            _connection,
+            _recordStore,
             GameRelease.SkyrimSE,
             plugin,
             loadOrder,
@@ -112,7 +112,7 @@ public class PluginProcessingBenchmarks : IDisposable
 
             await _modProcessor.ProcessPlugin(
                 _testDirectory,
-                _connection,
+                _recordStore,
                 GameRelease.SkyrimSE,
                 plugin,
                 loadOrder,
@@ -137,7 +137,7 @@ public class PluginProcessingBenchmarks : IDisposable
         {
             await _modProcessor.ProcessPlugin(
                 _testDirectory,
-                _connection,
+                _recordStore,
                 GameRelease.SkyrimSE,
                 plugin,
                 loadOrder,
@@ -164,7 +164,7 @@ public class PluginProcessingBenchmarks : IDisposable
         // First insert some data
         await _modProcessor.ProcessPlugin(
             _testDirectory,
-            _connection,
+            _recordStore,
             GameRelease.SkyrimSE,
             plugin,
             loadOrder,
@@ -174,7 +174,7 @@ public class PluginProcessingBenchmarks : IDisposable
         // Then update
         await _modProcessor.ProcessPlugin(
             _testDirectory,
-            _connection,
+            _recordStore,
             GameRelease.SkyrimSE,
             plugin,
             loadOrder,

@@ -23,6 +23,7 @@ public class ModProcessorTests : IDisposable
     private readonly DatabaseService _databaseService;
     private readonly List<string> _errorMessages;
     private readonly ModProcessor _modProcessor;
+    private readonly FormIdRecordStore _recordStore;
     private readonly string _testDbPath;
 
     public ModProcessorTests()
@@ -30,16 +31,21 @@ public class ModProcessorTests : IDisposable
         _testDbPath = Path.Combine(Path.GetTempPath(), $"test_{Guid.NewGuid()}.db");
         _errorMessages = [];
         _databaseService = new DatabaseService();
-        _modProcessor = new ModProcessor(_databaseService, error => _errorMessages.Add(error));
+        _modProcessor = new ModProcessor(error => _errorMessages.Add(error));
 
         // Create and open connection for tests
         _connection = new SqliteConnection($"Data Source={_testDbPath}");
         _connection.Open();
         InitializeDatabase(_connection, GameRelease.SkyrimSE);
+        _recordStore = FormIdRecordStore
+            .OpenAsync(_databaseService, _testDbPath, GameRelease.SkyrimSE)
+            .GetAwaiter()
+            .GetResult();
     }
 
     public void Dispose()
     {
+        _recordStore.DisposeAsync().AsTask().GetAwaiter().GetResult();
         _connection?.Close();
         _connection?.Dispose();
         if (File.Exists(_testDbPath))
@@ -75,7 +81,7 @@ public class ModProcessorTests : IDisposable
         {
             await _modProcessor.ProcessPlugin(
                 gameDir,
-                _connection,
+                _recordStore,
                 GameRelease.SkyrimSE,
                 pluginItem,
                 loadOrder,
@@ -115,7 +121,7 @@ public class ModProcessorTests : IDisposable
         await Assert.ThrowsAnyAsync<Exception>(async () =>
             await _modProcessor.ProcessPlugin(
                 gameDir,
-                _connection,
+                _recordStore,
                 GameRelease.SkyrimSE,
                 pluginItem,
                 loadOrder,
@@ -155,7 +161,7 @@ public class ModProcessorTests : IDisposable
             {
                 await _modProcessor.ProcessPlugin(
                     gameDir,
-                    _connection,
+                    _recordStore,
                     gameRelease,
                     pluginItem,
                     loadOrder,
@@ -187,7 +193,7 @@ public class ModProcessorTests : IDisposable
         // Act
         await _modProcessor.ProcessPlugin(
             gameDir,
-            _connection,
+            _recordStore,
             GameRelease.SkyrimSE,
             pluginItem,
             emptyLoadOrder,
@@ -210,7 +216,7 @@ public class ModProcessorTests : IDisposable
 
         await _modProcessor.ProcessPlugin(
             gameDir,
-            _connection,
+            _recordStore,
             GameRelease.SkyrimSE,
             pluginItem,
             snapshot,
@@ -234,7 +240,7 @@ public class ModProcessorTests : IDisposable
         // Act
         await _modProcessor.ProcessPlugin(
             gameDir,
-            _connection,
+            _recordStore,
             GameRelease.SkyrimSE,
             pluginItem,
             loadOrder,
@@ -263,7 +269,7 @@ public class ModProcessorTests : IDisposable
         await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
             await _modProcessor.ProcessPlugin(
                 gameDir,
-                _connection,
+                _recordStore,
                 GameRelease.SkyrimSE,
                 pluginItem,
                 loadOrder,
@@ -287,7 +293,7 @@ public class ModProcessorTests : IDisposable
         await Assert.ThrowsAsync<NotSupportedException>(async () =>
             await _modProcessor.ProcessPlugin(
                 gameDir,
-                _connection,
+                _recordStore,
                 (GameRelease)999,
                 pluginItem,
                 loadOrder,
@@ -296,19 +302,15 @@ public class ModProcessorTests : IDisposable
     }
 
     [Fact]
-    public async Task ProcessPlugin_UpdateMode_CallsClearPluginEntriesBeforeProcessing()
+    public async Task ProcessPlugin_UpdateMode_InvalidPluginFailureLeavesExistingRows()
     {
-        // Arrange
-        var databaseServiceMock = new Mock<DatabaseService>();
-        databaseServiceMock.Setup(x => x.ClearPluginEntries(
-                It.IsAny<SqliteConnection>(),
-                It.IsAny<GameRelease>(),
-                It.IsAny<string>(),
-                It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-
-        var errors = new List<string>();
-        var processor = new ModProcessor(databaseServiceMock.Object, errors.Add);
+        await _databaseService.InsertRecord(
+            _connection,
+            GameRelease.SkyrimSE,
+            "TestPlugin.esp",
+            "000001",
+            "OldEntry",
+            TestContext.Current.CancellationToken);
 
         var gameDir = Path.Combine(Path.GetTempPath(), "TestGame", "Data");
         Directory.CreateDirectory(gameDir);
@@ -318,120 +320,24 @@ public class ModProcessorTests : IDisposable
         var mockModListing = CreateMockModListing("TestPlugin.esp");
         var loadOrder = CreateLoadOrderDictionary(mockModListing.Object);
 
-        // Act
         await Assert.ThrowsAnyAsync<Exception>(async () =>
-            await processor.ProcessPlugin(
+            await _modProcessor.ProcessPlugin(
                 gameDir,
-                _connection,
+                _recordStore,
                 GameRelease.SkyrimSE,
                 pluginItem,
                 loadOrder,
                 true,
                 CancellationToken.None));
 
-        // Assert
-        databaseServiceMock.Verify(x => x.GetPluginsWithEntries(
-            It.IsAny<SqliteConnection>(),
-            It.IsAny<GameRelease>(),
-            It.IsAny<CancellationToken>()), Times.Never);
-        databaseServiceMock.Verify(x => x.ClearPluginEntries(
-            _connection,
-            GameRelease.SkyrimSE,
-            "TestPlugin.esp",
-            It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    [Fact]
-    public async Task ProcessPlugin_UpdateModeWithEmptyExistingPluginCache_StillClearsPluginEntries()
-    {
-        // Arrange
-        var databaseServiceMock = new Mock<DatabaseService>();
-        databaseServiceMock.Setup(x => x.ClearPluginEntries(
-                It.IsAny<SqliteConnection>(),
-                It.IsAny<GameRelease>(),
-                It.IsAny<string>(),
-                It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-
-        var errors = new List<string>();
-        var processor = new ModProcessor(databaseServiceMock.Object, errors.Add);
-
-        var gameDir = Path.Combine(Path.GetTempPath(), $"TestGame_{Guid.NewGuid():N}", "Data");
-        Directory.CreateDirectory(gameDir);
-        await CreateMinimalPluginFile(Path.Combine(gameDir, "TestPlugin.esp"));
-
-        var pluginItem = new PluginListItem { Name = "TestPlugin.esp", IsSelected = true };
-        var mockModListing = CreateMockModListing("TestPlugin.esp");
-        var loadOrder = CreateLoadOrderDictionary(mockModListing.Object);
-
-        // Act
-        await Assert.ThrowsAnyAsync<Exception>(async () =>
-            await processor.ProcessPlugin(
-                gameDir,
-                _connection,
-                GameRelease.SkyrimSE,
-                pluginItem,
-                loadOrder,
-                true,
-                CancellationToken.None,
-                new HashSet<string>(StringComparer.OrdinalIgnoreCase)));
-
-        // Assert
-        databaseServiceMock.Verify(x => x.ClearPluginEntries(
-            _connection,
-            GameRelease.SkyrimSE,
-            "TestPlugin.esp",
-            It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    [Fact]
-    public async Task ProcessPlugin_UpdateModeOffWithNullExistingPlugins_DoesNotClearPluginEntries()
-    {
-        // Arrange
-        var databaseServiceMock = new Mock<DatabaseService>();
-        databaseServiceMock.Setup(x => x.ClearPluginEntries(
-                It.IsAny<SqliteConnection>(),
-                It.IsAny<GameRelease>(),
-                It.IsAny<string>(),
-                It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-
-        var errors = new List<string>();
-        var processor = new ModProcessor(databaseServiceMock.Object, errors.Add);
-
-        var gameDir = Path.Combine(Path.GetTempPath(), $"TestGame_{Guid.NewGuid():N}", "Data");
-        Directory.CreateDirectory(gameDir);
-        await CreateMinimalPluginFile(Path.Combine(gameDir, "TestPlugin.esp"));
-
-        var pluginItem = new PluginListItem { Name = "TestPlugin.esp", IsSelected = true };
-        var mockModListing = CreateMockModListing("TestPlugin.esp");
-        var loadOrder = CreateLoadOrderDictionary(mockModListing.Object);
-
-        // Act
-        await Assert.ThrowsAnyAsync<Exception>(async () =>
-            await processor.ProcessPlugin(
-                gameDir,
-                _connection,
-                GameRelease.SkyrimSE,
-                pluginItem,
-                loadOrder,
-                false,
-                CancellationToken.None,
-                existingPlugins: null));
-
-        // Assert
-        databaseServiceMock.Verify(x => x.ClearPluginEntries(
-            It.IsAny<SqliteConnection>(),
-            It.IsAny<GameRelease>(),
-            It.IsAny<string>(),
-            It.IsAny<CancellationToken>()), Times.Never);
+        Assert.Equal(1, GetRecordCount());
     }
 
     [Fact]
     public async Task ProcessPlugin_StarfieldSnapshot_PassesMasterFlagsLookupToOverlayReads()
     {
         var errors = new List<string>();
-        var processor = new CapturingModProcessor(_databaseService, errors.Add);
+        var processor = new CapturingModProcessor(errors.Add);
 
         var gameDir = Path.Combine(Path.GetTempPath(), "TestGame", "Data");
         Directory.CreateDirectory(gameDir);
@@ -444,7 +350,7 @@ public class ModProcessorTests : IDisposable
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => processor.ProcessPlugin(
             gameDir,
-            _connection,
+            _recordStore,
             GameRelease.Starfield,
             pluginItem,
             snapshot,
@@ -459,7 +365,7 @@ public class ModProcessorTests : IDisposable
     public async Task ProcessPlugin_StarfieldDictionaryLoadOrder_PassesMasterFlagsLookupToOverlayReads()
     {
         var errors = new List<string>();
-        var processor = new CapturingModProcessor(_databaseService, errors.Add);
+        var processor = new CapturingModProcessor(errors.Add);
 
         var gameDir = Path.Combine(Path.GetTempPath(), "TestGame", "Data");
         Directory.CreateDirectory(gameDir);
@@ -478,7 +384,7 @@ public class ModProcessorTests : IDisposable
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => processor.ProcessPlugin(
             gameDir,
-            _connection,
+            _recordStore,
             GameRelease.Starfield,
             pluginItem,
             loadOrder,
@@ -512,7 +418,7 @@ public class ModProcessorTests : IDisposable
         await Assert.ThrowsAnyAsync<Exception>(async () =>
             await _modProcessor.ProcessPlugin(
                 gameDir,
-                _connection,
+                _recordStore,
                 GameRelease.SkyrimSE,
                 pluginItem,
                 loadOrder,
@@ -553,7 +459,7 @@ public class ModProcessorTests : IDisposable
         // Act - Process with non-existent plugin
         await _modProcessor.ProcessPlugin(
             gameDir,
-            _connection,
+            _recordStore,
             GameRelease.SkyrimSE,
             pluginItem,
             loadOrder,
@@ -588,7 +494,7 @@ public class ModProcessorTests : IDisposable
         await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
             await _modProcessor.ProcessPlugin(
                 gameDir,
-                _connection,
+                _recordStore,
                 GameRelease.SkyrimSE,
                 pluginItem,
                 loadOrder,
@@ -597,20 +503,17 @@ public class ModProcessorTests : IDisposable
     }
 
     [Fact]
-    public async Task ProcessPlugin_BatchesInserts_ForPerformance()
+    public void ProcessPlugin_BatchesInserts_ForPerformance()
     {
-        // This test verifies batching logic is in place
-        // The BatchSize constant is 1000 as defined in ModProcessor
+        // Plugin insert batching is owned by the FormID Record Store.
 
         // Verify the batch size constant exists and is reasonable
-        var batchSizeField = typeof(ModProcessor).GetField("BatchSize",
+        var batchSizeField = typeof(FormIdRecordStore).GetField("PluginBatchSize",
             BindingFlags.NonPublic | BindingFlags.Static);
         Assert.NotNull(batchSizeField);
 
         var batchSize = Assert.IsType<int>(batchSizeField!.GetValue(null));
         Assert.Equal(1000, batchSize);
-
-        await Task.CompletedTask;
     }
 
     #endregion
@@ -634,7 +537,7 @@ public class ModProcessorTests : IDisposable
         await Assert.ThrowsAnyAsync<Exception>(async () =>
             await _modProcessor.ProcessPlugin(
                 gameDir,
-                _connection,
+                _recordStore,
                 GameRelease.SkyrimSE,
                 pluginItem,
                 loadOrder,
@@ -653,7 +556,7 @@ public class ModProcessorTests : IDisposable
         // Act
         await _modProcessor.ProcessPlugin(
             gameDir,
-            _connection,
+            _recordStore,
             GameRelease.SkyrimSE,
             pluginItem,
             emptyLoadOrder, // Empty load order
@@ -692,7 +595,7 @@ public class ModProcessorTests : IDisposable
             {
                 await _modProcessor.ProcessPlugin(
                     gameDir,
-                    _connection,
+                    _recordStore,
                     GameRelease.SkyrimSE,
                     pluginItem,
                     loadOrder,
@@ -732,7 +635,7 @@ public class ModProcessorTests : IDisposable
             {
                 await _modProcessor.ProcessPlugin(
                     gameDir,
-                    _connection,
+                    _recordStore,
                     GameRelease.SkyrimSE,
                     pluginItem,
                     loadOrder,
@@ -753,8 +656,8 @@ public class ModProcessorTests : IDisposable
 
     #region Helper Methods
 
-    private sealed class CapturingModProcessor(DatabaseService databaseService, Action<string> errorCallback)
-        : ModProcessor(databaseService, errorCallback)
+    private sealed class CapturingModProcessor(Action<string> errorCallback)
+        : ModProcessor(errorCallback)
     {
         internal BinaryReadParameters CapturedReadParameters { get; private set; } = null!;
 

@@ -172,7 +172,7 @@ public class PluginProcessingServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task ProcessPlugins_UpdateMode_ClearsSelectedPluginsWithoutLoadingExistingPluginCache()
+    public async Task ProcessPlugins_UpdateMode_DoesNotLoadExistingPluginCache()
     {
         var gameDir = Path.Combine(Path.GetTempPath(), $"Game_{Guid.NewGuid():N}");
         var dataDir = Path.Combine(gameDir, "Data");
@@ -209,12 +209,6 @@ public class PluginProcessingServiceTests : IDisposable
                 It.IsAny<GameRelease>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new HashSet<string>(StringComparer.OrdinalIgnoreCase));
-        _mockDatabaseService.Setup(x => x.ClearPluginEntries(
-                It.IsAny<SqliteConnection>(),
-                It.IsAny<GameRelease>(),
-                It.IsAny<string>(),
-                It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
         _mockDatabaseService.Setup(x => x.OptimizeDatabase(It.IsAny<SqliteConnection>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
@@ -227,22 +221,12 @@ public class PluginProcessingServiceTests : IDisposable
         _mockDatabaseService.Verify(x => x.ClearPluginEntries(
             It.IsAny<SqliteConnection>(),
             GameRelease.SkyrimSE,
-            "TestPlugin1.esp",
-            It.IsAny<CancellationToken>()), Times.Once);
-        _mockDatabaseService.Verify(x => x.ClearPluginEntries(
-            It.IsAny<SqliteConnection>(),
-            GameRelease.SkyrimSE,
-            "TestPlugin2.esp",
-            It.IsAny<CancellationToken>()), Times.Once);
-        _mockDatabaseService.Verify(x => x.ClearPluginEntries(
-            It.IsAny<SqliteConnection>(),
-            GameRelease.SkyrimSE,
             It.IsAny<string>(),
-            It.IsAny<CancellationToken>()), Times.Exactly(2));
+            It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
-    public async Task ProcessPlugins_UpdateMode_ClearsRepeatedPluginEachTimeWithoutLoadingExistingPluginCache()
+    public async Task ProcessPlugins_UpdateMode_RepeatedPluginDoesNotLoadExistingPluginCache()
     {
         var gameDir = Path.Combine(Path.GetTempPath(), $"Game_{Guid.NewGuid():N}");
         var dataDir = Path.Combine(gameDir, "Data");
@@ -275,12 +259,6 @@ public class PluginProcessingServiceTests : IDisposable
                 It.IsAny<GameRelease>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new HashSet<string>(StringComparer.OrdinalIgnoreCase));
-        _mockDatabaseService.Setup(x => x.ClearPluginEntries(
-                It.IsAny<SqliteConnection>(),
-                It.IsAny<GameRelease>(),
-                It.IsAny<string>(),
-                It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
         _mockDatabaseService.Setup(x => x.OptimizeDatabase(It.IsAny<SqliteConnection>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
@@ -293,8 +271,8 @@ public class PluginProcessingServiceTests : IDisposable
         _mockDatabaseService.Verify(x => x.ClearPluginEntries(
             It.IsAny<SqliteConnection>(),
             GameRelease.SkyrimSE,
-            "TestPlugin1.esp",
-            It.IsAny<CancellationToken>()), Times.Exactly(2));
+            It.IsAny<string>(),
+            It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]

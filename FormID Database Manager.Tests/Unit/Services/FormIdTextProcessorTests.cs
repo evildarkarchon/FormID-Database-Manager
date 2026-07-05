@@ -1,3 +1,5 @@
+#nullable enable
+
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -6,38 +8,29 @@ using System.Threading;
 using System.Threading.Tasks;
 using FormID_Database_Manager.Services;
 using Microsoft.Data.Sqlite;
-using Moq;
 using Mutagen.Bethesda;
 using Xunit;
 
 namespace FormID_Database_Manager.Tests.Unit.Services;
 
-public class FormIdTextProcessorTests : IDisposable
+public sealed class FormIdTextProcessorTests : IDisposable
 {
-    private readonly SqliteConnection _connection;
-    private readonly FormIdTextProcessor _processor;
+    private readonly DatabaseService _databaseService = new();
+    private readonly FormIdTextProcessor _processor = new();
     private readonly string _testDbPath;
     private readonly string _testFilesDir;
 
     public FormIdTextProcessorTests()
     {
-        _testDbPath = Path.Combine(Path.GetTempPath(), $"test_{Guid.NewGuid()}.db");
-        _testFilesDir = Path.Combine(Path.GetTempPath(), $"test_files_{Guid.NewGuid()}");
+        _testDbPath = Path.Combine(Path.GetTempPath(), $"test_{Guid.NewGuid():N}.db");
+        _testFilesDir = Path.Combine(Path.GetTempPath(), $"test_files_{Guid.NewGuid():N}");
         Directory.CreateDirectory(_testFilesDir);
-
-        var databaseService = new DatabaseService();
-        _processor = new FormIdTextProcessor(databaseService);
-
-        // Create and open connection for tests
-        _connection = new SqliteConnection($"Data Source={_testDbPath}");
-        _connection.Open();
-        InitializeDatabase(_connection, GameRelease.SkyrimSE);
     }
 
     public void Dispose()
     {
-        _connection?.Close();
-        _connection?.Dispose();
+        SqliteConnection.ClearAllPools();
+
         if (File.Exists(_testDbPath))
         {
             try
@@ -46,7 +39,7 @@ public class FormIdTextProcessorTests : IDisposable
             }
             catch
             {
-                /* Ignore */
+                /* Ignore cleanup failures from SQLite file handles. */
             }
         }
 
@@ -58,7 +51,7 @@ public class FormIdTextProcessorTests : IDisposable
             }
             catch
             {
-                /* Ignore */
+                /* Ignore cleanup failures from antivirus/file handles. */
             }
         }
     }
@@ -68,55 +61,34 @@ public class FormIdTextProcessorTests : IDisposable
     [Fact]
     public async Task ProcessFormIdListFile_ClearsExistingEntries_InUpdateMode()
     {
-        // Arrange - Pre-populate database
-        await InsertTestRecord("Plugin1.esp", "000001", "OldEntry1");
-        await InsertTestRecord("Plugin1.esp", "000002", "OldEntry2");
-        await InsertTestRecord("Plugin2.esp", "000003", "OldEntry3");
+        await InsertTestRecordAsync("Plugin1.esp", "000001", "OldEntry1");
+        await InsertTestRecordAsync("Plugin1.esp", "000002", "OldEntry2");
+        await InsertTestRecordAsync("Plugin2.esp", "000003", "OldEntry3");
 
         var testFile = Path.Combine(_testFilesDir, "update_mode.txt");
-        var content = new[]
-        {
-            "Plugin1.esp|000001|NewEntry1", "Plugin1.esp|000004|NewEntry4", // New record
-            "Plugin2.esp|000003|UpdatedEntry3"
-        };
-        await File.WriteAllLinesAsync(testFile, content, TestContext.Current.CancellationToken);
-
-        // Act
-        await _processor.ProcessFormIdListFile(
-            testFile,
-            _connection,
-            GameRelease.SkyrimSE,
-            true, // Update mode
+        await File.WriteAllLinesAsync(testFile,
+            ["Plugin1.esp|000001|NewEntry1", "Plugin1.esp|000004|NewEntry4", "Plugin2.esp|000003|UpdatedEntry3"],
             TestContext.Current.CancellationToken);
 
-        // Assert
+        await ProcessFileAsync(testFile, updateMode: true);
+
         var records = GetAllRecords();
         Assert.Equal(3, records.Count);
-
-        // Old Plugin1 entries should be replaced
-        Assert.DoesNotContain(records, r => r.entry == "OldEntry1");
-        Assert.DoesNotContain(records, r => r.entry == "OldEntry2");
-        Assert.Contains(records, r => r.entry == "NewEntry1");
-        Assert.Contains(records, r => r.entry == "NewEntry4");
-
-        // Plugin2 should be updated
-        Assert.DoesNotContain(records, r => r.entry == "OldEntry3");
-        Assert.Contains(records, r => r.entry == "UpdatedEntry3");
+        Assert.DoesNotContain(records, record => record.entry.StartsWith("OldEntry", StringComparison.Ordinal));
+        Assert.Contains(records, record => record.entry == "NewEntry1");
+        Assert.Contains(records, record => record.entry == "NewEntry4");
+        Assert.Contains(records, record => record.entry == "UpdatedEntry3");
     }
 
     [Fact]
     public async Task ProcessFormIdListFile_UpdateMode_InsertsNewPluginWithoutExistingRows()
     {
         var testFile = Path.Combine(_testFilesDir, "update_mode_new_plugin.txt");
-        var content = new[] { "BrandNewPlugin.esp|000001|Entry1", "BrandNewPlugin.esp|000002|Entry2" };
-        await File.WriteAllLinesAsync(testFile, content, TestContext.Current.CancellationToken);
-
-        await _processor.ProcessFormIdListFile(
-            testFile,
-            _connection,
-            GameRelease.SkyrimSE,
-            true,
+        await File.WriteAllLinesAsync(testFile,
+            ["BrandNewPlugin.esp|000001|Entry1", "BrandNewPlugin.esp|000002|Entry2"],
             TestContext.Current.CancellationToken);
+
+        await ProcessFileAsync(testFile, updateMode: true);
 
         var records = GetAllRecords();
         Assert.Equal(2, records.Count);
@@ -124,94 +96,35 @@ public class FormIdTextProcessorTests : IDisposable
     }
 
     [Fact]
-    public async Task ProcessFormIdListFile_UpdateModeWithEmptyExistingPluginCache_StillClearsStaleRows()
-    {
-        await InsertTestRecord("Plugin1.esp", "000001", "OldEntry1");
-
-        var databaseServiceMock = new Mock<DatabaseService> { CallBase = true };
-        databaseServiceMock.Setup(x => x.GetPluginsWithEntries(
-                It.IsAny<SqliteConnection>(),
-                It.IsAny<GameRelease>(),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new HashSet<string>(StringComparer.OrdinalIgnoreCase));
-        var processor = new FormIdTextProcessor(databaseServiceMock.Object);
-
-        var testFile = Path.Combine(_testFilesDir, "update_mode_empty_cache.txt");
-        var content = new[] { "Plugin1.esp|000010|NewEntry1" };
-        await File.WriteAllLinesAsync(testFile, content, TestContext.Current.CancellationToken);
-
-        await processor.ProcessFormIdListFile(
-            testFile,
-            _connection,
-            GameRelease.SkyrimSE,
-            true,
-            TestContext.Current.CancellationToken);
-
-        var records = GetAllRecords();
-        Assert.Single(records);
-        Assert.DoesNotContain(records, r => r.entry == "OldEntry1");
-        Assert.Contains(records, r => r is { plugin: "Plugin1.esp", entry: "NewEntry1" });
-        databaseServiceMock.Verify(x => x.GetPluginsWithEntries(
-            It.IsAny<SqliteConnection>(),
-            It.IsAny<GameRelease>(),
-            It.IsAny<CancellationToken>()), Times.Never);
-    }
-
-    [Fact]
     public async Task ProcessFormIdListFile_UpdateMode_ClearsExistingEntriesCaseInsensitively()
     {
-        await InsertTestRecord("Plugin1.esp", "000001", "OldEntry1");
+        await InsertTestRecordAsync("Plugin1.esp", "000001", "OldEntry1");
 
         var testFile = Path.Combine(_testFilesDir, "update_mode_case_insensitive.txt");
-        var content = new[] { "PLUGIN1.ESP|000010|NewEntry1" };
-        await File.WriteAllLinesAsync(testFile, content, TestContext.Current.CancellationToken);
+        await File.WriteAllLinesAsync(testFile, ["PLUGIN1.ESP|000010|NewEntry1"], TestContext.Current.CancellationToken);
 
-        await _processor.ProcessFormIdListFile(
-            testFile,
-            _connection,
-            GameRelease.SkyrimSE,
-            true,
-            TestContext.Current.CancellationToken);
+        await ProcessFileAsync(testFile, updateMode: true);
 
         var records = GetAllRecords();
         Assert.Single(records);
-        Assert.DoesNotContain(records, r => r.entry == "OldEntry1");
-        Assert.Contains(records, r => r is { plugin: "PLUGIN1.ESP", entry: "NewEntry1" });
+        Assert.DoesNotContain(records, record => record.entry == "OldEntry1");
+        Assert.Contains(records, record => record is { plugin: "PLUGIN1.ESP", entry: "NewEntry1" });
     }
 
     [Fact]
-    public async Task ProcessFormIdListFile_UpdateModeOff_DoesNotLoadCacheOrClearPluginEntries()
+    public async Task ProcessFormIdListFile_UpdateModeOff_AppendsWithoutClearingExistingRows()
     {
-        await InsertTestRecord("Plugin1.esp", "000001", "OldEntry1");
-
-        var databaseServiceMock = new Mock<DatabaseService> { CallBase = true };
-        var processor = new FormIdTextProcessor(databaseServiceMock.Object);
+        await InsertTestRecordAsync("Plugin1.esp", "000001", "OldEntry1");
 
         var testFile = Path.Combine(_testFilesDir, "update_mode_off_no_clear.txt");
-        var content = new[] { "Plugin1.esp|000002|NewEntry1" };
-        await File.WriteAllLinesAsync(testFile, content, TestContext.Current.CancellationToken);
+        await File.WriteAllLinesAsync(testFile, ["Plugin1.esp|000002|NewEntry1"], TestContext.Current.CancellationToken);
 
-        await processor.ProcessFormIdListFile(
-            testFile,
-            _connection,
-            GameRelease.SkyrimSE,
-            false,
-            TestContext.Current.CancellationToken);
+        await ProcessFileAsync(testFile, updateMode: false);
 
         var records = GetAllRecords();
         Assert.Equal(2, records.Count);
-        Assert.Contains(records, r => r.entry == "OldEntry1");
-        Assert.Contains(records, r => r.entry == "NewEntry1");
-
-        databaseServiceMock.Verify(x => x.GetPluginsWithEntries(
-            It.IsAny<SqliteConnection>(),
-            It.IsAny<GameRelease>(),
-            It.IsAny<CancellationToken>()), Times.Never);
-        databaseServiceMock.Verify(x => x.ClearPluginEntries(
-            It.IsAny<SqliteConnection>(),
-            It.IsAny<GameRelease>(),
-            It.IsAny<string>(),
-            It.IsAny<CancellationToken>()), Times.Never);
+        Assert.Contains(records, record => record.entry == "OldEntry1");
+        Assert.Contains(records, record => record.entry == "NewEntry1");
     }
 
     #endregion
@@ -219,29 +132,27 @@ public class FormIdTextProcessorTests : IDisposable
     #region Transaction Tests
 
     [Fact]
-    public async Task ProcessFormIdListFile_RollsBackOnError_MaintainsDataIntegrity()
+    public async Task ProcessFormIdListFile_CommitError_RollsBackCurrentPluginRows()
     {
-        // Arrange
+        await InsertTestRecordAsync("Plugin1.esp", "000001", "OldEntry1");
+        await CreateFailingInsertTriggerAsync("BadEntry");
+
         var testFile = Path.Combine(_testFilesDir, "transaction_test.txt");
-        var content = new[] { "Plugin1.esp|000001|Entry1", "Plugin1.esp|000002|Entry2" };
-        await File.WriteAllLinesAsync(testFile, content, TestContext.Current.CancellationToken);
+        await File.WriteAllLinesAsync(testFile,
+            ["Plugin1.esp|000010|GoodEntry", "Plugin1.esp|000011|BadEntry"],
+            TestContext.Current.CancellationToken);
 
-        // Close connection to simulate database error
-        _connection.Close();
+        await using var store = await OpenStoreAsync(TestContext.Current.CancellationToken);
+        await Assert.ThrowsAsync<SqliteException>(() => _processor.ProcessFormIdListFile(
+            testFile,
+            store,
+            updateMode: true,
+            TestContext.Current.CancellationToken));
 
-        // Act & Assert
-        await Assert.ThrowsAnyAsync<Exception>(() =>
-            _processor.ProcessFormIdListFile(
-                testFile,
-                _connection,
-                GameRelease.SkyrimSE,
-                false,
-                TestContext.Current.CancellationToken));
-
-        // Re-open and verify no partial data
-        _connection.Open();
         var records = GetAllRecords();
-        Assert.Empty(records);
+        Assert.Single(records);
+        Assert.Contains(records, record => record is { plugin: "Plugin1.esp", formid: "000001", entry: "OldEntry1" });
+        Assert.DoesNotContain(records, record => record.entry == "GoodEntry");
     }
 
     #endregion
@@ -251,95 +162,66 @@ public class FormIdTextProcessorTests : IDisposable
     [Fact]
     public async Task ProcessFormIdListFile_ParsesValidFormat_Correctly()
     {
-        // Arrange
         var testFile = Path.Combine(_testFilesDir, "valid_formids.txt");
-        var content = new[]
-        {
-            "TestPlugin.esp|000001|TestWeapon", "TestPlugin.esp|000002|TestArmor",
-            "TestPlugin2.esp|000003|TestSpell"
-        };
-        await File.WriteAllLinesAsync(testFile, content, TestContext.Current.CancellationToken);
-
-        // Act
-        await _processor.ProcessFormIdListFile(
-            testFile,
-            _connection,
-            GameRelease.SkyrimSE,
-            false,
+        await File.WriteAllLinesAsync(testFile,
+            ["TestPlugin.esp|000001|TestWeapon", "TestPlugin.esp|000002|TestArmor", "TestPlugin2.esp|000003|TestSpell"],
             TestContext.Current.CancellationToken);
 
-        // Assert
+        await ProcessFileAsync(testFile, updateMode: false);
+
         var records = GetAllRecords();
         Assert.Equal(3, records.Count);
-        Assert.Contains(records, r => r is { plugin: "TestPlugin.esp", formid: "000001", entry: "TestWeapon" });
-        Assert.Contains(records, r => r is { plugin: "TestPlugin.esp", formid: "000002", entry: "TestArmor" });
-        Assert.Contains(records, r => r is { plugin: "TestPlugin2.esp", formid: "000003", entry: "TestSpell" });
+        Assert.Contains(records, record => record is { plugin: "TestPlugin.esp", formid: "000001", entry: "TestWeapon" });
+        Assert.Contains(records, record => record is { plugin: "TestPlugin.esp", formid: "000002", entry: "TestArmor" });
+        Assert.Contains(records, record => record is { plugin: "TestPlugin2.esp", formid: "000003", entry: "TestSpell" });
     }
 
     [Fact]
     public async Task ProcessFormIdListFile_HandlesDifferentLineFormats_Correctly()
     {
-        // Arrange - Test with various whitespace and formatting
         var testFile = Path.Combine(_testFilesDir, "varied_format.txt");
-        var content = new[]
-        {
-            "Plugin1.esp|000001|Entry1", "  Plugin2.esp  |  000002  |  Entry2  ", // Extra spaces
-            "Plugin3.esp|000003|Entry3|ExtraData", // Extra pipe (should be ignored)
-            "", // Empty line
-            "   ", // Whitespace only
-            "InvalidLine", // No pipes
-            "Plugin4.esp|000004" // Missing entry
-        };
-        await File.WriteAllLinesAsync(testFile, content, TestContext.Current.CancellationToken);
-
-        // Act
-        await _processor.ProcessFormIdListFile(
-            testFile,
-            _connection,
-            GameRelease.SkyrimSE,
-            false,
+        await File.WriteAllLinesAsync(testFile,
+            [
+                "Plugin1.esp|000001|Entry1",
+                "  Plugin2.esp  |  000002  |  Entry2  ",
+                "Plugin3.esp|000003|Entry3|ExtraData",
+                "",
+                "   ",
+                "InvalidLine",
+                "Plugin4.esp|000004"
+            ],
             TestContext.Current.CancellationToken);
 
-        // Assert
+        await ProcessFileAsync(testFile, updateMode: false);
+
         var records = GetAllRecords();
-        Assert.Equal(2, records.Count); // Only valid lines should be processed
-        Assert.Contains(records, r => r is { plugin: "Plugin1.esp", formid: "000001", entry: "Entry1" });
-        Assert.Contains(records, r => r is { plugin: "Plugin2.esp", formid: "000002", entry: "Entry2" });
+        Assert.Equal(2, records.Count);
+        Assert.Contains(records, record => record is { plugin: "Plugin1.esp", formid: "000001", entry: "Entry1" });
+        Assert.Contains(records, record => record is { plugin: "Plugin2.esp", formid: "000002", entry: "Entry2" });
     }
 
     [Fact]
     public async Task ProcessFormIdListFile_HandlesMultiplePlugins_InSingleFile()
     {
-        // Arrange
         var testFile = Path.Combine(_testFilesDir, "multiple_plugins.txt");
-        var content = new[]
-        {
-            "Plugin1.esp|000001|Entry1", "Plugin1.esp|000002|Entry2", "Plugin2.esp|000003|Entry3",
-            "Plugin2.esp|000004|Entry4", "Plugin1.esp|000005|Entry5", // Back to Plugin1
-            "Plugin3.esp|000006|Entry6"
-        };
-        await File.WriteAllLinesAsync(testFile, content, TestContext.Current.CancellationToken);
-
-        // Act
-        await _processor.ProcessFormIdListFile(
-            testFile,
-            _connection,
-            GameRelease.SkyrimSE,
-            false,
+        await File.WriteAllLinesAsync(testFile,
+            [
+                "Plugin1.esp|000001|Entry1",
+                "Plugin1.esp|000002|Entry2",
+                "Plugin2.esp|000003|Entry3",
+                "Plugin2.esp|000004|Entry4",
+                "Plugin1.esp|000005|Entry5",
+                "Plugin3.esp|000006|Entry6"
+            ],
             TestContext.Current.CancellationToken);
 
-        // Assert
+        await ProcessFileAsync(testFile, updateMode: false);
+
         var records = GetAllRecords();
         Assert.Equal(6, records.Count);
-
-        var plugin1Records = records.Where(r => r.plugin == "Plugin1.esp").ToList();
-        Assert.Equal(3, plugin1Records.Count);
-
-        var plugin2Records = records.Where(r => r.plugin == "Plugin2.esp").ToList();
-        Assert.Equal(2, plugin2Records.Count);
-
-        var plugin3Records = records.Where(r => r.plugin == "Plugin3.esp").ToList();
-        Assert.Single(plugin3Records);
+        Assert.Equal(3, records.Count(record => record.plugin == "Plugin1.esp"));
+        Assert.Equal(2, records.Count(record => record.plugin == "Plugin2.esp"));
+        Assert.Single(records, record => record.plugin == "Plugin3.esp");
     }
 
     #endregion
@@ -349,36 +231,21 @@ public class FormIdTextProcessorTests : IDisposable
     [Fact]
     public async Task ProcessFormIdListFile_ReportsProgress_AtRegularIntervals()
     {
-        // Arrange
         var testFile = Path.Combine(_testFilesDir, "progress_test.txt");
-        var lines = new List<string>();
-        for (var i = 0; i < 2500; i++) // More than UiUpdateInterval (1000)
-        {
-            lines.Add($"Plugin.esp|{i:X6}|Entry{i}");
-        }
-
+        var lines = Enumerable.Range(0, 2500).Select(i => $"Plugin.esp|{i:X6}|Entry{i}");
         await File.WriteAllLinesAsync(testFile, lines, TestContext.Current.CancellationToken);
 
         var progressReports = new List<(string Message, double? Value)>();
         var progress = new SynchronousProgress<(string Message, double? Value)>(progressReports.Add);
 
-        // Act
-        await _processor.ProcessFormIdListFile(
-            testFile,
-            _connection,
-            GameRelease.SkyrimSE,
-            false,
-            TestContext.Current.CancellationToken,
-            progress);
+        await ProcessFileAsync(testFile, updateMode: false, progress: progress);
 
-        // Assert
         Assert.NotEmpty(progressReports);
-        Assert.Contains(progressReports, r => r.Message.Contains("Starting processing"));
-        Assert.Contains(progressReports, r => r.Message.Contains("Processing:") && r.Value.HasValue);
-        Assert.Contains(progressReports, r => r.Message.Contains("Completed processing"));
+        Assert.Contains(progressReports, report => report.Message.Contains("Starting processing", StringComparison.Ordinal));
+        Assert.Contains(progressReports, report => report.Message.Contains("Processing:", StringComparison.Ordinal) && report.Value.HasValue);
+        Assert.Contains(progressReports, report => report.Message.Contains("Completed processing", StringComparison.Ordinal));
 
-        // Verify progress values are increasing
-        var progressValues = progressReports.Where(r => r.Value.HasValue).Select(r => r.Value!.Value).ToList();
+        var progressValues = progressReports.Where(report => report.Value.HasValue).Select(report => report.Value!.Value).ToList();
         for (var i = 1; i < progressValues.Count; i++)
         {
             Assert.True(progressValues[i] >= progressValues[i - 1]);
@@ -388,26 +255,17 @@ public class FormIdTextProcessorTests : IDisposable
     [Fact]
     public async Task ProcessFormIdListFile_CalculatesTotalLines_ForAccurateProgress()
     {
-        // Arrange
         var testFile = Path.Combine(_testFilesDir, "line_count_test.txt");
-        var expectedLines = 100;
+        const int expectedLines = 100;
         var lines = Enumerable.Range(1, expectedLines).Select(i => $"Plugin.esp|{i:X6}|Entry{i}");
         await File.WriteAllLinesAsync(testFile, lines, TestContext.Current.CancellationToken);
 
         var progressReports = new List<(string Message, double? Value)>();
         var progress = new SynchronousProgress<(string Message, double? Value)>(progressReports.Add);
 
-        // Act
-        await _processor.ProcessFormIdListFile(
-            testFile,
-            _connection,
-            GameRelease.SkyrimSE,
-            false,
-            TestContext.Current.CancellationToken,
-            progress);
+        await ProcessFileAsync(testFile, updateMode: false, progress: progress);
 
-        // Assert
-        var completionReport = progressReports.Last(r => r.Message.Contains("Completed"));
+        var completionReport = progressReports.Last(report => report.Message.Contains("Completed", StringComparison.Ordinal));
         Assert.Contains($"{expectedLines:N0} total records", completionReport.Message);
         Assert.Equal(100, completionReport.Value);
     }
@@ -419,36 +277,20 @@ public class FormIdTextProcessorTests : IDisposable
     [Fact]
     public async Task ProcessFormIdListFile_BatchesInserts_CorrectlyAtBatchSize()
     {
-        // Arrange
-        const int batchSize = 10000; // As defined in FormIdTextProcessor
+        const int batchSize = 10000;
         var testFile = Path.Combine(_testFilesDir, "batch_test.txt");
-        var totalRecords = batchSize + 100; // Slightly more than one batch
-
-        var lines = new List<string>();
-        for (var i = 0; i < totalRecords; i++)
-        {
-            lines.Add($"Plugin.esp|{i:X6}|Entry{i}");
-        }
-
+        var totalRecords = batchSize + 100;
+        var lines = Enumerable.Range(0, totalRecords).Select(i => $"Plugin.esp|{i:X6}|Entry{i}");
         await File.WriteAllLinesAsync(testFile, lines, TestContext.Current.CancellationToken);
 
-        // Act
-        await _processor.ProcessFormIdListFile(
-            testFile,
-            _connection,
-            GameRelease.SkyrimSE,
-            false,
-            TestContext.Current.CancellationToken);
+        await ProcessFileAsync(testFile, updateMode: false);
 
-        // Assert
-        var records = GetAllRecords();
-        Assert.Equal(totalRecords, records.Count);
+        Assert.Equal(totalRecords, GetAllRecords().Count);
     }
 
     [Fact]
     public async Task ProcessFormIdListFile_HandlesLargeFiles_Correctly()
     {
-        // Arrange
         var testFile = Path.Combine(_testFilesDir, "large_file_test.txt");
         const int totalRecords = 25000;
         const int pluginCount = 2;
@@ -466,17 +308,9 @@ public class FormIdTextProcessorTests : IDisposable
             }
         }
 
-        // Act
-        await _processor.ProcessFormIdListFile(
-            testFile,
-            _connection,
-            GameRelease.SkyrimSE,
-            false,
-            TestContext.Current.CancellationToken);
+        await ProcessFileAsync(testFile, updateMode: false);
 
-        // Assert
-        var records = GetAllRecords();
-        Assert.Equal(totalRecords, records.Count);
+        Assert.Equal(totalRecords, GetAllRecords().Count);
     }
 
     #endregion
@@ -486,95 +320,60 @@ public class FormIdTextProcessorTests : IDisposable
     [Fact]
     public async Task ProcessFormIdListFile_HandlesEmptyFile_Gracefully()
     {
-        // Arrange
         var testFile = Path.Combine(_testFilesDir, "empty.txt");
         await File.WriteAllTextAsync(testFile, string.Empty, TestContext.Current.CancellationToken);
 
-        // Act & Assert - Should not throw
-        await _processor.ProcessFormIdListFile(
-            testFile,
-            _connection,
-            GameRelease.SkyrimSE,
-            false,
-            TestContext.Current.CancellationToken);
+        await ProcessFileAsync(testFile, updateMode: false);
 
-        var records = GetAllRecords();
-        Assert.Empty(records);
+        Assert.Empty(GetAllRecords());
     }
 
     [Fact]
     public async Task ProcessFormIdListFile_HandlesInvalidFormat_WithoutCrashing()
     {
-        // Arrange
         var testFile = Path.Combine(_testFilesDir, "invalid_format.txt");
-        var content = new[]
-        {
-            "This is not a valid format", "Neither|is|this|one|with|too|many|pipes", "OrThis|WithTooFew",
-            null!, // Null line
-            "||||" // Empty fields
-        };
-        await File.WriteAllLinesAsync(testFile, content.Where(c => c != null), TestContext.Current.CancellationToken);
-
-        // Act & Assert - Should process without throwing
-        await _processor.ProcessFormIdListFile(
-            testFile,
-            _connection,
-            GameRelease.SkyrimSE,
-            false,
+        await File.WriteAllLinesAsync(testFile,
+            ["This is not a valid format", "Neither|is|this|one|with|too|many|pipes", "OrThis|WithTooFew", "||||"],
             TestContext.Current.CancellationToken);
 
-        var records = GetAllRecords();
-        Assert.Empty(records); // No valid records to process
+        await ProcessFileAsync(testFile, updateMode: false);
+
+        Assert.Empty(GetAllRecords());
     }
 
     [Fact]
     public async Task ProcessFormIdListFile_RespectsCancellationToken()
     {
-        // Arrange
-        // Increased record count to ensure cancellation has time to trigger
-        // (optimized code now processes 10k records in <50ms)
         var testFile = Path.Combine(_testFilesDir, "cancellation_test.txt");
-        var lines = new List<string>();
-        for (var i = 0; i < 100000; i++) // Increased from 10,000 to 100,000
-        {
-            lines.Add($"Plugin.esp|{i:X6}|Entry{i}");
-        }
-
+        var lines = Enumerable.Range(0, 100000).Select(i => $"Plugin.esp|{i:X6}|Entry{i}");
         await File.WriteAllLinesAsync(testFile, lines, TestContext.Current.CancellationToken);
 
-        var cts = new CancellationTokenSource();
-        var processTask = _processor.ProcessFormIdListFile(
-            testFile,
-            _connection,
-            GameRelease.SkyrimSE,
-            false,
-            cts.Token);
+        using var cts = new CancellationTokenSource();
+        var progress = new SynchronousProgress<(string Message, double? Value)>(report =>
+        {
+            if (report.Message.Contains("Processing:", StringComparison.Ordinal))
+            {
+                cts.Cancel();
+            }
+        });
 
-        // Act
-        cts.CancelAfter(50); // Cancel after 50ms
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            ProcessFileAsync(testFile, updateMode: false, cancellationToken: cts.Token, progress: progress));
 
-        // Assert - TaskCanceledException inherits from OperationCanceledException
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => processTask);
-
-        // Verify partial processing
-        var records = GetAllRecords();
-        Assert.True(records.Count < 100000); // Should not have processed all records
+        Assert.True(GetAllRecords().Count < 100000);
     }
 
     [Fact]
     public async Task ProcessFormIdListFile_HandlesFileNotFound_Gracefully()
     {
-        // Arrange
         var nonExistentFile = Path.Combine(_testFilesDir, "does_not_exist.txt");
 
-        // Act & Assert
-        await Assert.ThrowsAsync<FileNotFoundException>(() =>
-            _processor.ProcessFormIdListFile(
-                nonExistentFile,
-                _connection,
-                GameRelease.SkyrimSE,
-                false,
-                TestContext.Current.CancellationToken));
+        await using var store = await OpenStoreAsync(TestContext.Current.CancellationToken);
+        await Assert.ThrowsAsync<FileNotFoundException>(() => _processor.ProcessFormIdListFile(
+            nonExistentFile,
+            store,
+            updateMode: false,
+            TestContext.Current.CancellationToken));
     }
 
     #endregion
@@ -584,70 +383,55 @@ public class FormIdTextProcessorTests : IDisposable
     [Fact]
     public async Task ProcessFormIdListFile_HandlesSpecialCharacters_InFormIDs()
     {
-        // Arrange
         var testFile = Path.Combine(_testFilesDir, "special_chars.txt");
-        var content = new[]
-        {
-            "Plugin.esp|FF0001|Entry with spaces", "Plugin.esp|000002|Entry-with-dashes",
-            "Plugin.esp|000003|Entry_with_underscores", "Plugin.esp|000004|Entry.with.dots",
-            "Plugin.esp|000005|Entry'with'quotes", @"Plugin.esp|000006|Entry\with\backslashes",
-            "Plugin.esp|000007|Entry/with/forward/slashes", "Plugin.esp|000008|Entry(with)parentheses",
-            "Plugin.esp|000009|Entry[with]brackets", "Plugin.esp|00000A|Entry{with}braces"
-        };
-        await File.WriteAllLinesAsync(testFile, content, TestContext.Current.CancellationToken);
-
-        // Act
-        await _processor.ProcessFormIdListFile(
-            testFile,
-            _connection,
-            GameRelease.SkyrimSE,
-            false,
+        await File.WriteAllLinesAsync(testFile,
+            [
+                "Plugin.esp|FF0001|Entry with spaces",
+                "Plugin.esp|000002|Entry-with-dashes",
+                "Plugin.esp|000003|Entry_with_underscores",
+                "Plugin.esp|000004|Entry.with.dots",
+                "Plugin.esp|000005|Entry'with'quotes",
+                @"Plugin.esp|000006|Entry\with\backslashes",
+                "Plugin.esp|000007|Entry/with/forward/slashes",
+                "Plugin.esp|000008|Entry(with)parentheses",
+                "Plugin.esp|000009|Entry[with]brackets",
+                "Plugin.esp|00000A|Entry{with}braces"
+            ],
             TestContext.Current.CancellationToken);
 
-        // Assert
+        await ProcessFileAsync(testFile, updateMode: false);
+
         var records = GetAllRecords();
         Assert.Equal(10, records.Count);
-
-        // Verify special characters are preserved
-        Assert.Contains(records, r => r.entry == "Entry with spaces");
-        Assert.Contains(records, r => r.entry == "Entry-with-dashes");
-        Assert.Contains(records, r => r.entry == "Entry_with_underscores");
-        Assert.Contains(records, r => r.entry == "Entry'with'quotes");
+        Assert.Contains(records, record => record.entry == "Entry with spaces");
+        Assert.Contains(records, record => record.entry == "Entry-with-dashes");
+        Assert.Contains(records, record => record.entry == "Entry_with_underscores");
+        Assert.Contains(records, record => record.entry == "Entry'with'quotes");
     }
 
     [Fact]
     public async Task ProcessFormIdListFile_TracksProcessedPlugins_Correctly()
     {
-        // Arrange
         var testFile = Path.Combine(_testFilesDir, "plugin_tracking.txt");
-        var content = new[]
-        {
-            "Plugin1.esp|000001|Entry1", "Plugin1.esp|000002|Entry2", "Plugin2.esp|000003|Entry3",
-            "Plugin1.esp|000004|Entry4", // Same plugin again
-            "Plugin3.esp|000005|Entry5", "Plugin2.esp|000006|Entry6" // Same plugin again
-        };
-        await File.WriteAllLinesAsync(testFile, content, TestContext.Current.CancellationToken);
+        await File.WriteAllLinesAsync(testFile,
+            [
+                "Plugin1.esp|000001|Entry1",
+                "Plugin1.esp|000002|Entry2",
+                "Plugin2.esp|000003|Entry3",
+                "Plugin1.esp|000004|Entry4",
+                "Plugin3.esp|000005|Entry5",
+                "Plugin2.esp|000006|Entry6"
+            ],
+            TestContext.Current.CancellationToken);
 
         var progressReports = new List<(string Message, double? Value)>();
         var progress = new SynchronousProgress<(string Message, double? Value)>(progressReports.Add);
 
-        // Act
-        await _processor.ProcessFormIdListFile(
-            testFile,
-            _connection,
-            GameRelease.SkyrimSE,
-            false,
-            TestContext.Current.CancellationToken,
-            progress);
+        await ProcessFileAsync(testFile, updateMode: false, progress: progress);
 
-        // Give time for all progress reports to be captured
-        await Task.Delay(100, TestContext.Current.CancellationToken);
-
-        // Assert
-        Assert.NotEmpty(progressReports);
         Assert.Contains(progressReports,
-            r => r.Message.Contains("Completed processing 3 plugins") &&
-                 r.Message.Contains("total records")); // Should track 3 unique plugins
+            report => report.Message.Contains("Completed processing 3 plugins", StringComparison.Ordinal) &&
+                      report.Message.Contains("total records", StringComparison.Ordinal));
     }
 
     #endregion
@@ -657,117 +441,37 @@ public class FormIdTextProcessorTests : IDisposable
     [Fact]
     public async Task ProcessFormIdListFile_TreatsDifferentCasePluginNames_AsSamePlugin()
     {
-        // Arrange
         var testFile = Path.Combine(_testFilesDir, "case_insensitive.txt");
-        var content = new[]
-        {
-            "Plugin1.esp|000001|Entry1", "plugin1.esp|000002|Entry2", // Same plugin, different case
-            "PLUGIN1.ESP|000003|Entry3" // Same plugin, all caps
-        };
-        await File.WriteAllLinesAsync(testFile, content, TestContext.Current.CancellationToken);
+        await File.WriteAllLinesAsync(testFile,
+            ["Plugin1.esp|000001|Entry1", "plugin1.esp|000002|Entry2", "PLUGIN1.ESP|000003|Entry3"],
+            TestContext.Current.CancellationToken);
 
         var progressReports = new List<(string Message, double? Value)>();
         var progress = new SynchronousProgress<(string Message, double? Value)>(progressReports.Add);
 
-        // Act
-        await _processor.ProcessFormIdListFile(
-            testFile,
-            _connection,
-            GameRelease.SkyrimSE,
-            false,
-            TestContext.Current.CancellationToken,
-            progress);
+        await ProcessFileAsync(testFile, updateMode: false, progress: progress);
 
-        // Give time for all progress reports to be captured
-        await Task.Delay(100, TestContext.Current.CancellationToken);
-
-        // Assert - All 3 records should be inserted
-        var records = GetAllRecords();
-        Assert.Equal(3, records.Count);
-
-        // Should report only 1 unique plugin since names differ only by case
-        Assert.Contains(progressReports,
-            r => r.Message.Contains("Completed processing 1 plugins"));
+        Assert.Equal(3, GetAllRecords().Count);
+        Assert.Contains(progressReports, report => report.Message.Contains("Completed processing 1 plugins", StringComparison.Ordinal));
     }
 
     [Fact]
     public async Task ProcessFormIdListFile_CaseInsensitive_DoesNotDuplicateClearPluginEntries()
     {
-        // Arrange - Pre-populate database with entries under different casing
-        await InsertTestRecord("Plugin1.esp", "000001", "OldEntry1");
+        await InsertTestRecordAsync("Plugin1.esp", "000001", "OldEntry1");
 
         var testFile = Path.Combine(_testFilesDir, "case_clear.txt");
-        var content = new[]
-        {
-            "Plugin1.esp|000001|NewEntry1",
-            "PLUGIN1.ESP|000002|NewEntry2" // Same plugin, different case - should NOT trigger second clear
-        };
-        await File.WriteAllLinesAsync(testFile, content, TestContext.Current.CancellationToken);
-
-        // Act
-        await _processor.ProcessFormIdListFile(
-            testFile,
-            _connection,
-            GameRelease.SkyrimSE,
-            true, // Update mode
+        await File.WriteAllLinesAsync(testFile,
+            ["Plugin1.esp|000001|NewEntry1", "PLUGIN1.ESP|000002|NewEntry2"],
             TestContext.Current.CancellationToken);
 
-        // Assert - Should have 2 new entries (old one cleared once, both new ones inserted)
+        await ProcessFileAsync(testFile, updateMode: true);
+
         var records = GetAllRecords();
         Assert.Equal(2, records.Count);
-        Assert.Contains(records, r => r.entry == "NewEntry1");
-        Assert.Contains(records, r => r.entry == "NewEntry2");
-    }
-
-    [Fact]
-    public async Task ProcessFormIdListFile_UpdateMode_ClearsEachUniquePluginWithoutLoadingExistingPluginCache()
-    {
-        var databaseServiceMock = new Mock<DatabaseService>();
-        databaseServiceMock
-            .Setup(x => x.GetPluginsWithEntries(
-                It.IsAny<SqliteConnection>(),
-                It.IsAny<GameRelease>(),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new HashSet<string>(StringComparer.OrdinalIgnoreCase));
-        databaseServiceMock
-            .Setup(x => x.ClearPluginEntries(
-                It.IsAny<SqliteConnection>(),
-                It.IsAny<GameRelease>(),
-                It.IsAny<string>(),
-                It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-
-        var processor = new FormIdTextProcessor(databaseServiceMock.Object);
-
-        var testFile = Path.Combine(_testFilesDir, "update_mode_cache.txt");
-        var content = new[]
-        {
-            "Plugin1.esp|000001|Entry1", "PLUGIN1.ESP|000002|Entry2", "Plugin2.esp|000003|Entry3",
-            "Plugin1.esp|000004|Entry4"
-        };
-        await File.WriteAllLinesAsync(testFile, content, TestContext.Current.CancellationToken);
-
-        await processor.ProcessFormIdListFile(
-            testFile,
-            _connection,
-            GameRelease.SkyrimSE,
-            true,
-            TestContext.Current.CancellationToken);
-
-        databaseServiceMock.Verify(x => x.GetPluginsWithEntries(
-            _connection,
-            GameRelease.SkyrimSE,
-            It.IsAny<CancellationToken>()), Times.Never);
-        databaseServiceMock.Verify(x => x.ClearPluginEntries(
-            _connection,
-            GameRelease.SkyrimSE,
-            It.Is<string>(name => string.Equals(name, "Plugin1.esp", StringComparison.OrdinalIgnoreCase)),
-            It.IsAny<CancellationToken>()), Times.Once);
-        databaseServiceMock.Verify(x => x.ClearPluginEntries(
-            _connection,
-            GameRelease.SkyrimSE,
-            It.Is<string>(name => string.Equals(name, "Plugin2.esp", StringComparison.OrdinalIgnoreCase)),
-            It.IsAny<CancellationToken>()), Times.Once);
+        Assert.Contains(records, record => record.entry == "NewEntry1");
+        Assert.Contains(records, record => record.entry == "NewEntry2");
+        Assert.DoesNotContain(records, record => record.entry == "OldEntry1");
     }
 
     #endregion
@@ -782,52 +486,76 @@ public class FormIdTextProcessorTests : IDisposable
         }
     }
 
-    private void InitializeDatabase(SqliteConnection connection, GameRelease gameRelease)
+    private Task ProcessFileAsync(
+        string testFile,
+        bool updateMode,
+        IProgress<(string Message, double? Value)>? progress = null)
     {
-        using var command = connection.CreateCommand();
-        command.CommandText = $@"
-            CREATE TABLE IF NOT EXISTS {gameRelease} (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                plugin TEXT NOT NULL,
-                formid TEXT NOT NULL,
-                entry TEXT NOT NULL
-            )";
-        command.ExecuteNonQuery();
+        return ProcessFileAsync(testFile, updateMode, TestContext.Current.CancellationToken, progress);
+    }
 
-        // Create indices
-        command.CommandText =
-            $"CREATE INDEX IF NOT EXISTS idx_{gameRelease}_plugin ON {gameRelease}(plugin COLLATE nocase)";
-        command.ExecuteNonQuery();
-        command.CommandText = $"CREATE INDEX IF NOT EXISTS idx_{gameRelease}_formid ON {gameRelease}(formid)";
-        command.ExecuteNonQuery();
+    private async Task ProcessFileAsync(
+        string testFile,
+        bool updateMode,
+        CancellationToken cancellationToken,
+        IProgress<(string Message, double? Value)>? progress = null)
+    {
+        await using var store = await OpenStoreAsync(cancellationToken);
+        await _processor.ProcessFormIdListFile(testFile, store, updateMode, cancellationToken, progress);
+    }
+
+    private Task<FormIdRecordStore> OpenStoreAsync(CancellationToken cancellationToken)
+    {
+        return FormIdRecordStore.OpenAsync(_databaseService, _testDbPath, GameRelease.SkyrimSE, cancellationToken);
     }
 
     private List<(string plugin, string formid, string entry)> GetAllRecords()
     {
         var records = new List<(string plugin, string formid, string entry)>();
-        using var cmd = new SqliteCommand($"SELECT plugin, formid, entry FROM {GameRelease.SkyrimSE}", _connection);
-        using var reader = cmd.ExecuteReader();
+        using var connection = new SqliteConnection(DatabaseService.GetOptimizedConnectionString(_testDbPath));
+        connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = $"SELECT plugin, formid, entry FROM {GameRelease.SkyrimSE} ORDER BY id";
+        using var reader = command.ExecuteReader();
+
         while (reader.Read())
         {
-            records.Add((
-                reader.GetString(0),
-                reader.GetString(1),
-                reader.GetString(2)
-            ));
+            records.Add((reader.GetString(0), reader.GetString(1), reader.GetString(2)));
         }
 
         return records;
     }
 
-    private async Task InsertTestRecord(string plugin, string formId, string entry)
+    private async Task InsertTestRecordAsync(string plugin, string formId, string entry)
     {
-        await using var cmd = new SqliteCommand(
-            $"INSERT INTO {GameRelease.SkyrimSE} (plugin, formid, entry) VALUES (@plugin, @formid, @entry)",
-            _connection);
-        cmd.Parameters.AddWithValue("@plugin", plugin);
-        cmd.Parameters.AddWithValue("@formid", formId);
-        cmd.Parameters.AddWithValue("@entry", entry);
-        await cmd.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+        await _databaseService.InitializeDatabase(_testDbPath, GameRelease.SkyrimSE, TestContext.Current.CancellationToken);
+
+        await using var connection = new SqliteConnection(DatabaseService.GetOptimizedConnectionString(_testDbPath));
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = $"INSERT INTO {GameRelease.SkyrimSE} (plugin, formid, entry) VALUES (@plugin, @formid, @entry)";
+        command.Parameters.AddWithValue("@plugin", plugin);
+        command.Parameters.AddWithValue("@formid", formId);
+        command.Parameters.AddWithValue("@entry", entry);
+        await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+    }
+
+    private async Task CreateFailingInsertTriggerAsync(string failingEntry)
+    {
+        await _databaseService.InitializeDatabase(_testDbPath, GameRelease.SkyrimSE, TestContext.Current.CancellationToken);
+
+        await using var connection = new SqliteConnection(DatabaseService.GetOptimizedConnectionString(_testDbPath));
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = connection.CreateCommand();
+        var escapedEntry = failingEntry.Replace("'", "''", StringComparison.Ordinal);
+        command.CommandText = $@"
+            CREATE TRIGGER fail_bad_entry
+            BEFORE INSERT ON {GameRelease.SkyrimSE}
+            WHEN NEW.entry = '{escapedEntry}'
+            BEGIN
+                SELECT RAISE(FAIL, 'bad entry');
+            END;";
+        await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
     }
 
     #endregion

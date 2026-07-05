@@ -1,7 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 using FormID_Database_Manager.Models;
 using FormID_Database_Manager.ViewModels;
-using Microsoft.Data.Sqlite;
 
 namespace FormID_Database_Manager.Services;
 
@@ -37,8 +36,8 @@ public class PluginProcessingService : IDisposable
         _viewModel = viewModel;
         _dispatcher = dispatcher ?? new ImmediateThreadDispatcher();
         _loadOrderProvider = loadOrderProvider ?? new GameLoadOrderProvider();
-        _textProcessor = new FormIdTextProcessor(databaseService);
-        _modProcessor = new ModProcessor(databaseService, AddErrorMessage);
+        _textProcessor = new FormIdTextProcessor();
+        _modProcessor = new ModProcessor(AddErrorMessage);
     }
 
     /// <summary>
@@ -127,13 +126,12 @@ public class PluginProcessingService : IDisposable
             return;
         }
 
-        await _databaseService
-            .InitializeDatabase(parameters.DatabasePath, parameters.GameRelease, cancellationTokenSource.Token)
+        await using var recordStore = await FormIdRecordStore.OpenAsync(
+                _databaseService,
+                parameters.DatabasePath,
+                parameters.GameRelease,
+                cancellationTokenSource.Token)
             .ConfigureAwait(false);
-        await using var conn =
-            new SqliteConnection(DatabaseService.GetOptimizedConnectionString(parameters.DatabasePath));
-        await conn.OpenAsync(cancellationTokenSource.Token).ConfigureAwait(false);
-        await _databaseService.ConfigureConnection(conn, cancellationTokenSource.Token).ConfigureAwait(false);
 
         try
         {
@@ -142,16 +140,14 @@ public class PluginProcessingService : IDisposable
             {
                 await _textProcessor.ProcessFormIdListFile(
                     parameters.FormIdListPath,
-                    conn,
-                    parameters.GameRelease,
+                    recordStore,
                     parameters.UpdateMode,
                     cancellationTokenSource.Token,
                     progress).ConfigureAwait(false);
 
                 if (!cancellationTokenSource.Token.IsCancellationRequested)
                 {
-                    await _databaseService.OptimizeDatabase(conn, cancellationTokenSource.Token)
-                        .ConfigureAwait(false);
+                    await recordStore.OptimizeAsync(cancellationTokenSource.Token).ConfigureAwait(false);
                     progress?.Report(("Processing completed successfully!", 100));
                 }
 
@@ -192,7 +188,7 @@ public class PluginProcessingService : IDisposable
                 {
                     await _modProcessor.ProcessPlugin(
                         parameters.GameDirectory!,
-                        conn,
+                        recordStore,
                         parameters.GameRelease,
                         pluginItem,
                         loadOrderSnapshot,
@@ -211,8 +207,7 @@ public class PluginProcessingService : IDisposable
 
             if (!cancellationTokenSource.Token.IsCancellationRequested)
             {
-                await _databaseService.OptimizeDatabase(conn, cancellationTokenSource.Token)
-                    .ConfigureAwait(false);
+                await recordStore.OptimizeAsync(cancellationTokenSource.Token).ConfigureAwait(false);
                 if (failedPlugins > 0)
                 {
                     progress?.Report(

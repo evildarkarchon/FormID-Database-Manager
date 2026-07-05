@@ -1,7 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
 using FormID_Database_Manager.Models;
-using Microsoft.Data.Sqlite;
 using Mutagen.Bethesda;
 using Mutagen.Bethesda.Fallout4;
 using Mutagen.Bethesda.Oblivion;
@@ -17,17 +16,8 @@ namespace FormID_Database_Manager.Services;
 ///     Provides functionality to process mod plugin files, updating them in a database while handling errors and
 ///     supporting cancellation.
 /// </summary>
-public class ModProcessor(DatabaseService databaseService, Action<string> errorCallback)
+public class ModProcessor(Action<string> errorCallback)
 {
-    /// <summary>
-    ///     Number of records to batch before inserting to the database.
-    ///     1000 is optimized for mixed INSERT + processing workloads. Larger batches
-    ///     reduce transaction overhead but increase memory usage per batch.
-    ///     Compare with FormIdTextProcessor.BatchSize (10000) which handles pure text I/O
-    ///     without Mutagen processing overhead.
-    /// </summary>
-    private const int BatchSize = 1000;
-
     // HashSet for O(1) lookups of error patterns to ignore
     private static readonly HashSet<string> IgnorableErrorPatterns = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -49,25 +39,23 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
     ///     and provides error handling during processing.
     /// </summary>
     /// <param name="gameDir">The root directory of the game where the plugin resides.</param>
-    /// <param name="conn">The SQLite database connection used for processing.</param>
+    /// <param name="recordStore">The run-scoped FormID Record Store used for plugin writes.</param>
     /// <param name="gameRelease">The specific game release associated with the plugin.</param>
     /// <param name="pluginItem">The plugin to be processed, represented as a list item.</param>
     /// <param name="loadOrderDict">The load order listings used for membership and read parameter metadata.</param>
     /// <param name="updateMode">Indicates if the plugin entries should be updated in the database.</param>
     /// <param name="cancellationToken">The cancellation token to handle processing termination requests.</param>
-    /// <param name="existingPlugins">Ignored legacy cache parameter; update mode always clears the plugin before inserting.</param>
     /// <returns>A task that processes the plugin asynchronously and manages its database entries accordingly.</returns>
     [RequiresUnreferencedCode(
         "Uses reflection to discover INamedGetter interface and Name/String properties on Mutagen record types for name extraction.")]
     public async Task ProcessPlugin(
         string gameDir,
-        SqliteConnection conn,
+        FormIdRecordStore recordStore,
         GameRelease gameRelease,
         PluginListItem pluginItem,
         IReadOnlyDictionary<string, IModListingGetter<IModGetter>> loadOrderDict,
         bool updateMode,
-        CancellationToken cancellationToken,
-        IReadOnlySet<string>? existingPlugins = null)
+        CancellationToken cancellationToken)
     {
         var listedPluginNames = loadOrderDict.Keys.ToList();
         var masterStyles = loadOrderDict.Values
@@ -80,13 +68,12 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
 
         await ProcessPlugin(
             gameDir,
-            conn,
+            recordStore,
             gameRelease,
             pluginItem,
             snapshot,
             updateMode,
-            cancellationToken,
-            existingPlugins).ConfigureAwait(false);
+            cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -94,79 +81,63 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
     ///     and provides error handling during processing.
     /// </summary>
     /// <param name="gameDir">The root directory of the game where the plugin resides.</param>
-    /// <param name="conn">The SQLite database connection used for processing.</param>
+    /// <param name="recordStore">The run-scoped FormID Record Store used for plugin writes.</param>
     /// <param name="gameRelease">The specific game release associated with the plugin.</param>
     /// <param name="pluginItem">The plugin to be processed, represented as a list item.</param>
     /// <param name="loadOrderSnapshot">The run-scoped load order snapshot for membership and read parameters.</param>
     /// <param name="updateMode">Indicates if the plugin entries should be updated in the database.</param>
     /// <param name="cancellationToken">The cancellation token to handle processing termination requests.</param>
-    /// <param name="existingPlugins">Ignored legacy cache parameter; update mode always clears the plugin before inserting.</param>
     /// <returns>A task that processes the plugin asynchronously and manages its database entries accordingly.</returns>
     [RequiresUnreferencedCode(
         "Uses reflection to discover INamedGetter interface and Name/String properties on Mutagen record types for name extraction.")]
     public async Task ProcessPlugin(
         string gameDir,
-        SqliteConnection conn,
+        FormIdRecordStore recordStore,
         GameRelease gameRelease,
         PluginListItem pluginItem,
         GameLoadOrderSnapshot loadOrderSnapshot,
         bool updateMode,
-        CancellationToken cancellationToken,
-        IReadOnlySet<string>? existingPlugins = null)
+        CancellationToken cancellationToken)
     {
-        SqliteTransaction? transaction = null;
+        ArgumentNullException.ThrowIfNull(recordStore);
+
+        if (!loadOrderSnapshot.ContainsPlugin(pluginItem.Name))
+        {
+            errorCallback($"Warning: Could not find plugin in load order: {pluginItem.Name}");
+            return;
+        }
+
+        var dataPath = GameReleaseHelper.ResolveDataPath(gameDir);
+
+        var pluginPath = Path.Combine(dataPath, pluginItem.Name);
+
+        if (!File.Exists(pluginPath))
+        {
+            errorCallback($"Warning: Could not find plugin file: {pluginPath}");
+            return;
+        }
+
         try
         {
-            if (!loadOrderSnapshot.ContainsPlugin(pluginItem.Name))
-            {
-                errorCallback($"Warning: Could not find plugin in load order: {pluginItem.Name}");
-                return;
-            }
+            // Direct execution without Task.Run to avoid cross-thread transaction issues
+            // Note: Mutagen's CreateFromBinaryOverlay methods are synchronous and do not accept
+            // cancellation tokens. For large plugins (100MB+), this may cause several seconds
+            // of uninterruptible loading. Cancellation will be checked after loading completes.
+            cancellationToken.ThrowIfCancellationRequested();
 
-            var dataPath = GameReleaseHelper.ResolveDataPath(gameDir);
+            using var mod = CreateOverlay(pluginPath, gameRelease, loadOrderSnapshot.ReadParameters);
 
-            var pluginPath = Path.Combine(dataPath, pluginItem.Name);
-
-            if (!File.Exists(pluginPath))
-            {
-                errorCallback($"Warning: Could not find plugin file: {pluginPath}");
-                return;
-            }
-
-            transaction = conn.BeginTransaction();
-
-            if (updateMode)
-            {
-                await databaseService.ClearPluginEntries(conn, gameRelease, pluginItem.Name, cancellationToken)
-                    .ConfigureAwait(false);
-            }
-
-            try
-            {
-                // Direct execution without Task.Run to avoid cross-thread transaction issues
-                // Note: Mutagen's CreateFromBinaryOverlay methods are synchronous and do not accept
-                // cancellation tokens. For large plugins (100MB+), this may cause several seconds
-                // of uninterruptible loading. Cancellation will be checked after loading completes.
-                cancellationToken.ThrowIfCancellationRequested();
-
-                using var mod = CreateOverlay(pluginPath, gameRelease, loadOrderSnapshot.ReadParameters);
-
-                ProcessModRecords(conn, gameRelease, pluginItem.Name, mod, cancellationToken);
-                transaction.Commit();
-            }
-            catch (Exception ex)
-            {
-                errorCallback($"Error processing {pluginItem.Name}: {ex.Message}");
-                transaction.Rollback();
-                throw;
-            }
+            await recordStore.WritePluginRecordsAsync(
+                    pluginItem.Name,
+                    EnumerateModRecords(pluginItem.Name, mod, cancellationToken),
+                    updateMode,
+                    cancellationToken)
+                .ConfigureAwait(false);
         }
-        finally
+        catch (Exception ex)
         {
-            if (transaction is not null)
-            {
-                await transaction.DisposeAsync().ConfigureAwait(false);
-            }
+            errorCallback($"Error processing {pluginItem.Name}: {ex.Message}");
+            throw;
         }
     }
 
@@ -212,40 +183,23 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
     }
 
     /// <summary>
-    ///     Processes the records from the provided mod plugin, extracts relevant data,
-    ///     batches the results, and inserts them into the database while supporting cancellation and error handling.
+    ///     Enumerates records from the provided Plugin and extracts the FormID rows that should be stored.
     /// </summary>
-    /// <param name="conn">The active SQLite database connection used for data insertion.</param>
-    /// <param name="gameRelease">The game release version associated with the mod plugin.</param>
     /// <param name="pluginName">The name of the plugin being processed.</param>
     /// <param name="mod">The mod plugin containing the records to be processed.</param>
     /// <param name="cancellationToken">The cancellation token to handle termination of the processing operation.</param>
     [RequiresUnreferencedCode("Uses reflection-based name extraction for Mutagen records via GetRecordName.")]
-    private void ProcessModRecords(
-        SqliteConnection conn,
-        GameRelease gameRelease,
+    private IEnumerable<FormIdRecord> EnumerateModRecords(
         string pluginName,
         IModGetter mod,
         CancellationToken cancellationToken)
     {
-        var batch = new List<(string formId, string entry)>(BatchSize);
-
-        // Create a prepared command once and reuse for all batch inserts.
-        // Prepared statements avoid repeated SQL parsing and parameter allocation,
-        // which is faster than multi-value INSERT for SQLite (in-process, negligible round-trip cost).
-        var tableName = GameReleaseHelper.GetSafeTableName(gameRelease);
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"INSERT INTO {tableName} (plugin, formid, entry) VALUES (@plugin, @formid, @entry)";
-        cmd.Parameters.Add(new SqliteParameter { ParameterName = "@plugin" });
-        cmd.Parameters.Add(new SqliteParameter { ParameterName = "@formid" });
-        cmd.Parameters.Add(new SqliteParameter { ParameterName = "@entry" });
-        cmd.Prepare();
-
         var majorRecords = mod.EnumerateMajorRecords();
 
         foreach (var record in majorRecords)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            FormIdRecord? formIdRecord = null;
 
             try
             {
@@ -269,21 +223,7 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
                     entry = $"[{record.GetType().Name}_{formId}]";
                 }
 
-                batch.Add((formId, entry));
-
-                if (batch.Count >= BatchSize)
-                {
-                    try
-                    {
-                        FlushBatch(cmd, pluginName, batch);
-                        batch.Clear();
-                    }
-                    catch (Exception ex)
-                    {
-                        errorCallback($"Warning: Failed to insert batch in {pluginName}: {ex.Message}");
-                        batch.Clear();
-                    }
-                }
+                formIdRecord = new FormIdRecord(formId, entry);
             }
             catch (Exception ex)
             {
@@ -295,36 +235,11 @@ public class ModProcessor(DatabaseService databaseService, Action<string> errorC
                     errorCallback($"Warning: Error processing record in {pluginName}: {ex.Message}");
                 }
             }
-        }
 
-        if (batch.Count > 0)
-        {
-            try
+            if (formIdRecord is { } recordToStore)
             {
-                FlushBatch(cmd, pluginName, batch);
+                yield return recordToStore;
             }
-            catch (Exception ex)
-            {
-                errorCallback($"Warning: Failed to insert final batch in {pluginName}: {ex.Message}");
-            }
-        }
-    }
-
-    /// <summary>
-    ///     Flushes a batch of records using a pre-prepared command.
-    ///     Uses synchronous ExecuteNonQuery for minimal overhead (SQLite is in-process).
-    /// </summary>
-    private static void FlushBatch(
-        SqliteCommand cmd,
-        string pluginName,
-        List<(string formId, string entry)> batch)
-    {
-        foreach (var (formId, entry) in batch)
-        {
-            cmd.Parameters["@plugin"].Value = pluginName;
-            cmd.Parameters["@formid"].Value = formId;
-            cmd.Parameters["@entry"].Value = entry;
-            cmd.ExecuteNonQuery();
         }
     }
 

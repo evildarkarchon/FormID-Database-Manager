@@ -6,7 +6,6 @@ using System.Threading.Tasks;
 using FormID_Database_Manager.Services;
 using FormID_Database_Manager.TestUtilities;
 using Microsoft.Data.Sqlite;
-using Moq;
 using Mutagen.Bethesda;
 using Xunit;
 
@@ -259,8 +258,7 @@ public class RegressionTests : IDisposable
     public async Task FormIdTextProcessing_StaysWithinBaseline(int lineCount, string baselineKey)
     {
         // Arrange
-        var mockDatabaseService = new Mock<DatabaseService>();
-        var processor = new FormIdTextProcessor(mockDatabaseService.Object);
+        var processor = new FormIdTextProcessor();
         var formIdFile = Path.Combine(_testDirectory, "formids.txt");
         var dbPath = Path.Combine(_testDirectory, "test.db");
 
@@ -281,17 +279,17 @@ public class RegressionTests : IDisposable
 
         // Act
         var stopwatch = Stopwatch.StartNew();
-        // Open connection and process the file
-        await using (var connection = new SqliteConnection($"Data Source={dbPath}"))
+        await using (var recordStore = await FormIdRecordStore.OpenAsync(
+                         dbService,
+                         dbPath,
+                         GameRelease.SkyrimSE,
+                         TestContext.Current.CancellationToken))
         {
-            await connection.OpenAsync(TestContext.Current.CancellationToken);
             await processor.ProcessFormIdListFile(
                 formIdFile,
-                connection,
-                GameRelease.SkyrimSE,
+                recordStore,
                 false,
-                TestContext.Current.CancellationToken
-            );
+                TestContext.Current.CancellationToken);
         }
 
         stopwatch.Stop();

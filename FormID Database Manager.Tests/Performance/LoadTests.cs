@@ -115,16 +115,19 @@ public class LoadTests : IDisposable
 
         // Act
         var stopwatch = Stopwatch.StartNew();
-        await using var conn = new SqliteConnection($"Data Source={dbPath}");
-        await conn.OpenAsync();
+        await using var recordStore = await FormIdRecordStore.OpenAsync(
+            _databaseService,
+            dbPath,
+            GameRelease.SkyrimSE,
+            TestContext.Current.CancellationToken);
 
-        var modProcessor = new ModProcessor(_databaseService, msg => _output.WriteLine($"Error: {msg}"));
+        var modProcessor = new ModProcessor(msg => _output.WriteLine($"Error: {msg}"));
 
         Assert.True(File.Exists(Path.Combine(dataPath, pluginName)));
 
         await modProcessor.ProcessPlugin(
             _testDirectory,
-            conn,
+            recordStore,
             GameRelease.SkyrimSE,
             new PluginListItem { Name = pluginName },
             new Dictionary<string, IModListingGetter<IModGetter>>(StringComparer.OrdinalIgnoreCase)
@@ -140,6 +143,8 @@ public class LoadTests : IDisposable
         _output.WriteLine($"Processed {formIdCount} FormIDs in {stopwatch.Elapsed.TotalSeconds:F2} seconds");
         _output.WriteLine($"Processing rate: {formIdCount / stopwatch.Elapsed.TotalSeconds:F0} FormIDs/second");
 
+        await using var conn = new SqliteConnection($"Data Source={dbPath}");
+        await conn.OpenAsync(TestContext.Current.CancellationToken);
         await using var countCmd = new SqliteCommand($"SELECT COUNT(*) FROM {GameRelease.SkyrimSE}", conn);
         var actualCount = Convert.ToInt64(await countCmd.ExecuteScalarAsync());
 
