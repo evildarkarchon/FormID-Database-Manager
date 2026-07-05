@@ -38,9 +38,11 @@ public class WinUiPlatformServiceSourceTests
         Assert.Contains("FolderPicker", pickerSource, StringComparison.Ordinal);
         Assert.Contains("FileSavePicker", pickerSource, StringComparison.Ordinal);
         Assert.Contains("FileOpenPicker", pickerSource, StringComparison.Ordinal);
+        Assert.Contains("FileDialogResult", pickerSource, StringComparison.Ordinal);
         Assert.Contains("AppWindow.Id", pickerSource, StringComparison.Ordinal);
         Assert.Contains("\".db\"", pickerSource, StringComparison.Ordinal);
         Assert.Contains("\".txt\"", pickerSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("MainWindowViewModel", pickerSource, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -57,9 +59,10 @@ public class WinUiPlatformServiceSourceTests
         Assert.DoesNotContain("PickerPendingMessage", source, StringComparison.Ordinal);
         Assert.Contains("WinUiThreadDispatcher", source, StringComparison.Ordinal);
         Assert.Contains("WinUiFileDialogService", source, StringComparison.Ordinal);
+        Assert.Contains("UserWorkflow", source, StringComparison.Ordinal);
+        Assert.Contains("new UserWorkflow(", source, StringComparison.Ordinal);
         Assert.Contains("PluginListManager", source, StringComparison.Ordinal);
         Assert.Contains("PluginProcessingService", source, StringComparison.Ordinal);
-        Assert.Contains("CancelProcessing", source, StringComparison.Ordinal);
         Assert.Contains("DirectoryComboBox_SelectionChanged", source, StringComparison.Ordinal);
 
         var xaml = File.ReadAllText(mainWindowXamlPath);
@@ -80,25 +83,20 @@ public class WinUiPlatformServiceSourceTests
         var source = File.ReadAllText(mainWindowSourcePath);
         var xaml = File.ReadAllText(mainWindowXamlPath);
 
-        Assert.Contains("private readonly IFileDialogService _fileDialogService;", source, StringComparison.Ordinal);
         Assert.Contains("IFileDialogService? fileDialogService", source, StringComparison.Ordinal);
-        Assert.Contains("_fileDialogService = new WinUiFileDialogService(AppWindow, ViewModel);", source,
-            StringComparison.Ordinal);
-        Assert.Contains("_fileDialogService = fileDialogService ?? new WinUiFileDialogService(AppWindow, ViewModel);",
-            source, StringComparison.Ordinal);
+        Assert.Contains("new WinUiFileDialogService(AppWindow)", source, StringComparison.Ordinal);
+        Assert.Contains("fileDialogService ?? new WinUiFileDialogService(AppWindow)", source, StringComparison.Ordinal);
         Assert.True(
             source.IndexOf("InitializeWindow();", StringComparison.Ordinal) <
-            source.IndexOf("_fileDialogService = new WinUiFileDialogService(AppWindow, ViewModel);",
-                StringComparison.Ordinal),
-            "The production file-dialog service should be constructed after InitializeComponent creates the WinUI window.");
+            source.IndexOf("new UserWorkflow(", StringComparison.Ordinal),
+            "The production workflow should be constructed after InitializeComponent creates the WinUI window.");
 
-        Assert.Contains("await _fileDialogService.SelectGameDirectory()", source, StringComparison.Ordinal);
-        Assert.Contains("await _fileDialogService.SelectDatabaseFile()", source, StringComparison.Ordinal);
-        Assert.Contains("await _fileDialogService.SelectFormIdListFile()", source, StringComparison.Ordinal);
-        Assert.Contains("if (string.IsNullOrEmpty(path))", source, StringComparison.Ordinal);
-        Assert.Contains("SetGameDirectory(path);", source, StringComparison.Ordinal);
-        Assert.Contains("ViewModel.DatabasePath = path;", source, StringComparison.Ordinal);
-        Assert.Contains("ViewModel.FormIdListPath = path;", source, StringComparison.Ordinal);
+        Assert.Contains("await _userWorkflow.BrowseGameDirectoryAsync()", source, StringComparison.Ordinal);
+        Assert.Contains("await _userWorkflow.SelectDatabaseAsync()", source, StringComparison.Ordinal);
+        Assert.Contains("await _userWorkflow.SelectFormIdListAsync()", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("await _fileDialogService", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("ViewModel.DatabasePath = path;", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("ViewModel.FormIdListPath = path;", source, StringComparison.Ordinal);
 
         Assert.Contains("Click=\"BrowseDirectory_Click\"", xaml, StringComparison.Ordinal);
         Assert.Contains("Click=\"OnSelectDatabase_Click\"", xaml, StringComparison.Ordinal);
@@ -124,8 +122,8 @@ public class WinUiPlatformServiceSourceTests
         Assert.Contains("AutomationProperties.AutomationId=\"DatabasePathTextBox\"", xaml, StringComparison.Ordinal);
         Assert.Contains("AutomationProperties.AutomationId=\"FormIdListPathTextBox\"", xaml, StringComparison.Ordinal);
         Assert.Contains("AutomationProperties.AutomationId=\"PluginList\"", xaml, StringComparison.Ordinal);
-        Assert.Contains("x:Name=\"AdvancedModeCheckBox\"", xaml, StringComparison.Ordinal);
-        Assert.Contains("x:Name=\"UpdateModeCheckBox\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("AutomationProperties.AutomationId=\"AdvancedModeCheckBox\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("AutomationProperties.AutomationId=\"UpdateModeCheckBox\"", xaml, StringComparison.Ordinal);
         Assert.Contains("AutomationProperties.AutomationId=\"SelectAllButton\"", xaml, StringComparison.Ordinal);
         Assert.Contains("AutomationProperties.AutomationId=\"SelectNoneButton\"", xaml, StringComparison.Ordinal);
         Assert.Contains("AutomationProperties.AutomationId=\"ProcessFormIdsButton\"", xaml, StringComparison.Ordinal);
@@ -134,12 +132,12 @@ public class WinUiPlatformServiceSourceTests
         Assert.Contains("Click=\"SelectAll_Click\"", xaml, StringComparison.Ordinal);
         Assert.Contains("Click=\"SelectNone_Click\"", xaml, StringComparison.Ordinal);
         Assert.Contains("Click=\"ProcessFormIds_Click\"", xaml, StringComparison.Ordinal);
-        Assert.Contains("Checked=\"AdvancedMode_CheckedChanged\"", xaml, StringComparison.Ordinal);
-        Assert.Contains("Unchecked=\"AdvancedMode_CheckedChanged\"", xaml, StringComparison.Ordinal);
+        Assert.DoesNotContain("AdvancedMode_CheckedChanged", source + xaml, StringComparison.Ordinal);
 
-        Assert.Contains("_pluginListManager.SelectAll(ViewModel.Plugins);", source, StringComparison.Ordinal);
-        Assert.Contains("_pluginListManager.SelectNone(ViewModel.Plugins);", source, StringComparison.Ordinal);
-        Assert.Contains("await LoadPluginsForCurrentSelection();", source, StringComparison.Ordinal);
+        Assert.Contains("_userWorkflow.SelectAllPlugins();", source, StringComparison.Ordinal);
+        Assert.Contains("_userWorkflow.SelectNoPlugins();", source, StringComparison.Ordinal);
+        Assert.Contains("ViewModel.PropertyChanged += ViewModel_PropertyChanged;", source, StringComparison.Ordinal);
+        Assert.Contains("await _userWorkflow.RefreshPluginsForCurrentSelectionAsync();", source, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -157,24 +155,17 @@ public class WinUiPlatformServiceSourceTests
         Assert.DoesNotContain("AddInformationMessageOnce", source, StringComparison.Ordinal);
         Assert.DoesNotContain("Processing remains disabled", source, StringComparison.Ordinal);
         Assert.Contains("RequiresUnreferencedCode", source, StringComparison.Ordinal);
-        Assert.Contains("ProcessFormIdsAsync", source, StringComparison.Ordinal);
-        Assert.Contains("CancelProcessing", source, StringComparison.Ordinal);
-        Assert.Contains("\"Cancelling...\"", source, StringComparison.Ordinal);
-        Assert.Contains("\"Cancel Processing\"", source, StringComparison.Ordinal);
-        Assert.Contains("new ProcessingParameters", source, StringComparison.Ordinal);
-        Assert.Contains("GetSelectedPlugins", source, StringComparison.Ordinal);
-        Assert.Contains("DefaultDatabasePathProvider.CreateDefaultDatabasePath(gameRelease)", source,
+        Assert.Contains("await _userWorkflow.ProcessFormIdsAsync();", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("new ProcessingParameters", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("DefaultDatabasePathProvider.CreateDefaultDatabasePath", source,
             StringComparison.Ordinal);
-        Assert.Contains("ViewModel.DatabasePath = parameters.DatabasePath;", source, StringComparison.Ordinal);
         Assert.DoesNotContain("Directory.GetCurrentDirectory()", source, StringComparison.Ordinal);
-        Assert.Contains("ViewModel.UpdateProgress", source, StringComparison.Ordinal);
-        Assert.Contains("ProcessPlugins(parameters, progress)", source, StringComparison.Ordinal);
-        Assert.Contains("\"Error processing FormIDs:", source, StringComparison.Ordinal);
-        Assert.Contains("\"Process FormIDs\"", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("processButton.Content", source, StringComparison.Ordinal);
 
         var xaml = File.ReadAllText(mainWindowXamlPath);
         Assert.Contains("ItemsSource=\"{Binding AvailableGames}\"", xaml, StringComparison.Ordinal);
         Assert.Contains("Click=\"ProcessFormIds_Click\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("Content=\"{Binding ProcessButtonText, Mode=OneWay}\"", xaml, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -202,6 +193,8 @@ public class WinUiPlatformServiceSourceTests
         Assert.Contains("Text=\"{Binding FormIdListPath, Mode=TwoWay}\"", xaml, StringComparison.Ordinal);
         Assert.Contains("Text=\"{Binding PluginFilter, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}\"", xaml,
             StringComparison.Ordinal);
+        Assert.Contains("IsChecked=\"{Binding UpdateMode, Mode=TwoWay}\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("IsChecked=\"{Binding AdvancedMode, Mode=TwoWay}\"", xaml, StringComparison.Ordinal);
 
         Assert.Contains("ItemsSource=\"{Binding FilteredPlugins}\"", xaml, StringComparison.Ordinal);
         Assert.Contains("Content=\"{Binding Name}\"", xaml, StringComparison.Ordinal);
@@ -214,9 +207,7 @@ public class WinUiPlatformServiceSourceTests
 
         Assert.Contains("Text=\"{Binding ProgressStatus, Mode=OneWay}\"", xaml, StringComparison.Ordinal);
         Assert.Contains("Value=\"{Binding ProgressValue, Mode=OneWay}\"", xaml, StringComparison.Ordinal);
-        Assert.Contains("Content=\"Process FormIDs\"", xaml, StringComparison.Ordinal);
-        Assert.Contains("processButton.Content = \"Cancel Processing\";", source, StringComparison.Ordinal);
-        Assert.Contains("processButton.Content = \"Process FormIDs\";", source, StringComparison.Ordinal);
+        Assert.Contains("Content=\"{Binding ProcessButtonText, Mode=OneWay}\"", xaml, StringComparison.Ordinal);
     }
 
     /// <summary>

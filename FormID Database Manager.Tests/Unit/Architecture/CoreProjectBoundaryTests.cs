@@ -72,9 +72,16 @@ public class CoreProjectBoundaryTests
         var source = File.ReadAllText(contractPath);
 
         Assert.Contains("public interface IFileDialogService", source, StringComparison.Ordinal);
-        Assert.Contains("Task<string?> SelectGameDirectory()", source, StringComparison.Ordinal);
-        Assert.Contains("Task<string?> SelectDatabaseFile()", source, StringComparison.Ordinal);
-        Assert.Contains("Task<string?> SelectFormIdListFile()", source, StringComparison.Ordinal);
+        Assert.Contains("Task<FileDialogResult> SelectGameDirectory()", source, StringComparison.Ordinal);
+        Assert.Contains("Task<FileDialogResult> SelectDatabaseFile()", source, StringComparison.Ordinal);
+        Assert.Contains("Task<FileDialogResult> SelectFormIdListFile()", source, StringComparison.Ordinal);
+
+        var resultPath = Path.Combine(GetCoreProjectDirectory(), "Services", "FileDialogResult.cs");
+        var resultSource = File.ReadAllText(resultPath);
+        Assert.Contains("public enum FileDialogResultKind", resultSource, StringComparison.Ordinal);
+        Assert.Contains("Success", resultSource, StringComparison.Ordinal);
+        Assert.Contains("Cancelled", resultSource, StringComparison.Ordinal);
+        Assert.Contains("Failure", resultSource, StringComparison.Ordinal);
     }
 
     private static string GetCoreProjectDirectory()

@@ -15,6 +15,8 @@ public partial class MainWindowViewModel : ObservableObject, IDisposable
     private readonly object _pluginsLock = new();
     private CancellationTokenSource? _debounceCts;
 
+    [ObservableProperty] private bool _advancedMode;
+
     [ObservableProperty] private string _databasePath = string.Empty;
 
     [ObservableProperty] private ObservableCollection<string> _detectedDirectories = [];
@@ -44,12 +46,16 @@ public partial class MainWindowViewModel : ObservableObject, IDisposable
 
     private ObservableCollection<PluginListItem> _plugins;
 
+    [ObservableProperty] private string _processButtonText = "Process FormIDs";
+
     [ObservableProperty] private string _progressStatus = string.Empty;
 
     [ObservableProperty] [NotifyPropertyChangedFor(nameof(IsGameSelected))]
     private GameRelease? _selectedGame;
 
     [ObservableProperty] private double _progressValue;
+
+    [ObservableProperty] private bool _updateMode;
 
     public MainWindowViewModel(IThreadDispatcher? dispatcher = null) : this(dispatcher, 0)
     {

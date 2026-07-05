@@ -41,7 +41,7 @@ public class PluginProcessingService : IDisposable
     /// <summary>
     ///     Disposes of the resources used by the PluginProcessingService.
     /// </summary>
-    public void Dispose()
+    public virtual void Dispose()
     {
         lock (_cancellationLock)
         {
@@ -84,7 +84,7 @@ public class PluginProcessingService : IDisposable
     /// </returns>
     [RequiresUnreferencedCode(
         "Uses reflection-based name extraction for Mutagen records via ModProcessor.ProcessPlugin.")]
-    public async Task ProcessPlugins(
+    public virtual async Task ProcessPlugins(
         ProcessingParameters parameters,
         IProgress<(string Message, double? Value)>? progress = null)
     {
@@ -267,7 +267,7 @@ public class PluginProcessingService : IDisposable
     ///     plugin processing task, allowing the operation to terminate gracefully. If no
     ///     processing task is active, the method has no effect.
     /// </remarks>
-    public void CancelProcessing()
+    public virtual void CancelProcessing()
     {
         lock (_cancellationLock)
         {

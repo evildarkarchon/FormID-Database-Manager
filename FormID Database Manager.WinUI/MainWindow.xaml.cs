@@ -1,5 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
-using FormID_Database_Manager.Models;
+using System.ComponentModel;
 using FormID_Database_Manager.Services;
 using FormID_Database_Manager.ViewModels;
 using FormID_Database_Manager.WinUI.Services;
@@ -8,15 +8,8 @@ namespace FormID_Database_Manager.WinUI;
 
 public sealed partial class MainWindow : Window, IDisposable
 {
-    private readonly IFileDialogService _fileDialogService;
-    private readonly GameDetectionService _gameDetectionService;
-    private readonly IGameLocationService _gameLocationService;
-    private readonly PluginListManager _pluginListManager;
-    private readonly PluginProcessingService _pluginProcessingService;
-    private int _gameSelectionVersion;
+    private readonly UserWorkflow _userWorkflow;
     private bool _disposed;
-    private bool _suppressDirectorySelectionChanged;
-    private bool _suppressGameSelectionChanged;
 
     /// <summary>
     /// Initializes the WinUI main window with production platform services.
@@ -25,13 +18,19 @@ public sealed partial class MainWindow : Window, IDisposable
     {
         var dispatcher = new WinUiThreadDispatcher(DispatcherQueue);
         ViewModel = new MainWindowViewModel(dispatcher);
-        _gameDetectionService = new GameDetectionService();
-        _gameLocationService = new GameLocationService();
-        _pluginListManager = new PluginListManager(_gameDetectionService, ViewModel, dispatcher);
-        _pluginProcessingService = new PluginProcessingService(new DatabaseService(), ViewModel, dispatcher);
+        var gameDetectionService = new GameDetectionService();
+        var gameLocationService = new GameLocationService();
+        var pluginListManager = new PluginListManager(gameDetectionService, ViewModel, dispatcher);
+        var pluginProcessingService = new PluginProcessingService(new DatabaseService(), ViewModel, dispatcher);
 
         InitializeWindow();
-        _fileDialogService = new WinUiFileDialogService(AppWindow, ViewModel);
+        _userWorkflow = new UserWorkflow(
+            ViewModel,
+            new WinUiFileDialogService(AppWindow),
+            gameDetectionService,
+            gameLocationService,
+            pluginListManager,
+            pluginProcessingService);
     }
 
     /// <summary>
@@ -53,16 +52,23 @@ public sealed partial class MainWindow : Window, IDisposable
     {
         ViewModel = viewModel ?? throw new ArgumentNullException(nameof(viewModel));
         var dispatcher = new WinUiThreadDispatcher(DispatcherQueue);
-        _gameDetectionService = gameDetectionService ?? new GameDetectionService();
-        _gameLocationService = gameLocationService ?? new GameLocationService();
-        _pluginListManager = pluginListManager ?? new PluginListManager(_gameDetectionService, ViewModel, dispatcher);
-        _pluginProcessingService = pluginProcessingService ?? new PluginProcessingService(
+        var effectiveGameDetectionService = gameDetectionService ?? new GameDetectionService();
+        var effectiveGameLocationService = gameLocationService ?? new GameLocationService();
+        var effectivePluginListManager = pluginListManager ??
+                                         new PluginListManager(effectiveGameDetectionService, ViewModel, dispatcher);
+        var effectivePluginProcessingService = pluginProcessingService ?? new PluginProcessingService(
             new DatabaseService(),
             ViewModel,
             dispatcher);
 
         InitializeWindow();
-        _fileDialogService = fileDialogService ?? new WinUiFileDialogService(AppWindow, ViewModel);
+        _userWorkflow = new UserWorkflow(
+            ViewModel,
+            fileDialogService ?? new WinUiFileDialogService(AppWindow),
+            effectiveGameDetectionService,
+            effectiveGameLocationService,
+            effectivePluginListManager,
+            effectivePluginProcessingService);
     }
 
     /// <summary>
@@ -72,6 +78,7 @@ public sealed partial class MainWindow : Window, IDisposable
     {
         InitializeComponent();
         Root.DataContext = ViewModel;
+        ViewModel.PropertyChanged += ViewModel_PropertyChanged;
         Closed += MainWindow_Closed;
     }
 
@@ -89,8 +96,8 @@ public sealed partial class MainWindow : Window, IDisposable
 
         _disposed = true;
         Closed -= MainWindow_Closed;
-        _pluginProcessingService.CancelProcessing();
-        _pluginProcessingService.Dispose();
+        ViewModel.PropertyChanged -= ViewModel_PropertyChanged;
+        _userWorkflow.Dispose();
         ViewModel.Dispose();
     }
 
@@ -99,19 +106,19 @@ public sealed partial class MainWindow : Window, IDisposable
         Dispose();
     }
 
-    /// <summary>
-    /// Handles game selection changes by loading installed directories and refreshing plugins.
-    /// </summary>
-    private async void GameComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    private void ViewModel_PropertyChanged(object? sender, PropertyChangedEventArgs args)
     {
-        if (_suppressGameSelectionChanged)
+        if (args.PropertyName == nameof(MainWindowViewModel.AdvancedMode))
         {
-            return;
+            _ = RefreshPluginsForAdvancedModeAsync();
         }
+    }
 
+    private async Task RefreshPluginsForAdvancedModeAsync()
+    {
         try
         {
-            await OnGameSelectedAsync();
+            await _userWorkflow.RefreshPluginsForCurrentSelectionAsync();
         }
         catch (Exception ex)
         {
@@ -120,37 +127,17 @@ public sealed partial class MainWindow : Window, IDisposable
     }
 
     /// <summary>
-    /// Loads installed directories for the selected game while ignoring stale lookup results.
+    /// Handles game selection changes by loading installed directories and refreshing plugins.
     /// </summary>
-    /// <returns>A task that completes after directory detection and plugin loading finish.</returns>
-    private async Task OnGameSelectedAsync()
+    private async void GameComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (ViewModel.SelectedGame is not { } selectedGame)
+        try
         {
-            return;
+            await _userWorkflow.SelectGameAsync();
         }
-
-        var gameSelectionVersion = Interlocked.Increment(ref _gameSelectionVersion);
-
-        ResetGameSelectionState();
-
-        // Mutagen game-location lookup touches registry and file system state, so keep it off the UI thread.
-        var folders = await Task.Run(() => _gameLocationService.GetGameFolders(selectedGame));
-
-        if (!IsLatestGameSelection(gameSelectionVersion))
+        catch (Exception ex)
         {
-            return;
-        }
-
-        if (folders.Count == 0)
-        {
-            ViewModel.AddInformationMessage(
-                $"No installed locations found for {selectedGame}. Use Browse to select a directory.");
-        }
-        else
-        {
-            ApplyDetectedFolders(folders);
-            await LoadPluginsForCurrentSelection();
+            ViewModel.AddErrorMessage($"Unexpected error: {ex.Message}");
         }
     }
 
@@ -159,14 +146,9 @@ public sealed partial class MainWindow : Window, IDisposable
     /// </summary>
     private async void DirectoryComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (_suppressDirectorySelectionChanged)
-        {
-            return;
-        }
-
         try
         {
-            await LoadPluginsForCurrentSelection();
+            await _userWorkflow.SelectDetectedDirectoryAsync();
         }
         catch (Exception ex)
         {
@@ -181,143 +163,11 @@ public sealed partial class MainWindow : Window, IDisposable
     {
         try
         {
-            await BrowseDirectoryAsync();
+            await _userWorkflow.BrowseGameDirectoryAsync();
         }
         catch (Exception ex)
         {
             ViewModel.AddErrorMessage($"Unexpected error: {ex.Message}");
-        }
-    }
-
-    /// <summary>
-    /// Selects a game directory, auto-detects the game when needed, and refreshes plugins.
-    /// </summary>
-    /// <returns>A task that completes after picker handling and plugin refresh finish.</returns>
-    private async Task BrowseDirectoryAsync()
-    {
-        var path = await _fileDialogService.SelectGameDirectory();
-        if (string.IsNullOrEmpty(path))
-        {
-            return;
-        }
-
-        Interlocked.Increment(ref _gameSelectionVersion);
-        SetGameDirectory(path);
-
-        if (ViewModel.SelectedGame is null)
-        {
-            var detectedGame = _gameDetectionService.DetectGame(path);
-            if (detectedGame.HasValue)
-            {
-                // Suppress SelectionChanged so a browsed directory does not trigger a second installed-location scan.
-                _suppressGameSelectionChanged = true;
-                try
-                {
-                    ViewModel.SelectedGame = detectedGame.Value;
-                }
-                finally
-                {
-                    _suppressGameSelectionChanged = false;
-                }
-            }
-            else
-            {
-                ViewModel.AddErrorMessage(
-                    "Could not detect game from directory. Please select a game from the dropdown.");
-                return;
-            }
-        }
-
-        await LoadPluginsForCurrentSelection();
-    }
-
-    /// <summary>
-    /// Refreshes the plugin list when both a game and directory are available.
-    /// </summary>
-    /// <returns>A task that completes when the plugin refresh is finished or skipped.</returns>
-    private async Task LoadPluginsForCurrentSelection()
-    {
-        if (ViewModel.SelectedGame is not { } game || string.IsNullOrEmpty(ViewModel.GameDirectory))
-        {
-            return;
-        }
-
-        await _pluginListManager.RefreshPluginList(
-            ViewModel.GameDirectory,
-            game,
-            ViewModel.Plugins,
-            AdvancedModeCheckBox.IsChecked ?? false);
-    }
-
-    /// <summary>
-    /// Determines whether an asynchronous game-directory lookup still matches the latest selection.
-    /// </summary>
-    /// <param name="gameSelectionVersion">The version captured when the lookup started.</param>
-    /// <returns><see langword="true"/> when the lookup should still update UI state.</returns>
-    private bool IsLatestGameSelection(int gameSelectionVersion)
-    {
-        return gameSelectionVersion == Volatile.Read(ref _gameSelectionVersion);
-    }
-
-    /// <summary>
-    /// Clears directory and plugin state before applying a new game selection.
-    /// </summary>
-    private void ResetGameSelectionState()
-    {
-        RunWithDirectorySelectionSuppressed(() =>
-        {
-            ViewModel.GameDirectory = string.Empty;
-            ViewModel.DetectedDirectories.Clear();
-        });
-
-        ViewModel.Plugins.Clear();
-    }
-
-    /// <summary>
-    /// Applies installed game folders while suppressing duplicate selection-change reloads.
-    /// </summary>
-    /// <param name="folders">The installed folders found for the selected game.</param>
-    private void ApplyDetectedFolders(IReadOnlyList<string> folders)
-    {
-        RunWithDirectorySelectionSuppressed(() =>
-        {
-            ViewModel.DetectedDirectories.Clear();
-
-            if (folders.Count > 1)
-            {
-                foreach (var folder in folders)
-                {
-                    ViewModel.DetectedDirectories.Add(folder);
-                }
-            }
-
-            ViewModel.GameDirectory = folders[0];
-        });
-    }
-
-    /// <summary>
-    /// Updates the selected game directory without triggering an immediate duplicate reload.
-    /// </summary>
-    /// <param name="path">The selected game directory path.</param>
-    private void SetGameDirectory(string path)
-    {
-        RunWithDirectorySelectionSuppressed(() => ViewModel.GameDirectory = path);
-    }
-
-    /// <summary>
-    /// Temporarily suppresses directory selection handling while the ViewModel is updated programmatically.
-    /// </summary>
-    /// <param name="action">The directory-state update to run.</param>
-    private void RunWithDirectorySelectionSuppressed(Action action)
-    {
-        _suppressDirectorySelectionChanged = true;
-        try
-        {
-            action();
-        }
-        finally
-        {
-            _suppressDirectorySelectionChanged = false;
         }
     }
 
@@ -328,27 +178,12 @@ public sealed partial class MainWindow : Window, IDisposable
     {
         try
         {
-            await SelectDatabaseAsync();
+            await _userWorkflow.SelectDatabaseAsync();
         }
         catch (Exception ex)
         {
             ViewModel.AddErrorMessage($"Unexpected error: {ex.Message}");
         }
-    }
-
-    /// <summary>
-    /// Selects a database path without overwriting state when the picker is canceled.
-    /// </summary>
-    /// <returns>A task that completes after picker handling finishes.</returns>
-    private async Task SelectDatabaseAsync()
-    {
-        var path = await _fileDialogService.SelectDatabaseFile();
-        if (string.IsNullOrEmpty(path))
-        {
-            return;
-        }
-
-        ViewModel.DatabasePath = path;
     }
 
     /// <summary>
@@ -358,27 +193,12 @@ public sealed partial class MainWindow : Window, IDisposable
     {
         try
         {
-            await SelectFormIdListAsync();
+            await _userWorkflow.SelectFormIdListAsync();
         }
         catch (Exception ex)
         {
             ViewModel.AddErrorMessage($"Unexpected error: {ex.Message}");
         }
-    }
-
-    /// <summary>
-    /// Selects an optional FormID text file without overwriting state when the picker is canceled.
-    /// </summary>
-    /// <returns>A task that completes after picker handling finishes.</returns>
-    private async Task SelectFormIdListAsync()
-    {
-        var path = await _fileDialogService.SelectFormIdListFile();
-        if (string.IsNullOrEmpty(path))
-        {
-            return;
-        }
-
-        ViewModel.FormIdListPath = path;
     }
 
     /// <summary>
@@ -386,7 +206,7 @@ public sealed partial class MainWindow : Window, IDisposable
     /// </summary>
     private void SelectAll_Click(object sender, RoutedEventArgs e)
     {
-        _pluginListManager.SelectAll(ViewModel.Plugins);
+        _userWorkflow.SelectAllPlugins();
     }
 
     /// <summary>
@@ -394,22 +214,7 @@ public sealed partial class MainWindow : Window, IDisposable
     /// </summary>
     private void SelectNone_Click(object sender, RoutedEventArgs e)
     {
-        _pluginListManager.SelectNone(ViewModel.Plugins);
-    }
-
-    /// <summary>
-    /// Reloads plugins when advanced-mode visibility changes.
-    /// </summary>
-    private async void AdvancedMode_CheckedChanged(object sender, RoutedEventArgs e)
-    {
-        try
-        {
-            await LoadPluginsForCurrentSelection();
-        }
-        catch (Exception ex)
-        {
-            ViewModel.AddErrorMessage($"Unexpected error: {ex.Message}");
-        }
+        _userWorkflow.SelectNoPlugins();
     }
 
     /// <summary>
@@ -420,100 +225,11 @@ public sealed partial class MainWindow : Window, IDisposable
     {
         try
         {
-            await ProcessFormIdsAsync(sender as Button);
+            await _userWorkflow.ProcessFormIdsAsync();
         }
         catch (Exception ex)
         {
             ViewModel.AddErrorMessage($"Unexpected error: {ex.Message}");
-        }
-    }
-
-    /// <summary>
-    /// Validates WinUI processing state, runs the shared processing service, and restores UI state afterward.
-    /// </summary>
-    /// <param name="processButton">The process button whose content should reflect start/cancel state.</param>
-    /// <returns>A task that completes after processing starts, finishes, fails, or observes cancellation.</returns>
-    [RequiresUnreferencedCode("Uses reflection-based name extraction for Mutagen records.")]
-    private async Task ProcessFormIdsAsync(Button? processButton)
-    {
-        if (ViewModel.IsProcessing)
-        {
-            ViewModel.ProgressStatus = "Cancelling...";
-            _pluginProcessingService.CancelProcessing();
-            return;
-        }
-
-        if (processButton != null)
-        {
-            processButton.Content = "Cancel Processing";
-        }
-
-        ViewModel.IsProcessing = true;
-        ViewModel.ProgressValue = 0;
-        ViewModel.ProgressStatus = "Initializing...";
-        ViewModel.ErrorMessages.Clear();
-
-        try
-        {
-            if (ViewModel.SelectedGame is not { } gameRelease)
-            {
-                ViewModel.AddErrorMessage("Please select a game from the dropdown first.");
-                return;
-            }
-
-            var parameters = new ProcessingParameters
-            {
-                GameDirectory = ViewModel.GameDirectory,
-                DatabasePath = ViewModel.DatabasePath,
-                GameRelease = gameRelease,
-                SelectedPlugins = ViewModel.GetSelectedPlugins(),
-                UpdateMode = UpdateModeCheckBox.IsChecked ?? false,
-                FormIdListPath = ViewModel.FormIdListPath
-            };
-
-            var usingTextFile = !string.IsNullOrEmpty(parameters.FormIdListPath);
-
-            if (!usingTextFile && string.IsNullOrEmpty(parameters.GameDirectory))
-            {
-                ViewModel.AddErrorMessage("Game directory must be specified when processing plugins");
-                return;
-            }
-
-            if (!usingTextFile && !parameters.SelectedPlugins.Any())
-            {
-                ViewModel.AddErrorMessage("No plugins selected");
-                return;
-            }
-
-            if (string.IsNullOrEmpty(parameters.DatabasePath))
-            {
-                parameters.DatabasePath = DefaultDatabasePathProvider.CreateDefaultDatabasePath(gameRelease);
-                ViewModel.DatabasePath = parameters.DatabasePath;
-            }
-
-            var progress = new Progress<(string Message, double? Value)>(update =>
-            {
-                ViewModel.UpdateProgress(update.Message, update.Value);
-            });
-
-            await _pluginProcessingService.ProcessPlugins(parameters, progress);
-        }
-        catch (OperationCanceledException)
-        {
-            ViewModel.ProgressStatus = "Processing cancelled by user.";
-        }
-        catch (Exception ex)
-        {
-            ViewModel.AddErrorMessage($"Error processing FormIDs: {ex.Message}");
-        }
-        finally
-        {
-            ViewModel.IsProcessing = false;
-            ViewModel.ProgressStatus = string.Empty;
-            if (processButton != null)
-            {
-                processButton.Content = "Process FormIDs";
-            }
         }
     }
 }

@@ -29,7 +29,7 @@ public class PluginListManager(
     /// <param name="plugins">The observable collection that will hold the list of plugins to be displayed.</param>
     /// <param name="showAdvanced">A flag indicating whether advanced mode is enabled for filtering plugins.</param>
     /// <returns>A task that represents the asynchronous operation of refreshing the plugin list.</returns>
-    public async Task RefreshPluginList(
+    public virtual async Task RefreshPluginList(
         string gameDirectory,
         GameRelease gameRelease,
         ObservableCollection<PluginListItem> plugins,
@@ -224,7 +224,7 @@ public class PluginListManager(
     ///     Marks all plugins in the provided collection as selected by setting their IsSelected property to true.
     /// </summary>
     /// <param name="plugins">The collection of plugins to be updated with selection state.</param>
-    public void SelectAll(ObservableCollection<PluginListItem> plugins)
+    public virtual void SelectAll(ObservableCollection<PluginListItem> plugins)
     {
         foreach (var plugin in plugins)
         {
@@ -237,7 +237,7 @@ public class PluginListManager(
     ///     This method ensures no plugins remain selected in the provided collection.
     /// </summary>
     /// <param name="plugins">The collection of plugins to modify, where each plugin's selection state will be cleared.</param>
-    public void SelectNone(ObservableCollection<PluginListItem> plugins)
+    public virtual void SelectNone(ObservableCollection<PluginListItem> plugins)
     {
         foreach (var plugin in plugins)
         {

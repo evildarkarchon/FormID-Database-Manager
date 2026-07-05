@@ -247,6 +247,51 @@ public class MainWindowViewModelTests
     }
 
     [Fact]
+    public void AdvancedMode_RaisesPropertyChanged_WhenSet()
+    {
+        // Arrange
+        var propertyName = string.Empty;
+        _viewModel.PropertyChanged += (_, args) => propertyName = args.PropertyName;
+
+        // Act
+        _viewModel.AdvancedMode = true;
+
+        // Assert
+        Assert.Equal(nameof(MainWindowViewModel.AdvancedMode), propertyName);
+        Assert.True(_viewModel.AdvancedMode);
+    }
+
+    [Fact]
+    public void UpdateMode_RaisesPropertyChanged_WhenSet()
+    {
+        // Arrange
+        var propertyName = string.Empty;
+        _viewModel.PropertyChanged += (_, args) => propertyName = args.PropertyName;
+
+        // Act
+        _viewModel.UpdateMode = true;
+
+        // Assert
+        Assert.Equal(nameof(MainWindowViewModel.UpdateMode), propertyName);
+        Assert.True(_viewModel.UpdateMode);
+    }
+
+    [Fact]
+    public void ProcessButtonText_RaisesPropertyChanged_WhenSet()
+    {
+        // Arrange
+        var propertyName = string.Empty;
+        _viewModel.PropertyChanged += (_, args) => propertyName = args.PropertyName;
+
+        // Act
+        _viewModel.ProcessButtonText = "Cancel Processing";
+
+        // Assert
+        Assert.Equal(nameof(MainWindowViewModel.ProcessButtonText), propertyName);
+        Assert.Equal("Cancel Processing", _viewModel.ProcessButtonText);
+    }
+
+    [Fact]
     public void Properties_DoNotRaisePropertyChanged_WhenSetToSameValue()
     {
         // Arrange

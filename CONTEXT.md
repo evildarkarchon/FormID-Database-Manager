@@ -11,6 +11,14 @@ A hexadecimal identifier for a record inside a Bethesda game plugin. A FormID is
 A Bethesda game data file selected for processing, such as an `.esm`, `.esp`, or `.esl` file.
 _Avoid_: Mod, except when referring to Mutagen type names.
 
+**Plugin List**:
+The loaded set of Plugins available for a selected GameRelease and game directory, including the user's current Plugin selection.
+_Avoid_: Mod list, file list.
+
+**Advanced Mode**:
+A Plugin List display mode that includes base game Plugins that are normally hidden from Plugin selection.
+_Avoid_: Show all, expert mode.
+
 **GameRelease**:
 The target Bethesda game or edition that determines plugin layout, base plugins, and database table selection.
 _Avoid_: Game type, release enum.
@@ -30,3 +38,7 @@ _Avoid_: Database writer, write path.
 **Update Mode**:
 An ingestion mode that replaces existing FormID records for each Plugin encountered in the current run before storing the new records for that Plugin. Plugin matching is case-insensitive, while stored Plugin values preserve their source casing.
 _Avoid_: Full database refresh, exact-case replacement.
+
+**User Workflow**:
+The end-to-end user interaction that turns a selected GameRelease, a game directory or FormID text file, Plugin selections, database path, and Update Mode into one FormID processing run.
+_Avoid_: UI event flow, MainWindow logic.

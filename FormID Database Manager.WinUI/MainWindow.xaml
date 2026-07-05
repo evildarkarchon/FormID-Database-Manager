@@ -240,17 +240,17 @@
                 Orientation="Horizontal"
                 Spacing="16">
                 <CheckBox
-                    x:Name="UpdateModeCheckBox"
+                    AutomationProperties.AutomationId="UpdateModeCheckBox"
                     AutomationProperties.HelpText="Replace existing database entries for matching FormIDs."
                     Content="Update Mode (replaces existing entries)"
+                    IsChecked="{Binding UpdateMode, Mode=TwoWay}"
                     TabIndex="12" />
                 <CheckBox
-                    x:Name="AdvancedModeCheckBox"
+                    AutomationProperties.AutomationId="AdvancedModeCheckBox"
                     AutomationProperties.HelpText="Include base game and DLC plugins in the plugin list."
-                    Checked="AdvancedMode_CheckedChanged"
                     Content="Show Base Game/DLC Files"
-                    TabIndex="13"
-                    Unchecked="AdvancedMode_CheckedChanged" />
+                    IsChecked="{Binding AdvancedMode, Mode=TwoWay}"
+                    TabIndex="13" />
             </StackPanel>
 
             <Grid
@@ -282,7 +282,7 @@
                     Grid.Column="1"
                     AccessKey="P"
                     Click="ProcessFormIds_Click"
-                    Content="Process FormIDs"
+                    Content="{Binding ProcessButtonText, Mode=OneWay}"
                     Style="{StaticResource PrimaryWorkflowButtonStyle}"
                     TabIndex="14" />
             </Grid>
