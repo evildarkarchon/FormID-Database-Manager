@@ -172,117 +172,6 @@ public class DatabaseServiceTests(DatabaseFixture fixture) : IClassFixture<Datab
     }
 
     [Fact]
-    public async Task InsertRecord_InsertsDataCorrectly()
-    {
-        var gameRelease = GameRelease.SkyrimSE;
-        await fixture.InitializeSchemaAsync(_connection!, gameRelease.ToString());
-
-        await _service.InsertRecord(_connection!, gameRelease, "TestPlugin.esp", "0x00000001", "TestNPC", TestContext.Current.CancellationToken);
-
-        var command = _connection!.CreateCommand();
-        command.CommandText = $"SELECT COUNT(*) FROM {gameRelease}";
-        var count = Convert.ToInt32(await command.ExecuteScalarAsync(TestContext.Current.CancellationToken));
-
-        Assert.Equal(1, count);
-
-        command.CommandText = $"SELECT plugin, formid, entry FROM {gameRelease} WHERE formid = '0x00000001'";
-        await using var reader = await command.ExecuteReaderAsync(TestContext.Current.CancellationToken);
-
-        Assert.True(await reader.ReadAsync(TestContext.Current.CancellationToken));
-        Assert.Equal("TestPlugin.esp", reader.GetString(0));
-        Assert.Equal("0x00000001", reader.GetString(1));
-        Assert.Equal("TestNPC", reader.GetString(2));
-    }
-
-    [Fact]
-    public async Task InsertRecord_HandlesSpecialCharacters()
-    {
-        var gameRelease = GameRelease.SkyrimSE;
-        await fixture.InitializeSchemaAsync(_connection!, gameRelease.ToString());
-
-        var specialEntry = "Test'Entry\"With;Special--Characters";
-        await _service.InsertRecord(_connection!, gameRelease, "Plugin.esp", "0x00000001", specialEntry, TestContext.Current.CancellationToken);
-
-        var command = _connection!.CreateCommand();
-        command.CommandText = $"SELECT entry FROM {gameRelease} WHERE formid = '0x00000001'";
-        var result = await command.ExecuteScalarAsync(TestContext.Current.CancellationToken);
-
-        Assert.Equal(specialEntry, result);
-    }
-
-    [Fact]
-    public async Task ClearPluginEntries_RemovesOnlySpecifiedPlugin()
-    {
-        var gameRelease = GameRelease.SkyrimSE;
-        await fixture.InitializeSchemaAsync(_connection!, gameRelease.ToString());
-
-        await _service.InsertRecord(_connection!, gameRelease, "Plugin1.esp", "0x00000001", "Entry1", TestContext.Current.CancellationToken);
-        await _service.InsertRecord(_connection!, gameRelease, "Plugin1.esp", "0x00000002", "Entry2", TestContext.Current.CancellationToken);
-        await _service.InsertRecord(_connection!, gameRelease, "Plugin2.esp", "0x00000003", "Entry3", TestContext.Current.CancellationToken);
-
-        await _service.ClearPluginEntries(_connection!, gameRelease, "Plugin1.esp", TestContext.Current.CancellationToken);
-
-        var command = _connection!.CreateCommand();
-        command.CommandText = $"SELECT COUNT(*) FROM {gameRelease} WHERE plugin = 'Plugin1.esp'";
-        var plugin1Count = Convert.ToInt32(await command.ExecuteScalarAsync(TestContext.Current.CancellationToken));
-
-        command.CommandText = $"SELECT COUNT(*) FROM {gameRelease} WHERE plugin = 'Plugin2.esp'";
-        var plugin2Count = Convert.ToInt32(await command.ExecuteScalarAsync(TestContext.Current.CancellationToken));
-
-        Assert.Equal(0, plugin1Count);
-        Assert.Equal(1, plugin2Count);
-    }
-
-    [Fact]
-    public async Task ClearPluginEntries_HandlesNonExistentPlugin()
-    {
-        var gameRelease = GameRelease.SkyrimSE;
-        await fixture.InitializeSchemaAsync(_connection!, gameRelease.ToString());
-
-        await _service.ClearPluginEntries(_connection!, gameRelease, "NonExistent.esp", TestContext.Current.CancellationToken);
-    }
-
-    [Fact]
-    public async Task ClearPluginEntries_RemovesEntriesCaseInsensitively()
-    {
-        var gameRelease = GameRelease.SkyrimSE;
-        await fixture.InitializeSchemaAsync(_connection!, gameRelease.ToString());
-
-        await _service.InsertRecord(_connection!, gameRelease, "Plugin1.esp", "0x00000001", "Entry1", TestContext.Current.CancellationToken);
-        await _service.InsertRecord(_connection!, gameRelease, "PLUGIN1.ESP", "0x00000002", "Entry2", TestContext.Current.CancellationToken);
-        await _service.InsertRecord(_connection!, gameRelease, "Plugin2.esp", "0x00000003", "Entry3", TestContext.Current.CancellationToken);
-
-        await _service.ClearPluginEntries(_connection!, gameRelease, "plugin1.esp", TestContext.Current.CancellationToken);
-
-        await using var command = _connection!.CreateCommand();
-        command.CommandText = $"SELECT COUNT(*) FROM {gameRelease} WHERE plugin COLLATE NOCASE = 'plugin1.esp'";
-        var plugin1Count = Convert.ToInt32(await command.ExecuteScalarAsync(TestContext.Current.CancellationToken));
-
-        command.CommandText = $"SELECT COUNT(*) FROM {gameRelease} WHERE plugin = 'Plugin2.esp'";
-        var plugin2Count = Convert.ToInt32(await command.ExecuteScalarAsync(TestContext.Current.CancellationToken));
-
-        Assert.Equal(0, plugin1Count);
-        Assert.Equal(1, plugin2Count);
-    }
-
-    [Fact]
-    public async Task GetPluginsWithEntries_ReturnsCaseInsensitiveDistinctPlugins()
-    {
-        var gameRelease = GameRelease.SkyrimSE;
-        await fixture.InitializeSchemaAsync(_connection!, gameRelease.ToString());
-
-        await _service.InsertRecord(_connection!, gameRelease, "Plugin1.esp", "0x00000001", "Entry1", TestContext.Current.CancellationToken);
-        await _service.InsertRecord(_connection!, gameRelease, "PLUGIN1.ESP", "0x00000002", "Entry2", TestContext.Current.CancellationToken);
-        await _service.InsertRecord(_connection!, gameRelease, "Plugin2.esp", "0x00000003", "Entry3", TestContext.Current.CancellationToken);
-
-        var plugins = await _service.GetPluginsWithEntries(_connection!, gameRelease, TestContext.Current.CancellationToken);
-
-        Assert.Equal(2, plugins.Count);
-        Assert.Contains("plugin1.esp", plugins);
-        Assert.Contains("Plugin2.esp", plugins);
-    }
-
-    [Fact]
     public async Task OptimizeDatabase_ExecutesSuccessfully()
     {
         var gameRelease = GameRelease.SkyrimSE;
@@ -290,35 +179,10 @@ public class DatabaseServiceTests(DatabaseFixture fixture) : IClassFixture<Datab
 
         for (var i = 0; i < 100; i++)
         {
-            await _service.InsertRecord(_connection!, gameRelease, "Plugin.esp", $"0x{i:X8}", $"Entry{i}", TestContext.Current.CancellationToken);
+            await InsertRawRecordAsync(_connection!, gameRelease, "Plugin.esp", $"0x{i:X8}", $"Entry{i}");
         }
 
         await _service.OptimizeDatabase(_connection!, TestContext.Current.CancellationToken);
-    }
-
-    [Theory]
-    [InlineData(10)]
-    [InlineData(100)]
-    [InlineData(1000)]
-    public async Task BatchInsertPerformance_HandlesVariousSizes(int batchSize)
-    {
-        var gameRelease = GameRelease.SkyrimSE;
-        await fixture.InitializeSchemaAsync(_connection!, gameRelease.ToString());
-
-        var tasks = new List<Task>();
-        for (var i = 0; i < batchSize; i++)
-        {
-            tasks.Add(
-                _service.InsertRecord(_connection!, gameRelease, "BatchPlugin.esp", $"0x{i:X8}", $"BatchEntry{i}", TestContext.Current.CancellationToken));
-        }
-
-        await Task.WhenAll(tasks);
-
-        var command = _connection!.CreateCommand();
-        command.CommandText = $"SELECT COUNT(*) FROM {gameRelease}";
-        var count = Convert.ToInt32(await command.ExecuteScalarAsync(TestContext.Current.CancellationToken));
-
-        Assert.Equal(batchSize, count);
     }
 
     [Fact]
@@ -343,8 +207,8 @@ public class DatabaseServiceTests(DatabaseFixture fixture) : IClassFixture<Datab
                     await conn.OpenAsync(TestContext.Current.CancellationToken);
                     for (var j = 0; j < 20; j++)
                     {
-                        await _service.InsertRecord(conn, gameRelease, pluginName, $"0x{pluginIndex:X4}{j:X4}",
-                            $"Entry_{pluginIndex}_{j}", TestContext.Current.CancellationToken);
+                        await InsertRawRecordAsync(conn, gameRelease, pluginName, $"0x{pluginIndex:X4}{j:X4}",
+                            $"Entry_{pluginIndex}_{j}");
                     }
                 }, TestContext.Current.CancellationToken));
             }
@@ -367,5 +231,20 @@ public class DatabaseServiceTests(DatabaseFixture fixture) : IClassFixture<Datab
                 File.Delete(tempDbPath);
             }
         }
+    }
+
+    private static async Task InsertRawRecordAsync(
+        SqliteConnection connection,
+        GameRelease gameRelease,
+        string pluginName,
+        string formId,
+        string entry)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = $"INSERT INTO {gameRelease} (plugin, formid, entry) VALUES (@plugin, @formid, @entry)";
+        command.Parameters.AddWithValue("@plugin", pluginName);
+        command.Parameters.AddWithValue("@formid", formId);
+        command.Parameters.AddWithValue("@entry", entry);
+        await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
     }
 }

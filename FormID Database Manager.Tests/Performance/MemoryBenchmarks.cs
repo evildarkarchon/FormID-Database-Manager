@@ -12,7 +12,6 @@ using BenchmarkDotNet.Engines;
 using FormID_Database_Manager.Models;
 using FormID_Database_Manager.Services;
 using FormID_Database_Manager.ViewModels;
-using Microsoft.Data.Sqlite;
 using Mutagen.Bethesda;
 
 namespace FormID_Database_Manager.Tests.Performance;
@@ -125,33 +124,18 @@ public class MemoryBenchmarks
     }
 
     [Benchmark]
-    public async Task DatabaseService_LargeTransaction()
+    public async Task FormIdRecordStore_LargeTransaction()
     {
         var dbPath = Path.Combine(_testDirectory, "memory_test.db");
-        var databaseService = new DatabaseService();
 
-        await databaseService.InitializeDatabase(dbPath, GameRelease.SkyrimSE);
-
-        await using (var conn = new SqliteConnection($"Data Source={dbPath}"))
+        var entries = new List<FormIdRecord>();
+        for (var i = 0; i < ItemCount; i++)
         {
-            await conn.OpenAsync();
-
-            // Simulate large batch insert
-            var entries = new List<(string plugin, string formid, string entry)>();
-            for (var i = 0; i < ItemCount; i++)
-            {
-                entries.Add(("Plugin.esp", $"{i:X8}", $"Entry_{i}"));
-            }
-
-            // Insert in batches
-            await using var transaction = conn.BeginTransaction();
-            foreach (var entry in entries)
-            {
-                await databaseService.InsertRecord(conn, GameRelease.SkyrimSE, entry.plugin, entry.formid, entry.entry);
-            }
-
-            await transaction.CommitAsync();
+            entries.Add(new FormIdRecord($"{i:X8}", $"Entry_{i}"));
         }
+
+        await using var store = await FormIdRecordStore.OpenAsync(dbPath, GameRelease.SkyrimSE);
+        await store.WritePluginAsync("Plugin.esp", entries, UpdateMode.Append);
 
         // Clean up
         if (File.Exists(dbPath))

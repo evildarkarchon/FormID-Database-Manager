@@ -217,7 +217,6 @@ public class ProcessingRun : IDisposable
     private const int OutcomeDetailLimit = 5;
 
     private readonly Lock _cancellationLock = new();
-    private readonly DatabaseService _databaseService;
     private readonly IGameLoadOrderProvider _loadOrderProvider;
     private readonly PluginIngestion _pluginIngestion;
     private CancellationTokenSource? _cancellationTokenSource;
@@ -225,19 +224,16 @@ public class ProcessingRun : IDisposable
     /// <summary>
     ///     Creates the Processing Run module.
     /// </summary>
-    /// <param name="databaseService">The database module used to open the FormID Record Store.</param>
     /// <param name="loadOrderProvider">Optional Plugin load-order provider; production uses Mutagen-backed lookup.</param>
-    public ProcessingRun(DatabaseService databaseService, IGameLoadOrderProvider? loadOrderProvider = null)
-        : this(databaseService, loadOrderProvider, new PluginIngestion())
+    public ProcessingRun(IGameLoadOrderProvider? loadOrderProvider = null)
+        : this(loadOrderProvider, new PluginIngestion())
     {
     }
 
     internal ProcessingRun(
-        DatabaseService databaseService,
         IGameLoadOrderProvider? loadOrderProvider,
         PluginIngestion pluginIngestion)
     {
-        _databaseService = databaseService ?? throw new ArgumentNullException(nameof(databaseService));
         _loadOrderProvider = loadOrderProvider ?? new GameLoadOrderProvider();
         _pluginIngestion = pluginIngestion ?? throw new ArgumentNullException(nameof(pluginIngestion));
     }
@@ -332,7 +328,6 @@ public class ProcessingRun : IDisposable
             }
 
             await using var recordStore = await FormIdRecordStore.OpenAsync(
-                    _databaseService,
                     request.DatabasePath,
                     request.GameRelease,
                     cancellationTokenSource.Token)

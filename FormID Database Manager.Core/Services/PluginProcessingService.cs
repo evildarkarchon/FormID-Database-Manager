@@ -20,21 +20,25 @@ public class PluginProcessingService : IDisposable
     /// <summary>
     ///     Creates the legacy processing adapter.
     /// </summary>
-    /// <param name="databaseService">The database module used by the Processing Run.</param>
     /// <param name="viewModel">The UI state object that receives legacy error callbacks.</param>
     /// <param name="dispatcher">Optional dispatcher used to marshal legacy error callbacks.</param>
     /// <param name="loadOrderProvider">Optional Plugin load-order provider used by the Processing Run.</param>
     public PluginProcessingService(
-        DatabaseService databaseService,
         MainWindowViewModel viewModel,
         IThreadDispatcher? dispatcher = null,
         IGameLoadOrderProvider? loadOrderProvider = null)
+        : this(viewModel, new ProcessingRun(loadOrderProvider), dispatcher)
+    {
+    }
+
+    internal PluginProcessingService(
+        MainWindowViewModel viewModel,
+        ProcessingRun processingRun,
+        IThreadDispatcher? dispatcher = null)
     {
         _viewModel = viewModel ?? throw new ArgumentNullException(nameof(viewModel));
         _dispatcher = dispatcher ?? new ImmediateThreadDispatcher();
-        _processingRun = new ProcessingRun(
-            databaseService ?? throw new ArgumentNullException(nameof(databaseService)),
-            loadOrderProvider);
+        _processingRun = processingRun ?? throw new ArgumentNullException(nameof(processingRun));
     }
 
     /// <summary>

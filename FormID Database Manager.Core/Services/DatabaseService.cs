@@ -6,10 +6,9 @@ using Mutagen.Bethesda;
 namespace FormID_Database_Manager.Services;
 
 /// <summary>
-///     Provides services for managing a database, including initialization, record insertion, clearing plugin entries,
-///     and database optimization. Specifically designed for handling FormID records in the context of a game database.
+///     Provides SQLite schema, connection, and optimization behavior for the FormID Record Store implementation.
 /// </summary>
-public class DatabaseService
+internal class DatabaseService
 {
     /// <summary>
     ///     Creates an optimized SQLite connection string with connection pooling.
@@ -89,73 +88,6 @@ public class DatabaseService
 
         // Drop legacy redundant index if it exists (covered by covering_idx)
         command.CommandText = $"DROP INDEX IF EXISTS {tableName}_index";
-        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-    }
-
-    /// <summary>
-    ///     Clears all database entries for a specified plugin within the context of a specific game release.
-    ///     This operation removes all FormID records associated with the given plugin from the database.
-    /// </summary>
-    /// <param name="conn">The SQLite database connection used to execute the operation.</param>
-    /// <param name="gameRelease">The game release (e.g., Skyrim, Fallout) for which the plugin's entries will be cleared.</param>
-    /// <param name="pluginName">The name of the plugin whose entries are to be cleared from the database.</param>
-    /// <param name="cancellationToken"></param>
-    /// <returns>A task that represents the asynchronous operation of clearing plugin entries from the database.</returns>
-    public virtual async Task ClearPluginEntries(SqliteConnection conn, GameRelease gameRelease, string pluginName,
-        CancellationToken cancellationToken = default)
-    {
-        await using var command = conn.CreateCommand();
-        var tableName = GameReleaseHelper.GetSafeTableName(gameRelease);
-        command.CommandText = $"DELETE FROM {tableName} WHERE plugin COLLATE NOCASE = @plugin";
-        command.Parameters.AddWithValue("@plugin", pluginName);
-        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-    }
-
-    /// <summary>
-    ///     Retrieves the set of plugin names that currently have at least one row in the database.
-    /// </summary>
-    /// <param name="conn">The SQLite database connection used to execute the operation.</param>
-    /// <param name="gameRelease">The game release for which plugin names are being retrieved.</param>
-    /// <param name="cancellationToken"></param>
-    /// <returns>A case-insensitive set of plugin names found in the database.</returns>
-    public virtual async Task<HashSet<string>> GetPluginsWithEntries(SqliteConnection conn, GameRelease gameRelease,
-        CancellationToken cancellationToken = default)
-    {
-        var plugins = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-        await using var command = conn.CreateCommand();
-        var tableName = GameReleaseHelper.GetSafeTableName(gameRelease);
-        command.CommandText = $"SELECT DISTINCT plugin FROM {tableName} WHERE plugin IS NOT NULL";
-
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
-        {
-            plugins.Add(reader.GetString(0));
-        }
-
-        return plugins;
-    }
-
-    /// <summary>
-    ///     Inserts a new record into the database for a specific game release, plugin, and FormID.
-    /// </summary>
-    /// <param name="conn">An open SQLite connection to the database.</param>
-    /// <param name="gameRelease">The specific game release (e.g., Skyrim, Fallout) for which the record is being inserted.</param>
-    /// <param name="pluginName">The name of the plugin associated with the record.</param>
-    /// <param name="formId">The FormID associated with the record.</param>
-    /// <param name="entry">The entry details to be stored in the database.</param>
-    /// <param name="cancellationToken"></param>
-    /// <returns>A task that represents the asynchronous operation of inserting the record into the database.</returns>
-    public virtual async Task InsertRecord(SqliteConnection conn, GameRelease gameRelease, string pluginName,
-        string formId,
-        string entry, CancellationToken cancellationToken = default)
-    {
-        await using var command = conn.CreateCommand();
-        var tableName = GameReleaseHelper.GetSafeTableName(gameRelease);
-        command.CommandText = $"INSERT INTO {tableName} (plugin, formid, entry) VALUES (@plugin, @formid, @entry)";
-        command.Parameters.AddWithValue("@plugin", pluginName);
-        command.Parameters.AddWithValue("@formid", formId);
-        command.Parameters.AddWithValue("@entry", entry);
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 

@@ -61,13 +61,11 @@ public class DatabaseIntegrationTests : IDisposable
             // Insert some data
             for (var i = 0; i < 10; i++)
             {
-                await _databaseService.InsertRecord(
-                    connection,
+                await WriteRecordAsync(
                     GameRelease.SkyrimSE,
                     "TestPlugin.esp",
                     $"{i:X6}",
-                    $"Entry{i}",
-                    CancellationToken.None);
+                    $"Entry{i}");
             }
         }
 
@@ -84,13 +82,7 @@ public class DatabaseIntegrationTests : IDisposable
             Assert.Equal(10, count);
 
             // Should be able to continue inserting
-            await _databaseService.InsertRecord(
-                newConnection,
-                GameRelease.SkyrimSE,
-                "TestPlugin.esp",
-                "00000A",
-                "Entry10",
-                CancellationToken.None);
+            await WriteRecordAsync(GameRelease.SkyrimSE, "TestPlugin.esp", "00000A", "Entry10");
 
             var newCount = GetRecordCount(newConnection, GameRelease.SkyrimSE);
             Assert.Equal(11, newCount);
@@ -111,8 +103,7 @@ public class DatabaseIntegrationTests : IDisposable
         connection.Open();
 
         // Insert initial data
-        await _databaseService.InsertRecord(
-            connection, GameRelease.SkyrimSE, "Initial.esp", "000001", "InitialEntry", CancellationToken.None);
+        await WriteRecordAsync(GameRelease.SkyrimSE, "Initial.esp", "000001", "InitialEntry");
 
         var initialCount = GetRecordCount(connection, GameRelease.SkyrimSE);
 
@@ -171,8 +162,7 @@ public class DatabaseIntegrationTests : IDisposable
             var testData = GenerateTestData(gameRelease, 100);
             foreach (var (plugin, formId, entry) in testData)
             {
-                await _databaseService.InsertRecord(
-                    connection, gameRelease, plugin, formId, entry, CancellationToken.None);
+                await WriteRecordAsync(gameRelease, plugin, formId, entry);
             }
 
             // Query and verify
@@ -217,19 +207,18 @@ public class DatabaseIntegrationTests : IDisposable
 
         // Initial data
         var plugin = "TestPlugin.esp";
-        await _databaseService.InsertRecord(
-            connection, GameRelease.SkyrimSE, plugin, "000001", "OldEntry1", CancellationToken.None);
-        await _databaseService.InsertRecord(
-            connection, GameRelease.SkyrimSE, plugin, "000002", "OldEntry2", CancellationToken.None);
+        await WritePluginRecordsAsync(
+            GameRelease.SkyrimSE,
+            plugin,
+            [new FormIdRecord("000001", "OldEntry1"), new FormIdRecord("000002", "OldEntry2")],
+            UpdateMode.Append);
 
-        // Act - Clear and insert new data
-        await _databaseService.ClearPluginEntries(
-            connection, GameRelease.SkyrimSE, plugin, CancellationToken.None);
-
-        await _databaseService.InsertRecord(
-            connection, GameRelease.SkyrimSE, plugin, "000001", "NewEntry1", CancellationToken.None);
-        await _databaseService.InsertRecord(
-            connection, GameRelease.SkyrimSE, plugin, "000003", "NewEntry3", CancellationToken.None);
+        // Act - replace existing plugin data through the caller-facing store seam.
+        await WritePluginRecordsAsync(
+            GameRelease.SkyrimSE,
+            plugin,
+            [new FormIdRecord("000001", "NewEntry1"), new FormIdRecord("000003", "NewEntry3")],
+            UpdateMode.ReplacePluginRecords);
 
         // Assert
         var records = GetAllRecords(connection, GameRelease.SkyrimSE);
@@ -262,19 +251,9 @@ public class DatabaseIntegrationTests : IDisposable
             var threadId = i;
             var task = Task.Run(async () =>
             {
-                await using var threadConnection = new SqliteConnection($"Data Source={_testDbPath}");
-                threadConnection.Open();
-
-                for (var j = 0; j < recordsPerThread; j++)
-                {
-                    await _databaseService.InsertRecord(
-                        threadConnection,
-                        GameRelease.SkyrimSE,
-                        $"Plugin{threadId}.esp",
-                        $"{threadId:X2}{j:X4}",
-                        $"Entry_{threadId}_{j}",
-                        CancellationToken.None);
-                }
+                var records = Enumerable.Range(0, recordsPerThread)
+                    .Select(j => new FormIdRecord($"{threadId:X2}{j:X4}", $"Entry_{threadId}_{j}"));
+                await WritePluginRecordsAsync(GameRelease.SkyrimSE, $"Plugin{threadId}.esp", records, UpdateMode.Append);
             }, TestContext.Current.CancellationToken);
             tasks.Add(task);
         }
@@ -324,13 +303,7 @@ public class DatabaseIntegrationTests : IDisposable
         // Act - Interleave writes and reads across independent connections
         for (var i = 0; i < recordCount; i++)
         {
-            await _databaseService.InsertRecord(
-                writeConnection,
-                GameRelease.SkyrimSE,
-                "ConcurrentPlugin.esp",
-                $"{i:X6}",
-                $"Entry{i}",
-                CancellationToken.None);
+            await WriteRecordAsync(GameRelease.SkyrimSE, "ConcurrentPlugin.esp", $"{i:X6}", $"Entry{i}");
 
             if (i % 10 != 0)
             {
@@ -423,13 +396,7 @@ public class DatabaseIntegrationTests : IDisposable
         // Insert and delete many records to create fragmentation
         for (var i = 0; i < 10000; i++)
         {
-            await _databaseService.InsertRecord(
-                connection,
-                GameRelease.SkyrimSE,
-                $"Plugin{i % 100}.esp",
-                $"{i:X6}",
-                $"Entry{i}",
-                CancellationToken.None);
+            await WriteRecordAsync(GameRelease.SkyrimSE, $"Plugin{i % 100}.esp", $"{i:X6}", $"Entry{i}");
         }
 
         // Delete half the records
@@ -532,6 +499,29 @@ public class DatabaseIntegrationTests : IDisposable
         }
 
         return records;
+    }
+
+    private Task<FormIdPluginWriteResult> WriteRecordAsync(
+        GameRelease gameRelease,
+        string plugin,
+        string formId,
+        string entry)
+    {
+        return WritePluginRecordsAsync(
+            gameRelease,
+            plugin,
+            [new FormIdRecord(formId, entry)],
+            UpdateMode.Append);
+    }
+
+    private async Task<FormIdPluginWriteResult> WritePluginRecordsAsync(
+        GameRelease gameRelease,
+        string plugin,
+        IEnumerable<FormIdRecord> records,
+        UpdateMode updateMode)
+    {
+        await using var store = await FormIdRecordStore.OpenAsync(_testDbPath, gameRelease, CancellationToken.None);
+        return await store.WritePluginAsync(plugin, records, updateMode, CancellationToken.None);
     }
 
     #endregion

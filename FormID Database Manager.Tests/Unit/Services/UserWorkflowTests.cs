@@ -314,8 +314,7 @@ public class UserWorkflowTests
             _processingRun);
     }
 
-    private sealed class RecordingProcessingRun(List<ProcessingRunRequest> processingRuns)
-        : ProcessingRun(FormID_Database_Manager.TestUtilities.Mocks.MockFactory.CreateDatabaseServiceMock().Object)
+    private sealed class RecordingProcessingRun(List<ProcessingRunRequest> processingRuns) : ProcessingRun
     {
         public bool Cancelled { get; private set; }
 

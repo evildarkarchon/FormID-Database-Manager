@@ -20,7 +20,6 @@ public class PluginProcessingBenchmarks : IDisposable
 {
     private readonly Consumer _consumer = new();
     private string _databasePath = null!;
-    private DatabaseService _databaseService = null!;
     private string _testDirectory = null!;
     private List<string> _testPlugins = null!;
 
@@ -40,10 +39,9 @@ public class PluginProcessingBenchmarks : IDisposable
 
         // Create database
         _databasePath = Path.Combine(_testDirectory, "benchmark.db");
-        _databaseService = new DatabaseService();
 
         // Initialize database
-        _databaseService.InitializeDatabase(_databasePath, GameRelease.SkyrimSE).Wait();
+        new DatabaseService().InitializeDatabase(_databasePath, GameRelease.SkyrimSE).Wait();
 
         // Create test plugins
         var dataPath = GameReleaseHelper.ResolveDataPath(_testDirectory);
@@ -196,7 +194,7 @@ public class PluginProcessingBenchmarks : IDisposable
 
     private ProcessingRun CreateProcessingRun()
     {
-        return new ProcessingRun(_databaseService, new BenchmarkLoadOrderProvider(_testPlugins));
+        return new ProcessingRun(new BenchmarkLoadOrderProvider(_testPlugins));
     }
 
     private async Task ExecuteBenchmarkRunAsync(PluginProcessingRunRequest request)

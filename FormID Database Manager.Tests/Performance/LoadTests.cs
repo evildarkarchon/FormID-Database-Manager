@@ -54,7 +54,7 @@ public class LoadTests : IDisposable
         await _databaseService.InitializeDatabase(dbPath, GameRelease.SkyrimSE);
 
         var viewModel = new MainWindowViewModel();
-        var pluginProcessingService = new PluginProcessingService(_databaseService, viewModel);
+        var pluginProcessingService = new PluginProcessingService(viewModel);
 
         // Act
         var stopwatch = Stopwatch.StartNew();
@@ -115,7 +115,7 @@ public class LoadTests : IDisposable
         var stopwatch = Stopwatch.StartNew();
         Assert.True(File.Exists(Path.Combine(dataPath, pluginName)));
 
-        var processingRun = new ProcessingRun(_databaseService, new StaticGameLoadOrderProvider([pluginName]));
+        var processingRun = new ProcessingRun(new StaticGameLoadOrderProvider([pluginName]));
         await processingRun.ExecuteAsync(new PluginProcessingRunRequest(
             _testDirectory,
             dbPath,
@@ -164,18 +164,11 @@ public class LoadTests : IDisposable
             {
                 try
                 {
-                    await using var conn = new SqliteConnection($"Data Source={dbPath}");
-                    await conn.OpenAsync();
+                    await using var store = await FormIdRecordStore.OpenAsync(dbPath, GameRelease.SkyrimSE);
+                    var records = Enumerable.Range(0, operationsPerThread)
+                        .Select(j => new FormIdRecord($"{threadId:X4}{j:X4}", $"Entry_T{threadId}_#{j}"));
 
-                    for (var j = 0; j < operationsPerThread; j++)
-                    {
-                        await _databaseService.InsertRecord(
-                            conn,
-                            GameRelease.SkyrimSE,
-                            $"Plugin_{threadId}.esp",
-                            $"{threadId:X4}{j:X4}",
-                            $"Entry_T{threadId}_#{j}");
-                    }
+                    await store.WritePluginAsync($"Plugin_{threadId}.esp", records, UpdateMode.Append);
                 }
                 catch (Exception ex)
                 {

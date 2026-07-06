@@ -45,11 +45,10 @@ public class StressTests : IDisposable
         _createdFiles.Add(dbPath);
         var testCancellationToken = TestContext.Current.CancellationToken;
 
-        var databaseService = new DatabaseService();
-        await databaseService.InitializeDatabase(dbPath, GameRelease.SkyrimSE, testCancellationToken);
+        await new DatabaseService().InitializeDatabase(dbPath, GameRelease.SkyrimSE, testCancellationToken);
 
         var viewModel = new MainWindowViewModel();
-        var pluginProcessingService = new PluginProcessingService(databaseService, viewModel);
+        var pluginProcessingService = new PluginProcessingService(viewModel);
 
         var cancelledCount = 0;
         var completedCount = 0;
@@ -141,17 +140,20 @@ public class StressTests : IDisposable
                     try
                     {
                         await conn.OpenAsync(testCancellationToken);
+                        await using var command = conn.CreateCommand();
+                        command.CommandText =
+                            $"INSERT INTO {GameRelease.SkyrimSE} (plugin, formid, entry) VALUES (@plugin, @formid, @entry)";
+                        command.Parameters.Add(new SqliteParameter("@plugin", SqliteType.Text));
+                        command.Parameters.Add(new SqliteParameter("@formid", SqliteType.Text));
+                        command.Parameters.Add(new SqliteParameter("@entry", SqliteType.Text));
 
                         // Perform some operations
                         for (var j = 0; j < 10; j++)
                         {
-                            await databaseService.InsertRecord(
-                                conn,
-                                GameRelease.SkyrimSE,
-                                $"Plugin_{connIndex}.esp",
-                                $"{connIndex:X4}{j:X4}",
-                                $"Entry_{connIndex}_{j}",
-                                testCancellationToken);
+                            command.Parameters["@plugin"].Value = $"Plugin_{connIndex}.esp";
+                            command.Parameters["@formid"].Value = $"{connIndex:X4}{j:X4}";
+                            command.Parameters["@entry"].Value = $"Entry_{connIndex}_{j}";
+                            await command.ExecuteNonQueryAsync(testCancellationToken);
                         }
                     }
                     catch (Exception ex)

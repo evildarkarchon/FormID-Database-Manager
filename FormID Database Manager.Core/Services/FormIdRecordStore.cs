@@ -91,15 +91,13 @@ public sealed class FormIdRecordStore : IAsyncDisposable
     private const int TextStagingBatchSize = 10000;
     private const string StagingTableName = "temp_formid_record_staging";
 
-    private readonly DatabaseService _databaseService;
     private readonly SqliteConnection _connection;
     private readonly string _tableName;
     private readonly List<(string PluginName, string FormId, string Entry)> _stagingBatch = new(TextStagingBatchSize);
     private SqliteCommand? _stagingInsertCommand;
 
-    private FormIdRecordStore(DatabaseService databaseService, SqliteConnection connection, GameRelease gameRelease)
+    private FormIdRecordStore(SqliteConnection connection, GameRelease gameRelease)
     {
-        _databaseService = databaseService;
         _connection = connection;
         _tableName = GameReleaseHelper.GetSafeTableName(gameRelease);
     }
@@ -127,7 +125,7 @@ public sealed class FormIdRecordStore : IAsyncDisposable
     /// <param name="gameRelease">The GameRelease whose FormID table will be written.</param>
     /// <param name="cancellationToken">Token to monitor for cancellation.</param>
     /// <returns>An opened FormID Record Store that must be disposed after the processing run.</returns>
-    public static async Task<FormIdRecordStore> OpenAsync(
+    internal static async Task<FormIdRecordStore> OpenAsync(
         DatabaseService databaseService,
         string databasePath,
         GameRelease gameRelease,
@@ -147,7 +145,7 @@ public sealed class FormIdRecordStore : IAsyncDisposable
             await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
             await databaseService.ConfigureConnection(connection, cancellationToken).ConfigureAwait(false);
 
-            var store = new FormIdRecordStore(databaseService, connection, gameRelease);
+            var store = new FormIdRecordStore(connection, gameRelease);
             await store.CreateStagingTableAsync(cancellationToken).ConfigureAwait(false);
             return store;
         }
@@ -450,7 +448,7 @@ public sealed class FormIdRecordStore : IAsyncDisposable
     /// <param name="cancellationToken">Token to monitor for cancellation.</param>
     public Task OptimizeAsync(CancellationToken cancellationToken = default)
     {
-        return _databaseService.OptimizeDatabase(_connection, cancellationToken);
+        return new DatabaseService().OptimizeDatabase(_connection, cancellationToken);
     }
 
     /// <summary>

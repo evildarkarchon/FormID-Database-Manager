@@ -18,7 +18,6 @@ namespace FormID_Database_Manager.Tests.Unit.Services;
 
 public class PluginProcessingServiceTests : IDisposable
 {
-    private readonly Mock<DatabaseService> _mockDatabaseService;
     private readonly Mock<MainWindowViewModel> _mockViewModel;
     private readonly Mock<IThreadDispatcher> _mockDispatcher;
     private readonly Mock<IGameLoadOrderProvider> _mockLoadOrderProvider;
@@ -27,7 +26,6 @@ public class PluginProcessingServiceTests : IDisposable
 
     public PluginProcessingServiceTests()
     {
-        _mockDatabaseService = new Mock<DatabaseService>();
         _mockDispatcher = new Mock<IThreadDispatcher>();
         _mockViewModel = new Mock<MainWindowViewModel>(_mockDispatcher.Object);
         _mockLoadOrderProvider = new Mock<IGameLoadOrderProvider>();
@@ -41,7 +39,6 @@ public class PluginProcessingServiceTests : IDisposable
             .Returns(new GameLoadOrderSnapshot(["TestPlugin1.esp", "TestPlugin2.esp"]));
 
         _service = new PluginProcessingService(
-            _mockDatabaseService.Object,
             _mockViewModel.Object,
             _mockDispatcher.Object,
             _mockLoadOrderProvider.Object);
@@ -120,9 +117,7 @@ public class PluginProcessingServiceTests : IDisposable
 
         await _service.ProcessPlugins(parameters, progress);
 
-        _mockDatabaseService.Verify(
-            x => x.InitializeDatabase(It.IsAny<string>(), It.IsAny<GameRelease>(), It.IsAny<CancellationToken>()),
-            Times.Never);
+        Assert.False(File.Exists(parameters.DatabasePath));
         Assert.Contains(progressReports, r => r.Message.Contains("Would process TestPlugin1.esp"));
         Assert.Contains(progressReports, r => r.Message.Contains("Would process TestPlugin2.esp"));
     }
@@ -136,9 +131,7 @@ public class PluginProcessingServiceTests : IDisposable
 
         await _service.ProcessPlugins(parameters, progress);
 
-        _mockDatabaseService.Verify(
-            x => x.InitializeDatabase(It.IsAny<string>(), It.IsAny<GameRelease>(), It.IsAny<CancellationToken>()),
-            Times.Never);
+        Assert.False(File.Exists(parameters.DatabasePath));
         Assert.Single(progressReports);
         Assert.Contains("Would process FormID list file", progressReports[0].Message);
     }
@@ -204,25 +197,9 @@ public class PluginProcessingServiceTests : IDisposable
             FormIdListPath = parameters.FormIdListPath
         };
 
-        _mockDatabaseService.Setup(x => x.GetPluginsWithEntries(
-                It.IsAny<SqliteConnection>(),
-                It.IsAny<GameRelease>(),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new HashSet<string>(StringComparer.OrdinalIgnoreCase));
-        _mockDatabaseService.Setup(x => x.OptimizeDatabase(It.IsAny<SqliteConnection>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-
         await _service.ProcessPlugins(parameters);
 
-        _mockDatabaseService.Verify(x => x.GetPluginsWithEntries(
-            It.IsAny<SqliteConnection>(),
-            GameRelease.SkyrimSE,
-            It.IsAny<CancellationToken>()), Times.Never);
-        _mockDatabaseService.Verify(x => x.ClearPluginEntries(
-            It.IsAny<SqliteConnection>(),
-            GameRelease.SkyrimSE,
-            It.IsAny<string>(),
-            It.IsAny<CancellationToken>()), Times.Never);
+        Assert.True(File.Exists(parameters.DatabasePath));
     }
 
     [Fact]
@@ -254,25 +231,9 @@ public class PluginProcessingServiceTests : IDisposable
             FormIdListPath = parameters.FormIdListPath
         };
 
-        _mockDatabaseService.Setup(x => x.GetPluginsWithEntries(
-                It.IsAny<SqliteConnection>(),
-                It.IsAny<GameRelease>(),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new HashSet<string>(StringComparer.OrdinalIgnoreCase));
-        _mockDatabaseService.Setup(x => x.OptimizeDatabase(It.IsAny<SqliteConnection>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-
         await _service.ProcessPlugins(parameters);
 
-        _mockDatabaseService.Verify(x => x.GetPluginsWithEntries(
-            It.IsAny<SqliteConnection>(),
-            GameRelease.SkyrimSE,
-            It.IsAny<CancellationToken>()), Times.Never);
-        _mockDatabaseService.Verify(x => x.ClearPluginEntries(
-            It.IsAny<SqliteConnection>(),
-            GameRelease.SkyrimSE,
-            It.IsAny<string>(),
-            It.IsAny<CancellationToken>()), Times.Never);
+        Assert.True(File.Exists(parameters.DatabasePath));
     }
 
     [Fact]
@@ -308,37 +269,9 @@ public class PluginProcessingServiceTests : IDisposable
             FormIdListPath = parameters.FormIdListPath
         };
 
-        _mockDatabaseService.Setup(x => x.InitializeDatabase(
-                It.IsAny<string>(),
-                It.IsAny<GameRelease>(),
-                It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-        _mockDatabaseService.Setup(x => x.GetPluginsWithEntries(
-                It.IsAny<SqliteConnection>(),
-                It.IsAny<GameRelease>(),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(
-                new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "TestPlugin1.esp", "TestPlugin2.esp" });
-        _mockDatabaseService.Setup(x => x.ClearPluginEntries(
-                It.IsAny<SqliteConnection>(),
-                It.IsAny<GameRelease>(),
-                It.IsAny<string>(),
-                It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-        _mockDatabaseService.Setup(x => x.OptimizeDatabase(It.IsAny<SqliteConnection>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-
         await _service.ProcessPlugins(parameters);
 
-        _mockDatabaseService.Verify(x => x.GetPluginsWithEntries(
-            It.IsAny<SqliteConnection>(),
-            GameRelease.SkyrimSE,
-            It.IsAny<CancellationToken>()), Times.Never);
-        _mockDatabaseService.Verify(x => x.ClearPluginEntries(
-            It.IsAny<SqliteConnection>(),
-            GameRelease.SkyrimSE,
-            It.IsAny<string>(),
-            It.IsAny<CancellationToken>()), Times.Never);
+        Assert.True(File.Exists(parameters.DatabasePath));
     }
 
     [Fact]
@@ -346,36 +279,26 @@ public class PluginProcessingServiceTests : IDisposable
     {
         var parameters = CreateTestParameters();
 
-        _mockDatabaseService.Setup(x =>
-                x.InitializeDatabase(It.IsAny<string>(), It.IsAny<GameRelease>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-        _mockDatabaseService.Setup(x => x.OptimizeDatabase(It.IsAny<SqliteConnection>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-
         await _service.ProcessPlugins(parameters);
 
-        _mockDatabaseService.Verify(x => x.InitializeDatabase(
-            parameters.DatabasePath,
-            parameters.GameRelease,
-            It.IsAny<CancellationToken>()), Times.Once);
+        Assert.True(File.Exists(parameters.DatabasePath));
+        await using var connection = new SqliteConnection($"Data Source={parameters.DatabasePath}");
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT name FROM sqlite_master WHERE type='table' AND name=@table";
+        command.Parameters.AddWithValue("@table", parameters.GameRelease.ToString());
+
+        Assert.Equal(parameters.GameRelease.ToString(), await command.ExecuteScalarAsync(TestContext.Current.CancellationToken));
     }
 
     [Fact]
-    public async Task ProcessPlugins_OptimizesDatabaseAfterProcessing()
+    public async Task ProcessPlugins_CompletesProcessingRunAfterProcessing()
     {
         var parameters = CreateTestParameters();
 
-        _mockDatabaseService.Setup(x =>
-                x.InitializeDatabase(It.IsAny<string>(), It.IsAny<GameRelease>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-        _mockDatabaseService.Setup(x => x.OptimizeDatabase(It.IsAny<SqliteConnection>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-
         await _service.ProcessPlugins(parameters);
 
-        _mockDatabaseService.Verify(x => x.OptimizeDatabase(
-            It.IsAny<SqliteConnection>(),
-            It.IsAny<CancellationToken>()), Times.Once);
+        Assert.True(File.Exists(parameters.DatabasePath));
     }
 
     [Fact]
@@ -386,12 +309,6 @@ public class PluginProcessingServiceTests : IDisposable
         // Use a synchronous IProgress implementation to avoid Progress<T>'s async callbacks
         // which can cause race conditions in unit tests
         var progress = new SynchronousProgress<(string Message, double? Value)>(progressReports.Add);
-
-        _mockDatabaseService.Setup(x =>
-                x.InitializeDatabase(It.IsAny<string>(), It.IsAny<GameRelease>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-        _mockDatabaseService.Setup(x => x.OptimizeDatabase(It.IsAny<SqliteConnection>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
 
         await _service.ProcessPlugins(parameters, progress);
 
@@ -409,10 +326,9 @@ public class PluginProcessingServiceTests : IDisposable
         using var returnedFromCall = new ManualResetEventSlim(false);
 
         using var service = new PluginProcessingService(
-            new BlockingInitializeDatabaseService(initializeEntered, allowInitializeToContinue),
             _mockViewModel.Object,
-            _mockDispatcher.Object,
-            _mockLoadOrderProvider.Object);
+            new BlockingProcessingRun(initializeEntered, allowInitializeToContinue),
+            _mockDispatcher.Object);
 
         var parameters = CreateTestParameters();
 
@@ -450,18 +366,76 @@ public class PluginProcessingServiceTests : IDisposable
         }
     }
 
-    private sealed class BlockingInitializeDatabaseService(
+    private sealed class BlockingProcessingRun(
         ManualResetEventSlim initializeEntered,
-        ManualResetEventSlim allowInitializeToContinue) : DatabaseService
+        ManualResetEventSlim allowInitializeToContinue) : ProcessingRun
     {
-        public override Task InitializeDatabase(
-            string dbPath,
-            GameRelease gameRelease,
-            CancellationToken cancellationToken = default)
+        public override Task ExecuteAsync(
+            ProcessingRunRequest request,
+            IProgress<ProcessingRunEvent>? progress = null)
         {
             initializeEntered.Set();
-            allowInitializeToContinue.Wait(cancellationToken);
-            return base.InitializeDatabase(dbPath, gameRelease, cancellationToken);
+            return Task.Run(() => allowInitializeToContinue.Wait(TestContext.Current.CancellationToken));
+        }
+    }
+
+    private sealed class CancellableProcessingRun(TaskCompletionSource<bool> started) : ProcessingRun
+    {
+        private readonly CancellationTokenSource _cancellationTokenSource = new();
+
+        public override Task ExecuteAsync(
+            ProcessingRunRequest request,
+            IProgress<ProcessingRunEvent>? progress = null)
+        {
+            started.SetResult(true);
+            return Task.Delay(Timeout.InfiniteTimeSpan, _cancellationTokenSource.Token);
+        }
+
+        public override void Cancel()
+        {
+            _cancellationTokenSource.Cancel();
+        }
+
+        public override void Dispose()
+        {
+            _cancellationTokenSource.Dispose();
+        }
+    }
+
+    private sealed class ThrowingProcessingRun(Exception exception) : ProcessingRun
+    {
+        public override Task ExecuteAsync(
+            ProcessingRunRequest request,
+            IProgress<ProcessingRunEvent>? progress = null)
+        {
+            return Task.FromException(exception);
+        }
+    }
+
+    private sealed class SequentialBlockingProcessingRun(
+        TaskCompletionSource<bool> firstStarted,
+        TaskCompletionSource<bool> allowFirstToComplete) : ProcessingRun
+    {
+        private readonly CancellationTokenSource _firstRunCancellation = new();
+        private int _callCount;
+
+        public override Task ExecuteAsync(
+            ProcessingRunRequest request,
+            IProgress<ProcessingRunEvent>? progress = null)
+        {
+            if (Interlocked.Increment(ref _callCount) == 1)
+            {
+                firstStarted.SetResult(true);
+                return allowFirstToComplete.Task.WaitAsync(_firstRunCancellation.Token);
+            }
+
+            _firstRunCancellation.Cancel();
+            return Task.CompletedTask;
+        }
+
+        public override void Dispose()
+        {
+            _firstRunCancellation.Dispose();
         }
     }
 
@@ -472,22 +446,18 @@ public class PluginProcessingServiceTests : IDisposable
         var tcs = new TaskCompletionSource<bool>();
         var progressReports = new List<(string Message, double? Value)>();
         var progress = new Progress<(string Message, double? Value)>(progressReports.Add);
+        using var service = new PluginProcessingService(
+            _mockViewModel.Object,
+            new CancellableProcessingRun(tcs),
+            _mockDispatcher.Object);
 
-        _mockDatabaseService.Setup(x =>
-                x.InitializeDatabase(It.IsAny<string>(), It.IsAny<GameRelease>(), It.IsAny<CancellationToken>()))
-            .Returns(async (string _, GameRelease _, CancellationToken ct) =>
-            {
-                tcs.SetResult(true);
-                await Task.Delay(1000, ct);
-            });
-
-        var processTask = _service.ProcessPlugins(parameters, progress);
+        var processTask = service.ProcessPlugins(parameters, progress);
         await tcs.Task;
 
         // Small delay to ensure we're in the right state
         await Task.Delay(50, TestContext.Current.CancellationToken);
 
-        _service.CancelProcessing();
+        service.CancelProcessing();
 
         await Assert.ThrowsAsync<TaskCanceledException>(() => processTask);
         // The cancellation might happen too early to report the message
@@ -505,16 +475,16 @@ public class PluginProcessingServiceTests : IDisposable
     {
         var parameters = CreateTestParameters();
         var expectedError = "Database initialization failed";
-
-        _mockDatabaseService.Setup(x =>
-                x.InitializeDatabase(It.IsAny<string>(), It.IsAny<GameRelease>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new InvalidOperationException(expectedError));
+        using var service = new PluginProcessingService(
+            _mockViewModel.Object,
+            new ThrowingProcessingRun(new InvalidOperationException(expectedError)),
+            _mockDispatcher.Object);
 
         var progressReports = new List<(string Message, double? Value)>();
         IProgress<(string Message, double? Value)> progress = new Progress<(string Message, double? Value)>(progressReports.Add);
 
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            _service.ProcessPlugins(parameters, progress));
+            service.ProcessPlugins(parameters, progress));
 
         Assert.Equal(expectedError, exception.Message);
         // Progress reporting might not happen synchronously, so we just verify the exception
@@ -523,29 +493,25 @@ public class PluginProcessingServiceTests : IDisposable
     [Fact]
     public async Task ProcessPlugins_HandlesFormIdListProcessing()
     {
-        var parameters = CreateTestParameters(formIdListPath: "C:\\Test\\formids.txt");
+        var formIdFile = Path.Combine(Path.GetTempPath(), $"formids_{Guid.NewGuid():N}.txt");
+        await File.WriteAllLinesAsync(
+            formIdFile,
+            ["Plugin.esp|000001|Entry One"],
+            TestContext.Current.CancellationToken);
+        _tempFiles.Add(formIdFile);
+        var parameters = CreateTestParameters(formIdListPath: formIdFile);
         var progressReports = new List<(string Message, double? Value)>();
         var progress = new Progress<(string Message, double? Value)>(progressReports.Add);
 
-        _mockDatabaseService.Setup(x =>
-                x.InitializeDatabase(It.IsAny<string>(), It.IsAny<GameRelease>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-        _mockDatabaseService.Setup(x => x.OptimizeDatabase(It.IsAny<SqliteConnection>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
+        await _service.ProcessPlugins(parameters, progress);
 
-        try
-        {
-            await _service.ProcessPlugins(parameters, progress);
-        }
-        catch
-        {
-            // FormIdTextProcessor might throw if file doesn't exist, which is expected in unit test
-        }
-
-        _mockDatabaseService.Verify(x => x.InitializeDatabase(
+        await using var store = await FormIdRecordStore.OpenAsync(
             parameters.DatabasePath,
             parameters.GameRelease,
-            It.IsAny<CancellationToken>()), Times.Once);
+            TestContext.Current.CancellationToken);
+        var records = await store.ReadRecordsAsync(FormIdRecordQuery.All, TestContext.Current.CancellationToken);
+
+        Assert.Contains(records, record => record is { Plugin: "Plugin.esp", FormId: "000001", Entry: "Entry One" });
     }
 
     [Fact]
@@ -561,25 +527,15 @@ public class PluginProcessingServiceTests : IDisposable
         var parameters = CreateTestParameters();
         var firstStarted = new TaskCompletionSource<bool>();
         var allowFirstToComplete = new TaskCompletionSource<bool>();
+        using var service = new PluginProcessingService(
+            _mockViewModel.Object,
+            new SequentialBlockingProcessingRun(firstStarted, allowFirstToComplete),
+            _mockDispatcher.Object);
 
-        _mockDatabaseService.Setup(x =>
-                x.InitializeDatabase(It.IsAny<string>(), It.IsAny<GameRelease>(), It.IsAny<CancellationToken>()))
-            .Returns(async (string _, GameRelease _, CancellationToken ct) =>
-            {
-                firstStarted.TrySetResult(true);
-                await allowFirstToComplete.Task.WaitAsync(ct);
-            });
-        _mockDatabaseService.Setup(x => x.ConfigureConnection(
-                It.IsAny<SqliteConnection>(),
-                It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-        _mockDatabaseService.Setup(x => x.OptimizeDatabase(It.IsAny<SqliteConnection>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-
-        var firstTask = _service.ProcessPlugins(parameters);
+        var firstTask = service.ProcessPlugins(parameters);
         await firstStarted.Task;
 
-        var secondTask = _service.ProcessPlugins(parameters);
+        var secondTask = service.ProcessPlugins(parameters);
 
         allowFirstToComplete.SetResult(true);
 
@@ -603,16 +559,6 @@ public class PluginProcessingServiceTests : IDisposable
     public async Task ProcessPlugins_WarningCallback_AddsWarningMessages()
     {
         var parameters = CreateTestParameters();
-
-        _mockDatabaseService.Setup(x =>
-                x.InitializeDatabase(It.IsAny<string>(), It.IsAny<GameRelease>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-        _mockDatabaseService.Setup(x => x.ConfigureConnection(
-                It.IsAny<SqliteConnection>(),
-                It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-        _mockDatabaseService.Setup(x => x.OptimizeDatabase(It.IsAny<SqliteConnection>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
 
         await _service.ProcessPlugins(parameters);
 

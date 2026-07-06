@@ -21,7 +21,7 @@ public sealed partial class MainWindow : Window, IDisposable
         var gameDetectionService = new GameDetectionService();
         var gameLocationService = new GameLocationService();
         var pluginListManager = new PluginListManager(gameDetectionService, ViewModel, dispatcher);
-        var processingRun = new ProcessingRun(new DatabaseService());
+        var processingRun = new ProcessingRun();
 
         InitializeWindow();
         _userWorkflow = new UserWorkflow(
@@ -56,7 +56,7 @@ public sealed partial class MainWindow : Window, IDisposable
         var effectiveGameLocationService = gameLocationService ?? new GameLocationService();
         var effectivePluginListManager = pluginListManager ??
                                           new PluginListManager(effectiveGameDetectionService, ViewModel, dispatcher);
-        var effectiveProcessingRun = processingRun ?? new ProcessingRun(new DatabaseService());
+        var effectiveProcessingRun = processingRun ?? new ProcessingRun();
 
         InitializeWindow();
         _userWorkflow = new UserWorkflow(

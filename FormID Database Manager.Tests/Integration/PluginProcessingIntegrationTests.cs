@@ -34,8 +34,7 @@ public class PluginProcessingIntegrationTests : IDisposable
         // without depending on a desktop UI message pump.
         var dispatcher = new SynchronousThreadDispatcher();
         var viewModel = new MainWindowViewModel(dispatcher);
-        var databaseService = new DatabaseService();
-        _processingService = new PluginProcessingService(databaseService, viewModel, dispatcher);
+        _processingService = new PluginProcessingService(viewModel, dispatcher);
 
         Directory.CreateDirectory(_testDirectory);
         Directory.CreateDirectory(Path.Combine(_testDirectory, "Data"));

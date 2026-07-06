@@ -6,7 +6,6 @@ using System.Threading.Tasks;
 using FormID_Database_Manager.Models;
 using FormID_Database_Manager.Services;
 using FormID_Database_Manager.ViewModels;
-using Microsoft.Data.Sqlite;
 using Moq;
 using Mutagen.Bethesda;
 
@@ -44,32 +43,6 @@ public static class MockFactory
 
         mock.Setup(x => x.GetGameFolders(It.IsAny<GameRelease>()))
             .Returns(folders ?? []);
-
-        return mock;
-    }
-
-    public static Mock<DatabaseService> CreateDatabaseServiceMock()
-    {
-        var mock = new Mock<DatabaseService>();
-
-        mock.Setup(x =>
-                x.InitializeDatabase(It.IsAny<string>(), It.IsAny<GameRelease>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-
-        mock.Setup(x => x.InsertRecord(It.IsAny<SqliteConnection>(), It.IsAny<GameRelease>(),
-                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-
-        mock.Setup(x => x.ClearPluginEntries(It.IsAny<SqliteConnection>(), It.IsAny<GameRelease>(),
-                It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-
-        mock.Setup(x => x.GetPluginsWithEntries(It.IsAny<SqliteConnection>(), It.IsAny<GameRelease>(),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new HashSet<string>(StringComparer.OrdinalIgnoreCase));
-
-        mock.Setup(x => x.OptimizeDatabase(It.IsAny<SqliteConnection>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
 
         return mock;
     }

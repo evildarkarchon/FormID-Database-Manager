@@ -506,7 +506,7 @@ public sealed class FormIdTextProcessorTests : IDisposable
 
     private Task<FormIdRecordStore> OpenStoreAsync(CancellationToken cancellationToken)
     {
-        return FormIdRecordStore.OpenAsync(_databaseService, _testDbPath, GameRelease.SkyrimSE, cancellationToken);
+        return FormIdRecordStore.OpenAsync(_testDbPath, GameRelease.SkyrimSE, cancellationToken);
     }
 
     private List<(string plugin, string formid, string entry)> GetAllRecords()

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Threading.Tasks;
 using FormID_Database_Manager.Services;
 using FormID_Database_Manager.TestUtilities;
@@ -119,30 +120,14 @@ public class RegressionTests : IDisposable
     public async Task DatabaseBatchInsert_StaysWithinBaseline(int recordCount, string baselineKey)
     {
         // Arrange
-        var service = new DatabaseService();
         var dbPath = Path.Combine(_testDirectory, $"test_batch_{recordCount}.db");
-        await service.InitializeDatabase(dbPath, GameRelease.SkyrimSE, TestContext.Current.CancellationToken);
 
         var baseline = _performanceBaselines[baselineKey];
         var records = GenerateTestRecords(recordCount);
 
         // Act
         var stopwatch = Stopwatch.StartNew();
-        await using (var connection = new SqliteConnection($"Data Source={dbPath}"))
-        {
-            await connection.OpenAsync(TestContext.Current.CancellationToken);
-            // Simulate batch insert by inserting records in a transaction
-            await using (var transaction = connection.BeginTransaction())
-            {
-                foreach (var record in records)
-                {
-                    await service.InsertRecord(connection, GameRelease.SkyrimSE, record.plugin, record.formId,
-                        record.editorId, TestContext.Current.CancellationToken);
-                }
-
-                await transaction.CommitAsync(TestContext.Current.CancellationToken);
-            }
-        }
+        await WriteRecordsWithStoreAsync(dbPath, records);
 
         stopwatch.Stop();
 
@@ -308,9 +293,7 @@ public class RegressionTests : IDisposable
     public async Task MemoryUsage_DatabaseOperations_StaysWithinLimits()
     {
         // Arrange
-        var service = new DatabaseService();
         var dbPath = Path.Combine(_testDirectory, "memory_test.db");
-        await service.InitializeDatabase(dbPath, GameRelease.SkyrimSE, TestContext.Current.CancellationToken);
 
         var records = GenerateTestRecords(50000);
 
@@ -322,21 +305,7 @@ public class RegressionTests : IDisposable
         var memoryBefore = GC.GetTotalMemory(false);
 
         // Act
-        await using (var connection = new SqliteConnection($"Data Source={dbPath}"))
-        {
-            await connection.OpenAsync(TestContext.Current.CancellationToken);
-            // Simulate batch insert by inserting records in a transaction
-            await using (var transaction = connection.BeginTransaction())
-            {
-                foreach (var record in records)
-                {
-                    await service.InsertRecord(connection, GameRelease.SkyrimSE, record.plugin, record.formId,
-                        record.editorId, TestContext.Current.CancellationToken);
-                }
-
-                await transaction.CommitAsync(TestContext.Current.CancellationToken);
-            }
-        }
+        await WriteRecordsWithStoreAsync(dbPath, records);
 
         var memoryAfter = GC.GetTotalMemory(false);
         var memoryIncrease = memoryAfter - memoryBefore;
@@ -407,5 +376,25 @@ public class RegressionTests : IDisposable
         }
 
         return records;
+    }
+
+    private static async Task WriteRecordsWithStoreAsync(
+        string dbPath,
+        IReadOnlyList<(string plugin, string formId, string editorId)> records)
+    {
+        await using var store = await FormIdRecordStore.OpenAsync(
+            dbPath,
+            GameRelease.SkyrimSE,
+            TestContext.Current.CancellationToken);
+
+        foreach (var pluginGroup in records.GroupBy(static record => record.plugin))
+        {
+            var pluginRecords = pluginGroup.Select(static record => new FormIdRecord(record.formId, record.editorId));
+            await store.WritePluginAsync(
+                pluginGroup.Key,
+                pluginRecords,
+                UpdateMode.Append,
+                TestContext.Current.CancellationToken);
+        }
     }
 }

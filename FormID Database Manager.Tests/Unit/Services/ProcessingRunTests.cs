@@ -2,12 +2,12 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using FormID_Database_Manager.Services;
-using Microsoft.Data.Sqlite;
 using Moq;
 using Mutagen.Bethesda;
 using Xunit;
@@ -22,14 +22,14 @@ public sealed class ProcessingRunTests : IDisposable
     [Fact]
     public async Task ExecuteAsync_DryRunPluginRun_ReportsPluginStatusWithoutOpeningDatabase()
     {
-        var databaseService = new Mock<DatabaseService>();
-        var sut = new ProcessingRun(databaseService.Object);
+        var databasePath = CreateTempFilePath("dry-run.db");
+        var sut = new ProcessingRun();
         var events = new List<ProcessingRunEvent>();
         var progress = new SynchronousProgress<ProcessingRunEvent>(events.Add);
 
         var request = new PluginProcessingRunRequest(
             @"C:\Games\Skyrim",
-            CreateTempFilePath("dry-run.db"),
+            databasePath,
             GameRelease.SkyrimSE,
             ["PluginA.esp", "PluginB.esp"],
             UpdateMode.Append,
@@ -37,9 +37,7 @@ public sealed class ProcessingRunTests : IDisposable
 
         await sut.ExecuteAsync(request, progress);
 
-        databaseService.Verify(
-            x => x.InitializeDatabase(It.IsAny<string>(), It.IsAny<GameRelease>(), It.IsAny<CancellationToken>()),
-            Times.Never);
+        Assert.False(File.Exists(databasePath));
         Assert.All(events, runEvent => Assert.Equal(ProcessingRunEventKind.Status, runEvent.Kind));
         Assert.Contains(events, runEvent => runEvent.Message.Contains("Would process PluginA.esp", StringComparison.Ordinal));
         Assert.Contains(events, runEvent => runEvent.Message.Contains("Would process PluginB.esp", StringComparison.Ordinal));
@@ -48,8 +46,7 @@ public sealed class ProcessingRunTests : IDisposable
     [Fact]
     public async Task ExecuteAsync_DryRunPluginRun_AllowsEmptyDatabasePath()
     {
-        var databaseService = new Mock<DatabaseService>();
-        var sut = new ProcessingRun(databaseService.Object);
+        var sut = new ProcessingRun();
         var events = new List<ProcessingRunEvent>();
         var progress = new SynchronousProgress<ProcessingRunEvent>(events.Add);
 
@@ -63,9 +60,6 @@ public sealed class ProcessingRunTests : IDisposable
 
         await sut.ExecuteAsync(request, progress);
 
-        databaseService.Verify(
-            x => x.InitializeDatabase(It.IsAny<string>(), It.IsAny<GameRelease>(), It.IsAny<CancellationToken>()),
-            Times.Never);
         Assert.Contains(events, runEvent => runEvent.Message.Contains("Would process PluginA.esp", StringComparison.Ordinal));
     }
 
@@ -83,7 +77,7 @@ public sealed class ProcessingRunTests : IDisposable
             ],
             TestContext.Current.CancellationToken);
 
-        var sut = new ProcessingRun(new DatabaseService());
+        var sut = new ProcessingRun();
         var events = new List<ProcessingRunEvent>();
         var progress = new SynchronousProgress<ProcessingRunEvent>(events.Add);
         var request = new FormIdTextProcessingRunRequest(
@@ -94,22 +88,16 @@ public sealed class ProcessingRunTests : IDisposable
 
         await sut.ExecuteAsync(request, progress);
 
-        await using var connection = new SqliteConnection($"Data Source={databasePath}");
-        await connection.OpenAsync(TestContext.Current.CancellationToken);
-        await using var command = connection.CreateCommand();
-        command.CommandText = $"SELECT plugin, formid, entry FROM {GameRelease.SkyrimSE} ORDER BY id";
-
-        var records = new List<(string Plugin, string FormId, string Entry)>();
-        await using var reader = await command.ExecuteReaderAsync(TestContext.Current.CancellationToken);
-        while (await reader.ReadAsync(TestContext.Current.CancellationToken))
-        {
-            records.Add((reader.GetString(0), reader.GetString(1), reader.GetString(2)));
-        }
+        await using var store = await FormIdRecordStore.OpenAsync(
+            databasePath,
+            GameRelease.SkyrimSE,
+            TestContext.Current.CancellationToken);
+        var records = await store.ReadRecordsAsync(FormIdRecordQuery.All, TestContext.Current.CancellationToken);
 
         Assert.Equal(
             [
-                ("PluginA.esp", "000001", "First Entry"),
-                ("PluginB.esp", "000002", "Second Entry")
+                new FormIdStoredRecord("PluginA.esp", "000001", "First Entry"),
+                new FormIdStoredRecord("PluginB.esp", "000002", "Second Entry")
             ],
             records);
         Assert.Contains(events, runEvent =>
@@ -133,7 +121,7 @@ public sealed class ProcessingRunTests : IDisposable
             .Setup(x => x.BuildSnapshot(GameRelease.SkyrimSE, Path.Combine(gameDirectory, "Data"), true))
             .Returns(new GameLoadOrderSnapshot(["Other.esp"]));
 
-        var sut = new ProcessingRun(new DatabaseService(), loadOrderProvider.Object);
+        var sut = new ProcessingRun(loadOrderProvider.Object);
         var events = new List<ProcessingRunEvent>();
         var progress = new SynchronousProgress<ProcessingRunEvent>(events.Add);
         var request = new PluginProcessingRunRequest(
@@ -171,7 +159,7 @@ public sealed class ProcessingRunTests : IDisposable
             .Setup(x => x.BuildSnapshot(GameRelease.SkyrimSE, Path.Combine(gameDirectory, "Data"), true))
             .Returns(new GameLoadOrderSnapshot(["Missing.esp"]));
 
-        var sut = new ProcessingRun(new DatabaseService(), loadOrderProvider.Object);
+        var sut = new ProcessingRun(loadOrderProvider.Object);
         var events = new List<ProcessingRunEvent>();
         var progress = new SynchronousProgress<ProcessingRunEvent>(events.Add);
         var request = new PluginProcessingRunRequest(
@@ -204,7 +192,6 @@ public sealed class ProcessingRunTests : IDisposable
         ingestion.EnqueueResult(PluginIngestionResult.Succeeded("Good.esp", recordCount: 3, []));
 
         var sut = new ProcessingRun(
-            new DatabaseService(),
             CreateLoadOrderProvider(gameDirectory, ["Bad.esp", "Good.esp"]).Object,
             ingestion);
         var events = new List<ProcessingRunEvent>();
@@ -241,7 +228,6 @@ public sealed class ProcessingRunTests : IDisposable
         ingestion.EnqueueResult(PluginIngestionResult.Succeeded("Never.esp", recordCount: 1, []));
 
         var sut = new ProcessingRun(
-            new DatabaseService(),
             CreateLoadOrderProvider(gameDirectory, ["Bad.esp", "Never.esp"]).Object,
             ingestion);
         var events = new List<ProcessingRunEvent>();
@@ -276,7 +262,6 @@ public sealed class ProcessingRunTests : IDisposable
         ingestion.EnqueueException(new OperationCanceledException());
 
         var sut = new ProcessingRun(
-            new DatabaseService(),
             CreateLoadOrderProvider(gameDirectory, ["Done.esp", "Cancelled.esp"]).Object,
             ingestion);
         var events = new List<ProcessingRunEvent>();
@@ -311,7 +296,6 @@ public sealed class ProcessingRunTests : IDisposable
             ["Warned.esp: 2 recoverable record issues. First issue; second issue"]));
 
         var sut = new ProcessingRun(
-            new DatabaseService(),
             CreateLoadOrderProvider(gameDirectory, ["Warned.esp"]).Object,
             ingestion);
         var events = new List<ProcessingRunEvent>();
@@ -351,22 +335,27 @@ public sealed class ProcessingRunTests : IDisposable
     }
 
     [Fact]
-    public async Task ExecuteAsync_CancelledDuringInitialization_ReportsCancelledAndThrows()
+    public async Task ExecuteAsync_CancelledDuringPluginIngestion_ReportsCancelledAndThrows()
     {
-        using var initializeEntered = new ManualResetEventSlim(false);
-        var databaseService = new BlockingInitializeDatabaseService(initializeEntered);
-        var sut = new ProcessingRun(databaseService);
+        var gameDirectory = CreateTempDirectory();
+        Directory.CreateDirectory(Path.Combine(gameDirectory, "Data"));
+        var databasePath = Path.Combine(gameDirectory, "cancel.db");
+        var ingestion = new BlockingPluginIngestion();
+        var sut = new ProcessingRun(
+            CreateLoadOrderProvider(gameDirectory, ["Plugin.esp"]).Object,
+            ingestion);
         var events = new List<ProcessingRunEvent>();
         var progress = new SynchronousProgress<ProcessingRunEvent>(events.Add);
         var request = new PluginProcessingRunRequest(
-            @"C:\Games\Skyrim",
-            CreateTempFilePath("cancel.db"),
+            gameDirectory,
+            databasePath,
             GameRelease.SkyrimSE,
             ["Plugin.esp"],
             UpdateMode.Append);
 
         var processingTask = sut.ExecuteAsync(request, progress);
-        Assert.True(initializeEntered.Wait(TimeSpan.FromSeconds(1), TestContext.Current.CancellationToken));
+        var startedTask = await Task.WhenAny(ingestion.Started.Task, Task.Delay(TimeSpan.FromSeconds(1), TestContext.Current.CancellationToken));
+        Assert.Same(ingestion.Started.Task, startedTask);
 
         sut.Cancel();
 
@@ -379,22 +368,22 @@ public sealed class ProcessingRunTests : IDisposable
     [Fact]
     public async Task ExecuteAsync_FatalInitializationError_ReportsStatusOnlyAndRethrows()
     {
-        var sut = new ProcessingRun(new ThrowingInitializeDatabaseService());
+        var sut = new ProcessingRun();
+        var databasePath = Path.Combine(CreateTempDirectory(), "missing-parent", "fatal.db");
         var events = new List<ProcessingRunEvent>();
         var progress = new SynchronousProgress<ProcessingRunEvent>(events.Add);
         var request = new PluginProcessingRunRequest(
             @"C:\Games\Skyrim",
-            CreateTempFilePath("fatal.db"),
+            databasePath,
             GameRelease.SkyrimSE,
             ["Plugin.esp"],
             UpdateMode.Append);
 
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => sut.ExecuteAsync(request, progress));
+        await Assert.ThrowsAnyAsync<Exception>(() => sut.ExecuteAsync(request, progress));
 
-        Assert.Equal("database failed", exception.Message);
         Assert.Contains(events, runEvent =>
             runEvent.Kind == ProcessingRunEventKind.Status &&
-            runEvent.Message.Contains("Error during processing: database failed", StringComparison.Ordinal));
+            runEvent.Message.Contains("Error during processing", StringComparison.Ordinal));
         Assert.DoesNotContain(events, runEvent =>
             runEvent.Kind == ProcessingRunEventKind.Error &&
             runEvent.Message.Contains("Error during processing", StringComparison.Ordinal));
@@ -465,26 +454,18 @@ public sealed class ProcessingRunTests : IDisposable
         }
     }
 
-    private sealed class BlockingInitializeDatabaseService(ManualResetEventSlim initializeEntered) : DatabaseService
+    private sealed class BlockingPluginIngestion : PluginIngestion
     {
-        public override async Task InitializeDatabase(
-            string dbPath,
-            GameRelease gameRelease,
-            CancellationToken cancellationToken = default)
-        {
-            initializeEntered.Set();
-            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false);
-        }
-    }
+        public TaskCompletionSource<bool> Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    private sealed class ThrowingInitializeDatabaseService : DatabaseService
-    {
-        public override Task InitializeDatabase(
-            string dbPath,
-            GameRelease gameRelease,
-            CancellationToken cancellationToken = default)
+        internal override async Task<PluginIngestionResult> IngestAsync(
+            PluginIngestionRequest request,
+            FormIdRecordStore recordStore,
+            CancellationToken cancellationToken)
         {
-            return Task.FromException(new InvalidOperationException("database failed"));
+            Started.SetResult(true);
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false);
+            throw new UnreachableException();
         }
     }
 
