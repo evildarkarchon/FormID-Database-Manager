@@ -63,19 +63,36 @@ public class PluginProcessingService : IDisposable
     }
 
     /// <summary>
+    ///     Adds a warning message to the view model, ensuring thread-safe access to UI updates.
+    /// </summary>
+    /// <param name="message">The warning message to be added.</param>
+    internal void AddWarningMessage(string message)
+    {
+        // Use Dispatcher to ensure UI thread update.
+        if (!_dispatcher.CheckAccess())
+        {
+            _dispatcher.Post(() => _viewModel.AddWarningMessage(message));
+        }
+        else
+        {
+            _viewModel.AddWarningMessage(message);
+        }
+    }
+
+    /// <summary>
     ///     Processes game plugins using the legacy parameter bag.
     /// </summary>
     /// <param name="parameters">The legacy processing parameters to adapt into a Processing Run request.</param>
     /// <param name="progress">Optional legacy progress reporter.</param>
     /// <returns>A task that completes when the adapted Processing Run completes, fails, or observes cancellation.</returns>
     [RequiresUnreferencedCode(
-        "Uses reflection-based name extraction for Mutagen records via ModProcessor.ProcessPlugin.")]
+        "Uses reflection-based name extraction for Mutagen records via PluginIngestion.")]
     public virtual Task ProcessPlugins(
         ProcessingParameters parameters,
         IProgress<(string Message, double? Value)>? progress = null)
     {
         var request = CreateRequest(parameters);
-        return _processingRun.ExecuteAsync(request, new LegacyProgressAdapter(progress, AddErrorMessage));
+        return _processingRun.ExecuteAsync(request, new LegacyProgressAdapter(progress, AddErrorMessage, AddWarningMessage));
     }
 
     /// <summary>
@@ -112,7 +129,8 @@ public class PluginProcessingService : IDisposable
 
     private sealed class LegacyProgressAdapter(
         IProgress<(string Message, double? Value)>? progress,
-        Action<string> reportError)
+        Action<string> reportError,
+        Action<string> reportWarning)
         : IProgress<ProcessingRunEvent>
     {
         public void Report(ProcessingRunEvent value)
@@ -120,6 +138,10 @@ public class PluginProcessingService : IDisposable
             if (value.Kind == ProcessingRunEventKind.Error)
             {
                 reportError(value.Message);
+            }
+            else if (value.Kind == ProcessingRunEventKind.Warning)
+            {
+                reportWarning(value.Message);
             }
 
             progress?.Report((value.Message, value.Value));

@@ -541,11 +541,44 @@ public class MainWindowViewModelTests
     }
 
     [Fact]
+    public void AddWarningMessage_AddsToCollection()
+    {
+        // Arrange
+        var message = "Test warning message";
+
+        // Act
+        _viewModel.AddWarningMessage(message);
+
+        // Assert
+        Assert.Single(_viewModel.WarningMessages);
+        Assert.Contains(message, _viewModel.WarningMessages);
+    }
+
+    [Fact]
+    public void AddWarningMessage_MaintainsMaxMessages()
+    {
+        // Arrange
+        const int maxMessages = 5;
+
+        // Act
+        for (var i = 0; i < 10; i++)
+        {
+            _viewModel.AddWarningMessage($"Warning {i}", maxMessages);
+        }
+
+        // Assert
+        Assert.Equal(maxMessages, _viewModel.WarningMessages.Count);
+        Assert.Equal("Warning 5", _viewModel.WarningMessages.First());
+        Assert.Equal("Warning 9", _viewModel.WarningMessages.Last());
+    }
+
+    [Fact]
     public async Task AddMessages_WorksFromBackgroundThread()
     {
         // Arrange
         var errorAdded = false;
         var infoAdded = false;
+        var warningAdded = false;
 
         // Act - Add messages from background thread
         await Task.Run(() =>
@@ -554,13 +587,17 @@ public class MainWindowViewModelTests
             errorAdded = true;
             _viewModel.AddInformationMessage("Background info");
             infoAdded = true;
+            _viewModel.AddWarningMessage("Background warning");
+            warningAdded = true;
         }, TestContext.Current.CancellationToken);
 
         // Assert
         Assert.True(errorAdded);
         Assert.True(infoAdded);
+        Assert.True(warningAdded);
         Assert.Contains("Background error", _viewModel.ErrorMessages);
         Assert.Contains("Background info", _viewModel.InformationMessages);
+        Assert.Contains("Background warning", _viewModel.WarningMessages);
     }
 
     #endregion
@@ -576,6 +613,7 @@ public class MainWindowViewModelTests
         _viewModel.IsProcessing = true;
         _viewModel.ErrorMessages.Add("Error");
         _viewModel.InformationMessages.Add("Info");
+        _viewModel.WarningMessages.Add("Warning");
 
         // Act
         _viewModel.ResetProgress();
@@ -586,6 +624,7 @@ public class MainWindowViewModelTests
         Assert.False(_viewModel.IsProcessing);
         Assert.Empty(_viewModel.ErrorMessages);
         Assert.Empty(_viewModel.InformationMessages);
+        Assert.Empty(_viewModel.WarningMessages);
     }
 
     [Fact]
@@ -705,11 +744,20 @@ public class MainWindowViewModelTests
     }
 
     [Fact]
+    public void WarningMessages_InitializesAsEmptyCollection()
+    {
+        // Assert
+        Assert.NotNull(_viewModel.WarningMessages);
+        Assert.Empty(_viewModel.WarningMessages);
+    }
+
+    [Fact]
     public void MessageVisibilityProperties_ReturnFalseByDefault()
     {
         // Assert
         Assert.False(GetBooleanProperty(_viewModel, "HasErrorMessages"));
         Assert.False(GetBooleanProperty(_viewModel, "HasInformationMessages"));
+        Assert.False(GetBooleanProperty(_viewModel, "HasWarningMessages"));
     }
 
     [Fact]
@@ -752,6 +800,27 @@ public class MainWindowViewModelTests
         // Assert
         Assert.True(GetBooleanProperty(_viewModel, "HasInformationMessages"));
         Assert.Contains("HasInformationMessages", notifiedProperties);
+    }
+
+    [Fact]
+    public void AddWarningMessage_UpdatesHasWarningMessages()
+    {
+        // Arrange
+        var notifiedProperties = new System.Collections.Generic.List<string>();
+        _viewModel.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName != null)
+            {
+                notifiedProperties.Add(args.PropertyName);
+            }
+        };
+
+        // Act
+        _viewModel.AddWarningMessage("Binding support warning");
+
+        // Assert
+        Assert.True(GetBooleanProperty(_viewModel, "HasWarningMessages"));
+        Assert.Contains("HasWarningMessages", notifiedProperties);
     }
 
     [Fact]
@@ -810,6 +879,35 @@ public class MainWindowViewModelTests
         // Assert
         Assert.False(_viewModel.HasInformationMessages);
         Assert.Contains(nameof(MainWindowViewModel.HasInformationMessages), notifiedProperties);
+    }
+
+    [Fact]
+    public void WarningMessages_CollectionChangesNotifyHasWarningMessagesForAddAndClear()
+    {
+        // Arrange
+        var notifiedProperties = new System.Collections.Generic.List<string>();
+        _viewModel.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName != null)
+            {
+                notifiedProperties.Add(args.PropertyName);
+            }
+        };
+
+        // Act
+        _viewModel.WarningMessages.Add("Binding support warning");
+
+        // Assert
+        Assert.True(_viewModel.HasWarningMessages);
+        Assert.Contains(nameof(MainWindowViewModel.HasWarningMessages), notifiedProperties);
+
+        // Act
+        notifiedProperties.Clear();
+        _viewModel.WarningMessages.Clear();
+
+        // Assert
+        Assert.False(_viewModel.HasWarningMessages);
+        Assert.Contains(nameof(MainWindowViewModel.HasWarningMessages), notifiedProperties);
     }
 
     [Fact]
@@ -875,17 +973,50 @@ public class MainWindowViewModelTests
     }
 
     [Fact]
+    public void WarningMessages_ReplacedCollectionContinuesNotifyingHasWarningMessages()
+    {
+        // Arrange
+        var replacement = new ObservableCollection<string>();
+        var notifiedProperties = new System.Collections.Generic.List<string>();
+        _viewModel.WarningMessages = replacement;
+        _viewModel.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName != null)
+            {
+                notifiedProperties.Add(args.PropertyName);
+            }
+        };
+
+        // Act
+        replacement.Add("Replacement warning");
+
+        // Assert
+        Assert.True(_viewModel.HasWarningMessages);
+        Assert.Contains(nameof(MainWindowViewModel.HasWarningMessages), notifiedProperties);
+
+        // Act
+        notifiedProperties.Clear();
+        replacement.Clear();
+
+        // Assert
+        Assert.False(_viewModel.HasWarningMessages);
+        Assert.Contains(nameof(MainWindowViewModel.HasWarningMessages), notifiedProperties);
+    }
+
+    [Fact]
     public void Collections_CanBeModified()
     {
         // Act
         _viewModel.Plugins.Add(new PluginListItem { Name = "Test.esp" });
         _viewModel.ErrorMessages.Add("Error");
         _viewModel.InformationMessages.Add("Info");
+        _viewModel.WarningMessages.Add("Warning");
 
         // Assert
         Assert.Single(_viewModel.Plugins);
         Assert.Single(_viewModel.ErrorMessages);
         Assert.Single(_viewModel.InformationMessages);
+        Assert.Single(_viewModel.WarningMessages);
     }
 
     #endregion
@@ -1072,13 +1203,17 @@ public class MainWindowViewModelTests
         {
             _viewModel.AddErrorMessage($"Error {i}", 50);
             _viewModel.AddInformationMessage($"Info {i}", 50);
+            _viewModel.AddWarningMessage($"Warning {i}", 50);
         }
 
         // Assert
         Assert.Equal(50, _viewModel.ErrorMessages.Count);
         Assert.Equal(50, _viewModel.InformationMessages.Count);
+        Assert.Equal(50, _viewModel.WarningMessages.Count);
         Assert.Equal("Error 50", _viewModel.ErrorMessages.First());
         Assert.Equal("Error 99", _viewModel.ErrorMessages.Last());
+        Assert.Equal("Warning 50", _viewModel.WarningMessages.First());
+        Assert.Equal("Warning 99", _viewModel.WarningMessages.Last());
     }
 
     [Fact]

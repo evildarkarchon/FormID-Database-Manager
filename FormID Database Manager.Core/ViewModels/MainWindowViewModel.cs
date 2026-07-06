@@ -33,6 +33,9 @@ public partial class MainWindowViewModel : ObservableObject, IDisposable
     [ObservableProperty] [NotifyPropertyChangedFor(nameof(HasInformationMessages))]
     private ObservableCollection<string> _informationMessages = [];
 
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(HasWarningMessages))]
+    private ObservableCollection<string> _warningMessages = [];
+
     private bool _filterSuspended;
     private int _isApplyingFilter;
 
@@ -85,6 +88,7 @@ public partial class MainWindowViewModel : ObservableObject, IDisposable
         _detectedDirectories.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasMultipleDirectories));
         _errorMessages.CollectionChanged += OnErrorMessagesCollectionChanged;
         _informationMessages.CollectionChanged += OnInformationMessagesCollectionChanged;
+        _warningMessages.CollectionChanged += OnWarningMessagesCollectionChanged;
     }
 
     private LockedObservableCollection<PluginListItem> CreatePluginsCollection(
@@ -109,6 +113,8 @@ public partial class MainWindowViewModel : ObservableObject, IDisposable
     public bool HasErrorMessages => ErrorMessages.Count > 0;
 
     public bool HasInformationMessages => InformationMessages.Count > 0;
+
+    public bool HasWarningMessages => WarningMessages.Count > 0;
 
     public bool IsProgressVisible => IsProcessing || IsScanning;
 
@@ -179,6 +185,22 @@ public partial class MainWindowViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(HasInformationMessages));
     }
 
+    partial void OnWarningMessagesChanging(ObservableCollection<string> value)
+    {
+        if (ReferenceEquals(WarningMessages, value))
+        {
+            return;
+        }
+
+        WarningMessages.CollectionChanged -= OnWarningMessagesCollectionChanged;
+    }
+
+    partial void OnWarningMessagesChanged(ObservableCollection<string> value)
+    {
+        value.CollectionChanged += OnWarningMessagesCollectionChanged;
+        OnPropertyChanged(nameof(HasWarningMessages));
+    }
+
     private void OnErrorMessagesCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
     {
         OnPropertyChanged(nameof(HasErrorMessages));
@@ -187,6 +209,11 @@ public partial class MainWindowViewModel : ObservableObject, IDisposable
     private void OnInformationMessagesCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
     {
         OnPropertyChanged(nameof(HasInformationMessages));
+    }
+
+    private void OnWarningMessagesCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        OnPropertyChanged(nameof(HasWarningMessages));
     }
 
     partial void OnPluginFilterChanged(string value)
@@ -338,6 +365,26 @@ public partial class MainWindowViewModel : ObservableObject, IDisposable
         }
     }
 
+    public virtual void AddWarningMessage(string message, int maxMessages = 10)
+    {
+        // Ensure collection operations happen on UI thread
+        if (!_dispatcher.CheckAccess())
+        {
+            _dispatcher.Post(() => AddWarningMessage(message, maxMessages));
+            return;
+        }
+
+        lock (_messagesLock)
+        {
+            WarningMessages.Add(message);
+
+            if (WarningMessages.Count > maxMessages)
+            {
+                WarningMessages.RemoveAt(0);
+            }
+        }
+    }
+
     public void ResetProgress()
     {
         // Ensure collection operations happen on UI thread
@@ -354,6 +401,7 @@ public partial class MainWindowViewModel : ObservableObject, IDisposable
         {
             ErrorMessages.Clear();
             InformationMessages.Clear();
+            WarningMessages.Clear();
         }
     }
 

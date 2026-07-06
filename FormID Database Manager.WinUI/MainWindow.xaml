@@ -306,6 +306,23 @@
                 </InfoBar>
 
                 <InfoBar
+                    AutomationProperties.AutomationId="WarningMessagesInfoBar"
+                    AutomationProperties.Name="Warning messages"
+                    CornerRadius="4"
+                    IsClosable="True"
+                    IsOpen="{Binding HasWarningMessages, Mode=OneWay}"
+                    Severity="Warning"
+                    Title="Warnings">
+                    <ItemsControl ItemsSource="{Binding WarningMessages}" Margin="0,0,0,8">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding}" TextWrapping="WrapWholeWords" />
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </InfoBar>
+
+                <InfoBar
                     AutomationProperties.AutomationId="InformationMessagesInfoBar"
                     AutomationProperties.Name="Information messages"
                     CornerRadius="4"

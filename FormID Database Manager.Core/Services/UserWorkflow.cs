@@ -220,6 +220,7 @@ public sealed class UserWorkflow : IDisposable
         _viewModel.ProgressValue = 0;
         _viewModel.ProgressStatus = "Initializing...";
         _viewModel.ErrorMessages.Clear();
+        _viewModel.WarningMessages.Clear();
 
         try
         {
@@ -237,7 +238,7 @@ public sealed class UserWorkflow : IDisposable
             }
 
             var request = CreateProcessingRunRequest(gameRelease, databasePath);
-            var progress = new Progress<ProcessingRunEvent>(ApplyProcessingRunEvent);
+            var progress = new ProcessingRunProgressAdapter(ApplyProcessingRunEvent);
 
             await _processingRun.ExecuteAsync(request, progress);
         }
@@ -361,6 +362,20 @@ public sealed class UserWorkflow : IDisposable
             return;
         }
 
+        if (runEvent.Kind == ProcessingRunEventKind.Warning)
+        {
+            _viewModel.AddWarningMessage(runEvent.Message);
+            return;
+        }
+
         _viewModel.UpdateProgress(runEvent.Message, runEvent.Value);
+    }
+
+    private sealed class ProcessingRunProgressAdapter(Action<ProcessingRunEvent> handler) : IProgress<ProcessingRunEvent>
+    {
+        public void Report(ProcessingRunEvent value)
+        {
+            handler(value);
+        }
     }
 }

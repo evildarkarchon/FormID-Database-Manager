@@ -72,6 +72,12 @@ public readonly record struct FormIdStoreProgress(string Message, double? Value)
 public readonly record struct FormIdTextFileImportResult(int PluginCount, int RecordCount);
 
 /// <summary>
+///     Result of writing one Plugin's FormID records into the store.
+/// </summary>
+/// <param name="RecordCount">The number of FormID records inserted for the Plugin.</param>
+public readonly record struct FormIdPluginWriteResult(int RecordCount);
+
+/// <summary>
 ///     Owns SQLite writes for the FormID Record Store during one processing run.
 /// </summary>
 /// <remarks>
@@ -159,7 +165,8 @@ public sealed class FormIdRecordStore : IAsyncDisposable
     /// <param name="records">The FormID records to insert for the Plugin.</param>
     /// <param name="updateMode">Controls whether rows are appended or replace existing rows for the Plugin.</param>
     /// <param name="cancellationToken">Token to monitor for cancellation.</param>
-    public Task WritePluginAsync(
+    /// <returns>The number of records inserted for the Plugin.</returns>
+    public Task<FormIdPluginWriteResult> WritePluginAsync(
         string pluginName,
         IEnumerable<FormIdRecord> records,
         UpdateMode updateMode,
@@ -313,7 +320,7 @@ public sealed class FormIdRecordStore : IAsyncDisposable
         return plugins;
     }
 
-    private async Task WritePluginRecordsCoreAsync(
+    private async Task<FormIdPluginWriteResult> WritePluginRecordsCoreAsync(
         string pluginName,
         IEnumerable<FormIdRecord> records,
         bool replaceExistingPluginRows,
@@ -328,17 +335,20 @@ public sealed class FormIdRecordStore : IAsyncDisposable
 
         try
         {
-            if (replaceExistingPluginRows)
-            {
-                await DeletePluginRowsAsync(pluginName, transaction, cancellationToken).ConfigureAwait(false);
-            }
-
             await using var insertCommand = CreateTargetInsertCommand(transaction);
             var batch = new List<FormIdRecord>(PluginBatchSize);
+            var recordCount = 0;
 
             foreach (var record in records)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+
+                if (recordCount == 0 && replaceExistingPluginRows)
+                {
+                    await DeletePluginRowsAsync(pluginName, transaction, cancellationToken).ConfigureAwait(false);
+                }
+
+                recordCount++;
                 batch.Add(record);
 
                 if (batch.Count >= PluginBatchSize)
@@ -349,6 +359,7 @@ public sealed class FormIdRecordStore : IAsyncDisposable
 
             FlushPluginBatch(insertCommand, pluginName, batch, cancellationToken);
             await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            return new FormIdPluginWriteResult(recordCount);
         }
         catch
         {

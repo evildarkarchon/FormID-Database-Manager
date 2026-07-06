@@ -202,6 +202,8 @@ public class WinUiPlatformServiceSourceTests
 
         Assert.Contains("IsOpen=\"{Binding HasErrorMessages, Mode=OneWay}\"", xaml, StringComparison.Ordinal);
         Assert.Contains("ItemsSource=\"{Binding ErrorMessages}\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("IsOpen=\"{Binding HasWarningMessages, Mode=OneWay}\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("ItemsSource=\"{Binding WarningMessages}\"", xaml, StringComparison.Ordinal);
         Assert.Contains("IsOpen=\"{Binding HasInformationMessages, Mode=OneWay}\"", xaml, StringComparison.Ordinal);
         Assert.Contains("ItemsSource=\"{Binding InformationMessages}\"", xaml, StringComparison.Ordinal);
 
@@ -223,14 +225,14 @@ public class WinUiPlatformServiceSourceTests
         var processButtonIndex = xaml.IndexOf(
             "AutomationProperties.AutomationId=\"ProcessFormIdsButton\"",
             StringComparison.Ordinal);
-        var informationBarIndex = xaml.IndexOf("IsOpen=\"{Binding HasInformationMessages, Mode=OneWay}\"",
+        var warningBarIndex = xaml.IndexOf("IsOpen=\"{Binding HasWarningMessages, Mode=OneWay}\"",
             StringComparison.Ordinal);
 
         Assert.Contains("<StackPanel Grid.Row=\"5\" Margin=\"0,0,0,4\" Spacing=\"8\">", xaml, StringComparison.Ordinal);
-        Assert.Equal(2, CountOccurrences(xaml, "CornerRadius=\"4\""));
-        Assert.Equal(2, CountOccurrences(xaml, "Margin=\"0,0,0,8\""));
+        Assert.Equal(3, CountOccurrences(xaml, "CornerRadius=\"4\""));
+        Assert.Equal(3, CountOccurrences(xaml, "Margin=\"0,0,0,8\""));
         Assert.True(
-            processButtonIndex >= 0 && processButtonIndex < informationBarIndex,
+            processButtonIndex >= 0 && processButtonIndex < warningBarIndex,
             "The progress/action footer should be declared before the bottom notification bars.");
     }
 
@@ -299,6 +301,7 @@ public class WinUiPlatformServiceSourceTests
         Assert.Contains("AutomationProperties.Name=\"Processing status\"", xaml, StringComparison.Ordinal);
         Assert.Contains("AutomationProperties.Name=\"Processing progress\"", xaml, StringComparison.Ordinal);
         Assert.Contains("AutomationProperties.Name=\"Error messages\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("AutomationProperties.Name=\"Warning messages\"", xaml, StringComparison.Ordinal);
         Assert.Contains("AutomationProperties.Name=\"Information messages\"", xaml, StringComparison.Ordinal);
     }
 

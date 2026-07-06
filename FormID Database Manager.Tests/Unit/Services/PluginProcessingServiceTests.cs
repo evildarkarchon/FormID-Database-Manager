@@ -396,8 +396,8 @@ public class PluginProcessingServiceTests : IDisposable
         await _service.ProcessPlugins(parameters, progress);
 
         Assert.NotEmpty(progressReports);
-        Assert.Contains(progressReports, r => r.Message.Contains("Initializing plugin processing"));
-        Assert.Contains(progressReports, r => r.Message.Contains("Processing completed successfully"));
+        Assert.Contains(progressReports, r => r.Message.Contains("Initializing plugin ingestion"));
+        Assert.Contains(progressReports, r => r.Message.Contains("Processing completed with warnings"));
         Assert.Equal(100, progressReports.Last().Value);
     }
 
@@ -600,7 +600,7 @@ public class PluginProcessingServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task ProcessPlugins_ErrorCallback_AddsErrorMessages()
+    public async Task ProcessPlugins_WarningCallback_AddsWarningMessages()
     {
         var parameters = CreateTestParameters();
 
@@ -616,7 +616,7 @@ public class PluginProcessingServiceTests : IDisposable
 
         await _service.ProcessPlugins(parameters);
 
-        _mockViewModel.Verify(x => x.AddErrorMessage(
+        _mockViewModel.Verify(x => x.AddWarningMessage(
                 It.Is<string>(message => message.Contains("Could not find plugin file", StringComparison.Ordinal)),
                 It.IsAny<int>()),
             Times.AtLeastOnce);

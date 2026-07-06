@@ -162,7 +162,12 @@ public enum ProcessingRunEventKind
     Status,
 
     /// <summary>
-    ///     A recoverable or fatal error message associated with the run.
+    ///     A non-fatal Processing Warning that should be shown separately from errors.
+    /// </summary>
+    Warning,
+
+    /// <summary>
+    ///     A failed Plugin or fatal run error message associated with the run.
     /// </summary>
     Error
 }
@@ -186,6 +191,15 @@ public readonly record struct ProcessingRunEvent(ProcessingRunEventKind Kind, st
     }
 
     /// <summary>
+    ///     Creates a warning event.
+    /// </summary>
+    /// <param name="message">The user-facing warning message.</param>
+    public static ProcessingRunEvent Warning(string message)
+    {
+        return new ProcessingRunEvent(ProcessingRunEventKind.Warning, message);
+    }
+
+    /// <summary>
     ///     Creates an error event.
     /// </summary>
     /// <param name="message">The user-facing error message.</param>
@@ -200,9 +214,12 @@ public readonly record struct ProcessingRunEvent(ProcessingRunEventKind Kind, st
 /// </summary>
 public class ProcessingRun : IDisposable
 {
+    private const int OutcomeDetailLimit = 5;
+
     private readonly Lock _cancellationLock = new();
     private readonly DatabaseService _databaseService;
     private readonly IGameLoadOrderProvider _loadOrderProvider;
+    private readonly PluginIngestion _pluginIngestion;
     private CancellationTokenSource? _cancellationTokenSource;
 
     /// <summary>
@@ -211,9 +228,18 @@ public class ProcessingRun : IDisposable
     /// <param name="databaseService">The database module used to open the FormID Record Store.</param>
     /// <param name="loadOrderProvider">Optional Plugin load-order provider; production uses Mutagen-backed lookup.</param>
     public ProcessingRun(DatabaseService databaseService, IGameLoadOrderProvider? loadOrderProvider = null)
+        : this(databaseService, loadOrderProvider, new PluginIngestion())
+    {
+    }
+
+    internal ProcessingRun(
+        DatabaseService databaseService,
+        IGameLoadOrderProvider? loadOrderProvider,
+        PluginIngestion pluginIngestion)
     {
         _databaseService = databaseService ?? throw new ArgumentNullException(nameof(databaseService));
         _loadOrderProvider = loadOrderProvider ?? new GameLoadOrderProvider();
+        _pluginIngestion = pluginIngestion ?? throw new ArgumentNullException(nameof(pluginIngestion));
     }
 
     /// <summary>
@@ -223,7 +249,7 @@ public class ProcessingRun : IDisposable
     /// <param name="progress">Optional typed run event reporter.</param>
     /// <returns>A task that completes when the run completes, fails, or observes cancellation.</returns>
     [RequiresUnreferencedCode(
-        "Uses reflection-based name extraction for Mutagen records via ModProcessor.ProcessPlugin.")]
+        "Uses reflection-based name extraction for Mutagen records via PluginIngestion.")]
     public virtual async Task ExecuteAsync(
         ProcessingRunRequest request,
         IProgress<ProcessingRunEvent>? progress = null)
@@ -274,6 +300,11 @@ public class ProcessingRun : IDisposable
         progress?.Report(ProcessingRunEvent.Error(message));
     }
 
+    private static void ReportWarning(IProgress<ProcessingRunEvent>? progress, string message)
+    {
+        progress?.Report(ProcessingRunEvent.Warning(message));
+    }
+
     private CancellationTokenSource StartCancellationSource()
     {
         lock (_cancellationLock)
@@ -286,7 +317,7 @@ public class ProcessingRun : IDisposable
     }
 
     [RequiresUnreferencedCode(
-        "Uses reflection-based name extraction for Mutagen records via ModProcessor.ProcessPlugin.")]
+        "Uses reflection-based name extraction for Mutagen records via PluginIngestion.")]
     private async Task ExecuteCoreAsync(
         ProcessingRunRequest request,
         IProgress<ProcessingRunEvent>? progress,
@@ -381,14 +412,14 @@ public class ProcessingRun : IDisposable
     }
 
     [RequiresUnreferencedCode(
-        "Uses reflection-based name extraction for Mutagen records via ModProcessor.ProcessPlugin.")]
+        "Uses reflection-based name extraction for Mutagen records via PluginIngestion.")]
     private async Task ExecutePluginRunAsync(
         PluginProcessingRunRequest request,
         FormIdRecordStore recordStore,
         IProgress<ProcessingRunEvent>? progress,
         CancellationToken cancellationToken)
     {
-        ReportStatus(progress, "Initializing plugin processing...", 0);
+        ReportStatus(progress, "Initializing plugin ingestion...", 0);
 
         var pluginNames = request.PluginNames.ToList();
         var dataPath = GameReleaseHelper.ResolveDataPath(request.GameDirectory);
@@ -398,65 +429,133 @@ public class ProcessingRun : IDisposable
             includeMasterFlagsLookup: true);
 
         var successfulPlugins = 0;
+        var skippedPlugins = 0;
         var failedPlugins = 0;
-        var modProcessor = new ModProcessor(message => ReportError(progress, message));
+        var warningDetails = new List<string>();
+        var failedDetails = new List<string>();
 
         for (var i = 0; i < pluginNames.Count; i++)
         {
-            if (cancellationToken.IsCancellationRequested)
-            {
-                break;
-            }
+            cancellationToken.ThrowIfCancellationRequested();
 
             var pluginName = pluginNames[i];
             var progressPercent = (double)(i + 1) / pluginNames.Count * 100;
-            ReportStatus(progress, $"Processing plugin {i + 1} of {pluginNames.Count}: {pluginName}", progressPercent);
+            ReportStatus(progress, $"Ingesting plugin {i + 1} of {pluginNames.Count}: {pluginName}", progressPercent);
 
-            try
-            {
-                await modProcessor.ProcessPlugin(
+            var result = await _pluginIngestion.IngestAsync(
+                    new PluginIngestionRequest(
                         request.GameDirectory,
-                        recordStore,
                         request.GameRelease,
                         pluginName,
                         loadOrderSnapshot,
-                        request.UpdateMode,
-                        cancellationToken)
-                    .ConfigureAwait(false);
-                successfulPlugins++;
-            }
-            catch (OperationCanceledException)
+                        request.UpdateMode),
+                    recordStore,
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            switch (result.Kind)
             {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                failedPlugins++;
-                ReportError(progress, $"Failed to process plugin {pluginName}: {ex.Message}");
-                ReportStatus(progress, $"Error processing plugin {pluginName}: {ex.Message}");
-                ReportError(progress, "Continuing with next plugin...");
+                case PluginIngestionResultKind.Succeeded:
+                    successfulPlugins++;
+                    warningDetails.AddRange(result.Warnings);
+                    break;
+
+                case PluginIngestionResultKind.Skipped:
+                    skippedPlugins++;
+                    warningDetails.Add(FormatPluginOutcomeDetail(result));
+                    break;
+
+                case PluginIngestionResultKind.Failed:
+                    failedPlugins++;
+                    failedDetails.Add(FormatPluginOutcomeDetail(result));
+                    break;
+
+                default:
+                    throw new ArgumentOutOfRangeException(
+                        nameof(result),
+                        result.Kind,
+                        "Unsupported Plugin Ingestion outcome.");
             }
         }
 
-        if (!cancellationToken.IsCancellationRequested)
+        cancellationToken.ThrowIfCancellationRequested();
+
+        await recordStore.OptimizeAsync(cancellationToken).ConfigureAwait(false);
+
+        if (warningDetails.Count > 0)
         {
-            await recordStore.OptimizeAsync(cancellationToken).ConfigureAwait(false);
-            if (failedPlugins > 0)
-            {
-                ReportStatus(
-                    progress,
-                    $"Processing completed with {successfulPlugins} successful and {failedPlugins} failed plugins.",
-                    100);
-            }
-            else
-            {
-                ReportStatus(progress, "Processing completed successfully!", 100);
-            }
+            ReportWarning(
+                progress,
+                FormatOutcomeDetails(
+                    $"{warningDetails.Count} processing warning{(warningDetails.Count == 1 ? string.Empty : "s")}.",
+                    warningDetails));
+        }
+
+        if (failedDetails.Count > 0)
+        {
+            ReportError(
+                progress,
+                FormatOutcomeDetails(
+                    $"{failedPlugins} failed plugin{(failedPlugins == 1 ? string.Empty : "s")}.",
+                    failedDetails));
+        }
+
+        if (failedPlugins > 0)
+        {
+            ReportStatus(
+                progress,
+                FormatCompletionStatus(
+                    "Processing completed with failures",
+                    successfulPlugins,
+                    skippedPlugins,
+                    failedPlugins),
+                100);
+        }
+        else if (warningDetails.Count > 0)
+        {
+            ReportStatus(
+                progress,
+                FormatCompletionStatus(
+                    "Processing completed with warnings",
+                    successfulPlugins,
+                    skippedPlugins,
+                    failedPlugins),
+                100);
         }
         else
         {
-            ReportStatus(progress, "Processing cancelled.");
+            ReportStatus(progress, "Processing completed successfully!", 100);
         }
+    }
+
+    private static string FormatPluginOutcomeDetail(PluginIngestionResult result)
+    {
+        return string.IsNullOrWhiteSpace(result.Detail)
+            ? result.PluginName
+            : $"{result.PluginName}: {result.Detail}";
+    }
+
+    private static string FormatOutcomeDetails(string summary, IReadOnlyList<string> details)
+    {
+        var lines = new List<string> { summary };
+        lines.AddRange(details.Take(OutcomeDetailLimit));
+
+        var remaining = details.Count - OutcomeDetailLimit;
+        if (remaining > 0)
+        {
+            lines.Add($"and {remaining} more.");
+        }
+
+        return string.Join(Environment.NewLine, lines);
+    }
+
+    private static string FormatCompletionStatus(
+        string prefix,
+        int successfulPlugins,
+        int skippedPlugins,
+        int failedPlugins)
+    {
+        return $"{prefix}: {successfulPlugins} successful, {skippedPlugins} skipped, and {failedPlugins} failed plugins.";
     }
 
     private static IProgress<FormIdStoreProgress>? CreateStoreProgressAdapter(

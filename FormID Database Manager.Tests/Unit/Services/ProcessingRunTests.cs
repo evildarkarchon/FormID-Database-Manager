@@ -122,7 +122,45 @@ public sealed class ProcessingRunTests : IDisposable
     }
 
     [Fact]
-    public async Task ExecuteAsync_PluginRunMissingPluginFile_ReportsTypedErrorEventAndCompletesRun()
+    public async Task ExecuteAsync_PluginRunMissingSelectedPlugin_WarnsSkipsAndCompletesWithWarnings()
+    {
+        var gameDirectory = CreateTempDirectory();
+        Directory.CreateDirectory(Path.Combine(gameDirectory, "Data"));
+        var databasePath = Path.Combine(gameDirectory, "plugins.db");
+
+        var loadOrderProvider = new Mock<IGameLoadOrderProvider>();
+        loadOrderProvider
+            .Setup(x => x.BuildSnapshot(GameRelease.SkyrimSE, Path.Combine(gameDirectory, "Data"), true))
+            .Returns(new GameLoadOrderSnapshot(["Other.esp"]));
+
+        var sut = new ProcessingRun(new DatabaseService(), loadOrderProvider.Object);
+        var events = new List<ProcessingRunEvent>();
+        var progress = new SynchronousProgress<ProcessingRunEvent>(events.Add);
+        var request = new PluginProcessingRunRequest(
+            gameDirectory,
+            databasePath,
+            GameRelease.SkyrimSE,
+            ["Missing.esp"],
+            UpdateMode.Append);
+
+        await sut.ExecuteAsync(request, progress);
+
+        Assert.Contains(events, runEvent =>
+            runEvent.Kind == ProcessingRunEventKind.Warning &&
+            runEvent.Message.Contains("Missing.esp", StringComparison.Ordinal) &&
+            runEvent.Message.Contains("load order", StringComparison.Ordinal));
+        Assert.Contains(events, runEvent =>
+            runEvent.Kind == ProcessingRunEventKind.Status &&
+            runEvent.Message.Contains("Processing completed with warnings", StringComparison.Ordinal) &&
+            runEvent.Message.Contains("0 successful", StringComparison.Ordinal) &&
+            runEvent.Message.Contains("1 skipped", StringComparison.Ordinal));
+        Assert.DoesNotContain(events, runEvent =>
+            runEvent.Kind == ProcessingRunEventKind.Status &&
+            runEvent.Message.Contains("Processing completed successfully", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_PluginRunMissingPluginFile_WarnsSkipsAndCompletesWithWarnings()
     {
         var gameDirectory = CreateTempDirectory();
         Directory.CreateDirectory(Path.Combine(gameDirectory, "Data"));
@@ -146,9 +184,154 @@ public sealed class ProcessingRunTests : IDisposable
         await sut.ExecuteAsync(request, progress);
 
         Assert.Contains(events, runEvent =>
-            runEvent.Kind == ProcessingRunEventKind.Error &&
+            runEvent.Kind == ProcessingRunEventKind.Warning &&
             runEvent.Message.Contains("Could not find plugin file", StringComparison.Ordinal));
         Assert.Contains(events, runEvent =>
+            runEvent.Kind == ProcessingRunEventKind.Status &&
+            runEvent.Message.Contains("Processing completed with warnings", StringComparison.Ordinal) &&
+            runEvent.Message.Contains("0 successful", StringComparison.Ordinal) &&
+            runEvent.Message.Contains("1 skipped", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_PluginSpecificFatalError_ReportsFailedPluginAndContinues()
+    {
+        var gameDirectory = CreateTempDirectory();
+        Directory.CreateDirectory(Path.Combine(gameDirectory, "Data"));
+        var databasePath = Path.Combine(gameDirectory, "plugins.db");
+        var ingestion = new RecordingPluginIngestion();
+        ingestion.EnqueueResult(PluginIngestionResult.Failed("Bad.esp", "Invalid plugin header."));
+        ingestion.EnqueueResult(PluginIngestionResult.Succeeded("Good.esp", recordCount: 3, []));
+
+        var sut = new ProcessingRun(
+            new DatabaseService(),
+            CreateLoadOrderProvider(gameDirectory, ["Bad.esp", "Good.esp"]).Object,
+            ingestion);
+        var events = new List<ProcessingRunEvent>();
+        var progress = new SynchronousProgress<ProcessingRunEvent>(events.Add);
+        var request = new PluginProcessingRunRequest(
+            gameDirectory,
+            databasePath,
+            GameRelease.SkyrimSE,
+            ["Bad.esp", "Good.esp"],
+            UpdateMode.Append);
+
+        await sut.ExecuteAsync(request, progress);
+
+        Assert.Equal(["Bad.esp", "Good.esp"], ingestion.IngestedPlugins);
+        Assert.Contains(events, runEvent =>
+            runEvent.Kind == ProcessingRunEventKind.Error &&
+            runEvent.Message.Contains("1 failed plugin", StringComparison.Ordinal) &&
+            runEvent.Message.Contains("Bad.esp: Invalid plugin header.", StringComparison.Ordinal));
+        Assert.Contains(events, runEvent =>
+            runEvent.Kind == ProcessingRunEventKind.Status &&
+            runEvent.Message.Contains("Processing completed with failures", StringComparison.Ordinal) &&
+            runEvent.Message.Contains("1 successful", StringComparison.Ordinal) &&
+            runEvent.Message.Contains("1 failed", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_StoreWriteFailure_FailsProcessingRunAndDoesNotContinue()
+    {
+        var gameDirectory = CreateTempDirectory();
+        Directory.CreateDirectory(Path.Combine(gameDirectory, "Data"));
+        var databasePath = Path.Combine(gameDirectory, "plugins.db");
+        var ingestion = new RecordingPluginIngestion();
+        ingestion.EnqueueException(new InvalidOperationException("store failed"));
+        ingestion.EnqueueResult(PluginIngestionResult.Succeeded("Never.esp", recordCount: 1, []));
+
+        var sut = new ProcessingRun(
+            new DatabaseService(),
+            CreateLoadOrderProvider(gameDirectory, ["Bad.esp", "Never.esp"]).Object,
+            ingestion);
+        var events = new List<ProcessingRunEvent>();
+        var progress = new SynchronousProgress<ProcessingRunEvent>(events.Add);
+        var request = new PluginProcessingRunRequest(
+            gameDirectory,
+            databasePath,
+            GameRelease.SkyrimSE,
+            ["Bad.esp", "Never.esp"],
+            UpdateMode.Append);
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => sut.ExecuteAsync(request, progress));
+
+        Assert.Equal("store failed", exception.Message);
+        Assert.Equal(["Bad.esp"], ingestion.IngestedPlugins);
+        Assert.Contains(events, runEvent =>
+            runEvent.Kind == ProcessingRunEventKind.Status &&
+            runEvent.Message.Contains("Error during processing: store failed", StringComparison.Ordinal));
+        Assert.DoesNotContain(events, runEvent =>
+            runEvent.Kind == ProcessingRunEventKind.Error &&
+            runEvent.Message.Contains("failed plugin", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_CancellationAfterPartialCounts_ReportsCancelledTerminalOutcome()
+    {
+        var gameDirectory = CreateTempDirectory();
+        Directory.CreateDirectory(Path.Combine(gameDirectory, "Data"));
+        var databasePath = Path.Combine(gameDirectory, "plugins.db");
+        var ingestion = new RecordingPluginIngestion();
+        ingestion.EnqueueResult(PluginIngestionResult.Succeeded("Done.esp", recordCount: 1, []));
+        ingestion.EnqueueException(new OperationCanceledException());
+
+        var sut = new ProcessingRun(
+            new DatabaseService(),
+            CreateLoadOrderProvider(gameDirectory, ["Done.esp", "Cancelled.esp"]).Object,
+            ingestion);
+        var events = new List<ProcessingRunEvent>();
+        var progress = new SynchronousProgress<ProcessingRunEvent>(events.Add);
+        var request = new PluginProcessingRunRequest(
+            gameDirectory,
+            databasePath,
+            GameRelease.SkyrimSE,
+            ["Done.esp", "Cancelled.esp"],
+            UpdateMode.Append);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sut.ExecuteAsync(request, progress));
+
+        Assert.Contains(events, runEvent =>
+            runEvent.Kind == ProcessingRunEventKind.Status &&
+            runEvent.Message.Contains("Processing cancelled", StringComparison.Ordinal));
+        Assert.DoesNotContain(events, runEvent =>
+            runEvent.Kind == ProcessingRunEventKind.Status &&
+            runEvent.Message.Contains("Processing completed", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_PluginWarningsWithoutFailures_CompletesWithWarnings()
+    {
+        var gameDirectory = CreateTempDirectory();
+        Directory.CreateDirectory(Path.Combine(gameDirectory, "Data"));
+        var databasePath = Path.Combine(gameDirectory, "plugins.db");
+        var ingestion = new RecordingPluginIngestion();
+        ingestion.EnqueueResult(PluginIngestionResult.Succeeded(
+            "Warned.esp",
+            recordCount: 2,
+            ["Warned.esp: 2 recoverable record issues. First issue; second issue"]));
+
+        var sut = new ProcessingRun(
+            new DatabaseService(),
+            CreateLoadOrderProvider(gameDirectory, ["Warned.esp"]).Object,
+            ingestion);
+        var events = new List<ProcessingRunEvent>();
+        var progress = new SynchronousProgress<ProcessingRunEvent>(events.Add);
+        var request = new PluginProcessingRunRequest(
+            gameDirectory,
+            databasePath,
+            GameRelease.SkyrimSE,
+            ["Warned.esp"],
+            UpdateMode.Append);
+
+        await sut.ExecuteAsync(request, progress);
+
+        Assert.Contains(events, runEvent =>
+            runEvent.Kind == ProcessingRunEventKind.Warning &&
+            runEvent.Message.Contains("recoverable record issues", StringComparison.Ordinal));
+        Assert.Contains(events, runEvent =>
+            runEvent.Kind == ProcessingRunEventKind.Status &&
+            runEvent.Message.Contains("Processing completed with warnings", StringComparison.Ordinal));
+        Assert.DoesNotContain(events, runEvent =>
             runEvent.Kind == ProcessingRunEventKind.Status &&
             runEvent.Message.Contains("Processing completed successfully", StringComparison.Ordinal));
     }
@@ -263,6 +446,17 @@ public sealed class ProcessingRunTests : IDisposable
         return filePath;
     }
 
+    private static Mock<IGameLoadOrderProvider> CreateLoadOrderProvider(
+        string gameDirectory,
+        IReadOnlyList<string> pluginNames)
+    {
+        var loadOrderProvider = new Mock<IGameLoadOrderProvider>();
+        loadOrderProvider
+            .Setup(x => x.BuildSnapshot(GameRelease.SkyrimSE, Path.Combine(gameDirectory, "Data"), true))
+            .Returns(new GameLoadOrderSnapshot(pluginNames));
+        return loadOrderProvider;
+    }
+
     private sealed class SynchronousProgress<T>(Action<T> handler) : IProgress<T>
     {
         public void Report(T value)
@@ -291,6 +485,33 @@ public sealed class ProcessingRunTests : IDisposable
             CancellationToken cancellationToken = default)
         {
             return Task.FromException(new InvalidOperationException("database failed"));
+        }
+    }
+
+    private sealed class RecordingPluginIngestion : PluginIngestion
+    {
+        private readonly Queue<Func<PluginIngestionRequest, FormIdRecordStore, CancellationToken, Task<PluginIngestionResult>>>
+            _responses = [];
+
+        public List<string> IngestedPlugins { get; } = [];
+
+        public void EnqueueResult(PluginIngestionResult result)
+        {
+            _responses.Enqueue((_, _, _) => Task.FromResult(result));
+        }
+
+        public void EnqueueException(Exception exception)
+        {
+            _responses.Enqueue((_, _, _) => Task.FromException<PluginIngestionResult>(exception));
+        }
+
+        internal override Task<PluginIngestionResult> IngestAsync(
+            PluginIngestionRequest request,
+            FormIdRecordStore recordStore,
+            CancellationToken cancellationToken)
+        {
+            IngestedPlugins.Add(request.PluginName);
+            return _responses.Dequeue()(request, recordStore, cancellationToken);
         }
     }
 }

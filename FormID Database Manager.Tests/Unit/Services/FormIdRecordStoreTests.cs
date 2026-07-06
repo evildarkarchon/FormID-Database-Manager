@@ -71,6 +71,25 @@ public sealed class FormIdRecordStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task WritePluginAsync_ReplaceModeWithZeroRecords_PreservesExistingRows()
+    {
+        await InsertTestRecordAsync("Plugin.esp", "000001", "OldEntry");
+        await using var store = await OpenStoreAsync();
+
+        var result = await store.WritePluginAsync(
+            "PLUGIN.ESP",
+            [],
+            UpdateMode.ReplacePluginRecords,
+            TestContext.Current.CancellationToken);
+
+        var records = await GetAllRecordsAsync();
+
+        Assert.Equal(0, result.RecordCount);
+        Assert.Single(records);
+        Assert.Contains(records, record => record is { plugin: "Plugin.esp", formid: "000001", entry: "OldEntry" });
+    }
+
+    [Fact]
     public async Task WritePluginAsync_ReplaceInsertFails_RollsBackOldRows()
     {
         await InsertTestRecordAsync("Plugin.esp", "000001", "OldEntry");

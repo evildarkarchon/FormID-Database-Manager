@@ -246,6 +246,37 @@ public class UserWorkflowTests
     }
 
     [Fact]
+    public async Task ProcessFormIdsAsync_StartsNewRun_ClearsStaleWarnings()
+    {
+        _viewModel.SelectedGame = GameRelease.SkyrimSE;
+        _viewModel.GameDirectory = GameDirectory;
+        _viewModel.DatabasePath = DatabasePath;
+        _viewModel.WarningMessages.Add("Stale warning");
+        _viewModel.Plugins.Add(new PluginListItem { Name = "User.esp", IsSelected = true });
+
+        var sut = CreateSut();
+        await sut.ProcessFormIdsAsync();
+
+        Assert.Empty(_viewModel.WarningMessages);
+    }
+
+    [Fact]
+    public async Task ProcessFormIdsAsync_ProcessingRunWarningEvent_AddsWarningMessage()
+    {
+        _viewModel.SelectedGame = GameRelease.SkyrimSE;
+        _viewModel.GameDirectory = GameDirectory;
+        _viewModel.DatabasePath = DatabasePath;
+        _viewModel.Plugins.Add(new PluginListItem { Name = "User.esp", IsSelected = true });
+        _processingRun.EventsToReport.Add(ProcessingRunEvent.Warning("Skipped User.esp"));
+
+        var sut = CreateSut();
+        await sut.ProcessFormIdsAsync();
+
+        Assert.Contains("Skipped User.esp", _viewModel.WarningMessages);
+        Assert.Empty(_viewModel.ErrorMessages);
+    }
+
+    [Fact]
     public async Task ProcessFormIdsAsync_AlreadyProcessing_CancelsCurrentRunAndSetsCancellingState()
     {
         _viewModel.IsProcessing = true;
@@ -288,11 +319,18 @@ public class UserWorkflowTests
     {
         public bool Cancelled { get; private set; }
 
+        public List<ProcessingRunEvent> EventsToReport { get; } = [];
+
         public override Task ExecuteAsync(
             ProcessingRunRequest request,
             IProgress<ProcessingRunEvent>? progress = null)
         {
             processingRuns.Add(request);
+            foreach (var runEvent in EventsToReport)
+            {
+                progress?.Report(runEvent);
+            }
+
             return Task.CompletedTask;
         }
 
