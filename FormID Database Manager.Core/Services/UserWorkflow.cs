@@ -17,7 +17,7 @@ public sealed class UserWorkflow : IDisposable
     private readonly ProcessingRun _processingRun;
     private readonly MainWindowViewModel _viewModel;
     private bool _disposed;
-    private int _gameSelectionVersion;
+    private int _gameContextVersion;
     private string? _programmaticDirectorySelectionToIgnore;
     private GameRelease? _programmaticGameSelectionToIgnore;
 
@@ -47,64 +47,25 @@ public sealed class UserWorkflow : IDisposable
     }
 
     /// <summary>
-    /// Handles game selection by clearing stale state, loading installed folders, and refreshing plugins.
+    /// Applies a source-aware Game Context transition and refreshes the Plugin List when the context is complete.
     /// </summary>
-    /// <returns>A task that completes after the latest applicable selection has been applied.</returns>
-    public async Task SelectGameAsync()
+    /// <param name="transition">The Game Context source that changed.</param>
+    /// <returns>A task that completes after the applicable workflow transition and refresh finish.</returns>
+    internal Task ApplyGameContextTransitionAsync(GameContextTransition transition)
     {
-        if (_programmaticGameSelectionToIgnore == _viewModel.SelectedGame)
+        return transition.Source switch
         {
-            _programmaticGameSelectionToIgnore = null;
-            return;
-        }
-
-        _programmaticGameSelectionToIgnore = null;
-
-        if (_viewModel.SelectedGame is not { } selectedGame)
-        {
-            return;
-        }
-
-        var gameSelectionVersion = Interlocked.Increment(ref _gameSelectionVersion);
-
-        ResetGameSelectionState();
-
-        // Mutagen game-location lookup touches registry and file system state, so keep it off the UI thread.
-        var folders = await Task.Run(() => _gameLocationService.GetGameFolders(selectedGame));
-
-        if (!IsLatestGameSelection(gameSelectionVersion))
-        {
-            return;
-        }
-
-        if (folders.Count == 0)
-        {
-            _viewModel.AddInformationMessage(
-                $"No installed locations found for {selectedGame}. Use Browse to select a directory.");
-            return;
-        }
-
-        ApplyDetectedFolders(folders);
-        await RefreshPluginsForCurrentSelectionAsync();
-    }
-
-    /// <summary>
-    /// Handles detected-directory selection by refreshing plugins for the current game and directory.
-    /// </summary>
-    /// <returns>A task that completes after plugin refresh finishes or is skipped.</returns>
-    public Task SelectDetectedDirectoryAsync()
-    {
-        if (_programmaticDirectorySelectionToIgnore is { } ignoredDirectory)
-        {
-            _programmaticDirectorySelectionToIgnore = null;
-
-            if (string.Equals(ignoredDirectory, _viewModel.GameDirectory, StringComparison.OrdinalIgnoreCase))
-            {
-                return Task.CompletedTask;
-            }
-        }
-
-        return RefreshPluginsForCurrentSelectionAsync();
+            GameContextTransitionSource.SelectedGameReleaseChanged => ApplySelectedGameReleaseChangedAsync(),
+            GameContextTransitionSource.SelectedDetectedDirectoryChanged => ApplySelectedDetectedDirectoryChangedAsync(),
+            GameContextTransitionSource.AdvancedModeChanged => RefreshPluginsForCurrentGameContextAsync(),
+            GameContextTransitionSource.BrowsedDirectorySelected => ApplyBrowsedDirectorySelectedAsync(
+                transition.BrowsedDirectoryPath ??
+                throw new ArgumentException("A browsed directory transition requires a path.", nameof(transition))),
+            _ => throw new ArgumentOutOfRangeException(
+                nameof(transition),
+                transition.Source,
+                "Unsupported Game Context transition source.")
+        };
     }
 
     /// <summary>
@@ -119,26 +80,7 @@ public sealed class UserWorkflow : IDisposable
             return;
         }
 
-        Interlocked.Increment(ref _gameSelectionVersion);
-        SetGameDirectoryFromWorkflow(path);
-
-        if (_viewModel.SelectedGame is null)
-        {
-            var detectedGame = _gameDetectionService.DetectGame(path);
-            if (detectedGame.HasValue)
-            {
-                _programmaticGameSelectionToIgnore = detectedGame.Value;
-                _viewModel.SelectedGame = detectedGame.Value;
-            }
-            else
-            {
-                _viewModel.AddErrorMessage(
-                    "Could not detect game from directory. Please select a game from the dropdown.");
-                return;
-            }
-        }
-
-        await RefreshPluginsForCurrentSelectionAsync();
+        await ApplyGameContextTransitionAsync(GameContextTransition.BrowsedDirectorySelected(path));
     }
 
     /// <summary>
@@ -165,24 +107,6 @@ public sealed class UserWorkflow : IDisposable
         {
             _viewModel.FormIdListPath = path;
         }
-    }
-
-    /// <summary>
-    /// Refreshes the plugin list when both a game and directory are available.
-    /// </summary>
-    /// <returns>A task that completes when plugin refresh finishes or is skipped.</returns>
-    public async Task RefreshPluginsForCurrentSelectionAsync()
-    {
-        if (_viewModel.SelectedGame is not { } game || string.IsNullOrEmpty(_viewModel.GameDirectory))
-        {
-            return;
-        }
-
-        await _pluginListManager.RefreshPluginList(
-            _viewModel.GameDirectory,
-            game,
-            _viewModel.Plugins,
-            _viewModel.AdvancedMode);
     }
 
     /// <summary>
@@ -277,6 +201,105 @@ public sealed class UserWorkflow : IDisposable
         _processingRun.Dispose();
     }
 
+    private async Task ApplySelectedGameReleaseChangedAsync()
+    {
+        if (_programmaticGameSelectionToIgnore.HasValue &&
+            _programmaticGameSelectionToIgnore == _viewModel.SelectedGame)
+        {
+            _programmaticGameSelectionToIgnore = null;
+            return;
+        }
+
+        _programmaticGameSelectionToIgnore = null;
+
+        if (_viewModel.SelectedGame is not { } selectedGame)
+        {
+            return;
+        }
+
+        var gameContextVersion = BeginGameContextDirectoryTransition();
+
+        ResetGameSelectionState();
+
+        // Mutagen game-location lookup touches registry and file system state, so keep it off the UI thread.
+        var folders = await Task.Run(() => _gameLocationService.GetGameFolders(selectedGame));
+
+        if (!IsLatestGameContextDirectoryTransition(gameContextVersion))
+        {
+            return;
+        }
+
+        if (folders.Count == 0)
+        {
+            _viewModel.AddInformationMessage(
+                $"No installed locations found for {selectedGame}. Use Browse to select a directory.");
+            return;
+        }
+
+        ApplyDetectedFolders(folders);
+        await RefreshPluginsForCurrentGameContextAsync(gameContextVersion);
+    }
+
+    private Task ApplySelectedDetectedDirectoryChangedAsync()
+    {
+        if (_programmaticDirectorySelectionToIgnore is { } ignoredDirectory)
+        {
+            _programmaticDirectorySelectionToIgnore = null;
+
+            if (string.Equals(ignoredDirectory, _viewModel.GameDirectory, StringComparison.OrdinalIgnoreCase))
+            {
+                return Task.CompletedTask;
+            }
+        }
+
+        var gameContextVersion = BeginGameContextDirectoryTransition();
+        return RefreshPluginsForCurrentGameContextAsync(gameContextVersion);
+    }
+
+    private async Task ApplyBrowsedDirectorySelectedAsync(string path)
+    {
+        var gameContextVersion = BeginGameContextDirectoryTransition();
+        SetGameDirectoryFromWorkflow(path);
+
+        if (_viewModel.SelectedGame is null)
+        {
+            var detectedGame = _gameDetectionService.DetectGame(path);
+            if (detectedGame.HasValue)
+            {
+                _programmaticGameSelectionToIgnore = detectedGame.Value;
+                _viewModel.SelectedGame = detectedGame.Value;
+            }
+            else
+            {
+                _viewModel.AddErrorMessage(
+                    "Could not detect game from directory. Please select a game from the dropdown.");
+                return;
+            }
+        }
+
+        await RefreshPluginsForCurrentGameContextAsync(gameContextVersion);
+    }
+
+    private async Task RefreshPluginsForCurrentGameContextAsync(int? expectedGameContextVersion = null)
+    {
+        if (expectedGameContextVersion.HasValue &&
+            !IsLatestGameContextDirectoryTransition(expectedGameContextVersion.Value))
+        {
+            return;
+        }
+
+        if (_viewModel.SelectedGame is not { } game || string.IsNullOrEmpty(_viewModel.GameDirectory))
+        {
+            return;
+        }
+
+        await _pluginListManager.RefreshPluginList(
+            _viewModel.GameDirectory,
+            game,
+            _viewModel.Plugins,
+            _viewModel.AdvancedMode);
+    }
+
     private static bool IsFailure(FileDialogResult result)
     {
         return result.Kind == FileDialogResultKind.Failure;
@@ -300,9 +323,16 @@ public sealed class UserWorkflow : IDisposable
         return false;
     }
 
-    private bool IsLatestGameSelection(int gameSelectionVersion)
+    private int BeginGameContextDirectoryTransition()
     {
-        return gameSelectionVersion == Volatile.Read(ref _gameSelectionVersion);
+        // Directory discovery can finish after a later user action, so each directory-changing
+        // transition gets a generation that retires older lookup results before they touch state.
+        return Interlocked.Increment(ref _gameContextVersion);
+    }
+
+    private bool IsLatestGameContextDirectoryTransition(int gameContextVersion)
+    {
+        return gameContextVersion == Volatile.Read(ref _gameContextVersion);
     }
 
     private void ResetGameSelectionState()

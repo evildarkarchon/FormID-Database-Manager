@@ -137,7 +137,8 @@ public class WinUiPlatformServiceSourceTests
         Assert.Contains("_userWorkflow.SelectAllPlugins();", source, StringComparison.Ordinal);
         Assert.Contains("_userWorkflow.SelectNoPlugins();", source, StringComparison.Ordinal);
         Assert.Contains("ViewModel.PropertyChanged += ViewModel_PropertyChanged;", source, StringComparison.Ordinal);
-        Assert.Contains("await _userWorkflow.RefreshPluginsForCurrentSelectionAsync();", source, StringComparison.Ordinal);
+        Assert.Contains("await _userWorkflow.ApplyGameContextTransitionAsync(", source, StringComparison.Ordinal);
+        Assert.Contains("GameContextTransition.AdvancedModeChanged()", source, StringComparison.Ordinal);
     }
 
     /// <summary>

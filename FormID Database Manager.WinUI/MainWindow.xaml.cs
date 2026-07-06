@@ -115,7 +115,7 @@ public sealed partial class MainWindow : Window, IDisposable
     {
         try
         {
-            await _userWorkflow.RefreshPluginsForCurrentSelectionAsync();
+            await _userWorkflow.ApplyGameContextTransitionAsync(GameContextTransition.AdvancedModeChanged());
         }
         catch (Exception ex)
         {
@@ -130,7 +130,7 @@ public sealed partial class MainWindow : Window, IDisposable
     {
         try
         {
-            await _userWorkflow.SelectGameAsync();
+            await _userWorkflow.ApplyGameContextTransitionAsync(GameContextTransition.SelectedGameReleaseChanged());
         }
         catch (Exception ex)
         {
@@ -145,7 +145,7 @@ public sealed partial class MainWindow : Window, IDisposable
     {
         try
         {
-            await _userWorkflow.SelectDetectedDirectoryAsync();
+            await _userWorkflow.ApplyGameContextTransitionAsync(GameContextTransition.SelectedDetectedDirectoryChanged());
         }
         catch (Exception ex)
         {

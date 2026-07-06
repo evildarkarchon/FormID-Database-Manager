@@ -35,6 +35,10 @@ _Avoid_: Show all, expert mode.
 The target Bethesda game or edition that determines plugin layout, base plugins, and database table selection.
 _Avoid_: Game type, release enum.
 
+**Game Context**:
+The User Workflow state that determines which Plugin List can be loaded: selected GameRelease, selected game directory, and Advanced Mode.
+_Avoid_: Game selection, current game state.
+
 **Entry**:
 The human-readable label stored for a FormID, usually an EditorID or record name.
 _Avoid_: Name value.
