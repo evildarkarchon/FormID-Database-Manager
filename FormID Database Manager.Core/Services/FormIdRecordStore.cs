@@ -204,7 +204,8 @@ public sealed class FormIdRecordStore : IAsyncDisposable
 
         progress?.Report(new FormIdStoreProgress("Starting processing...", 0));
 
-        await using var stream = new FileStream(formIdTextFilePath, FileMode.Open, FileAccess.Read, FileShare.Read, 81920);
+        await using var stream =
+            new FileStream(formIdTextFilePath, FileMode.Open, FileAccess.Read, FileShare.Read, 81920);
         using var reader = new StreamReader(stream, Encoding.UTF8);
 
         while (true)
@@ -247,7 +248,8 @@ public sealed class FormIdRecordStore : IAsyncDisposable
             await StageTextRecordAsync(pluginName, formId, entry, cancellationToken).ConfigureAwait(false);
         }
 
-        await CommitStagedTextRecordsAsync(ShouldReplacePluginRows(updateMode), cancellationToken).ConfigureAwait(false);
+        await CommitStagedTextRecordsAsync(ShouldReplacePluginRows(updateMode), cancellationToken)
+            .ConfigureAwait(false);
 
         progress?.Report(new FormIdStoreProgress(
             $"Completed processing {processedPlugins.Count} plugins ({recordCount:N0} total records)",
@@ -309,7 +311,8 @@ public sealed class FormIdRecordStore : IAsyncDisposable
         var plugins = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         await using var command = _connection.CreateCommand();
-        command.CommandText = $"SELECT DISTINCT plugin FROM {_tableName} WHERE plugin IS NOT NULL ORDER BY plugin COLLATE NOCASE";
+        command.CommandText =
+            $"SELECT DISTINCT plugin FROM {_tableName} WHERE plugin IS NOT NULL ORDER BY plugin COLLATE NOCASE";
 
         await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
         while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
