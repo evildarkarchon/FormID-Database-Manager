@@ -6,217 +6,79 @@ using Mutagen.Bethesda;
 namespace FormID_Database_Manager.Services;
 
 /// <summary>
-///     Manages the list of plugins for a game environment, including operations
-///     such as loading plugin data, refreshing the displayed list, and managing
-///     plugin selection states.
+///     Applies Plugin List refresh results to the ViewModel while the deeper refresh module owns Plugin List rules.
 /// </summary>
-public class PluginListManager(
-    GameDetectionService gameDetectionService,
-    MainWindowViewModel viewModel,
-    IThreadDispatcher dispatcher,
-    IGameLoadOrderProvider? loadOrderProvider = null)
+public class PluginListManager
 {
-    private int _refreshVersion;
+    private readonly IThreadDispatcher _dispatcher;
+    private readonly IPluginListRefresh _pluginListRefresh;
+    private readonly MainWindowViewModel _viewModel;
 
     /// <summary>
-    ///     Refreshes the list of plugins by loading data from the specified game directory and game release.
-    ///     Clears the existing plugin lists, adds the updated plugin list, and updates the filtered plugin list.
-    ///     Displays messages for the plugin load process and handles errors if the operation fails.
-    ///     Offloads synchronous I/O operations to background thread to prevent UI freezing (1-10s for 1000+ plugins on HDD).
+    ///     Creates the ViewModel adapter for loading Plugin Lists.
     /// </summary>
-    /// <param name="gameDirectory">The path to the game directory containing the "Data" folder.</param>
-    /// <param name="gameRelease">The version of the game for which the plugins are being refreshed.</param>
-    /// <param name="plugins">The observable collection that will hold the list of plugins to be displayed.</param>
-    /// <param name="showAdvanced">A flag indicating whether advanced mode is enabled for filtering plugins.</param>
-    /// <returns>A task that represents the asynchronous operation of refreshing the plugin list.</returns>
+    /// <param name="gameDetectionService">The GameRelease rule source used by the refresh module.</param>
+    /// <param name="viewModel">The UI projection updated by the adapter.</param>
+    /// <param name="dispatcher">The UI thread dispatcher used for ViewModel mutation.</param>
+    /// <param name="loadOrderProvider">Optional load-order adapter; production uses the Mutagen-backed provider.</param>
+    public PluginListManager(
+        GameDetectionService gameDetectionService,
+        MainWindowViewModel viewModel,
+        IThreadDispatcher dispatcher,
+        IGameLoadOrderProvider? loadOrderProvider = null)
+        : this(new PluginListRefresh(gameDetectionService, loadOrderProvider), viewModel, dispatcher)
+    {
+    }
+
+    internal PluginListManager(
+        IPluginListRefresh pluginListRefresh,
+        MainWindowViewModel viewModel,
+        IThreadDispatcher dispatcher)
+    {
+        _pluginListRefresh = pluginListRefresh ?? throw new ArgumentNullException(nameof(pluginListRefresh));
+        _viewModel = viewModel ?? throw new ArgumentNullException(nameof(viewModel));
+        _dispatcher = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
+    }
+
+    /// <summary>
+    ///     Refreshes the ViewModel's Plugin List projection for the selected GameRelease and directory.
+    /// </summary>
+    /// <param name="gameDirectory">The selected game root or existing Data directory.</param>
+    /// <param name="gameRelease">The GameRelease whose load-order and base Plugin rules apply.</param>
+    /// <param name="plugins">The UI collection that receives the loaded Plugin List.</param>
+    /// <param name="showAdvanced">Whether Advanced Mode is active for base Plugin filtering.</param>
+    /// <returns>A task that completes after refresh and any applicable ViewModel projection finish.</returns>
     public virtual async Task RefreshPluginList(
         string gameDirectory,
         GameRelease gameRelease,
         ObservableCollection<PluginListItem> plugins,
         bool showAdvanced)
     {
-        var refreshVersion = Interlocked.Increment(ref _refreshVersion);
+        ArgumentNullException.ThrowIfNull(plugins);
 
-        bool IsLatestRefresh()
+        var request = new PluginListRefreshRequest(
+            gameDirectory,
+            gameRelease,
+            ToAdvancedMode(showAdvanced));
+        var progress = new PluginListRefreshProgressAdapter(_viewModel, _dispatcher);
+        var result = await _pluginListRefresh.RefreshAsync(request, progress).ConfigureAwait(false);
+
+        switch (result.Status)
         {
-            return refreshVersion == Volatile.Read(ref _refreshVersion);
-        }
+            case PluginListRefreshStatus.Completed:
+                await ApplyCompletedResultAsync(result, plugins, showAdvanced).ConfigureAwait(false);
+                break;
 
-        try
-        {
-            // Run expensive I/O operations on background thread to avoid UI freeze
-            // For 1000+ plugins on HDD, this prevents 1-10 second UI freeze
-            var (pluginItems, loadedCount, isStale) = await Task.Run(() =>
-            {
-                if (!IsLatestRefresh())
-                {
-                    return (new List<PluginListItem>(), 0, true);
-                }
+            case PluginListRefreshStatus.Failed:
+                await ApplyFailedResultAsync(result, plugins).ConfigureAwait(false);
+                break;
 
-                var effectiveLoadOrderProvider = loadOrderProvider ?? new GameLoadOrderProvider();
+            case PluginListRefreshStatus.Stale:
+            case PluginListRefreshStatus.Cancelled:
+                break;
 
-                // Determine the data path
-                var dataPath = GameReleaseHelper.ResolveDataPath(gameDirectory);
-
-                var loadOrderSnapshot = effectiveLoadOrderProvider.BuildSnapshot(gameRelease, dataPath);
-                var loadOrder = loadOrderSnapshot.ListedPluginNames;
-                var basePluginSet = new HashSet<string>(
-                    gameDetectionService.GetBaseGamePlugins(gameRelease),
-                    StringComparer.OrdinalIgnoreCase);
-
-                var items = new List<PluginListItem>();
-                var addedPlugins = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                var count = 0;
-
-                var totalPlugins = loadOrder.Count;
-                var scannedCount = 0;
-
-                // Show scanning progress on UI thread
-                dispatcher.Post(() =>
-                {
-                    if (!IsLatestRefresh())
-                    {
-                        return;
-                    }
-
-                    viewModel.IsScanning = true;
-                    viewModel.UpdateProgress("Scanning plugins...", 0);
-                });
-
-                // Process plugins - File.Exists calls now on background thread
-                foreach (var plugin in loadOrder)
-                {
-                    if (!IsLatestRefresh())
-                    {
-                        return (items, count, true);
-                    }
-
-                    var pluginFileName = plugin;
-
-                    // Report scanning progress every 10th plugin to reduce UI thread pressure
-                    scannedCount++;
-                    if (scannedCount % 10 == 0 || scannedCount == totalPlugins)
-                    {
-                        var currentCount = scannedCount;
-                        var total = totalPlugins;
-                        dispatcher.Post(() =>
-                        {
-                            if (!IsLatestRefresh())
-                            {
-                                return;
-                            }
-
-                            viewModel.UpdateProgress($"Scanning plugins... ({currentCount}/{total})", (double)currentCount / total * 100);
-                        });
-                    }
-
-                    // Deduplication check
-                    if (addedPlugins.Contains(pluginFileName))
-                    {
-                        continue;
-                    }
-
-                    // Skip base plugins if not in advanced mode
-                    if (!showAdvanced && basePluginSet.Contains(pluginFileName))
-                    {
-                        continue;
-                    }
-
-                    // Check if the plugin file exists (synchronous I/O now safe on background thread)
-                    var pluginPath = Path.Combine(dataPath, pluginFileName);
-                    if (!File.Exists(pluginPath))
-                    {
-                        continue;
-                    }
-
-                    // Add the plugin to the list
-                    items.Add(new PluginListItem { Name = pluginFileName, IsSelected = false });
-                    addedPlugins.Add(pluginFileName);
-                    count++;
-                }
-
-                // Clear scanning state
-                dispatcher.Post(() =>
-                {
-                    if (!IsLatestRefresh())
-                    {
-                        return;
-                    }
-
-                    viewModel.IsScanning = false;
-                    viewModel.ProgressValue = 0;
-                    viewModel.ProgressStatus = string.Empty;
-                });
-
-                return (items, count, false);
-            }).ConfigureAwait(false);
-
-            if (isStale || !IsLatestRefresh())
-            {
-                return;
-            }
-
-            // Update UI on UI thread
-            await dispatcher.InvokeAsync(() =>
-            {
-                if (!IsLatestRefresh())
-                {
-                    return;
-                }
-
-                // Suspend filter during bulk add to avoid N ApplyFilter calls
-                viewModel.SuspendFilter();
-                try
-                {
-                    // Clear plugin lists
-                    plugins.Clear();
-                    viewModel.FilteredPlugins.Clear();
-
-                    // Populate plugin list
-                    foreach (var plugin in pluginItems)
-                    {
-                        plugins.Add(plugin);
-                    }
-                }
-                finally
-                {
-                    // Resume triggers a single ApplyFilter for all added plugins
-                    viewModel.ResumeFilter();
-                }
-
-                // Add a standard informational message
-                var pluginLabel = showAdvanced ? "plugins" : "non-base game plugins";
-                viewModel.AddInformationMessage($"Loaded {loadedCount} {pluginLabel}");
-            });
-        }
-        catch (Exception ex)
-        {
-            if (!IsLatestRefresh())
-            {
-                return;
-            }
-
-            // Update UI on UI thread in case of error
-            await dispatcher.InvokeAsync(() =>
-            {
-                if (!IsLatestRefresh())
-                {
-                    return;
-                }
-
-                // Clear scanning state
-                viewModel.IsScanning = false;
-                viewModel.ProgressValue = 0;
-                viewModel.ProgressStatus = string.Empty;
-
-                // Clear both collections in case of error
-                plugins.Clear();
-                viewModel.FilteredPlugins.Clear();
-
-                // Provide a clear error message
-                viewModel.AddErrorMessage($"Failed to load plugins: {ex.Message}");
-                viewModel.AddErrorMessage("Ensure you selected the correct game Data directory");
-            });
+            default:
+                throw new ArgumentOutOfRangeException(nameof(result), result.Status, "Unsupported Plugin List refresh status.");
         }
     }
 
@@ -234,14 +96,97 @@ public class PluginListManager(
 
     /// <summary>
     ///     Deselects all plugins in the specified collection by setting their selection state to false.
-    ///     This method ensures no plugins remain selected in the provided collection.
     /// </summary>
-    /// <param name="plugins">The collection of plugins to modify, where each plugin's selection state will be cleared.</param>
+    /// <param name="plugins">The collection of plugins whose selection state will be cleared.</param>
     public virtual void SelectNone(ObservableCollection<PluginListItem> plugins)
     {
         foreach (var plugin in plugins)
         {
             plugin.IsSelected = false;
+        }
+    }
+
+    private static AdvancedMode ToAdvancedMode(bool showAdvanced)
+    {
+        return showAdvanced ? AdvancedMode.On : AdvancedMode.Off;
+    }
+
+    private Task ApplyCompletedResultAsync(
+        PluginListRefreshResult result,
+        ObservableCollection<PluginListItem> plugins,
+        bool showAdvanced)
+    {
+        return _dispatcher.InvokeAsync(() =>
+        {
+            ClearScanningState();
+
+            _viewModel.SuspendFilter();
+            try
+            {
+                plugins.Clear();
+                _viewModel.FilteredPlugins.Clear();
+
+                foreach (var plugin in result.Plugins)
+                {
+                    plugins.Add(new PluginListItem { Name = plugin.Name, IsSelected = false });
+                }
+            }
+            finally
+            {
+                _viewModel.ResumeFilter();
+            }
+
+            var pluginLabel = showAdvanced ? "plugins" : "non-base game plugins";
+            _viewModel.AddInformationMessage($"Loaded {result.LoadedCount} {pluginLabel}");
+        });
+    }
+
+    private Task ApplyFailedResultAsync(
+        PluginListRefreshResult result,
+        ObservableCollection<PluginListItem> plugins)
+    {
+        return _dispatcher.InvokeAsync(() =>
+        {
+            ClearScanningState();
+            plugins.Clear();
+            _viewModel.FilteredPlugins.Clear();
+
+            var message = string.IsNullOrWhiteSpace(result.ErrorMessage)
+                ? "Unknown error"
+                : result.ErrorMessage;
+            _viewModel.AddErrorMessage($"Failed to load plugins: {message}");
+            _viewModel.AddErrorMessage("Ensure you selected the correct game Data directory");
+        });
+    }
+
+    private void ClearScanningState()
+    {
+        _viewModel.IsScanning = false;
+        _viewModel.ProgressValue = 0;
+        _viewModel.ProgressStatus = string.Empty;
+    }
+
+    private sealed class PluginListRefreshProgressAdapter(
+        MainWindowViewModel viewModel,
+        IThreadDispatcher dispatcher)
+        : IProgress<PluginListRefreshProgress>
+    {
+        public void Report(PluginListRefreshProgress value)
+        {
+            dispatcher.Post(() =>
+            {
+                viewModel.IsScanning = true;
+
+                if (value.ScannedCount == 0 || value.TotalCount == 0)
+                {
+                    viewModel.UpdateProgress("Scanning plugins...", 0);
+                    return;
+                }
+
+                viewModel.UpdateProgress(
+                    $"Scanning plugins... ({value.ScannedCount}/{value.TotalCount})",
+                    (double)value.ScannedCount / value.TotalCount * 100);
+            });
         }
     }
 }
