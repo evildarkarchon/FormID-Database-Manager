@@ -8,7 +8,7 @@ Define separated-master overlay read behavior so runtime processing passes corre
 For game releases that use separated master load orders, the system SHALL construct `BinaryReadParameters` with `MasterFlagsLookup` from the run's load-order snapshot and pass those parameters to plugin overlay reads.
 
 #### Scenario: Starfield overlay read receives master lookup
-- **WHEN** `ModProcessor.ProcessPlugin` opens a plugin for `GameRelease.Starfield`
+- **WHEN** Plugin Ingestion opens a Plugin for `GameRelease.Starfield`
 - **THEN** overlay creation receives `BinaryReadParameters` containing a non-null `MasterFlagsLookup` built from listed master-style metadata
 
 #### Scenario: Lookup is reused across plugins in the same run
@@ -21,7 +21,7 @@ For game releases that use separated master load orders, the system SHALL constr
 For game releases without separated master load orders, the system SHALL continue to open overlays successfully without requiring a separated-master lookup.
 
 #### Scenario: SkyrimSE overlay read works without separated lookup
-- **WHEN** `ModProcessor.ProcessPlugin` opens a plugin for `GameRelease.SkyrimSE`
+- **WHEN** Plugin Ingestion opens a Plugin for `GameRelease.SkyrimSE`
 - **THEN** overlay creation succeeds using read parameters compatible with non-separated-master behavior
 
 ---

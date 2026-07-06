@@ -1,12 +1,7 @@
-using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
 using Mutagen.Bethesda;
-using Mutagen.Bethesda.Fallout4;
-using Mutagen.Bethesda.Oblivion;
 using Mutagen.Bethesda.Plugins.Binary.Parameters;
 using Mutagen.Bethesda.Plugins.Records;
-using Mutagen.Bethesda.Skyrim;
-using Mutagen.Bethesda.Starfield;
 
 namespace FormID_Database_Manager.Services;
 
@@ -72,18 +67,19 @@ internal class PluginIngestion
 {
     private const int WarningDetailLimit = 5;
 
-    private static readonly HashSet<string> IgnorableErrorPatterns = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "KSIZ",
-        "KWDA",
-        "Expected EDID",
-        "List with a non zero counter",
-        "Unexpected record type",
-        "Failed to parse record header",
-        "Object reference not set to an instance"
-    };
+    private readonly EntryExtraction _entryExtraction;
+    private readonly IPluginOverlayReader _overlayReader;
 
-    private static readonly ConcurrentDictionary<Type, Func<IMajorRecordGetter, string?>> NameExtractorCache = new();
+    internal PluginIngestion()
+        : this(new MutagenPluginOverlayReader(), new EntryExtraction())
+    {
+    }
+
+    internal PluginIngestion(IPluginOverlayReader overlayReader, EntryExtraction entryExtraction)
+    {
+        _overlayReader = overlayReader ?? throw new ArgumentNullException(nameof(overlayReader));
+        _entryExtraction = entryExtraction ?? throw new ArgumentNullException(nameof(entryExtraction));
+    }
 
     [RequiresUnreferencedCode(
         "Uses reflection to discover INamedGetter interface and Name/String properties on Mutagen record types for name extraction.")]
@@ -162,48 +158,7 @@ internal class PluginIngestion
         }
     }
 
-    internal virtual IModDisposeGetter CreateOverlay(
-        string pluginPath,
-        GameRelease gameRelease,
-        BinaryReadParameters readParameters)
-    {
-        return gameRelease switch
-        {
-            GameRelease.Oblivion => OblivionMod.CreateFromBinaryOverlay(pluginPath,
-                OblivionRelease.Oblivion,
-                readParameters),
-            GameRelease.SkyrimLE => SkyrimMod.CreateFromBinaryOverlay(pluginPath,
-                SkyrimRelease.SkyrimLE,
-                readParameters),
-            GameRelease.SkyrimSE => SkyrimMod.CreateFromBinaryOverlay(pluginPath,
-                SkyrimRelease.SkyrimSE,
-                readParameters),
-            GameRelease.SkyrimSEGog => SkyrimMod.CreateFromBinaryOverlay(pluginPath,
-                SkyrimRelease.SkyrimSEGog,
-                readParameters),
-            GameRelease.SkyrimVR => SkyrimMod.CreateFromBinaryOverlay(pluginPath,
-                SkyrimRelease.SkyrimVR,
-                readParameters),
-            GameRelease.EnderalLE => SkyrimMod.CreateFromBinaryOverlay(pluginPath,
-                SkyrimRelease.EnderalLE,
-                readParameters),
-            GameRelease.EnderalSE => SkyrimMod.CreateFromBinaryOverlay(pluginPath,
-                SkyrimRelease.EnderalSE,
-                readParameters),
-            GameRelease.Fallout4 => Fallout4Mod.CreateFromBinaryOverlay(pluginPath,
-                Fallout4Release.Fallout4,
-                readParameters),
-            GameRelease.Fallout4VR => Fallout4Mod.CreateFromBinaryOverlay(pluginPath,
-                Fallout4Release.Fallout4VR,
-                readParameters),
-            GameRelease.Starfield => StarfieldMod.CreateFromBinaryOverlay(pluginPath,
-                StarfieldRelease.Starfield,
-                readParameters),
-            _ => throw new NotSupportedException($"Unsupported game release: {gameRelease}")
-        };
-    }
-
-    [RequiresUnreferencedCode("Uses reflection-based name extraction for Mutagen records via GetRecordName.")]
+    [RequiresUnreferencedCode("Uses reflection-based name extraction for Mutagen records via EntryExtraction.")]
     private IEnumerable<FormIdRecord> EnumeratePluginRecords(
         string pluginName,
         IModGetter plugin,
@@ -216,7 +171,7 @@ internal class PluginIngestion
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            if (TryCreateRecord(pluginName, records.Current, warningCollector) is { } record)
+            if (_entryExtraction.TryExtract(records.Current, warningCollector.Add) is { } record)
             {
                 yield return record;
             }
@@ -247,104 +202,6 @@ internal class PluginIngestion
         }
     }
 
-    [RequiresUnreferencedCode("Uses reflection-based name extraction for Mutagen records via GetRecordName.")]
-    private FormIdRecord? TryCreateRecord(
-        string pluginName,
-        IMajorRecordGetter record,
-        RecordWarningCollector warningCollector)
-    {
-        try
-        {
-            string formId;
-            try
-            {
-                formId = record.FormKey.ID.ToString("X6");
-            }
-            catch (Exception)
-            {
-                return null;
-            }
-
-            string entry;
-            try
-            {
-                entry = !string.IsNullOrEmpty(record.EditorID) ? record.EditorID : GetRecordName(record);
-            }
-            catch (Exception)
-            {
-                entry = $"[{record.GetType().Name}_{formId}]";
-            }
-
-            return new FormIdRecord(formId, entry);
-        }
-        catch (Exception ex)
-        {
-            if (!IgnorableErrorPatterns.Any(pattern =>
-                    ex.Message.Contains(pattern, StringComparison.OrdinalIgnoreCase)))
-            {
-                warningCollector.Add(ex.Message);
-            }
-
-            return null;
-        }
-    }
-
-    [RequiresUnreferencedCode(
-        "Uses reflection to discover INamedGetter interface and Name/String properties on Mutagen record types.")]
-    private string GetRecordName(IMajorRecordGetter record)
-    {
-        if (!string.IsNullOrEmpty(record.EditorID))
-        {
-            return record.EditorID;
-        }
-
-        if (record is Mutagen.Bethesda.Plugins.Aspects.INamedGetter named && !string.IsNullOrEmpty(named.Name))
-        {
-            return named.Name;
-        }
-
-        var extractor = NameExtractorCache.GetOrAdd(record.GetType(), type =>
-        {
-            var namedInterface = type.GetInterfaces()
-                .FirstOrDefault(i => i.Name.Contains("INamedGetter", StringComparison.Ordinal));
-
-            if (namedInterface == null)
-            {
-                return _ => null;
-            }
-
-            var nameProperty = namedInterface.GetProperty("Name");
-            if (nameProperty == null)
-            {
-                return _ => null;
-            }
-
-            var stringProperty = nameProperty.PropertyType.GetProperty("String");
-            if (stringProperty == null)
-            {
-                return _ => null;
-            }
-
-            return rec =>
-            {
-                try
-                {
-                    var nameValue = nameProperty.GetValue(rec);
-                    return nameValue != null ? stringProperty.GetValue(nameValue) as string : null;
-                }
-                catch (Exception ex)
-                {
-                    System.Diagnostics.Debug.WriteLine(
-                        $"Name extraction failed for {rec.GetType().Name}: {ex.Message}");
-                    return null;
-                }
-            };
-        });
-
-        var name = extractor(record);
-        return !string.IsNullOrEmpty(name) ? name : $"[{record.GetType().Name}_{record.FormKey.ID:X6}]";
-    }
-
     private IModDisposeGetter TryCreateOverlay(
         string pluginName,
         string pluginPath,
@@ -353,7 +210,7 @@ internal class PluginIngestion
     {
         try
         {
-            return CreateOverlay(pluginPath, gameRelease, readParameters);
+            return _overlayReader.ReadOverlay(pluginPath, gameRelease, readParameters);
         }
         catch (OperationCanceledException)
         {

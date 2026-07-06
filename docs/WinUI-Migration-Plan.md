@@ -39,7 +39,7 @@ Avalonia-specific surface area is relatively concentrated:
 
 Reusable application logic:
 
-- `Services/DatabaseService.cs`, `ModProcessor.cs`, `FormIdTextProcessor.cs`, `PluginProcessingService.cs`, `PluginListManager.cs`, `GameDetectionService.cs`, `GameLocationService.cs`, and load-order services should largely survive the migration.
+- `Services/DatabaseService.cs`, `ProcessingRun.cs`, `PluginIngestion.cs`, `FormIdTextProcessor.cs`, `PluginProcessingService.cs`, `PluginListManager.cs`, `GameDetectionService.cs`, `GameLocationService.cs`, and load-order services should largely survive the migration.
 - `Models/PluginListItem.cs`, `Models/ProcessingParameters.cs`, and `ViewModels/MainWindowViewModel.cs` are already CommunityToolkit.Mvvm-based and can remain the main state model after removing Avalonia defaults.
 - The test utilities already include `SynchronousThreadDispatcher`, which is useful for UI-independent ViewModel and service tests.
 

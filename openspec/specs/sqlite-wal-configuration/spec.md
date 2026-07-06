@@ -48,12 +48,12 @@ The system SHALL configure `PRAGMA mmap_size = 268435456` (256 MB) in `Configure
 The system SHALL declare the result of `CreateFromBinaryOverlay` as `IModDisposeGetter` and wrap it in a `using` statement. The overlay's underlying stream SHALL be released before processing the next plugin.
 
 #### Scenario: Overlay disposed after successful processing
-- **WHEN** `ModProcessor.ProcessPlugin` completes successfully
+- **WHEN** Plugin Ingestion completes a Plugin successfully
 - **THEN** the `IModDisposeGetter` overlay is disposed, releasing its `IBinaryReadStream`
 
 #### Scenario: Overlay disposed after processing failure
-- **WHEN** `ModProcessor.ProcessPlugin` throws during record enumeration
-- **THEN** the `IModDisposeGetter` overlay is still disposed before the exception propagates
+- **WHEN** Plugin Ingestion classifies a Plugin as failed during record enumeration
+- **THEN** the `IModDisposeGetter` overlay is still disposed before the failed Plugin outcome is returned
 
 ---
 

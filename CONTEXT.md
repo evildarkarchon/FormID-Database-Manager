@@ -39,6 +39,10 @@ _Avoid_: Game type, release enum.
 The human-readable label stored for a FormID, usually an EditorID or record name.
 _Avoid_: Name value.
 
+**Entry Extraction**:
+The part of Plugin Ingestion that chooses the Entry stored for a FormID, preferring EditorID, then Mutagen record names, then a deterministic fallback label.
+_Avoid_: Name helper, record naming.
+
 **FormID text file**:
 A pipe-delimited import file whose rows provide Plugin, FormID, and Entry values without reading binary plugins.
 _Avoid_: List file, text import.

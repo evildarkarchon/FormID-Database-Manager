@@ -12,8 +12,6 @@ using FormID_Database_Manager.ViewModels;
 using Microsoft.Data.Sqlite;
 using Mutagen.Bethesda;
 using Mutagen.Bethesda.Plugins;
-using Mutagen.Bethesda.Plugins.Order;
-using Mutagen.Bethesda.Plugins.Records;
 using Mutagen.Bethesda.Skyrim;
 using Xunit;
 
@@ -115,27 +113,15 @@ public class LoadTests : IDisposable
 
         // Act
         var stopwatch = Stopwatch.StartNew();
-        await using var recordStore = await FormIdRecordStore.OpenAsync(
-            _databaseService,
-            dbPath,
-            GameRelease.SkyrimSE,
-            TestContext.Current.CancellationToken);
-
-        var modProcessor = new ModProcessor(msg => _output.WriteLine($"Error: {msg}"));
-
         Assert.True(File.Exists(Path.Combine(dataPath, pluginName)));
 
-        await modProcessor.ProcessPlugin(
+        var processingRun = new ProcessingRun(_databaseService, new StaticGameLoadOrderProvider([pluginName]));
+        await processingRun.ExecuteAsync(new PluginProcessingRunRequest(
             _testDirectory,
-            recordStore,
+            dbPath,
             GameRelease.SkyrimSE,
-            new PluginListItem { Name = pluginName },
-            new Dictionary<string, IModListingGetter<IModGetter>>(StringComparer.OrdinalIgnoreCase)
-            {
-                [pluginName] = CreateMockModListing(pluginName)
-            },
-            false,
-            CancellationToken.None);
+            [pluginName],
+            UpdateMode.Append));
 
         stopwatch.Stop();
 
@@ -402,13 +388,19 @@ public class LoadTests : IDisposable
         });
     }
 
-    private static IModListingGetter<IModGetter> CreateMockModListing(string pluginName)
+    private sealed class StaticGameLoadOrderProvider(IReadOnlyList<string> pluginNames) : IGameLoadOrderProvider
     {
-        var modKey = ModKey.FromNameAndExtension(pluginName);
-        var mockListing = new Moq.Mock<IModListingGetter<IModGetter>>();
-        mockListing.Setup(x => x.ModKey).Returns(modKey);
-        mockListing.Setup(x => x.Enabled).Returns(true);
-        mockListing.Setup(x => x.ModExists).Returns(true);
-        return mockListing.Object;
+        public GameLoadOrderSnapshot BuildSnapshot(
+            GameRelease gameRelease,
+            string dataPath,
+            bool includeMasterFlagsLookup = false)
+        {
+            return new GameLoadOrderSnapshot(pluginNames);
+        }
+
+        public IReadOnlyList<string> GetListedPluginNames(GameRelease gameRelease, string dataPath)
+        {
+            return pluginNames;
+        }
     }
 }

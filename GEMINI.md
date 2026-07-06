@@ -50,7 +50,8 @@ The solution has four projects in `FormID Database Manager.slnx`:
 - `Services/` — All business logic:
   - `DatabaseService` — SQLite schema, CRUD, optimizations (WAL mode, covering indexes)
   - `PluginProcessingService` — Orchestrates plugin processing with cancellation support
-  - `ModProcessor` — Parses plugins via Mutagen's `CreateFromBinaryOverlay`, extracts FormIDs with batched inserts (1000/batch). Uses cached reflection for name extraction
+  - `ProcessingRun` — External seam for Plugin Ingestion and FormID text-file Processing Runs with structured status, warning, and error events
+  - `PluginIngestion` — Internal one-Plugin ingestion module; reads Mutagen overlays via `IPluginOverlayReader`, extracts Entries via `EntryExtraction`, and writes through `FormIdRecordStore`
   - `FormIdTextProcessor` — Parses pipe-delimited text files (`plugin|formid|entry`), batched inserts (10000/batch)
   - `PluginListManager` — Loads plugin lists from game directories on background thread
   - `GameDetectionService` — Detects game type from directory structure (master file presence)

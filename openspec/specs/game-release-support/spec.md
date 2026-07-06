@@ -16,7 +16,7 @@ The system SHALL maintain a single authoritative mapping from `GameRelease` enum
 - **THEN** it throws `ArgumentException` with a message identifying the unsupported release
 
 #### Scenario: All services use the same table name
-- **WHEN** `DatabaseService`, `ModProcessor`, and `FormIdTextProcessor.BatchInserter` each resolve a table name for the same `GameRelease`
+- **WHEN** `DatabaseService`, `FormIdRecordStore`, and `FormIdTextProcessor.BatchInserter` each resolve a table name for the same `GameRelease`
 - **THEN** they all return the same string (i.e., there is no divergence between components)
 
 ---
@@ -35,22 +35,22 @@ The system SHALL provide a single helper `GameReleaseHelper.ResolveDataPath(stri
 ---
 
 ### Requirement: Mutagen binary overlay covers all supported game releases
-The `CreateFromBinaryOverlay` switch in `ModProcessor` SHALL handle every `GameRelease` that `GetSafeTableName` supports: `Oblivion`, `SkyrimLE`, `SkyrimSE`, `SkyrimSEGog`, `SkyrimVR`, `EnderalLE`, `EnderalSE`, `Fallout4`, `Fallout4VR`, `Starfield`. Unsupported releases SHALL throw `NotSupportedException`.
+The `CreateFromBinaryOverlay` switch in `MutagenPluginOverlayReader` SHALL handle every `GameRelease` that `GetSafeTableName` supports: `Oblivion`, `SkyrimLE`, `SkyrimSE`, `SkyrimSEGog`, `SkyrimVR`, `EnderalLE`, `EnderalSE`, `Fallout4`, `Fallout4VR`, `Starfield`. Unsupported releases SHALL throw `NotSupportedException`.
 
 #### Scenario: SkyrimLE plugin is opened
-- **WHEN** `ModProcessor.ProcessPlugin` is called with `GameRelease.SkyrimLE`
+- **WHEN** `MutagenPluginOverlayReader.ReadOverlay` is called with `GameRelease.SkyrimLE`
 - **THEN** it calls `SkyrimMod.CreateFromBinaryOverlay` with `SkyrimRelease.SkyrimLE` without throwing
 
 #### Scenario: EnderalSE plugin is opened
-- **WHEN** `ModProcessor.ProcessPlugin` is called with `GameRelease.EnderalSE`
+- **WHEN** `MutagenPluginOverlayReader.ReadOverlay` is called with `GameRelease.EnderalSE`
 - **THEN** it calls `SkyrimMod.CreateFromBinaryOverlay` with `SkyrimRelease.EnderalSE` without throwing
 
 #### Scenario: Fallout4VR plugin is opened
-- **WHEN** `ModProcessor.ProcessPlugin` is called with `GameRelease.Fallout4VR`
+- **WHEN** `MutagenPluginOverlayReader.ReadOverlay` is called with `GameRelease.Fallout4VR`
 - **THEN** it calls `Fallout4Mod.CreateFromBinaryOverlay` with `Fallout4Release.Fallout4VR` without throwing
 
 #### Scenario: Unsupported release throws during plugin open
-- **WHEN** `ModProcessor.ProcessPlugin` is called with an unsupported `GameRelease`
+- **WHEN** `MutagenPluginOverlayReader.ReadOverlay` is called with an unsupported `GameRelease`
 - **THEN** it throws `NotSupportedException`
 
 ---
