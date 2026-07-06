@@ -85,7 +85,7 @@ internal class PluginIngestion
         "Uses reflection to discover INamedGetter interface and Name/String properties on Mutagen record types for name extraction.")]
     internal virtual async Task<PluginIngestionResult> IngestAsync(
         PluginIngestionRequest request,
-        FormIdRecordStore recordStore,
+        IFormIdRecordStoreSession recordStore,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);

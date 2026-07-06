@@ -41,7 +41,7 @@ public sealed class PluginIngestionTests : IDisposable
     public async Task IngestAsync_PluginNotInLoadOrder_ReturnsSkippedOutcome()
     {
         var gameDirectory = CreateGameDirectory();
-        await using var recordStore = await OpenStoreAsync(gameDirectory);
+        var recordStore = new UnusedRecordStoreSession();
         var sut = CreateSut(new ThrowingOverlayReader(new InvalidOperationException("Should not read overlay.")));
 
         var result = await sut.IngestAsync(
@@ -62,7 +62,7 @@ public sealed class PluginIngestionTests : IDisposable
     public async Task IngestAsync_PluginFileMissing_ReturnsSkippedOutcome()
     {
         var gameDirectory = CreateGameDirectory();
-        await using var recordStore = await OpenStoreAsync(gameDirectory);
+        var recordStore = new UnusedRecordStoreSession();
         var sut = CreateSut(new ThrowingOverlayReader(new InvalidOperationException("Should not read overlay.")));
 
         var result = await sut.IngestAsync(
@@ -84,7 +84,7 @@ public sealed class PluginIngestionTests : IDisposable
     {
         var gameDirectory = CreateGameDirectory();
         await CreatePluginFileAsync(gameDirectory, "Plugin.esp");
-        await using var recordStore = await OpenStoreAsync(gameDirectory);
+        var recordStore = new UnusedRecordStoreSession();
         var sut = CreateSut(new ThrowingOverlayReader(new InvalidOperationException("Should not read overlay.")));
         using var cancellationTokenSource = new CancellationTokenSource();
         await cancellationTokenSource.CancelAsync();
@@ -105,7 +105,7 @@ public sealed class PluginIngestionTests : IDisposable
     {
         var gameDirectory = CreateGameDirectory();
         await CreatePluginFileAsync(gameDirectory, "Bad.esp");
-        await using var recordStore = await OpenStoreAsync(gameDirectory);
+        var recordStore = new UnusedRecordStoreSession();
         var sut = CreateSut(new ThrowingOverlayReader(new InvalidOperationException("Invalid plugin header.")));
 
         var result = await sut.IngestAsync(
@@ -128,7 +128,7 @@ public sealed class PluginIngestionTests : IDisposable
     {
         var gameDirectory = CreateGameDirectory();
         await CreatePluginFileAsync(gameDirectory, "TestPlugin.esm");
-        await using var recordStore = await OpenStoreAsync(gameDirectory);
+        var recordStore = new UnusedRecordStoreSession();
         var overlayReader = new ThrowingOverlayReader(new InvalidOperationException("Overlay creation intercepted."));
         var sut = CreateSut(overlayReader);
 
@@ -250,6 +250,37 @@ public sealed class PluginIngestionTests : IDisposable
             var plugin = new Mock<IModDisposeGetter>();
             plugin.Setup(x => x.EnumerateMajorRecords()).Returns([]);
             return plugin.Object;
+        }
+    }
+
+    private sealed class UnusedRecordStoreSession : IFormIdRecordStoreSession
+    {
+        public Task<FormIdPluginWriteResult> WritePluginAsync(
+            string pluginName,
+            IEnumerable<FormIdRecord> records,
+            UpdateMode updateMode,
+            CancellationToken cancellationToken = default)
+        {
+            throw new InvalidOperationException("This test should not write Plugin records.");
+        }
+
+        public Task<FormIdTextFileImportResult> ImportFormIdTextFileAsync(
+            string formIdTextFilePath,
+            UpdateMode updateMode,
+            IProgress<FormIdStoreProgress> progress = null,
+            CancellationToken cancellationToken = default)
+        {
+            throw new InvalidOperationException("This test should not import a FormID text file.");
+        }
+
+        public Task OptimizeAsync(CancellationToken cancellationToken = default)
+        {
+            throw new InvalidOperationException("This test should not optimize the FormID Record Store.");
+        }
+
+        public ValueTask DisposeAsync()
+        {
+            return ValueTask.CompletedTask;
         }
     }
 }

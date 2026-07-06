@@ -219,6 +219,7 @@ public class ProcessingRun : IDisposable
     private readonly Lock _cancellationLock = new();
     private readonly IGameLoadOrderProvider _loadOrderProvider;
     private readonly PluginIngestion _pluginIngestion;
+    private readonly IFormIdRecordStoreSessionOpener _recordStoreOpener;
     private CancellationTokenSource? _cancellationTokenSource;
 
     /// <summary>
@@ -226,16 +227,25 @@ public class ProcessingRun : IDisposable
     /// </summary>
     /// <param name="loadOrderProvider">Optional Plugin load-order provider; production uses Mutagen-backed lookup.</param>
     public ProcessingRun(IGameLoadOrderProvider? loadOrderProvider = null)
-        : this(loadOrderProvider, new PluginIngestion())
+        : this(loadOrderProvider, new PluginIngestion(), new FormIdRecordStoreSessionOpener())
     {
     }
 
     internal ProcessingRun(
         IGameLoadOrderProvider? loadOrderProvider,
         PluginIngestion pluginIngestion)
+        : this(loadOrderProvider, pluginIngestion, new FormIdRecordStoreSessionOpener())
+    {
+    }
+
+    internal ProcessingRun(
+        IGameLoadOrderProvider? loadOrderProvider,
+        PluginIngestion pluginIngestion,
+        IFormIdRecordStoreSessionOpener recordStoreOpener)
     {
         _loadOrderProvider = loadOrderProvider ?? new GameLoadOrderProvider();
         _pluginIngestion = pluginIngestion ?? throw new ArgumentNullException(nameof(pluginIngestion));
+        _recordStoreOpener = recordStoreOpener ?? throw new ArgumentNullException(nameof(recordStoreOpener));
     }
 
     /// <summary>
@@ -327,7 +337,7 @@ public class ProcessingRun : IDisposable
                 return;
             }
 
-            await using var recordStore = await FormIdRecordStore.OpenAsync(
+            await using var recordStore = await _recordStoreOpener.OpenAsync(
                     request.DatabasePath,
                     request.GameRelease,
                     cancellationTokenSource.Token)
@@ -388,7 +398,7 @@ public class ProcessingRun : IDisposable
 
     private static async Task ExecuteTextFileRunAsync(
         FormIdTextProcessingRunRequest request,
-        FormIdRecordStore recordStore,
+        IFormIdRecordStoreSession recordStore,
         IProgress<ProcessingRunEvent>? progress,
         CancellationToken cancellationToken)
     {
@@ -410,7 +420,7 @@ public class ProcessingRun : IDisposable
         "Uses reflection-based name extraction for Mutagen records via PluginIngestion.")]
     private async Task ExecutePluginRunAsync(
         PluginProcessingRunRequest request,
-        FormIdRecordStore recordStore,
+        IFormIdRecordStoreSession recordStore,
         IProgress<ProcessingRunEvent>? progress,
         CancellationToken cancellationToken)
     {

@@ -84,7 +84,7 @@ public readonly record struct FormIdPluginWriteResult(int RecordCount);
 ///     This module keeps plugin replacement atomic by owning the connection, batching, prepared commands,
 ///     per-plugin transactions, and FormID text staging table behind a small caller interface.
 /// </remarks>
-public sealed class FormIdRecordStore : IAsyncDisposable
+public sealed class FormIdRecordStore : IFormIdRecordStoreSession
 {
     private const int PluginBatchSize = 1000;
     private const int TextProgressInterval = 1000;
