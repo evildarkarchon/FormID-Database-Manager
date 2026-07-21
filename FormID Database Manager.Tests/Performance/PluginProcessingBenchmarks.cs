@@ -97,9 +97,9 @@ public class PluginProcessingBenchmarks : IDisposable
         }
 
         var plugin = _testPlugins[0];
-        var processingRun = CreateProcessingRun();
-        var processingTask = processingRun.ExecuteAsync(CreateRequest([plugin], UpdateMode.Append));
-        processingRun.Cancel();
+        var processingRunExecutor = CreateProcessingRun();
+        var processingTask = processingRunExecutor.ExecuteAsync(CreateRequest([plugin], UpdateMode.Append));
+        processingRunExecutor.Cancel();
 
         try
         {
@@ -192,9 +192,9 @@ public class PluginProcessingBenchmarks : IDisposable
         return plugins;
     }
 
-    private ProcessingRun CreateProcessingRun()
+    private ProcessingRunExecutor CreateProcessingRun()
     {
-        return new ProcessingRun(new BenchmarkLoadOrderProvider(_testPlugins));
+        return new ProcessingRunExecutor(new BenchmarkLoadOrderProvider(_testPlugins));
     }
 
     private async Task ExecuteBenchmarkRunAsync(PluginProcessingRunRequest request)

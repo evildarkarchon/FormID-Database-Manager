@@ -8,13 +8,13 @@ namespace FormID_Database_Manager.Services;
 ///     Compatibility adapter for callers that still use <see cref="ProcessingParameters" />.
 /// </summary>
 /// <remarks>
-///     New production workflow code should call <see cref="ProcessingRun" /> directly. This adapter keeps older tests,
+///     New production workflow code should call <see cref="ProcessingRunExecutor" /> directly. This adapter keeps older tests,
 ///     benchmarks, and integration surfaces working while the nullable parameter bag is retired incrementally.
 /// </remarks>
 public class PluginProcessingService : IDisposable
 {
     private readonly IThreadDispatcher _dispatcher;
-    private readonly ProcessingRun _processingRun;
+    private readonly IProcessingRunExecutor _processingRunExecutor;
     private readonly MainWindowViewModel _viewModel;
 
     /// <summary>
@@ -27,18 +27,18 @@ public class PluginProcessingService : IDisposable
         MainWindowViewModel viewModel,
         IThreadDispatcher? dispatcher = null,
         IGameLoadOrderProvider? loadOrderProvider = null)
-        : this(viewModel, new ProcessingRun(loadOrderProvider), dispatcher)
+        : this(viewModel, new ProcessingRunExecutor(loadOrderProvider), dispatcher)
     {
     }
 
     internal PluginProcessingService(
         MainWindowViewModel viewModel,
-        ProcessingRun processingRun,
+        IProcessingRunExecutor processingRunExecutor,
         IThreadDispatcher? dispatcher = null)
     {
         _viewModel = viewModel ?? throw new ArgumentNullException(nameof(viewModel));
         _dispatcher = dispatcher ?? new ImmediateThreadDispatcher();
-        _processingRun = processingRun ?? throw new ArgumentNullException(nameof(processingRun));
+        _processingRunExecutor = processingRunExecutor ?? throw new ArgumentNullException(nameof(processingRunExecutor));
     }
 
     /// <summary>
@@ -46,7 +46,7 @@ public class PluginProcessingService : IDisposable
     /// </summary>
     public virtual void Dispose()
     {
-        _processingRun.Dispose();
+        _processingRunExecutor.Dispose();
     }
 
     /// <summary>
@@ -96,7 +96,9 @@ public class PluginProcessingService : IDisposable
         IProgress<(string Message, double? Value)>? progress = null)
     {
         var request = CreateRequest(parameters);
-        return _processingRun.ExecuteAsync(request, new LegacyProgressAdapter(progress, AddErrorMessage, AddWarningMessage));
+        return _processingRunExecutor.ExecuteAsync(
+            request,
+            new LegacyProgressAdapter(progress, AddErrorMessage, AddWarningMessage));
     }
 
     /// <summary>
@@ -104,7 +106,7 @@ public class PluginProcessingService : IDisposable
     /// </summary>
     public virtual void CancelProcessing()
     {
-        _processingRun.Cancel();
+        _processingRunExecutor.Cancel();
     }
 
     private static ProcessingRunRequest CreateRequest(ProcessingParameters parameters)

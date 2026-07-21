@@ -13,6 +13,7 @@ public class PluginListManager
     private readonly IThreadDispatcher _dispatcher;
     private readonly IPluginListRefresh _pluginListRefresh;
     private readonly MainWindowViewModel _viewModel;
+    private int _refreshVersion;
 
     /// <summary>
     ///     Creates the ViewModel adapter for loading Plugin Lists.
@@ -56,11 +57,15 @@ public class PluginListManager
     {
         ArgumentNullException.ThrowIfNull(plugins);
 
+        var refreshVersion = Interlocked.Increment(ref _refreshVersion);
         var request = new PluginListRefreshRequest(
             gameDirectory,
             gameRelease,
             ToAdvancedMode(showAdvanced));
-        var progress = new PluginListRefreshProgressAdapter(_viewModel, _dispatcher);
+        var progress = new PluginListRefreshProgressAdapter(
+            _viewModel,
+            _dispatcher,
+            () => refreshVersion == Volatile.Read(ref _refreshVersion));
         var result = await _pluginListRefresh.RefreshAsync(request, progress).ConfigureAwait(false);
 
         switch (result.Status)
@@ -168,13 +173,21 @@ public class PluginListManager
 
     private sealed class PluginListRefreshProgressAdapter(
         MainWindowViewModel viewModel,
-        IThreadDispatcher dispatcher)
+        IThreadDispatcher dispatcher,
+        Func<bool> isCurrentRefresh)
         : IProgress<PluginListRefreshProgress>
     {
+        /// <inheritdoc />
         public void Report(PluginListRefreshProgress value)
         {
             dispatcher.Post(() =>
             {
+                // Post is asynchronous, so freshness must be checked on the dispatcher after any newer refresh starts.
+                if (!isCurrentRefresh())
+                {
+                    return;
+                }
+
                 viewModel.IsScanning = true;
 
                 if (value.ScannedCount == 0 || value.TotalCount == 0)

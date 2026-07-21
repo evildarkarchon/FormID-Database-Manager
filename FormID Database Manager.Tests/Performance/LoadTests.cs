@@ -115,8 +115,8 @@ public class LoadTests : IDisposable
         var stopwatch = Stopwatch.StartNew();
         Assert.True(File.Exists(Path.Combine(dataPath, pluginName)));
 
-        var processingRun = new ProcessingRun(new StaticGameLoadOrderProvider([pluginName]));
-        await processingRun.ExecuteAsync(new PluginProcessingRunRequest(
+        var processingRunExecutor = new ProcessingRunExecutor(new StaticGameLoadOrderProvider([pluginName]));
+        await processingRunExecutor.ExecuteAsync(new PluginProcessingRunRequest(
             _testDirectory,
             dbPath,
             GameRelease.SkyrimSE,

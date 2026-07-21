@@ -14,16 +14,77 @@ using Xunit;
 
 namespace FormID_Database_Manager.Tests.Unit.Services;
 
-public sealed class ProcessingRunTests : IDisposable
+public sealed class ProcessingRunExecutorTests : IDisposable
 {
     private readonly List<string> _tempDirectories = [];
     private readonly List<string> _tempFiles = [];
+
+    /// <summary>
+    ///     Verifies the public sealed executor contract and its internal composition seam.
+    /// </summary>
+    [Fact]
+    public void Type_IsPublicSealedAndImplementsExecutorInterface()
+    {
+        var executorType = typeof(ProcessingRunExecutor);
+
+        Assert.True(executorType.IsPublic);
+        Assert.True(executorType.IsSealed);
+        Assert.Contains(typeof(IProcessingRunExecutor), executorType.GetInterfaces());
+    }
+
+    /// <summary>
+    ///     Verifies that a FormID text-file dry run reports its plan without opening a FormID Record Store.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_DryRunFormIdTextFile_ReportsPlannedWorkWithoutOpeningRecordStore()
+    {
+        var opener = new RecordingRecordStoreSessionOpener(new RecordingRecordStoreSession());
+        using var sut = new ProcessingRunExecutor(null, new PluginIngestion(), opener);
+        var events = new List<ProcessingRunEvent>();
+        var progress = new SynchronousProgress<ProcessingRunEvent>(events.Add);
+        var request = new FormIdTextProcessingRunRequest(
+            @"C:\Imports\formids.txt",
+            string.Empty,
+            GameRelease.SkyrimSE,
+            UpdateMode.Append,
+            dryRun: true);
+
+        await sut.ExecuteAsync(request, progress);
+
+        Assert.Empty(opener.OpenCalls);
+        Assert.Contains(events, runEvent =>
+            runEvent.Kind == ProcessingRunEventKind.Status &&
+            runEvent.Message.Contains(@"C:\Imports\formids.txt", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    ///     Verifies that idle and between-run cancellation never carries into a later Processing Run.
+    /// </summary>
+    [Fact]
+    public async Task Cancel_IdleAndRepeatedBetweenRuns_DoesNotCancelLaterRuns()
+    {
+        using var sut = new ProcessingRunExecutor();
+        var events = new List<ProcessingRunEvent>();
+        var progress = new SynchronousProgress<ProcessingRunEvent>(events.Add);
+
+        sut.Cancel();
+        await sut.ExecuteAsync(CreateDryRunRequest("First.esp"), progress);
+
+        sut.Cancel();
+        sut.Cancel();
+        await sut.ExecuteAsync(CreateDryRunRequest("Second.esp"), progress);
+
+        Assert.Contains(events, runEvent => runEvent.Message.Contains("Would process First.esp", StringComparison.Ordinal));
+        Assert.Contains(events, runEvent => runEvent.Message.Contains("Would process Second.esp", StringComparison.Ordinal));
+        Assert.DoesNotContain(events, runEvent =>
+            runEvent.Message.Contains("cancelled", StringComparison.OrdinalIgnoreCase));
+    }
 
     [Fact]
     public async Task ExecuteAsync_DryRunPluginRun_ReportsPluginStatusWithoutOpeningDatabase()
     {
         var databasePath = CreateTempFilePath("dry-run.db");
-        var sut = new ProcessingRun();
+        var sut = new ProcessingRunExecutor();
         var events = new List<ProcessingRunEvent>();
         var progress = new SynchronousProgress<ProcessingRunEvent>(events.Add);
 
@@ -46,7 +107,7 @@ public sealed class ProcessingRunTests : IDisposable
     [Fact]
     public async Task ExecuteAsync_DryRunPluginRun_AllowsEmptyDatabasePath()
     {
-        var sut = new ProcessingRun();
+        var sut = new ProcessingRunExecutor();
         var events = new List<ProcessingRunEvent>();
         var progress = new SynchronousProgress<ProcessingRunEvent>(events.Add);
 
@@ -86,7 +147,7 @@ public sealed class ProcessingRunTests : IDisposable
             ]
         };
         var opener = new RecordingRecordStoreSessionOpener(recordStore);
-        var sut = new ProcessingRun(null, new PluginIngestion(), opener);
+        var sut = new ProcessingRunExecutor(null, new PluginIngestion(), opener);
         var events = new List<ProcessingRunEvent>();
         var progress = new SynchronousProgress<ProcessingRunEvent>(events.Add);
         var request = new FormIdTextProcessingRunRequest(
@@ -125,7 +186,7 @@ public sealed class ProcessingRunTests : IDisposable
             .Returns(new GameLoadOrderSnapshot(["Other.esp"]));
 
         var recordStore = new RecordingRecordStoreSession();
-        var sut = new ProcessingRun(loadOrderProvider.Object, new PluginIngestion(),
+        var sut = new ProcessingRunExecutor(loadOrderProvider.Object, new PluginIngestion(),
             new RecordingRecordStoreSessionOpener(recordStore));
         var events = new List<ProcessingRunEvent>();
         var progress = new SynchronousProgress<ProcessingRunEvent>(events.Add);
@@ -165,7 +226,7 @@ public sealed class ProcessingRunTests : IDisposable
             .Returns(new GameLoadOrderSnapshot(["Missing.esp"]));
 
         var recordStore = new RecordingRecordStoreSession();
-        var sut = new ProcessingRun(loadOrderProvider.Object, new PluginIngestion(),
+        var sut = new ProcessingRunExecutor(loadOrderProvider.Object, new PluginIngestion(),
             new RecordingRecordStoreSessionOpener(recordStore));
         var events = new List<ProcessingRunEvent>();
         var progress = new SynchronousProgress<ProcessingRunEvent>(events.Add);
@@ -198,7 +259,7 @@ public sealed class ProcessingRunTests : IDisposable
         ingestion.EnqueueResult(PluginIngestionResult.Failed("Bad.esp", "Invalid plugin header."));
         ingestion.EnqueueResult(PluginIngestionResult.Succeeded("Good.esp", recordCount: 3, []));
 
-        var sut = new ProcessingRun(
+        var sut = new ProcessingRunExecutor(
             CreateLoadOrderProvider(gameDirectory, ["Bad.esp", "Good.esp"]).Object,
             ingestion,
             new RecordingRecordStoreSessionOpener(new RecordingRecordStoreSession()));
@@ -235,7 +296,7 @@ public sealed class ProcessingRunTests : IDisposable
         ingestion.EnqueueException(new InvalidOperationException("store failed"));
         ingestion.EnqueueResult(PluginIngestionResult.Succeeded("Never.esp", recordCount: 1, []));
 
-        var sut = new ProcessingRun(
+        var sut = new ProcessingRunExecutor(
             CreateLoadOrderProvider(gameDirectory, ["Bad.esp", "Never.esp"]).Object,
             ingestion,
             new RecordingRecordStoreSessionOpener(new RecordingRecordStoreSession()));
@@ -270,7 +331,7 @@ public sealed class ProcessingRunTests : IDisposable
         ingestion.EnqueueResult(PluginIngestionResult.Succeeded("Done.esp", recordCount: 1, []));
         ingestion.EnqueueException(new OperationCanceledException());
 
-        var sut = new ProcessingRun(
+        var sut = new ProcessingRunExecutor(
             CreateLoadOrderProvider(gameDirectory, ["Done.esp", "Cancelled.esp"]).Object,
             ingestion,
             new RecordingRecordStoreSessionOpener(new RecordingRecordStoreSession()));
@@ -305,7 +366,7 @@ public sealed class ProcessingRunTests : IDisposable
             recordCount: 2,
             ["Warned.esp: 2 recoverable record issues. First issue; second issue"]));
 
-        var sut = new ProcessingRun(
+        var sut = new ProcessingRunExecutor(
             CreateLoadOrderProvider(gameDirectory, ["Warned.esp"]).Object,
             ingestion,
             new RecordingRecordStoreSessionOpener(new RecordingRecordStoreSession()));
@@ -352,7 +413,7 @@ public sealed class ProcessingRunTests : IDisposable
         Directory.CreateDirectory(Path.Combine(gameDirectory, "Data"));
         var databasePath = Path.Combine(gameDirectory, "cancel.db");
         var ingestion = new BlockingPluginIngestion();
-        var sut = new ProcessingRun(
+        var sut = new ProcessingRunExecutor(
             CreateLoadOrderProvider(gameDirectory, ["Plugin.esp"]).Object,
             ingestion,
             new RecordingRecordStoreSessionOpener(new RecordingRecordStoreSession()));
@@ -377,10 +438,93 @@ public sealed class ProcessingRunTests : IDisposable
             runEvent.Message.Contains("Processing cancelled", StringComparison.Ordinal));
     }
 
+    /// <summary>
+    ///     Verifies that supersession cancels the older run without disposing its source and keeps the newer run active.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_SecondRunSupersedesFirst_OlderCompletionCannotClearNewerActiveRun()
+    {
+        using var opener = new SequencedBlockingRecordStoreSessionOpener();
+        using var sut = new ProcessingRunExecutor(null, new PluginIngestion(), opener);
+
+        var firstTask = sut.ExecuteAsync(CreateTextFileRequest("first.txt"));
+        Assert.True(opener.FirstOpenStarted.Wait(TimeSpan.FromSeconds(1), TestContext.Current.CancellationToken));
+
+        var secondTask = sut.ExecuteAsync(CreateTextFileRequest("second.txt"));
+        await opener.SecondImportStarted.Task.WaitAsync(
+            TimeSpan.FromSeconds(1),
+            TestContext.Current.CancellationToken);
+
+        opener.AllowFirstOpenToReturn.Set();
+        var firstException = await Record.ExceptionAsync(() => firstTask);
+
+        // The older run finishes after the newer run owns the active slot; cancellation must still target run two.
+        sut.Cancel();
+        await opener.SecondCancellationObserved.Task.WaitAsync(
+            TimeSpan.FromSeconds(1),
+            TestContext.Current.CancellationToken);
+        var secondException = await Record.ExceptionAsync(() => secondTask);
+
+        Assert.IsAssignableFrom<OperationCanceledException>(firstException);
+        Assert.IsNotType<ObjectDisposedException>(firstException);
+        Assert.IsAssignableFrom<OperationCanceledException>(secondException);
+        Assert.IsNotType<ObjectDisposedException>(secondException);
+    }
+
+    /// <summary>
+    ///     Verifies that disposal cancels the active run without disposing its source out from under that run.
+    /// </summary>
+    [Fact]
+    public async Task Dispose_ActiveRun_CancelsRunAndCanBeRepeated()
+    {
+        using var opener = new SequencedBlockingRecordStoreSessionOpener();
+        using var sut = new ProcessingRunExecutor(null, new PluginIngestion(), opener);
+
+        var processingTask = sut.ExecuteAsync(CreateTextFileRequest("dispose.txt"));
+        Assert.True(opener.FirstOpenStarted.Wait(TimeSpan.FromSeconds(1), TestContext.Current.CancellationToken));
+
+        sut.Dispose();
+        sut.Dispose();
+        opener.AllowFirstOpenToReturn.Set();
+
+        var exception = await Record.ExceptionAsync(() => processingTask);
+        Assert.IsAssignableFrom<OperationCanceledException>(exception);
+        Assert.IsNotType<ObjectDisposedException>(exception);
+    }
+
+    /// <summary>
+    ///     Verifies that synchronously blocking initialization is offloaded before execution is returned to its caller.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_SynchronousRecordStoreInitializationBlocks_ReturnsControlAsynchronously()
+    {
+        using var opener = new SequencedBlockingRecordStoreSessionOpener();
+        using var sut = new ProcessingRunExecutor(null, new PluginIngestion(), opener);
+        using var returnedFromExecute = new ManualResetEventSlim(false);
+        Task? processingTask = null;
+
+        var callerTask = Task.Run(() =>
+        {
+            processingTask = sut.ExecuteAsync(CreateTextFileRequest("blocking.txt"));
+            returnedFromExecute.Set();
+        }, TestContext.Current.CancellationToken);
+
+        Assert.True(opener.FirstOpenStarted.Wait(TimeSpan.FromSeconds(1), TestContext.Current.CancellationToken));
+        var returnedBeforeInitializationCompleted = returnedFromExecute.Wait(
+            TimeSpan.FromSeconds(1),
+            TestContext.Current.CancellationToken);
+
+        opener.AllowFirstOpenToReturn.Set();
+        await callerTask;
+        await processingTask!;
+
+        Assert.True(returnedBeforeInitializationCompleted);
+    }
+
     [Fact]
     public async Task ExecuteAsync_FatalInitializationError_ReportsStatusOnlyAndRethrows()
     {
-        var sut = new ProcessingRun(
+        var sut = new ProcessingRunExecutor(
             null,
             new PluginIngestion(),
             new ThrowingRecordStoreSessionOpener(new InvalidOperationException("open failed")));
@@ -450,6 +594,36 @@ public sealed class ProcessingRunTests : IDisposable
         return filePath;
     }
 
+    /// <summary>
+    ///     Creates a valid dry-run request that requires no filesystem or FormID Record Store access.
+    /// </summary>
+    /// <param name="pluginName">The selected Plugin to include in the planned run.</param>
+    /// <returns>A dry-run Plugin request.</returns>
+    private static PluginProcessingRunRequest CreateDryRunRequest(string pluginName)
+    {
+        return new PluginProcessingRunRequest(
+            @"C:\Games\Skyrim",
+            string.Empty,
+            GameRelease.SkyrimSE,
+            [pluginName],
+            UpdateMode.Append,
+            dryRun: true);
+    }
+
+    /// <summary>
+    ///     Creates a FormID text-file request for executor lifecycle tests that use an injected store opener.
+    /// </summary>
+    /// <param name="fileName">The illustrative FormID text-file name.</param>
+    /// <returns>A non-dry-run FormID text-file request.</returns>
+    private static FormIdTextProcessingRunRequest CreateTextFileRequest(string fileName)
+    {
+        return new FormIdTextProcessingRunRequest(
+            Path.Combine(@"C:\Imports", fileName),
+            @"C:\Databases\formids.db",
+            GameRelease.SkyrimSE,
+            UpdateMode.Append);
+    }
+
     private static Mock<IGameLoadOrderProvider> CreateLoadOrderProvider(
         string gameDirectory,
         IReadOnlyList<string> pluginNames)
@@ -466,6 +640,114 @@ public sealed class ProcessingRunTests : IDisposable
         public void Report(T value)
         {
             handler(value);
+        }
+    }
+
+    private sealed class SequencedBlockingRecordStoreSessionOpener : IFormIdRecordStoreSessionOpener, IDisposable
+    {
+        private int _openCount;
+
+        public ManualResetEventSlim FirstOpenStarted { get; } = new(false);
+
+        public ManualResetEventSlim AllowFirstOpenToReturn { get; } = new(false);
+
+        public TaskCompletionSource<bool> SecondImportStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource<bool> SecondCancellationObserved { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        /// <inheritdoc />
+        public Task<IFormIdRecordStoreSession> OpenAsync(
+            string databasePath,
+            GameRelease gameRelease,
+            CancellationToken cancellationToken = default)
+        {
+            var openNumber = Interlocked.Increment(ref _openCount);
+            if (openNumber == 1)
+            {
+                FirstOpenStarted.Set();
+
+                // Ignore cancellation while blocked so the older initializer returns after supersession,
+                // forcing the executor to use the older run's captured token without touching its source.
+                AllowFirstOpenToReturn.Wait(TestContext.Current.CancellationToken);
+                return Task.FromResult<IFormIdRecordStoreSession>(new CancellationAwareRecordStoreSession());
+            }
+
+            if (openNumber == 2)
+            {
+                return Task.FromResult<IFormIdRecordStoreSession>(new CancellationAwareRecordStoreSession(
+                    SecondImportStarted,
+                    SecondCancellationObserved));
+            }
+
+            throw new InvalidOperationException("The lifecycle test opener supports at most two Processing Runs.");
+        }
+
+        /// <summary>
+        ///     Releases and disposes the synchronization gates owned by this test opener.
+        /// </summary>
+        public void Dispose()
+        {
+            AllowFirstOpenToReturn.Set();
+            FirstOpenStarted.Dispose();
+            AllowFirstOpenToReturn.Dispose();
+        }
+    }
+
+    private sealed class CancellationAwareRecordStoreSession(
+        TaskCompletionSource<bool>? importStarted = null,
+        TaskCompletionSource<bool>? cancellationObserved = null) : IFormIdRecordStoreSession
+    {
+        /// <inheritdoc />
+        public Task<FormIdPluginWriteResult> WritePluginAsync(
+            string pluginName,
+            IEnumerable<FormIdRecord> records,
+            UpdateMode updateMode,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult(new FormIdPluginWriteResult(0));
+        }
+
+        /// <inheritdoc />
+        public async Task<FormIdTextFileImportResult> ImportFormIdTextFileAsync(
+            string formIdTextFilePath,
+            UpdateMode updateMode,
+            IProgress<FormIdStoreProgress>? progress = null,
+            CancellationToken cancellationToken = default)
+        {
+            if (importStarted is null)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                return new FormIdTextFileImportResult(0, 0);
+            }
+
+            importStarted.SetResult(true);
+            try
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                cancellationObserved!.SetResult(true);
+                throw;
+            }
+
+            throw new UnreachableException();
+        }
+
+        /// <inheritdoc />
+        public Task OptimizeAsync(CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.CompletedTask;
+        }
+
+        /// <inheritdoc />
+        public ValueTask DisposeAsync()
+        {
+            return ValueTask.CompletedTask;
         }
     }
 

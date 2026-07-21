@@ -64,6 +64,40 @@ public class UserWorkflowTests
         Assert.Equal((GameDirectory, GameRelease.SkyrimSE, false), Assert.Single(_refreshes));
     }
 
+    /// <summary>
+    /// Verifies that the selection event raised while clearing an old directory does not invalidate the new lookup.
+    /// </summary>
+    [Fact]
+    public async Task ApplyGameContextTransitionAsync_SelectedGameReleaseChangedWithExistingDirectory_IgnoresResetSelectionChange()
+    {
+        var lookupStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var allowLookupToFinish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        _viewModel.SelectedGame = GameRelease.Fallout4;
+        _viewModel.GameDirectory = @"C:\Old";
+        _viewModel.DetectedDirectories.Add(@"C:\Old");
+        _gameLocationService.Setup(x => x.GetGameFolders(GameRelease.Fallout4))
+            .Returns(() =>
+            {
+                lookupStarted.SetResult();
+                allowLookupToFinish.Task.GetAwaiter().GetResult();
+                return [@"C:\NewFallout"];
+            });
+
+        var sut = CreateSut();
+
+        var gameSelection = sut.ApplyGameContextTransitionAsync(GameContextTransition.SelectedGameReleaseChanged());
+        await lookupStarted.Task;
+
+        await sut.ApplyGameContextTransitionAsync(GameContextTransition.SelectedDetectedDirectoryChanged());
+
+        allowLookupToFinish.SetResult();
+        await gameSelection;
+
+        Assert.Equal(@"C:\NewFallout", _viewModel.GameDirectory);
+        Assert.Equal((@"C:\NewFallout", GameRelease.Fallout4, false), Assert.Single(_refreshes));
+    }
+
     [Fact]
     public async Task ApplyGameContextTransitionAsync_SelectedGameReleaseChangedWithoutInstalledFolders_RecordsInformationMessage()
     {

@@ -235,7 +235,7 @@ internal interface IProcessingRunExecutor : IDisposable
 /// <summary>
 ///     Executes one Processing Run from a domain request and emits typed run events.
 /// </summary>
-public class ProcessingRun : IProcessingRunExecutor
+public sealed class ProcessingRunExecutor : IProcessingRunExecutor
 {
     private const int OutcomeDetailLimit = 5;
 
@@ -243,25 +243,26 @@ public class ProcessingRun : IProcessingRunExecutor
     private readonly IGameLoadOrderProvider _loadOrderProvider;
     private readonly PluginIngestion _pluginIngestion;
     private readonly IFormIdRecordStoreSessionOpener _recordStoreOpener;
-    private CancellationTokenSource? _cancellationTokenSource;
+    private CancellationTokenSource? _activeCancellationSource;
+    private bool _disposed;
 
     /// <summary>
     ///     Creates the Processing Run module.
     /// </summary>
     /// <param name="loadOrderProvider">Optional Plugin load-order provider; production uses Mutagen-backed lookup.</param>
-    public ProcessingRun(IGameLoadOrderProvider? loadOrderProvider = null)
+    public ProcessingRunExecutor(IGameLoadOrderProvider? loadOrderProvider = null)
         : this(loadOrderProvider, new PluginIngestion(), new FormIdRecordStoreSessionOpener())
     {
     }
 
-    internal ProcessingRun(
+    internal ProcessingRunExecutor(
         IGameLoadOrderProvider? loadOrderProvider,
         PluginIngestion pluginIngestion)
         : this(loadOrderProvider, pluginIngestion, new FormIdRecordStoreSessionOpener())
     {
     }
 
-    internal ProcessingRun(
+    internal ProcessingRunExecutor(
         IGameLoadOrderProvider? loadOrderProvider,
         PluginIngestion pluginIngestion,
         IFormIdRecordStoreSessionOpener recordStoreOpener)
@@ -279,41 +280,59 @@ public class ProcessingRun : IProcessingRunExecutor
     /// <returns>A task that completes when the run completes, fails, or observes cancellation.</returns>
     [RequiresUnreferencedCode(
         "Uses reflection-based name extraction for Mutagen records via PluginIngestion.")]
-    public virtual async Task ExecuteAsync(
+    public async Task ExecuteAsync(
         ProcessingRunRequest request,
         IProgress<ProcessingRunEvent>? progress = null)
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        var cancellationTokenSource = StartCancellationSource();
-        await Task.Run(
-                () => ExecuteCoreAsync(request, progress, cancellationTokenSource),
-                cancellationTokenSource.Token)
-            .ConfigureAwait(false);
+        var cancellationSource = StartCancellationSource();
+        try
+        {
+            // Do not pass the token to Task.Run scheduling: even a pre-cancelled run must enter the worker
+            // so it can report cancellation and release the source owned by this execution.
+            await Task.Run(() => ExecuteCoreAsync(request, progress, cancellationSource.Token))
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            CompleteRun(cancellationSource);
+        }
     }
 
     /// <summary>
     ///     Requests cancellation for the active Processing Run, if one is active.
     /// </summary>
-    public virtual void Cancel()
+    public void Cancel()
     {
+        CancellationTokenSource? cancellationSource;
         lock (_cancellationLock)
         {
-            _cancellationTokenSource?.Cancel();
+            cancellationSource = _activeCancellationSource;
         }
+
+        CancelSource(cancellationSource);
     }
 
     /// <summary>
     ///     Cancels any active run and releases the owned cancellation source.
     /// </summary>
-    public virtual void Dispose()
+    public void Dispose()
     {
+        CancellationTokenSource? cancellationSource;
         lock (_cancellationLock)
         {
-            _cancellationTokenSource?.Cancel();
-            _cancellationTokenSource?.Dispose();
-            _cancellationTokenSource = null;
+            if (_disposed)
+            {
+                return;
+            }
+
+            _disposed = true;
+            cancellationSource = _activeCancellationSource;
         }
+
+        // The active execution remains the source owner and will dispose it in its finally block.
+        CancelSource(cancellationSource);
     }
 
     private static void ReportStatus(
@@ -334,26 +353,61 @@ public class ProcessingRun : IProcessingRunExecutor
         progress?.Report(ProcessingRunEvent.Warning(message));
     }
 
+    /// <summary>
+    ///     Creates and publishes the cancellation source for a new active Processing Run.
+    /// </summary>
+    /// <returns>The source owned by the new execution.</returns>
+    /// <exception cref="ObjectDisposedException">The executor has already been disposed.</exception>
     private CancellationTokenSource StartCancellationSource()
     {
+        CancellationTokenSource? previousSource;
+        CancellationTokenSource currentSource;
         lock (_cancellationLock)
         {
-            _cancellationTokenSource?.Cancel();
-            _cancellationTokenSource?.Dispose();
-            _cancellationTokenSource = new CancellationTokenSource();
-            return _cancellationTokenSource;
+            if (_disposed)
+            {
+                throw new ObjectDisposedException(nameof(ProcessingRunExecutor));
+            }
+
+            previousSource = _activeCancellationSource;
+            currentSource = new CancellationTokenSource();
+
+            // Publish the newer run before cancelling the older one so delayed older completion
+            // can never clear the slot now owned by the newer run.
+            _activeCancellationSource = currentSource;
+        }
+
+        try
+        {
+            // The older execution owns disposal of its source; supersession only requests cancellation.
+            CancelSource(previousSource);
+            return currentSource;
+        }
+        catch
+        {
+            CompleteRun(currentSource);
+            throw;
         }
     }
 
+    /// <summary>
+    ///     Executes one Processing Run on the background worker with the token owned by that execution.
+    /// </summary>
+    /// <param name="request">The validated domain request describing the run.</param>
+    /// <param name="progress">Optional typed run event reporter.</param>
+    /// <param name="cancellationToken">The execution-owned token used by initialization and ingestion.</param>
+    /// <returns>A task that completes with the run and propagates cancellation or processing failures unchanged.</returns>
     [RequiresUnreferencedCode(
         "Uses reflection-based name extraction for Mutagen records via PluginIngestion.")]
     private async Task ExecuteCoreAsync(
         ProcessingRunRequest request,
         IProgress<ProcessingRunEvent>? progress,
-        CancellationTokenSource cancellationTokenSource)
+        CancellationToken cancellationToken)
     {
         try
         {
+            cancellationToken.ThrowIfCancellationRequested();
+
             if (request.DryRun)
             {
                 ReportDryRun(request, progress);
@@ -363,18 +417,18 @@ public class ProcessingRun : IProcessingRunExecutor
             await using var recordStore = await _recordStoreOpener.OpenAsync(
                     request.DatabasePath,
                     request.GameRelease,
-                    cancellationTokenSource.Token)
+                    cancellationToken)
                 .ConfigureAwait(false);
 
             switch (request)
             {
                 case FormIdTextProcessingRunRequest textRequest:
-                    await ExecuteTextFileRunAsync(textRequest, recordStore, progress, cancellationTokenSource.Token)
+                    await ExecuteTextFileRunAsync(textRequest, recordStore, progress, cancellationToken)
                         .ConfigureAwait(false);
                     break;
 
                 case PluginProcessingRunRequest pluginRequest:
-                    await ExecutePluginRunAsync(pluginRequest, recordStore, progress, cancellationTokenSource.Token)
+                    await ExecutePluginRunAsync(pluginRequest, recordStore, progress, cancellationToken)
                         .ConfigureAwait(false);
                     break;
 
@@ -391,10 +445,6 @@ public class ProcessingRun : IProcessingRunExecutor
         {
             ReportStatus(progress, $"Error during processing: {ex.Message}");
             throw;
-        }
-        finally
-        {
-            ReleaseCancellationSource(cancellationTokenSource);
         }
     }
 
@@ -592,15 +642,37 @@ public class ProcessingRun : IProcessingRunExecutor
         return progress is null ? null : new StoreProgressAdapter(progress);
     }
 
-    private void ReleaseCancellationSource(CancellationTokenSource cancellationTokenSource)
+    /// <summary>
+    ///     Clears the active slot when this source still owns it, then releases the execution-owned source.
+    /// </summary>
+    /// <param name="cancellationSource">The source owned by the completing execution.</param>
+    private void CompleteRun(CancellationTokenSource cancellationSource)
     {
         lock (_cancellationLock)
         {
-            if (_cancellationTokenSource == cancellationTokenSource)
+            if (ReferenceEquals(_activeCancellationSource, cancellationSource))
             {
-                _cancellationTokenSource.Dispose();
-                _cancellationTokenSource = null;
+                _activeCancellationSource = null;
             }
+        }
+
+        // Disposal happens only after the owning worker is finished reading its token.
+        cancellationSource.Dispose();
+    }
+
+    /// <summary>
+    ///     Requests cancellation while tolerating completion that wins the race and disposes the source first.
+    /// </summary>
+    /// <param name="cancellationSource">The source to cancel, or <see langword="null" /> when idle.</param>
+    private static void CancelSource(CancellationTokenSource? cancellationSource)
+    {
+        try
+        {
+            cancellationSource?.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+            // The owning execution completed between the active-slot snapshot and this cancellation request.
         }
     }
 

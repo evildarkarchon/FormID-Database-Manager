@@ -338,7 +338,9 @@ public sealed class UserWorkflow : IDisposable
 
     private void ResetGameSelectionState()
     {
-        _viewModel.GameDirectory = string.Empty;
+        // Clearing the bound directory raises SelectionChanged; ignore that programmatic event so it
+        // cannot retire the installed-folder lookup that initiated this reset.
+        SetGameDirectoryFromWorkflow(string.Empty);
         _viewModel.DetectedDirectories.Clear();
         _viewModel.Plugins.Clear();
     }

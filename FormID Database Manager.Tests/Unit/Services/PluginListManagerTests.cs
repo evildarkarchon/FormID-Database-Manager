@@ -1,7 +1,9 @@
 using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using FormID_Database_Manager.Models;
 using FormID_Database_Manager.Services;
@@ -226,6 +228,85 @@ public class PluginListManagerTests : IDisposable
 
         Assert.Single(_plugins);
         Assert.Equal("Newer.esp", _plugins[0].Name);
+    }
+
+    /// <summary>
+    ///     Verifies that queued progress from an older refresh cannot restore scanning after a newer refresh completes.
+    /// </summary>
+    [Fact]
+    public async Task RefreshPluginList_QueuedOlderProgressAfterNewerCompletes_DoesNotRestoreScanningState()
+    {
+        var postedActions = new Queue<Action>();
+        _dispatcher.Setup(d => d.Post(It.IsAny<Action>()))
+            .Callback<Action>(postedActions.Enqueue);
+
+        var pluginListRefresh = new SequencedPluginListRefresh();
+        var sut = new PluginListManager(pluginListRefresh, _viewModel, _dispatcher.Object);
+
+        var olderTask = sut.RefreshPluginList(
+            _testDirectory,
+            GameRelease.SkyrimSE,
+            _plugins,
+            showAdvanced: true);
+        await pluginListRefresh.OlderProgressQueued.Task;
+
+        await sut.RefreshPluginList(
+            _testDirectory,
+            GameRelease.SkyrimSE,
+            _plugins,
+            showAdvanced: true);
+
+        pluginListRefresh.AllowOlderToComplete.SetResult(true);
+        await olderTask;
+
+        Assert.False(_viewModel.IsScanning);
+        Assert.Equal(string.Empty, _viewModel.ProgressStatus);
+        Assert.Single(postedActions);
+
+        postedActions.Dequeue()();
+
+        Assert.False(_viewModel.IsScanning);
+        Assert.Equal(string.Empty, _viewModel.ProgressStatus);
+        Assert.Single(_plugins);
+        Assert.Equal("Newer.esp", _plugins[0].Name);
+    }
+
+    private sealed class SequencedPluginListRefresh : IPluginListRefresh
+    {
+        private int _refreshCallCount;
+
+        public TaskCompletionSource<bool> OlderProgressQueued { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource<bool> AllowOlderToComplete { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        /// <inheritdoc />
+        public Task<PluginListRefreshResult> RefreshAsync(
+            PluginListRefreshRequest request,
+            IProgress<PluginListRefreshProgress> progress,
+            CancellationToken cancellationToken = default)
+        {
+            return Interlocked.Increment(ref _refreshCallCount) == 1
+                ? CompleteOlderRefreshAsync(progress, cancellationToken)
+                : Task.FromResult(PluginListRefreshResult.Completed([new PluginListEntry("Newer.esp")]));
+        }
+
+        /// <summary>
+        ///     Queues older progress, then waits until the newer refresh has completed before returning stale.
+        /// </summary>
+        /// <param name="progress">The older refresh progress sink.</param>
+        /// <param name="cancellationToken">The test cancellation token.</param>
+        /// <returns>A stale result after the test releases the older refresh.</returns>
+        private async Task<PluginListRefreshResult> CompleteOlderRefreshAsync(
+            IProgress<PluginListRefreshProgress> progress,
+            CancellationToken cancellationToken)
+        {
+            progress.Report(new PluginListRefreshProgress(0, 12));
+            OlderProgressQueued.SetResult(true);
+            await AllowOlderToComplete.Task.WaitAsync(cancellationToken);
+            return PluginListRefreshResult.Stale();
+        }
     }
 
     [Fact]
