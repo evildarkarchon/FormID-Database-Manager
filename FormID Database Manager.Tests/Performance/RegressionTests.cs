@@ -243,7 +243,6 @@ public class RegressionTests : IDisposable
     public async Task FormIdTextProcessing_StaysWithinBaseline(int lineCount, string baselineKey)
     {
         // Arrange
-        var processor = new FormIdTextProcessor();
         var formIdFile = Path.Combine(_testDirectory, "formids.txt");
         var dbPath = Path.Combine(_testDirectory, "test.db");
 
@@ -270,11 +269,10 @@ public class RegressionTests : IDisposable
                          GameRelease.SkyrimSE,
                          TestContext.Current.CancellationToken))
         {
-            await processor.ProcessFormIdListFile(
+            await recordStore.ImportFormIdTextFileAsync(
                 formIdFile,
-                recordStore,
-                false,
-                TestContext.Current.CancellationToken);
+                UpdateMode.Append,
+                cancellationToken: TestContext.Current.CancellationToken);
         }
 
         stopwatch.Stop();

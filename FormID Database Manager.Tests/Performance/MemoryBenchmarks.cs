@@ -144,17 +144,17 @@ public class MemoryBenchmarks
         }
     }
 
+    /// <summary>
+    ///     Measures allocations for a large in-memory collection shaped like FormID text rows.
+    /// </summary>
     [Benchmark]
-    public void FormIdTextProcessor_ParseLargeFile()
+    public void FormIdTextRows_LargeInMemoryCollection()
     {
-        // FormIdTextProcessor requires DatabaseService parameter
-        // Test removed as it requires constructor changes
-
-        // Simulate memory usage of large collection instead
+        // Keep database I/O out of this benchmark so it isolates the row collection's managed-memory cost.
         var testData = new List<string>(ItemCount);
         for (var i = 0; i < ItemCount; i++)
         {
-            testData.Add($"{i:X8} # Item_{i} - Description of item {i}");
+            testData.Add($"Plugin.esp|{i:X8}|Entry_{i}");
         }
 
         _ = testData.Count;
