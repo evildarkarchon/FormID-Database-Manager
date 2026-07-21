@@ -397,23 +397,32 @@ public sealed class FormIdRecordStoreTests : IDisposable
     }
 
     /// <summary>
-    ///     Verifies that the 10,000-row staging flush and its residual batch are both committed.
+    ///     Verifies that imports exceeding the 10,000-row managed batch use file-backed SQLite staging and commit all rows.
     /// </summary>
     [Fact]
-    public async Task ImportFormIdTextFileAsync_ExceedsStagingBatchSize_CommitsAllRecords()
+    public async Task ImportFormIdTextFileAsync_ExceedsStagingBatchSize_UsesFileBackedStagingAndCommitsAllRecords()
     {
         const int totalRecords = 10100;
+        const long fileBackedTemporaryStorageMode = 1;
         var lines = Enumerable.Range(0, totalRecords).Select(i => $"Plugin.esp|{i:X6}|Entry{i}");
         var testFile = await WriteFormIdTextFileAsync("batch_boundary.txt", lines);
-        await using var store = await OpenStoreAsync();
+        var databaseService = new TemporaryStorageInspectingDatabaseService();
+        await using var store = await FormIdRecordStore.OpenAsync(
+            databaseService,
+            _testDbPath,
+            GameRelease.SkyrimSE,
+            TestContext.Current.CancellationToken);
 
         var result = await store.ImportFormIdTextFileAsync(
             testFile,
             UpdateMode.Append,
             cancellationToken: TestContext.Current.CancellationToken);
 
+        var temporaryStorageMode = await databaseService.ReadTemporaryStorageModeAsync(
+            TestContext.Current.CancellationToken);
         var records = await store.ReadRecordsAsync(FormIdRecordQuery.All, TestContext.Current.CancellationToken);
 
+        Assert.Equal(fileBackedTemporaryStorageMode, temporaryStorageMode);
         Assert.Equal(new FormIdTextFileImportResult(1, totalRecords), result);
         Assert.Equal(totalRecords, records.Count);
     }
@@ -667,6 +676,38 @@ public sealed class FormIdRecordStoreTests : IDisposable
         public void ResetComparisonCount()
         {
             Interlocked.Exchange(ref _comparisonCount, 0);
+        }
+    }
+
+    private sealed class TemporaryStorageInspectingDatabaseService : DatabaseService
+    {
+        private SqliteConnection _configuredConnection = null!;
+
+        /// <inheritdoc />
+        public override async Task ConfigureConnection(
+            SqliteConnection conn,
+            CancellationToken cancellationToken = default)
+        {
+            await base.ConfigureConnection(conn, cancellationToken);
+            _configuredConnection = conn;
+        }
+
+        /// <summary>
+        ///     Reads SQLite's temporary-storage mode from the run-scoped FormID Record Store connection.
+        /// </summary>
+        /// <param name="cancellationToken">Token to monitor for cancellation.</param>
+        /// <returns>The numeric SQLite <c>temp_store</c> mode.</returns>
+        public async Task<long> ReadTemporaryStorageModeAsync(CancellationToken cancellationToken)
+        {
+            if (_configuredConnection is null)
+            {
+                throw new InvalidOperationException("No FormID Record Store connection has been configured.");
+            }
+
+            await using var command = _configuredConnection.CreateCommand();
+            command.CommandText = "PRAGMA temp_store";
+            var mode = await command.ExecuteScalarAsync(cancellationToken);
+            return Convert.ToInt64(mode);
         }
     }
 

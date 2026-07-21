@@ -471,6 +471,9 @@ public sealed class FormIdRecordStore : IFormIdRecordStoreSession
     {
         await using var command = _connection.CreateCommand();
         command.CommandText = $@"
+            -- Text imports retain staged rows until Plugin-scoped commits, so spill large staging sets to disk.
+            PRAGMA temp_store = FILE;
+
             CREATE TEMP TABLE IF NOT EXISTS {StagingTableName} (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 plugin_key TEXT NOT NULL COLLATE NOCASE,
