@@ -419,6 +419,38 @@ public sealed class FormIdRecordStoreTests : IDisposable
     }
 
     /// <summary>
+    ///     Verifies that importing many distinct Plugins does not compare every staged row for every Plugin commit.
+    /// </summary>
+    [Fact]
+    public async Task ImportFormIdTextFileAsync_ManyDistinctPlugins_KeepsStagingLookupWorkSubquadratic()
+    {
+        const int pluginCount = 512;
+        // A full scan needs roughly one comparison per Plugin-row pair; this bound leaves indexed work ample headroom.
+        const long maximumNoCaseComparisons = pluginCount * pluginCount / 4;
+        var lines = Enumerable.Range(0, pluginCount)
+            .Select(i => $"Plugin{i:D4}.esp|{i:X6}|Entry{i}");
+        var testFile = await WriteFormIdTextFileAsync("many_distinct_plugins.txt", lines);
+        var databaseService = new NoCaseComparisonCountingDatabaseService();
+        await using var store = await FormIdRecordStore.OpenAsync(
+            databaseService,
+            _testDbPath,
+            GameRelease.SkyrimSE,
+            TestContext.Current.CancellationToken);
+        databaseService.ResetComparisonCount();
+
+        var result = await store.ImportFormIdTextFileAsync(
+            testFile,
+            UpdateMode.Append,
+            cancellationToken: TestContext.Current.CancellationToken);
+        var comparisonCount = databaseService.ComparisonCount;
+        var records = await store.ReadRecordsAsync(FormIdRecordQuery.All, TestContext.Current.CancellationToken);
+
+        Assert.Equal(new FormIdTextFileImportResult(pluginCount, pluginCount), result);
+        Assert.Equal(pluginCount, records.Count);
+        Assert.InRange(comparisonCount, 1, maximumNoCaseComparisons);
+    }
+
+    /// <summary>
     ///     Verifies that cancellation during parsing stops the import before target rows are committed.
     /// </summary>
     [Fact]
@@ -605,6 +637,37 @@ public sealed class FormIdRecordStoreTests : IDisposable
         }
 
         return records;
+    }
+
+    private sealed class NoCaseComparisonCountingDatabaseService : DatabaseService
+    {
+        private long _comparisonCount;
+
+        /// <summary>
+        ///     Gets the number of case-insensitive comparisons performed since the last reset.
+        /// </summary>
+        public long ComparisonCount => Interlocked.Read(ref _comparisonCount);
+
+        /// <inheritdoc />
+        public override async Task ConfigureConnection(
+            SqliteConnection conn,
+            CancellationToken cancellationToken = default)
+        {
+            await base.ConfigureConnection(conn, cancellationToken);
+            conn.CreateCollation("NOCASE", (left, right) =>
+            {
+                Interlocked.Increment(ref _comparisonCount);
+                return string.Compare(left, right, StringComparison.OrdinalIgnoreCase);
+            });
+        }
+
+        /// <summary>
+        ///     Starts a new comparison-counting interval for a FormID Record Store operation.
+        /// </summary>
+        public void ResetComparisonCount()
+        {
+            Interlocked.Exchange(ref _comparisonCount, 0);
+        }
     }
 
     private sealed class SynchronousProgress<T>(Action<T> handler) : IProgress<T>

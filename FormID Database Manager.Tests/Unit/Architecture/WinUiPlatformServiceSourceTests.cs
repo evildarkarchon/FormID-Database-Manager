@@ -62,7 +62,7 @@ public class WinUiPlatformServiceSourceTests
         Assert.Contains("UserWorkflow", source, StringComparison.Ordinal);
         Assert.Contains("new UserWorkflow(", source, StringComparison.Ordinal);
         Assert.Contains("PluginListManager", source, StringComparison.Ordinal);
-        Assert.Contains("ProcessingRun", source, StringComparison.Ordinal);
+        Assert.Contains("ProcessingRunExecutor", source, StringComparison.Ordinal);
         Assert.Contains("DirectoryComboBox_SelectionChanged", source, StringComparison.Ordinal);
 
         var xaml = File.ReadAllText(mainWindowXamlPath);
@@ -157,7 +157,6 @@ public class WinUiPlatformServiceSourceTests
         Assert.DoesNotContain("Processing remains disabled", source, StringComparison.Ordinal);
         Assert.Contains("RequiresUnreferencedCode", source, StringComparison.Ordinal);
         Assert.Contains("await _userWorkflow.ProcessFormIdsAsync();", source, StringComparison.Ordinal);
-        Assert.DoesNotContain("new ProcessingParameters", source, StringComparison.Ordinal);
         Assert.DoesNotContain("DefaultDatabasePathProvider.CreateDefaultDatabasePath", source,
             StringComparison.Ordinal);
         Assert.DoesNotContain("Directory.GetCurrentDirectory()", source, StringComparison.Ordinal);

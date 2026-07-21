@@ -477,7 +477,11 @@ public sealed class FormIdRecordStore : IFormIdRecordStoreSession
                 plugin TEXT NOT NULL,
                 formid TEXT NOT NULL,
                 entry TEXT NOT NULL
-            )";
+            );
+
+            -- Each Plugin commit filters the full staged set, so index the key and preserved row order to avoid per-Plugin scans.
+            CREATE INDEX IF NOT EXISTS temp.{StagingTableName}_plugin_key_id_idx
+            ON {StagingTableName} (plugin_key COLLATE NOCASE, id);";
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 

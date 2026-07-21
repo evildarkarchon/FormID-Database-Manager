@@ -49,15 +49,14 @@ The solution has four projects in `FormID Database Manager.slnx`:
 - `ViewModels/MainWindowViewModel.cs` — CommunityToolkit.Mvvm ObservableObject ViewModel with plugin filtering, progress tracking, and thread-safe UI updates via `IThreadDispatcher`
 - `Services/` — All business logic:
   - `DatabaseService` — SQLite schema, CRUD, optimizations (WAL mode, covering indexes)
-  - `PluginProcessingService` — Orchestrates plugin processing with cancellation support
-  - `ProcessingRun` — External seam for Plugin Ingestion and FormID text-file Processing Runs with structured status, warning, and error events
+  - `ProcessingRunExecutor` — Reusable Processing Run seam for Plugin Ingestion and Processing Runs that read FormID text files; owns the active-run cancellation lifecycle and emits structured status, warning, and error events
   - `PluginIngestion` — Internal one-Plugin ingestion module; reads Mutagen overlays via `IPluginOverlayReader`, extracts Entries via `EntryExtraction`, and writes through `FormIdRecordStore`
-  - `FormIdRecordStore` — Owns SQLite writes and pipe-delimited FormID text-file imports (`plugin|formid|entry`) with 10000-row staging batches
+  - `FormIdRecordStore` — Implements the FormID Record Store and owns SQLite writes plus the import of pipe-delimited FormID text files (`plugin|formid|entry`) with 10000-row staging batches
   - `PluginListManager` — Loads plugin lists from game directories on background thread
   - `GameDetectionService` — Detects game type from directory structure (master file presence)
   - `IFileDialogService` — UI-neutral file/folder picker abstraction
   - `IThreadDispatcher` / `ImmediateThreadDispatcher` / `QueuedThreadDispatcher` — Abstractions for UI thread marshalling (testable)
-- `Models/` — `PluginListItem` (CommunityToolkit.Mvvm ObservableObject), `ProcessingParameters`
+- `Models/` — `PluginListItem` (CommunityToolkit.Mvvm ObservableObject)
 
 ### Main App (`FormID Database Manager.WinUI/`)
 - `App.xaml.cs` — WinUI application startup
@@ -84,7 +83,7 @@ The solution has four projects in `FormID Database Manager.slnx`:
 
 - **Thread safety**: UI updates go through `IThreadDispatcher`. ViewModel uses `Interlocked` for filter reentrancy guard and `lock` for plugins collection access.
 - **SQL injection prevention**: `GameReleaseHelper.GetSafeTableName()` uses an explicit whitelist switch on `GameRelease` enum.
-- **Cancellation**: All async processing supports `CancellationToken`. `PluginProcessingService` manages `CancellationTokenSource` lifecycle with a lock. Note: Mutagen's `CreateFromBinaryOverlay` is synchronous and not cancellable.
+- **Cancellation**: All async processing supports `CancellationToken`. `ProcessingRunExecutor` owns the active Processing Run's `CancellationTokenSource` lifecycle. Note: Mutagen's `CreateFromBinaryOverlay` is synchronous and not cancellable.
 - **Test collections**: Database tests use `[Collection(...)]` for sequential execution. Unit tests run in parallel.
 - **InternalsVisibleTo**: The core project exposes internals to the test and WinUI projects.
 
@@ -98,4 +97,5 @@ The solution has four projects in `FormID Database Manager.slnx`:
 ## Important Notes
 
 - **Mutagen API Reference**: When looking up Mutagen types, interfaces, or method signatures, consult `docs/mutagen/` first — it contains pre-generated API documentation (one markdown file per project) with organized type catalogs, method signatures, and common patterns. If the documentation doesn't have the detail you need, fall back to the `Mutagen/` git submodule source code as a secondary reference. The submodule is read-only and should never be modified. The app references Mutagen via NuGet package, not the submodule source.
+- `docs/WinUI-Migration-Plan.md` is a dated historical checkpoint; leave it unchanged and exclude it from live architecture-reference sweeps.
 - `CS1998` (async method lacks await) is treated as an error via `WarningsAsErrors`.
