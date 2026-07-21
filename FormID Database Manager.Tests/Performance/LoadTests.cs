@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
-using System.Threading;
 using System.Threading.Tasks;
 using FormID_Database_Manager.Models;
 using FormID_Database_Manager.Services;
@@ -39,10 +38,13 @@ public class LoadTests : IDisposable
         TestCleanupHelper.DeleteTestFilesAndDirectory(_createdFiles, _testDirectory, _output);
     }
 
+    /// <summary>
+    ///     Measures multi-Plugin ingestion throughput through the production Processing Run executor.
+    /// </summary>
     [ManualPerformanceFact]
     [Trait("Category", "ManualPerformance")]
     [Trait("Category", "LoadTest")]
-    public async Task LoadTest_Process100Plugins_Concurrently()
+    public async Task LoadTest_Process100Plugins_Sequentially()
     {
         // Arrange
         const int pluginCount = 100;
@@ -53,28 +55,25 @@ public class LoadTests : IDisposable
 
         await _databaseService.InitializeDatabase(dbPath, GameRelease.SkyrimSE);
 
-        var viewModel = new MainWindowViewModel();
-        var pluginProcessingService = new PluginProcessingService(viewModel);
+        using var processingRunExecutor = new ProcessingRunExecutor(
+            new StaticGameLoadOrderProvider(plugins));
 
         // Act
         var stopwatch = Stopwatch.StartNew();
-        var parameters = new ProcessingParameters
-        {
-            GameDirectory = _testDirectory,
-            DatabasePath = dbPath,
-            GameRelease = GameRelease.SkyrimSE,
-            SelectedPlugins = plugins.Select(p => new PluginListItem { Name = p }).ToList(),
-            UpdateMode = false
-        };
-
-        var progress = new Progress<(string Message, double? Value)>(update =>
+        var request = new PluginProcessingRunRequest(
+            _testDirectory,
+            dbPath,
+            GameRelease.SkyrimSE,
+            plugins,
+            UpdateMode.Append);
+        var progress = new Progress<ProcessingRunEvent>(update =>
         {
             _output.WriteLine($"{update.Value:F1}% - {update.Message}");
         });
 
         Assert.All(plugins, p => Assert.True(File.Exists(Path.Combine(dataPath, p))));
 
-        await pluginProcessingService.ProcessPlugins(parameters, progress);
+        await processingRunExecutor.ExecuteAsync(request, progress);
         stopwatch.Stop();
 
         // Assert
@@ -87,8 +86,7 @@ public class LoadTests : IDisposable
         await using var cmd = new SqliteCommand($"SELECT COUNT(DISTINCT plugin) FROM {GameRelease.SkyrimSE}", conn);
         var processedCount = Convert.ToInt64(await cmd.ExecuteScalarAsync());
 
-        // Plugins may fail to parse under stress conditions; this test focuses on throughput and stability.
-        Assert.True(processedCount >= 0);
+        Assert.Equal(pluginCount, processedCount);
     }
 
     [ManualPerformanceFact]
@@ -115,7 +113,7 @@ public class LoadTests : IDisposable
         var stopwatch = Stopwatch.StartNew();
         Assert.True(File.Exists(Path.Combine(dataPath, pluginName)));
 
-        var processingRunExecutor = new ProcessingRunExecutor(new StaticGameLoadOrderProvider([pluginName]));
+        using var processingRunExecutor = new ProcessingRunExecutor(new StaticGameLoadOrderProvider([pluginName]));
         await processingRunExecutor.ExecuteAsync(new PluginProcessingRunRequest(
             _testDirectory,
             dbPath,
@@ -381,19 +379,4 @@ public class LoadTests : IDisposable
         });
     }
 
-    private sealed class StaticGameLoadOrderProvider(IReadOnlyList<string> pluginNames) : IGameLoadOrderProvider
-    {
-        public GameLoadOrderSnapshot BuildSnapshot(
-            GameRelease gameRelease,
-            string dataPath,
-            bool includeMasterFlagsLookup = false)
-        {
-            return new GameLoadOrderSnapshot(pluginNames);
-        }
-
-        public IReadOnlyList<string> GetListedPluginNames(GameRelease gameRelease, string dataPath)
-        {
-            return pluginNames;
-        }
-    }
 }

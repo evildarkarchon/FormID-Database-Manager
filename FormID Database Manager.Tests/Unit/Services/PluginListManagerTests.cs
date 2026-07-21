@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
@@ -231,6 +232,80 @@ public class PluginListManagerTests : IDisposable
     }
 
     /// <summary>
+    ///     Verifies that a completed older refresh queued for UI projection cannot overtake a newer inline projection.
+    /// </summary>
+    [Fact]
+    public async Task RefreshPluginList_QueuedOlderCompletedResultAfterNewerCompletes_DoesNotReplaceNewerPlugins()
+    {
+        await AssertQueuedOlderResultDoesNotReplaceNewerStateAsync(
+            PluginListRefreshResult.Completed([new PluginListEntry("Older.esp")]));
+    }
+
+    /// <summary>
+    ///     Verifies that a failed older refresh queued for UI projection cannot clear a newer inline projection.
+    /// </summary>
+    [Fact]
+    public async Task RefreshPluginList_QueuedOlderFailedResultAfterNewerCompletes_DoesNotClearNewerPlugins()
+    {
+        await AssertQueuedOlderResultDoesNotReplaceNewerStateAsync(
+            PluginListRefreshResult.Failed("older refresh failure"));
+    }
+
+    /// <summary>
+    ///     Exercises the dispatcher overtaking window and verifies that only the newer Plugin List state is projected.
+    /// </summary>
+    /// <param name="olderResult">The completed or failed older result to delay on the dispatcher.</param>
+    /// <returns>A task that completes after both refresh calls and the delayed callback finish.</returns>
+    private async Task AssertQueuedOlderResultDoesNotReplaceNewerStateAsync(PluginListRefreshResult olderResult)
+    {
+        var hasDispatcherAccess = 0;
+        var queuedActions = new ConcurrentQueue<Action>();
+        var applyQueued = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var dispatcher = new QueuedThreadDispatcher(
+            () => Volatile.Read(ref hasDispatcherAccess) == 1,
+            action =>
+            {
+                queuedActions.Enqueue(action);
+                applyQueued.TrySetResult(true);
+                return true;
+            },
+            "The test dispatcher rejected queued work.");
+        using var viewModel = new MainWindowViewModel(dispatcher);
+        var pluginListRefresh = new OvertakingPluginListRefresh(
+            olderResult,
+            PluginListRefreshResult.Completed([new PluginListEntry("Newer.esp")]));
+        var sut = new PluginListManager(pluginListRefresh, viewModel, dispatcher);
+        ObservableCollection<PluginListItem> plugins = [];
+
+        var olderTask = sut.RefreshPluginList(
+            _testDirectory,
+            GameRelease.SkyrimSE,
+            plugins,
+            showAdvanced: false);
+        await pluginListRefresh.OlderRefreshStarted.Task.WaitAsync(TestContext.Current.CancellationToken);
+
+        pluginListRefresh.AllowOlderToComplete.SetResult(true);
+        await applyQueued.Task.WaitAsync(TestContext.Current.CancellationToken);
+
+        Volatile.Write(ref hasDispatcherAccess, 1);
+        await sut.RefreshPluginList(
+            _testDirectory,
+            GameRelease.SkyrimSE,
+            plugins,
+            showAdvanced: false);
+
+        Assert.True(queuedActions.TryDequeue(out var applyOlderResult));
+        applyOlderResult();
+        await olderTask.WaitAsync(TestContext.Current.CancellationToken);
+
+        Assert.Single(plugins);
+        Assert.Equal("Newer.esp", plugins[0].Name);
+        Assert.Empty(viewModel.ErrorMessages);
+        Assert.Single(viewModel.InformationMessages);
+        Assert.Contains("Loaded 1 non-base game plugins", viewModel.InformationMessages[0]);
+    }
+
+    /// <summary>
     ///     Verifies that queued progress from an older refresh cannot restore scanning after a newer refresh completes.
     /// </summary>
     [Fact]
@@ -306,6 +381,42 @@ public class PluginListManagerTests : IDisposable
             OlderProgressQueued.SetResult(true);
             await AllowOlderToComplete.Task.WaitAsync(cancellationToken);
             return PluginListRefreshResult.Stale();
+        }
+    }
+
+    private sealed class OvertakingPluginListRefresh(
+        PluginListRefreshResult olderResult,
+        PluginListRefreshResult newerResult) : IPluginListRefresh
+    {
+        private int _refreshCallCount;
+
+        public TaskCompletionSource<bool> OlderRefreshStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource<bool> AllowOlderToComplete { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        /// <inheritdoc />
+        public Task<PluginListRefreshResult> RefreshAsync(
+            PluginListRefreshRequest request,
+            IProgress<PluginListRefreshProgress> progress,
+            CancellationToken cancellationToken = default)
+        {
+            return Interlocked.Increment(ref _refreshCallCount) == 1
+                ? CompleteOlderRefreshAsync(cancellationToken)
+                : Task.FromResult(newerResult);
+        }
+
+        /// <summary>
+        ///     Releases the older result asynchronously so its manager continuation reaches the dispatcher off-thread.
+        /// </summary>
+        /// <param name="cancellationToken">The test cancellation token.</param>
+        /// <returns>The configured older result after the test releases it.</returns>
+        private async Task<PluginListRefreshResult> CompleteOlderRefreshAsync(CancellationToken cancellationToken)
+        {
+            OlderRefreshStarted.SetResult(true);
+            await AllowOlderToComplete.Task.WaitAsync(cancellationToken);
+            return olderResult;
         }
     }
 

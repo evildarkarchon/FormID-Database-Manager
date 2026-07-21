@@ -34,6 +34,9 @@ public class StressTests : IDisposable
         TestCleanupHelper.DeleteTestFilesAndDirectory(_createdFiles, _testDirectory, _output);
     }
 
+    /// <summary>
+    ///     Repeatedly cancels active executor runs to exercise source replacement and cleanup across runs.
+    /// </summary>
     [ManualPerformanceFact(Timeout = 120000)]
     [Trait("Category", "ManualPerformance")]
     [Trait("Category", "StressTest")]
@@ -47,41 +50,30 @@ public class StressTests : IDisposable
 
         await new DatabaseService().InitializeDatabase(dbPath, GameRelease.SkyrimSE, testCancellationToken);
 
-        var viewModel = new MainWindowViewModel();
-        var pluginProcessingService = new PluginProcessingService(viewModel);
+        var pluginNames = Enumerable.Range(0, cancellationAttempts)
+            .Select(static i => $"Test_{i}.esp")
+            .ToArray();
+        using var processingRunExecutor = new ProcessingRunExecutor(
+            new StaticGameLoadOrderProvider(pluginNames));
 
         var cancelledCount = 0;
         var completedCount = 0;
         var errorCount = 0;
-        var cancellationTasks = new List<Task>();
 
         // Act
         for (var i = 0; i < cancellationAttempts; i++)
         {
-            var parameters = new ProcessingParameters
-            {
-                GameDirectory = _testDirectory,
-                DatabasePath = dbPath,
-                GameRelease = GameRelease.SkyrimSE,
-                SelectedPlugins = [new() { Name = $"Test_{i}.esp" }],
-                UpdateMode = false
-            };
-
-            // Start processing
-            var processTask = pluginProcessingService.ProcessPlugins(parameters);
-
-            // Cancel after random delay
-            var cancelDelay = Random.Shared.Next(1, 50);
-            var cancellationTask = Task.Run(async () =>
-            {
-                await Task.Delay(cancelDelay, testCancellationToken);
-                pluginProcessingService.CancelProcessing();
-            }, testCancellationToken);
-            cancellationTasks.Add(cancellationTask);
+            var request = new PluginProcessingRunRequest(
+                _testDirectory,
+                dbPath,
+                GameRelease.SkyrimSE,
+                [pluginNames[i]],
+                UpdateMode.Append);
+            var progress = new CancelOnFirstStatusProgress(processingRunExecutor);
 
             try
             {
-                await processTask;
+                await processingRunExecutor.ExecuteAsync(request, progress);
                 completedCount++;
             }
             catch (OperationCanceledException)
@@ -95,7 +87,14 @@ public class StressTests : IDisposable
             }
         }
 
-        await Task.WhenAll(cancellationTasks);
+        await processingRunExecutor.ExecuteAsync(new PluginProcessingRunRequest(
+            _testDirectory,
+            dbPath,
+            GameRelease.SkyrimSE,
+            [pluginNames[0]],
+            UpdateMode.Append,
+            dryRun: true));
+        completedCount++;
 
         // Assert
         _output.WriteLine("Cancellation stress test results:");
@@ -104,7 +103,8 @@ public class StressTests : IDisposable
         _output.WriteLine($"Errors: {errorCount}");
 
         Assert.Equal(0, errorCount);
-        Assert.True(cancelledCount > 0, "No operations were cancelled");
+        Assert.Equal(1, completedCount);
+        Assert.Equal(cancellationAttempts, cancelledCount);
     }
 
     [ManualPerformanceFact(Timeout = 120000)]
@@ -440,6 +440,21 @@ public class StressTests : IDisposable
         if (caughtException == null)
         {
             _output.WriteLine("No OutOfMemoryException was thrown - memory handling is acceptable");
+        }
+    }
+
+    private sealed class CancelOnFirstStatusProgress(ProcessingRunExecutor executor)
+        : IProgress<ProcessingRunEvent>
+    {
+        private bool _cancellationRequested;
+
+        public void Report(ProcessingRunEvent value)
+        {
+            if (!_cancellationRequested && value.Kind == ProcessingRunEventKind.Status)
+            {
+                _cancellationRequested = true;
+                executor.Cancel();
+            }
         }
     }
 }

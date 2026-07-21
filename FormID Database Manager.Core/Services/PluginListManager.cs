@@ -71,11 +71,11 @@ public class PluginListManager
         switch (result.Status)
         {
             case PluginListRefreshStatus.Completed:
-                await ApplyCompletedResultAsync(result, plugins, showAdvanced).ConfigureAwait(false);
+                await ApplyCompletedResultAsync(result, plugins, showAdvanced, refreshVersion).ConfigureAwait(false);
                 break;
 
             case PluginListRefreshStatus.Failed:
-                await ApplyFailedResultAsync(result, plugins).ConfigureAwait(false);
+                await ApplyFailedResultAsync(result, plugins, refreshVersion).ConfigureAwait(false);
                 break;
 
             case PluginListRefreshStatus.Stale:
@@ -119,10 +119,17 @@ public class PluginListManager
     private Task ApplyCompletedResultAsync(
         PluginListRefreshResult result,
         ObservableCollection<PluginListItem> plugins,
-        bool showAdvanced)
+        bool showAdvanced,
+        int refreshVersion)
     {
         return _dispatcher.InvokeAsync(() =>
         {
+            // Another refresh can start while this callback is queued, so validate freshness on the dispatcher.
+            if (refreshVersion != Volatile.Read(ref _refreshVersion))
+            {
+                return;
+            }
+
             ClearScanningState();
 
             _viewModel.SuspendFilter();
@@ -148,10 +155,17 @@ public class PluginListManager
 
     private Task ApplyFailedResultAsync(
         PluginListRefreshResult result,
-        ObservableCollection<PluginListItem> plugins)
+        ObservableCollection<PluginListItem> plugins,
+        int refreshVersion)
     {
         return _dispatcher.InvokeAsync(() =>
         {
+            // Another refresh can start while this callback is queued, so validate freshness on the dispatcher.
+            if (refreshVersion != Volatile.Read(ref _refreshVersion))
+            {
+                return;
+            }
+
             ClearScanningState();
             plugins.Clear();
             _viewModel.FilteredPlugins.Clear();

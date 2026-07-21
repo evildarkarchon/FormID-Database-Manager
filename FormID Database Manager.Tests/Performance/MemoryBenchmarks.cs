@@ -12,6 +12,7 @@ using BenchmarkDotNet.Engines;
 using FormID_Database_Manager.Models;
 using FormID_Database_Manager.Services;
 using FormID_Database_Manager.ViewModels;
+using Microsoft.Data.Sqlite;
 using Mutagen.Bethesda;
 
 namespace FormID_Database_Manager.Tests.Performance;
@@ -22,20 +23,40 @@ namespace FormID_Database_Manager.Tests.Performance;
 [ThreadingDiagnoser]
 public class MemoryBenchmarks
 {
+    private string _formIdTextDatabasePath = null!;
+    private string _formIdTextFilePath = null!;
+    private IReadOnlyList<string> _pluginNames = null!;
     private string _testDirectory = null!;
 
     [Params(1000, 10000, 50000)] public int ItemCount { get; set; }
 
+    /// <summary>
+    ///     Creates reusable Plugin names, FormID text input, and database paths for each benchmark parameter set.
+    /// </summary>
     [GlobalSetup]
     public void Setup()
     {
         _testDirectory = Path.Combine(Path.GetTempPath(), $"membench_{Guid.NewGuid()}");
         Directory.CreateDirectory(_testDirectory);
+        _formIdTextDatabasePath = Path.Combine(_testDirectory, "text_import.db");
+        _formIdTextFilePath = Path.Combine(_testDirectory, "formids.txt");
+        _pluginNames = Enumerable.Range(0, ItemCount)
+            .Select(static i => $"Plugin_{i:D6}.esp")
+            .ToArray();
+        File.WriteAllLines(
+            _formIdTextFilePath,
+            Enumerable.Range(0, ItemCount).Select(static i => $"Plugin.esp|{i:X8}|Entry_{i}"));
     }
 
+    /// <summary>
+    ///     Releases SQLite file handles and removes the benchmark's temporary workspace.
+    /// </summary>
     [GlobalCleanup]
     public void Cleanup()
     {
+        // Pooled SQLite connections can retain Windows file handles after each store is disposed.
+        SqliteConnection.ClearAllPools();
+
         if (Directory.Exists(_testDirectory))
         {
             try
@@ -126,7 +147,7 @@ public class MemoryBenchmarks
     [Benchmark]
     public async Task FormIdRecordStore_LargeTransaction()
     {
-        var dbPath = Path.Combine(_testDirectory, "memory_test.db");
+        var dbPath = Path.Combine(_testDirectory, $"memory_test_{Guid.NewGuid():N}.db");
 
         var entries = new List<FormIdRecord>();
         for (var i = 0; i < ItemCount; i++)
@@ -136,63 +157,40 @@ public class MemoryBenchmarks
 
         await using var store = await FormIdRecordStore.OpenAsync(dbPath, GameRelease.SkyrimSE);
         await store.WritePluginAsync("Plugin.esp", entries, UpdateMode.Append);
-
-        // Clean up
-        if (File.Exists(dbPath))
-        {
-            File.Delete(dbPath);
-        }
     }
 
     /// <summary>
-    ///     Measures allocations for a large in-memory collection shaped like FormID text rows.
+    ///     Measures managed allocations while importing a FormID text file through the production record-store seam.
     /// </summary>
     [Benchmark]
-    public void FormIdTextRows_LargeInMemoryCollection()
+    public async Task<FormIdTextFileImportResult> FormIdRecordStore_ImportTextFile()
     {
-        // Keep database I/O out of this benchmark so it isolates the row collection's managed-memory cost.
-        var testData = new List<string>(ItemCount);
-        for (var i = 0; i < ItemCount; i++)
-        {
-            testData.Add($"Plugin.esp|{i:X8}|Entry_{i}");
-        }
-
-        _ = testData.Count;
-
-        GC.Collect();
-        GC.WaitForPendingFinalizers();
-        GC.Collect();
-
-        // Cleanup not needed
+        await using var store = await FormIdRecordStore.OpenAsync(
+            _formIdTextDatabasePath,
+            GameRelease.SkyrimSE);
+        return await store.ImportFormIdTextFileAsync(
+            _formIdTextFilePath,
+            UpdateMode.ReplacePluginRecords);
     }
 
+    /// <summary>
+    ///     Measures the immutable Plugin-name snapshot captured by a typed Processing Run request.
+    /// </summary>
     [Benchmark]
-    public int ProcessingParameters_LargePluginList()
+    public int PluginProcessingRunRequest_LargePluginList()
     {
-        var parameters = new ProcessingParameters
-        {
-            GameDirectory = @"C:\Games\Skyrim",
-            DatabasePath = @"C:\Games\test.db",
-            GameRelease = GameRelease.SkyrimSE,
-            SelectedPlugins = [],
-            UpdateMode = false
-        };
-
-        // Add many selected plugins
-        for (var i = 0; i < ItemCount; i++)
-        {
-            parameters.SelectedPlugins.Add(new PluginListItem
-            {
-                Name = $"Plugin_{i:D6}.esp", IsSelected = true
-                // LoadIndex not available
-            });
-        }
+        var request = new PluginProcessingRunRequest(
+            @"C:\Games\Skyrim",
+            @"C:\Games\test.db",
+            GameRelease.SkyrimSE,
+            _pluginNames,
+            UpdateMode.Append);
 
         GC.Collect();
         GC.WaitForPendingFinalizers();
         GC.Collect();
 
-        return parameters.SelectedPlugins.Count;
+        return request.PluginNames.Count;
     }
 
     [Benchmark]

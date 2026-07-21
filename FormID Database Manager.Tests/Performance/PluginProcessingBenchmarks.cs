@@ -97,7 +97,7 @@ public class PluginProcessingBenchmarks : IDisposable
         }
 
         var plugin = _testPlugins[0];
-        var processingRunExecutor = CreateProcessingRun();
+        using var processingRunExecutor = CreateProcessingRun();
         var processingTask = processingRunExecutor.ExecuteAsync(CreateRequest([plugin], UpdateMode.Append));
         processingRunExecutor.Cancel();
 
@@ -194,13 +194,14 @@ public class PluginProcessingBenchmarks : IDisposable
 
     private ProcessingRunExecutor CreateProcessingRun()
     {
-        return new ProcessingRunExecutor(new BenchmarkLoadOrderProvider(_testPlugins));
+        return new ProcessingRunExecutor(new StaticGameLoadOrderProvider(_testPlugins));
     }
 
     private async Task ExecuteBenchmarkRunAsync(PluginProcessingRunRequest request)
     {
         var progress = new CapturingRunProgress();
-        await CreateProcessingRun().ExecuteAsync(request, progress);
+        using var processingRunExecutor = CreateProcessingRun();
+        await processingRunExecutor.ExecuteAsync(request, progress);
 
         var issues = progress.Events
             .Where(static e => e.Kind is ProcessingRunEventKind.Warning or ProcessingRunEventKind.Error)
@@ -222,22 +223,6 @@ public class PluginProcessingBenchmarks : IDisposable
             GameRelease.SkyrimSE,
             pluginNames,
             updateMode);
-    }
-
-    private sealed class BenchmarkLoadOrderProvider(IReadOnlyList<string> pluginNames) : IGameLoadOrderProvider
-    {
-        public GameLoadOrderSnapshot BuildSnapshot(
-            GameRelease gameRelease,
-            string dataPath,
-            bool includeMasterFlagsLookup = false)
-        {
-            return new GameLoadOrderSnapshot(pluginNames);
-        }
-
-        public IReadOnlyList<string> GetListedPluginNames(GameRelease gameRelease, string dataPath)
-        {
-            return pluginNames;
-        }
     }
 
     private sealed class CapturingRunProgress : IProgress<ProcessingRunEvent>
