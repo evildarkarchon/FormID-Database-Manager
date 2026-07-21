@@ -78,9 +78,8 @@ public async Task MyMethod_CancelsCleanly_WhenTokenSignaled()
 Use the MockFactory for consistent mock setups:
 
 ```csharp
-var mockFactory = new MockFactory();
-var mockGameDetection = mockFactory.CreateGameDetectionServiceMock(GameRelease.SkyrimSE);
-var mockDatabase = mockFactory.CreateDatabaseServiceMock();
+var mockGameDetection = MockFactory.CreateGameDetectionServiceMock();
+var cancellationSource = MockFactory.CreateCancellationTokenSource();
 ```
 
 ### 5. Test Data Management
@@ -203,7 +202,7 @@ public async Task Process_ReportsProgressAccurately()
 Follow the pattern: `MethodName_StateUnderTest_ExpectedBehavior`
 
 Examples:
-- `InitializeDatabase_CreatesTableForEachGameRelease`
+- `OpenAsync_SupportedGameRelease_PreparesSelectedTable`
 - `ProcessPlugins_CancelsCleanly_WhenTokenSignaled`
 - `SelectGameDirectory_ReturnsNull_WhenNoFolderSelected`
 

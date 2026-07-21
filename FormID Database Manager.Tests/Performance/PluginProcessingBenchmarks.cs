@@ -40,8 +40,7 @@ public class PluginProcessingBenchmarks : IDisposable
         // Create database
         _databasePath = Path.Combine(_testDirectory, "benchmark.db");
 
-        // Initialize database
-        new DatabaseService().InitializeDatabase(_databasePath, GameRelease.SkyrimSE).Wait();
+        // Processing Run owns Store opening so the end-to-end benchmark does not pre-initialize its database.
 
         // Create test plugins
         var dataPath = GameReleaseHelper.ResolveDataPath(_testDirectory);

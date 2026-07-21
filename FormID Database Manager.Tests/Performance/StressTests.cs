@@ -46,9 +46,6 @@ public class StressTests : IDisposable
         const int cancellationAttempts = 50;
         var dbPath = Path.Combine(_testDirectory, "cancel_stress.db");
         _createdFiles.Add(dbPath);
-        var testCancellationToken = TestContext.Current.CancellationToken;
-
-        await new DatabaseService().InitializeDatabase(dbPath, GameRelease.SkyrimSE, testCancellationToken);
 
         var pluginNames = Enumerable.Range(0, cancellationAttempts)
             .Select(static i => $"Test_{i}.esp")
@@ -118,8 +115,13 @@ public class StressTests : IDisposable
         _createdFiles.Add(dbPath);
         var testCancellationToken = TestContext.Current.CancellationToken;
 
-        var databaseService = new DatabaseService();
-        await databaseService.InitializeDatabase(dbPath, GameRelease.SkyrimSE, testCancellationToken);
+        await using (var store = await FormIdRecordStore.OpenAsync(
+                         dbPath,
+                         GameRelease.SkyrimSE,
+                         testCancellationToken))
+        {
+            // Prepare Store-owned schema and configuration before stressing raw concurrent connections.
+        }
 
         var connections = new List<SqliteConnection>();
         var tasks = new List<Task>();
@@ -267,6 +269,9 @@ public class StressTests : IDisposable
         Assert.Empty(errors);
     }
 
+    /// <summary>
+    ///     Exercises raw million-row generation and lookup, followed by explicit Store-owned optimization.
+    /// </summary>
     [ManualPerformanceFact(Timeout = 300000)]
     [Trait("Category", "ManualPerformance")]
     [Trait("Category", "StressTest")]
@@ -277,8 +282,13 @@ public class StressTests : IDisposable
         _createdFiles.Add(dbPath);
         var testCancellationToken = TestContext.Current.CancellationToken;
 
-        var databaseService = new DatabaseService();
-        await databaseService.InitializeDatabase(dbPath, GameRelease.SkyrimSE, testCancellationToken);
+        await using (var store = await FormIdRecordStore.OpenAsync(
+                         dbPath,
+                         GameRelease.SkyrimSE,
+                         testCancellationToken))
+        {
+            // Prepare Store-owned schema and configuration before generating the measured raw workload.
+        }
 
         const int recordCount = 1_000_000;
         const int batchSize = 10000;
@@ -287,55 +297,63 @@ public class StressTests : IDisposable
 
         // Act
         var stopwatch = Stopwatch.StartNew();
-        await using var conn = new SqliteConnection($"Data Source={dbPath}");
-        await conn.OpenAsync(testCancellationToken);
-
-        var transaction = conn.BeginTransaction();
-        await using var command = conn.CreateCommand();
-        command.CommandText =
-            $"INSERT INTO {GameRelease.SkyrimSE} (plugin, formid, entry) VALUES (@plugin, @formid, @entry)";
-        command.Transaction = transaction;
-
-        var pluginParam = new SqliteParameter("@plugin", SqliteType.Text);
-        var formidParam = new SqliteParameter("@formid", SqliteType.Text);
-        var entryParam = new SqliteParameter("@entry", SqliteType.Text);
-
-        command.Parameters.Add(pluginParam);
-        command.Parameters.Add(formidParam);
-        command.Parameters.Add(entryParam);
-
-        for (var i = 0; i < recordCount; i++)
+        object? searchResult;
+        Stopwatch searchStopwatch;
+        await using (var conn = new SqliteConnection($"Data Source={dbPath}"))
         {
-            pluginParam.Value = $"Plugin_{i % 100}.esp";
-            formidParam.Value = $"{i:X8}";
-            entryParam.Value = $"Entry_{i}";
+            await conn.OpenAsync(testCancellationToken);
 
-            await command.ExecuteNonQueryAsync(testCancellationToken);
+            var transaction = conn.BeginTransaction();
+            await using var command = conn.CreateCommand();
+            command.CommandText =
+                $"INSERT INTO {GameRelease.SkyrimSE} (plugin, formid, entry) VALUES (@plugin, @formid, @entry)";
+            command.Transaction = transaction;
 
-            if (i % batchSize == 0 && i > 0)
+            var pluginParam = new SqliteParameter("@plugin", SqliteType.Text);
+            var formidParam = new SqliteParameter("@formid", SqliteType.Text);
+            var entryParam = new SqliteParameter("@entry", SqliteType.Text);
+
+            command.Parameters.Add(pluginParam);
+            command.Parameters.Add(formidParam);
+            command.Parameters.Add(entryParam);
+
+            for (var i = 0; i < recordCount; i++)
             {
-                await transaction.CommitAsync(testCancellationToken);
-                await transaction.DisposeAsync();
+                pluginParam.Value = $"Plugin_{i % 100}.esp";
+                formidParam.Value = $"{i:X8}";
+                entryParam.Value = $"Entry_{i}";
 
-                transaction = conn.BeginTransaction();
-                command.Transaction = transaction;
+                await command.ExecuteNonQueryAsync(testCancellationToken);
+
+                if (i % batchSize == 0 && i > 0)
+                {
+                    await transaction.CommitAsync(testCancellationToken);
+                    await transaction.DisposeAsync();
+
+                    transaction = conn.BeginTransaction();
+                    command.Transaction = transaction;
+                }
             }
+
+            await transaction.CommitAsync(testCancellationToken);
+            await transaction.DisposeAsync();
+            command.Transaction = null;
+            stopwatch.Stop();
+
+            // Inspect the generated workload on the same raw connection before handing maintenance back to the Store.
+            searchStopwatch = Stopwatch.StartNew();
+            command.CommandText = $"SELECT COUNT(*) FROM {GameRelease.SkyrimSE} WHERE formid LIKE '0000%'";
+            searchResult = await command.ExecuteScalarAsync(testCancellationToken);
+            searchStopwatch.Stop();
         }
 
-        await transaction.CommitAsync(testCancellationToken);
-        await transaction.DisposeAsync();
-        command.Transaction = null;
-        stopwatch.Stop();
-
-        // Test database performance with large file
-        var searchStopwatch = Stopwatch.StartNew();
-        command.CommandText = $"SELECT COUNT(*) FROM {GameRelease.SkyrimSE} WHERE formid LIKE '0000%'";
-        var searchResult = await command.ExecuteScalarAsync(testCancellationToken);
-        searchStopwatch.Stop();
-
         // Optimize and measure
+        await using var optimizationStore = await FormIdRecordStore.OpenAsync(
+            dbPath,
+            GameRelease.SkyrimSE,
+            testCancellationToken);
         var optimizeStopwatch = Stopwatch.StartNew();
-        await databaseService.OptimizeDatabase(conn, testCancellationToken);
+        await optimizationStore.OptimizeAsync(testCancellationToken);
         optimizeStopwatch.Stop();
 
         // Assert

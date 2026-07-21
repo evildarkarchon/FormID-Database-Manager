@@ -162,49 +162,6 @@ public sealed class FormIdRecordStore : IFormIdRecordStoreSession
     }
 
     /// <summary>
-    ///     Opens a run-scoped SQLite FormID Record Store through the legacy setup service.
-    /// </summary>
-    /// <remarks>
-    ///     This compatibility path remains only for performance callers awaiting migration to the public Store-opening
-    ///     contract. Correctness and integration tests must use <see cref="OpenAsync(string, GameRelease, CancellationToken)"/>.
-    /// </remarks>
-    /// <param name="databaseService">The legacy database setup service.</param>
-    /// <param name="databasePath">The SQLite database path.</param>
-    /// <param name="gameRelease">The GameRelease whose FormID table will be written.</param>
-    /// <param name="cancellationToken">Token to monitor for cancellation.</param>
-    /// <returns>An opened FormID Record Store that must be disposed after the performance workload.</returns>
-    internal static async Task<FormIdRecordStore> OpenAsync(
-        DatabaseService databaseService,
-        string databasePath,
-        GameRelease gameRelease,
-        CancellationToken cancellationToken = default)
-    {
-        ArgumentNullException.ThrowIfNull(databaseService);
-        ArgumentException.ThrowIfNullOrWhiteSpace(databasePath);
-
-        // Resolve the table name before opening a connection so unsupported releases fail through the whitelist seam.
-        GameReleaseHelper.GetSafeTableName(gameRelease);
-
-        await databaseService.InitializeDatabase(databasePath, gameRelease, cancellationToken).ConfigureAwait(false);
-
-        var connection = new SqliteConnection(DatabaseService.GetOptimizedConnectionString(databasePath));
-        try
-        {
-            await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
-            await databaseService.ConfigureConnection(connection, cancellationToken).ConfigureAwait(false);
-
-            var store = new FormIdRecordStore(connection, GameReleaseHelper.GetSafeTableName(gameRelease));
-            await store.CreateStagingTableAsync(cancellationToken).ConfigureAwait(false);
-            return store;
-        }
-        catch
-        {
-            await connection.DisposeAsync().ConfigureAwait(false);
-            throw;
-        }
-    }
-
-    /// <summary>
     ///     Writes one Plugin's FormID records atomically, optionally replacing existing rows for that Plugin first.
     /// </summary>
     /// <param name="pluginName">The Plugin whose rows are being written.</param>
@@ -545,7 +502,6 @@ public sealed class FormIdRecordStore : IFormIdRecordStoreSession
     /// <returns>The connection string used for the Store's single SQLite connection.</returns>
     private static string CreateConnectionString(string databasePath)
     {
-        // The legacy DatabaseService retains equivalent setup during the expand step for callers not yet migrated.
         return new SqliteConnectionStringBuilder
         {
             DataSource = databasePath,

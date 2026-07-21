@@ -6,7 +6,6 @@ using System.Linq;
 using System.Threading.Tasks;
 using FormID_Database_Manager.Services;
 using FormID_Database_Manager.TestUtilities;
-using Microsoft.Data.Sqlite;
 using Mutagen.Bethesda;
 using Xunit;
 
@@ -32,8 +31,8 @@ public class RegressionTests : IDisposable
         // Performance baselines (adjust based on your hardware)
         _performanceBaselines = new Dictionary<string, TimeSpan>
         {
-            ["DatabaseInit_SingleGame"] = TimeSpan.FromMilliseconds(50),
-            ["DatabaseInit_AllGames"] = TimeSpan.FromMilliseconds(200),
+            ["StoreOpen_SingleGame"] = TimeSpan.FromMilliseconds(50),
+            ["StoreOpen_AllGames"] = TimeSpan.FromMilliseconds(200),
             ["BatchInsert_1000Records"] = TimeSpan.FromMilliseconds(100),
             ["BatchInsert_10000Records"] = TimeSpan.FromSeconds(1),
             ["GameDetection_SimpleDirectory"] = TimeSpan.FromMilliseconds(10),
@@ -60,35 +59,45 @@ public class RegressionTests : IDisposable
         }
     }
 
+    /// <summary>
+    ///     Guards the full ready-on-return Store-opening contract for one GameRelease.
+    /// </summary>
     [ManualPerformanceFact]
     [Trait("Category", "PerformanceRegression")]
-    public async Task DatabaseInitialization_SingleGame_StaysWithinBaseline()
+    public async Task FormIdRecordStoreOpen_SingleGame_StaysWithinBaseline()
     {
         // Arrange
-        var service = new DatabaseService();
         var dbPath = Path.Combine(_testDirectory, "test_single.db");
-        var baseline = _performanceBaselines["DatabaseInit_SingleGame"];
+        var baseline = _performanceBaselines["StoreOpen_SingleGame"];
 
         // Act
         var stopwatch = Stopwatch.StartNew();
-        await service.InitializeDatabase(dbPath, GameRelease.SkyrimSE, TestContext.Current.CancellationToken);
+        await using (var store = await FormIdRecordStore.OpenAsync(
+                         dbPath,
+                         GameRelease.SkyrimSE,
+                         TestContext.Current.CancellationToken))
+        {
+            // Disposal completes inside the timer so the baseline covers the full Store open-and-close lifecycle.
+        }
         stopwatch.Stop();
 
         // Assert
-        _output.WriteLine($"Database initialization (single game) took: {stopwatch.Elapsed.TotalMilliseconds:F2}ms");
+        _output.WriteLine($"Store opening (single game) took: {stopwatch.Elapsed.TotalMilliseconds:F2}ms");
         _output.WriteLine($"Baseline: {baseline.TotalMilliseconds:F2}ms");
 
         Assert.True(stopwatch.Elapsed < baseline.Add(TimeSpan.FromMilliseconds(baseline.TotalMilliseconds * 0.2)),
             $"Performance regression detected! Operation took {stopwatch.Elapsed.TotalMilliseconds:F2}ms, baseline is {baseline.TotalMilliseconds:F2}ms (20% tolerance)");
     }
 
+    /// <summary>
+    ///     Guards the aggregate ready-on-return Store-opening contract across supported GameReleases.
+    /// </summary>
     [ManualPerformanceFact]
     [Trait("Category", "PerformanceRegression")]
-    public async Task DatabaseInitialization_AllGames_StaysWithinBaseline()
+    public async Task FormIdRecordStoreOpen_AllGames_StaysWithinBaseline()
     {
         // Arrange
-        var service = new DatabaseService();
-        var baseline = _performanceBaselines["DatabaseInit_AllGames"];
+        var baseline = _performanceBaselines["StoreOpen_AllGames"];
         var games = new[]
         {
             GameRelease.SkyrimSE, GameRelease.Fallout4, GameRelease.Starfield, GameRelease.SkyrimVR,
@@ -100,13 +109,19 @@ public class RegressionTests : IDisposable
         foreach (var game in games)
         {
             var dbPath = Path.Combine(_testDirectory, $"test_{game}.db");
-            await service.InitializeDatabase(dbPath, game, TestContext.Current.CancellationToken);
+            await using (var store = await FormIdRecordStore.OpenAsync(
+                             dbPath,
+                             game,
+                             TestContext.Current.CancellationToken))
+            {
+                // Each disposal remains inside the timer so every GameRelease measures the same complete lifecycle.
+            }
         }
 
         stopwatch.Stop();
 
         // Assert
-        _output.WriteLine($"Database initialization (all games) took: {stopwatch.Elapsed.TotalMilliseconds:F2}ms");
+        _output.WriteLine($"Store opening (all games) took: {stopwatch.Elapsed.TotalMilliseconds:F2}ms");
         _output.WriteLine($"Baseline: {baseline.TotalMilliseconds:F2}ms");
 
         Assert.True(stopwatch.Elapsed < baseline.Add(TimeSpan.FromMilliseconds(baseline.TotalMilliseconds * 0.2)),
@@ -255,16 +270,19 @@ public class RegressionTests : IDisposable
 
         await File.WriteAllLinesAsync(formIdFile, lines, TestContext.Current.CancellationToken);
 
-        // Setup database
-        var dbService = new DatabaseService();
-        await dbService.InitializeDatabase(dbPath, GameRelease.SkyrimSE, TestContext.Current.CancellationToken);
+        await using (var store = await FormIdRecordStore.OpenAsync(
+                         dbPath,
+                         GameRelease.SkyrimSE,
+                         TestContext.Current.CancellationToken))
+        {
+            // Keep the import baseline prewarmed while preparing it through the production Store seam.
+        }
 
         var baseline = _performanceBaselines[baselineKey];
 
         // Act
         var stopwatch = Stopwatch.StartNew();
         await using (var recordStore = await FormIdRecordStore.OpenAsync(
-                         dbService,
                          dbPath,
                          GameRelease.SkyrimSE,
                          TestContext.Current.CancellationToken))

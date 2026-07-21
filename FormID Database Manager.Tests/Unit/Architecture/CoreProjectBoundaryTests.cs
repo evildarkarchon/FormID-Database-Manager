@@ -84,6 +84,27 @@ public class CoreProjectBoundaryTests
         Assert.Contains("Failure", resultSource, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// Verifies that performance workloads no longer bypass Store-owned database preparation and maintenance.
+    /// </summary>
+    [Fact]
+    public void PerformanceSources_AfterStoreOwnershipMigration_DoNotReferenceRetiredDatabaseService()
+    {
+        var performanceDirectory = Path.Combine(
+            FindRepositoryRoot(),
+            "FormID Database Manager.Tests",
+            "Performance");
+
+        var legacyCallers = Directory
+            .EnumerateFiles(performanceDirectory, "*.cs", SearchOption.AllDirectories)
+            .Where(path => File.ReadAllText(path).Contains("DatabaseService", StringComparison.Ordinal))
+            .Select(Path.GetFileName)
+            .OrderBy(static fileName => fileName, StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.Empty(legacyCallers);
+    }
+
     private static string GetCoreProjectDirectory()
     {
         return Path.Combine(FindRepositoryRoot(), "FormID Database Manager.Core");

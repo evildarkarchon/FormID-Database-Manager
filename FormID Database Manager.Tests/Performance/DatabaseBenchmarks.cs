@@ -16,7 +16,6 @@ namespace FormID_Database_Manager.Tests.Performance;
 public class DatabaseBenchmarks : IDisposable
 {
     private string _databasePath = null!;
-    private DatabaseService _databaseService = null!;
     private List<(string plugin, string formid, string entry)> _testData = null!;
 
     [Params(1000, 10000, 100000)] public int RecordCount { get; set; }
@@ -30,13 +29,12 @@ public class DatabaseBenchmarks : IDisposable
     public void Setup()
     {
         _databasePath = Path.Combine(Path.GetTempPath(), $"benchmark_{Guid.NewGuid()}.db");
-        _databaseService = new DatabaseService();
 
         // Generate test data
         _testData = GenerateTestData(RecordCount);
 
-        // Initialize database
-        _databaseService.InitializeDatabase(_databasePath, GameRelease.SkyrimSE).GetAwaiter().GetResult();
+        // Prepare the full ready-on-return Store contract outside the measured database workloads.
+        PrepareStoreAsync(_databasePath).GetAwaiter().GetResult();
     }
 
     [GlobalCleanup]
@@ -193,19 +191,27 @@ public class DatabaseBenchmarks : IDisposable
         }
     }
 
+    /// <summary>
+    ///     Measures explicit checkpointing and optimization through the Store-owned maintenance seam.
+    /// </summary>
     [Benchmark]
-    public async Task OptimizeDatabase()
+    public async Task OptimizeFormIdRecordStore()
     {
-        await using var conn = new SqliteConnection($"Data Source={_databasePath}");
-        await conn.OpenAsync();
+        var hasData = false;
+        await using (var conn = new SqliteConnection($"Data Source={_databasePath}"))
+        {
+            await conn.OpenAsync();
+            hasData = await GetRecordCount(conn, GameRelease.SkyrimSE) > 0;
+        }
 
         // Ensure data exists
-        if (await GetRecordCount(conn, GameRelease.SkyrimSE) == 0)
+        if (!hasData)
         {
             await InsertTestData();
         }
 
-        await _databaseService.OptimizeDatabase(conn);
+        await using var store = await FormIdRecordStore.OpenAsync(_databasePath, GameRelease.SkyrimSE);
+        await store.OptimizeAsync();
     }
 
     private async Task<long> GetRecordCount(SqliteConnection conn, GameRelease gameRelease)
@@ -268,6 +274,14 @@ public class DatabaseBenchmarks : IDisposable
             var records = pluginGroup.Select(static record => new FormIdRecord(record.formid, record.entry));
             await store.WritePluginAsync(pluginGroup.Key, records, UpdateMode.Append);
         }
+    }
+
+    /// <summary>
+    ///     Opens and disposes a Store so benchmark setup includes schema, configuration, and staging readiness.
+    /// </summary>
+    private static async Task PrepareStoreAsync(string databasePath)
+    {
+        await using var store = await FormIdRecordStore.OpenAsync(databasePath, GameRelease.SkyrimSE);
     }
 
     private List<(string plugin, string formid, string entry)> GenerateTestData(int count)

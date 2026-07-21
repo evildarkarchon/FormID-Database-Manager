@@ -20,7 +20,6 @@ namespace FormID_Database_Manager.Tests.Performance;
 public class LoadTests : IDisposable
 {
     private readonly List<string> _createdFiles = [];
-    private readonly DatabaseService _databaseService;
     private readonly ITestOutputHelper _output;
     private readonly string _testDirectory;
 
@@ -29,12 +28,11 @@ public class LoadTests : IDisposable
         _output = output;
         _testDirectory = Path.Combine(Path.GetTempPath(), $"loadtest_{Guid.NewGuid()}");
         Directory.CreateDirectory(_testDirectory);
-        _databaseService = new DatabaseService();
     }
 
     public void Dispose()
     {
-        // Cleanup database service
+        // Cleanup test artifacts
         TestCleanupHelper.DeleteTestFilesAndDirectory(_createdFiles, _testDirectory, _output);
     }
 
@@ -52,8 +50,6 @@ public class LoadTests : IDisposable
         var plugins = await CreateTestPlugins(dataPath, pluginCount, 100);
         var dbPath = Path.Combine(_testDirectory, "loadtest.db");
         _createdFiles.Add(dbPath);
-
-        await _databaseService.InitializeDatabase(dbPath, GameRelease.SkyrimSE);
 
         using var processingRunExecutor = new ProcessingRunExecutor(
             new StaticGameLoadOrderProvider(plugins));
@@ -107,8 +103,6 @@ public class LoadTests : IDisposable
 
         var dbPath = Path.Combine(_testDirectory, "largetest.db");
         _createdFiles.Add(dbPath);
-        await _databaseService.InitializeDatabase(dbPath, GameRelease.SkyrimSE);
-
         // Act
         var stopwatch = Stopwatch.StartNew();
         Assert.True(File.Exists(Path.Combine(dataPath, pluginName)));
@@ -147,7 +141,13 @@ public class LoadTests : IDisposable
         var dbPath = Path.Combine(_testDirectory, "concurrent.db");
         _createdFiles.Add(dbPath);
 
-        await _databaseService.InitializeDatabase(dbPath, GameRelease.SkyrimSE);
+        await using (var store = await FormIdRecordStore.OpenAsync(
+                         dbPath,
+                         GameRelease.SkyrimSE,
+                         TestContext.Current.CancellationToken))
+        {
+            // The connection storm is the measured workload, so Store readiness is prepared before timing starts.
+        }
 
         // Act
         var stopwatch = Stopwatch.StartNew();
@@ -220,11 +220,6 @@ public class LoadTests : IDisposable
         // Arrange
         const int iterations = 5;
         const int pluginsPerIteration = 20;
-        var dbPath = Path.Combine(_testDirectory, "memory.db");
-        _createdFiles.Add(dbPath);
-
-        await _databaseService.InitializeDatabase(dbPath, GameRelease.SkyrimSE);
-
         var memoryReadings = new List<long>();
         var viewModel = new MainWindowViewModel();
 
