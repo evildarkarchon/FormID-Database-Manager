@@ -105,12 +105,12 @@ The solution has four projects in `FormID Database Manager.slnx`:
 
 ### Issue tracker
 
-Issues and PRDs are tracked as local markdown under `.scratch/<feature>/`; external PRs are not a triage surface for this local tracker. See `docs/agents/issue-tracker.md`.
+Track work and PRDs as GitHub Issues in `evildarkarchon/FormID-Database-Manager`; external pull requests are not a triage request surface. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 
-Use the default canonical triage vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, and `wontfix`. See `docs/agents/triage-labels.md`.
+Use the canonical triage-state labels: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, and `wontfix`. See `docs/agents/triage-labels.md`.
 
 ### Domain docs
 
-This repo uses a single-context domain-doc layout: root `CONTEXT.md` plus root `docs/adr/`. See `docs/agents/domain.md`.
+Use the single-context layout rooted at `CONTEXT.md`, with architectural decisions under `docs/adr/`. See `docs/agents/domain.md`.
