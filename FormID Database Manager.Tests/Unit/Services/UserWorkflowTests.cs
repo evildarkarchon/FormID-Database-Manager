@@ -27,7 +27,7 @@ public class UserWorkflowTests
     private readonly Mock<GameDetectionService> _gameDetectionService;
     private readonly Mock<IGameLocationService> _gameLocationService = new();
     private readonly RecordingPluginListManager _pluginListManager;
-    private readonly RecordingProcessingRun _processingRun;
+    private readonly RecordingProcessingRunExecutor _processingRunExecutor;
     private readonly List<ProcessingRunRequest> _processingRuns = [];
     private readonly List<(string Directory, GameRelease Game, bool Advanced)> _refreshes = [];
     private readonly MainWindowViewModel _viewModel;
@@ -41,7 +41,7 @@ public class UserWorkflowTests
             _viewModel,
             _dispatcher,
             _refreshes);
-        _processingRun = new RecordingProcessingRun(_processingRuns);
+        _processingRunExecutor = new RecordingProcessingRunExecutor(_processingRuns);
     }
 
     [Fact]
@@ -312,17 +312,27 @@ public class UserWorkflowTests
     [Fact]
     public async Task ProcessFormIdsAsync_ProcessingRunWarningEvent_AddsWarningMessage()
     {
-        _viewModel.SelectedGame = GameRelease.SkyrimSE;
-        _viewModel.GameDirectory = GameDirectory;
-        _viewModel.DatabasePath = DatabasePath;
-        _viewModel.Plugins.Add(new PluginListItem { Name = "User.esp", IsSelected = true });
-        _processingRun.EventsToReport.Add(ProcessingRunEvent.Warning("Skipped User.esp"));
+        ConfigureValidPluginProcessingRun();
+        _processingRunExecutor.EventsToReport.Add(ProcessingRunEvent.Warning("Skipped User.esp"));
 
         var sut = CreateSut();
         await sut.ProcessFormIdsAsync();
 
         Assert.Contains("Skipped User.esp", _viewModel.WarningMessages);
         Assert.Empty(_viewModel.ErrorMessages);
+    }
+
+    [Fact]
+    public async Task ProcessFormIdsAsync_ProcessingRunErrorEvent_AddsErrorMessage()
+    {
+        ConfigureValidPluginProcessingRun();
+        _processingRunExecutor.EventsToReport.Add(ProcessingRunEvent.Error("Failed User.esp"));
+
+        var sut = CreateSut();
+        await sut.ProcessFormIdsAsync();
+
+        Assert.Contains("Failed User.esp", _viewModel.ErrorMessages);
+        Assert.Empty(_viewModel.WarningMessages);
     }
 
     [Fact]
@@ -333,9 +343,21 @@ public class UserWorkflowTests
         var sut = CreateSut();
         await sut.ProcessFormIdsAsync();
 
-        Assert.True(_processingRun.Cancelled);
+        Assert.Equal(1, _processingRunExecutor.CancelCallCount);
         Assert.True(_viewModel.IsProcessing);
         Assert.Equal("Cancelling...", _viewModel.ProgressStatus);
+    }
+
+    [Fact]
+    public void Dispose_CalledTwice_CancelsAndDisposesProcessingRunExecutorOnce()
+    {
+        var sut = CreateSut();
+
+        sut.Dispose();
+        sut.Dispose();
+
+        Assert.Equal(1, _processingRunExecutor.CancelCallCount);
+        Assert.Equal(1, _processingRunExecutor.DisposeCallCount);
     }
 
     [Fact]
@@ -360,16 +382,27 @@ public class UserWorkflowTests
             _gameDetectionService.Object,
             _gameLocationService.Object,
             _pluginListManager,
-            _processingRun);
+            _processingRunExecutor);
     }
 
-    private sealed class RecordingProcessingRun(List<ProcessingRunRequest> processingRuns) : ProcessingRun
+    private void ConfigureValidPluginProcessingRun()
     {
-        public bool Cancelled { get; private set; }
+        _viewModel.SelectedGame = GameRelease.SkyrimSE;
+        _viewModel.GameDirectory = GameDirectory;
+        _viewModel.DatabasePath = DatabasePath;
+        _viewModel.Plugins.Add(new PluginListItem { Name = "User.esp", IsSelected = true });
+    }
+
+    private sealed class RecordingProcessingRunExecutor(List<ProcessingRunRequest> processingRuns)
+        : IProcessingRunExecutor
+    {
+        public int CancelCallCount { get; private set; }
+
+        public int DisposeCallCount { get; private set; }
 
         public List<ProcessingRunEvent> EventsToReport { get; } = [];
 
-        public override Task ExecuteAsync(
+        public Task ExecuteAsync(
             ProcessingRunRequest request,
             IProgress<ProcessingRunEvent>? progress = null)
         {
@@ -382,13 +415,14 @@ public class UserWorkflowTests
             return Task.CompletedTask;
         }
 
-        public override void Cancel()
+        public void Cancel()
         {
-            Cancelled = true;
+            CancelCallCount++;
         }
 
-        public override void Dispose()
+        public void Dispose()
         {
+            DisposeCallCount++;
         }
     }
 

@@ -14,7 +14,7 @@ public sealed class UserWorkflow : IDisposable
     private readonly GameDetectionService _gameDetectionService;
     private readonly IGameLocationService _gameLocationService;
     private readonly PluginListManager _pluginListManager;
-    private readonly ProcessingRun _processingRun;
+    private readonly IProcessingRunExecutor _processingRunExecutor;
     private readonly MainWindowViewModel _viewModel;
     private bool _disposed;
     private int _gameContextVersion;
@@ -29,21 +29,22 @@ public sealed class UserWorkflow : IDisposable
     /// <param name="gameDetectionService">The game detection module.</param>
     /// <param name="gameLocationService">The installed-location lookup adapter.</param>
     /// <param name="pluginListManager">The plugin list module.</param>
-    /// <param name="processingRun">The Processing Run module.</param>
-    public UserWorkflow(
+    /// <param name="processingRunExecutor">The owned Processing Run executor.</param>
+    internal UserWorkflow(
         MainWindowViewModel viewModel,
         IFileDialogService fileDialogService,
         GameDetectionService gameDetectionService,
         IGameLocationService gameLocationService,
         PluginListManager pluginListManager,
-        ProcessingRun processingRun)
+        IProcessingRunExecutor processingRunExecutor)
     {
         _viewModel = viewModel ?? throw new ArgumentNullException(nameof(viewModel));
         _fileDialogService = fileDialogService ?? throw new ArgumentNullException(nameof(fileDialogService));
         _gameDetectionService = gameDetectionService ?? throw new ArgumentNullException(nameof(gameDetectionService));
         _gameLocationService = gameLocationService ?? throw new ArgumentNullException(nameof(gameLocationService));
         _pluginListManager = pluginListManager ?? throw new ArgumentNullException(nameof(pluginListManager));
-        _processingRun = processingRun ?? throw new ArgumentNullException(nameof(processingRun));
+        _processingRunExecutor = processingRunExecutor ??
+                                 throw new ArgumentNullException(nameof(processingRunExecutor));
     }
 
     /// <summary>
@@ -135,7 +136,7 @@ public sealed class UserWorkflow : IDisposable
         if (_viewModel.IsProcessing)
         {
             _viewModel.ProgressStatus = "Cancelling...";
-            _processingRun.Cancel();
+            _processingRunExecutor.Cancel();
             return;
         }
 
@@ -164,7 +165,7 @@ public sealed class UserWorkflow : IDisposable
             var request = CreateProcessingRunRequest(gameRelease, databasePath);
             var progress = new ProcessingRunProgressAdapter(ApplyProcessingRunEvent);
 
-            await _processingRun.ExecuteAsync(request, progress);
+            await _processingRunExecutor.ExecuteAsync(request, progress);
         }
         catch (ProcessingRunValidationException ex)
         {
@@ -197,8 +198,8 @@ public sealed class UserWorkflow : IDisposable
         }
 
         _disposed = true;
-        _processingRun.Cancel();
-        _processingRun.Dispose();
+        _processingRunExecutor.Cancel();
+        _processingRunExecutor.Dispose();
     }
 
     private async Task ApplySelectedGameReleaseChangedAsync()

@@ -210,9 +210,32 @@ public readonly record struct ProcessingRunEvent(ProcessingRunEventKind Kind, st
 }
 
 /// <summary>
+///     Executes typed Processing Run requests and owns cancellation for the active run.
+/// </summary>
+internal interface IProcessingRunExecutor : IDisposable
+{
+    /// <summary>
+    ///     Executes the supplied Processing Run request.
+    /// </summary>
+    /// <param name="request">The validated domain request describing the run.</param>
+    /// <param name="progress">Optional typed run event reporter.</param>
+    /// <returns>A task that completes when the run completes, fails, or observes cancellation.</returns>
+    [RequiresUnreferencedCode(
+        "Uses reflection-based name extraction for Mutagen records via PluginIngestion.")]
+    Task ExecuteAsync(
+        ProcessingRunRequest request,
+        IProgress<ProcessingRunEvent>? progress = null);
+
+    /// <summary>
+    ///     Requests cancellation for the active Processing Run, if one is active.
+    /// </summary>
+    void Cancel();
+}
+
+/// <summary>
 ///     Executes one Processing Run from a domain request and emits typed run events.
 /// </summary>
-public class ProcessingRun : IDisposable
+public class ProcessingRun : IProcessingRunExecutor
 {
     private const int OutcomeDetailLimit = 5;
 
