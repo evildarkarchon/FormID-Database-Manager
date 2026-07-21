@@ -162,13 +162,17 @@ public sealed class FormIdRecordStore : IFormIdRecordStoreSession
     }
 
     /// <summary>
-    ///     Opens a run-scoped SQLite FormID Record Store for the specified database and GameRelease.
+    ///     Opens a run-scoped SQLite FormID Record Store through the legacy setup service.
     /// </summary>
-    /// <param name="databaseService">The database service that owns existing schema and connection configuration logic.</param>
+    /// <remarks>
+    ///     This compatibility path remains only for performance callers awaiting migration to the public Store-opening
+    ///     contract. Correctness and integration tests must use <see cref="OpenAsync(string, GameRelease, CancellationToken)"/>.
+    /// </remarks>
+    /// <param name="databaseService">The legacy database setup service.</param>
     /// <param name="databasePath">The SQLite database path.</param>
     /// <param name="gameRelease">The GameRelease whose FormID table will be written.</param>
     /// <param name="cancellationToken">Token to monitor for cancellation.</param>
-    /// <returns>An opened FormID Record Store that must be disposed after the processing run.</returns>
+    /// <returns>An opened FormID Record Store that must be disposed after the performance workload.</returns>
     internal static async Task<FormIdRecordStore> OpenAsync(
         DatabaseService databaseService,
         string databasePath,

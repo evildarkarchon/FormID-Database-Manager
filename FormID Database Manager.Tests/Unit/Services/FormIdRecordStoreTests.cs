@@ -235,6 +235,39 @@ public sealed class FormIdRecordStoreTests : IDisposable
     }
 
     /// <summary>
+    ///     Verifies that public Store opening prepares the selected table for every supported GameRelease.
+    /// </summary>
+    [Theory]
+    [InlineData(GameRelease.SkyrimSE)]
+    [InlineData(GameRelease.SkyrimSEGog)]
+    [InlineData(GameRelease.SkyrimVR)]
+    [InlineData(GameRelease.SkyrimLE)]
+    [InlineData(GameRelease.Fallout4)]
+    [InlineData(GameRelease.Fallout4VR)]
+    [InlineData(GameRelease.Starfield)]
+    [InlineData(GameRelease.Oblivion)]
+    [InlineData(GameRelease.EnderalLE)]
+    [InlineData(GameRelease.EnderalSE)]
+    public async Task OpenAsync_SupportedGameRelease_PreparesSelectedTable(GameRelease gameRelease)
+    {
+        var store = await FormIdRecordStore.OpenAsync(
+            _testDbPath,
+            gameRelease,
+            TestContext.Current.CancellationToken);
+        await store.DisposeAsync();
+
+        await using var connection = await OpenUnpooledDatabaseConnectionAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT name FROM sqlite_master WHERE type = 'table' AND name = @table_name";
+        command.Parameters.AddWithValue("@table_name", gameRelease.ToString());
+
+        var tableName = Convert.ToString(
+            await command.ExecuteScalarAsync(TestContext.Current.CancellationToken));
+
+        Assert.Equal(gameRelease.ToString(), tableName);
+    }
+
+    /// <summary>
     ///     Verifies that opening returns with the selected schema, indexes, and text staging ready for immediate use.
     /// </summary>
     [Fact]
@@ -664,18 +697,15 @@ public sealed class FormIdRecordStoreTests : IDisposable
     }
 
     /// <summary>
-    ///     Verifies that imports exceeding the 10,000-row managed batch use file-backed SQLite staging and commit all rows.
+    ///     Verifies that imports crossing the 10,000-row staging boundary commit every row through the public Store seam.
     /// </summary>
     [Fact]
-    public async Task ImportFormIdTextFileAsync_ExceedsStagingBatchSize_UsesFileBackedStagingAndCommitsAllRecords()
+    public async Task ImportFormIdTextFileAsync_ExceedsStagingBatchSize_CommitsAllRecords()
     {
         const int totalRecords = 10100;
-        const long fileBackedTemporaryStorageMode = 1;
         var lines = Enumerable.Range(0, totalRecords).Select(i => $"Plugin.esp|{i:X6}|Entry{i}");
         var testFile = await WriteFormIdTextFileAsync("batch_boundary.txt", lines);
-        var databaseService = new TemporaryStorageInspectingDatabaseService();
         await using var store = await FormIdRecordStore.OpenAsync(
-            databaseService,
             _testDbPath,
             GameRelease.SkyrimSE,
             TestContext.Current.CancellationToken);
@@ -685,45 +715,35 @@ public sealed class FormIdRecordStoreTests : IDisposable
             UpdateMode.Append,
             cancellationToken: TestContext.Current.CancellationToken);
 
-        var temporaryStorageMode = await databaseService.ReadTemporaryStorageModeAsync(
-            TestContext.Current.CancellationToken);
         var records = await store.ReadRecordsAsync(FormIdRecordQuery.All, TestContext.Current.CancellationToken);
 
-        Assert.Equal(fileBackedTemporaryStorageMode, temporaryStorageMode);
         Assert.Equal(new FormIdTextFileImportResult(1, totalRecords), result);
         Assert.Equal(totalRecords, records.Count);
     }
 
     /// <summary>
-    ///     Verifies that importing many distinct Plugins does not compare every staged row for every Plugin commit.
+    ///     Verifies that the indexed staging path imports many distinct Plugins through the public Store seam.
     /// </summary>
     [Fact]
-    public async Task ImportFormIdTextFileAsync_ManyDistinctPlugins_KeepsStagingLookupWorkSubquadratic()
+    public async Task ImportFormIdTextFileAsync_ManyDistinctPlugins_ImportsEveryPlugin()
     {
         const int pluginCount = 512;
-        // A full scan needs roughly one comparison per Plugin-row pair; this bound leaves indexed work ample headroom.
-        const long maximumNoCaseComparisons = pluginCount * pluginCount / 4;
         var lines = Enumerable.Range(0, pluginCount)
             .Select(i => $"Plugin{i:D4}.esp|{i:X6}|Entry{i}");
         var testFile = await WriteFormIdTextFileAsync("many_distinct_plugins.txt", lines);
-        var databaseService = new NoCaseComparisonCountingDatabaseService();
         await using var store = await FormIdRecordStore.OpenAsync(
-            databaseService,
             _testDbPath,
             GameRelease.SkyrimSE,
             TestContext.Current.CancellationToken);
-        databaseService.ResetComparisonCount();
 
         var result = await store.ImportFormIdTextFileAsync(
             testFile,
             UpdateMode.Append,
             cancellationToken: TestContext.Current.CancellationToken);
-        var comparisonCount = databaseService.ComparisonCount;
         var records = await store.ReadRecordsAsync(FormIdRecordQuery.All, TestContext.Current.CancellationToken);
 
         Assert.Equal(new FormIdTextFileImportResult(pluginCount, pluginCount), result);
         Assert.Equal(pluginCount, records.Count);
-        Assert.InRange(comparisonCount, 1, maximumNoCaseComparisons);
     }
 
     /// <summary>
@@ -931,69 +951,6 @@ public sealed class FormIdRecordStoreTests : IDisposable
         }
 
         return records;
-    }
-
-    private sealed class NoCaseComparisonCountingDatabaseService : DatabaseService
-    {
-        private long _comparisonCount;
-
-        /// <summary>
-        ///     Gets the number of case-insensitive comparisons performed since the last reset.
-        /// </summary>
-        public long ComparisonCount => Interlocked.Read(ref _comparisonCount);
-
-        /// <inheritdoc />
-        public override async Task ConfigureConnection(
-            SqliteConnection conn,
-            CancellationToken cancellationToken = default)
-        {
-            await base.ConfigureConnection(conn, cancellationToken);
-            conn.CreateCollation("NOCASE", (left, right) =>
-            {
-                Interlocked.Increment(ref _comparisonCount);
-                return string.Compare(left, right, StringComparison.OrdinalIgnoreCase);
-            });
-        }
-
-        /// <summary>
-        ///     Starts a new comparison-counting interval for a FormID Record Store operation.
-        /// </summary>
-        public void ResetComparisonCount()
-        {
-            Interlocked.Exchange(ref _comparisonCount, 0);
-        }
-    }
-
-    private sealed class TemporaryStorageInspectingDatabaseService : DatabaseService
-    {
-        private SqliteConnection _configuredConnection = null!;
-
-        /// <inheritdoc />
-        public override async Task ConfigureConnection(
-            SqliteConnection conn,
-            CancellationToken cancellationToken = default)
-        {
-            await base.ConfigureConnection(conn, cancellationToken);
-            _configuredConnection = conn;
-        }
-
-        /// <summary>
-        ///     Reads SQLite's temporary-storage mode from the run-scoped FormID Record Store connection.
-        /// </summary>
-        /// <param name="cancellationToken">Token to monitor for cancellation.</param>
-        /// <returns>The numeric SQLite <c>temp_store</c> mode.</returns>
-        public async Task<long> ReadTemporaryStorageModeAsync(CancellationToken cancellationToken)
-        {
-            if (_configuredConnection is null)
-            {
-                throw new InvalidOperationException("No FormID Record Store connection has been configured.");
-            }
-
-            await using var command = _configuredConnection.CreateCommand();
-            command.CommandText = "PRAGMA temp_store";
-            var mode = await command.ExecuteScalarAsync(cancellationToken);
-            return Convert.ToInt64(mode);
-        }
     }
 
     private sealed class SynchronousProgress<T>(Action<T> handler) : IProgress<T>

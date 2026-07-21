@@ -16,7 +16,6 @@ namespace FormID_Database_Manager.Tests.Unit.Services;
 
 public sealed class PluginIngestionTests : IDisposable
 {
-    private readonly DatabaseService _databaseService = new();
     private readonly List<string> _tempDirectories = [];
 
     public void Dispose()
@@ -220,7 +219,6 @@ public sealed class PluginIngestionTests : IDisposable
     private Task<FormIdRecordStore> OpenStoreAsync(string gameDirectory)
     {
         return FormIdRecordStore.OpenAsync(
-            _databaseService,
             Path.Combine(gameDirectory, "plugins.db"),
             GameRelease.SkyrimSE,
             TestContext.Current.CancellationToken);

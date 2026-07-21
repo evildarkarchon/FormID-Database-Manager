@@ -61,7 +61,13 @@ public sealed class ProcessingRunIntegrationTests : IDisposable
 
         Assert.True(File.Exists(databasePath));
 
-        await using (var connection = new SqliteConnection(DatabaseService.GetOptimizedConnectionString(databasePath)))
+        var inspectionConnectionString = new SqliteConnectionStringBuilder
+        {
+            DataSource = databasePath,
+            Mode = SqliteOpenMode.ReadOnly,
+            Pooling = false
+        }.ToString();
+        await using (var connection = new SqliteConnection(inspectionConnectionString))
         {
             await connection.OpenAsync(TestContext.Current.CancellationToken);
             await using var statisticsCommand = connection.CreateCommand();
