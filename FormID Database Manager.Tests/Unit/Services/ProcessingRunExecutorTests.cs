@@ -138,17 +138,19 @@ public sealed class ProcessingRunExecutorTests : IDisposable
             ],
             TestContext.Current.CancellationToken);
 
+        var events = new List<ProcessingRunEvent>();
         var recordStore = new RecordingRecordStoreSession
         {
             TextFileImportResult = new FormIdTextFileImportResult(2, 2),
             TextFileProgressReports =
             [
                 new FormIdStoreProgress("Completed processing 2 plugins (2 total records)", 100)
-            ]
+            ],
+            OptimizeAction = () => Assert.DoesNotContain(events, runEvent =>
+                runEvent.Message.Contains("Processing completed successfully", StringComparison.Ordinal))
         };
         var opener = new RecordingRecordStoreSessionOpener(recordStore);
         var sut = new ProcessingRunExecutor(null, new PluginIngestion(), opener);
-        var events = new List<ProcessingRunEvent>();
         var progress = new SynchronousProgress<ProcessingRunEvent>(events.Add);
         var request = new FormIdTextProcessingRunRequest(
             textFilePath,
@@ -171,6 +173,73 @@ public sealed class ProcessingRunExecutorTests : IDisposable
             runEvent.Kind == ProcessingRunEventKind.Status &&
             runEvent.Message.Contains("Processing completed successfully", StringComparison.Ordinal) &&
             runEvent.Value == 100);
+    }
+
+    /// <summary>
+    ///     Verifies that best-effort Store cleanup cannot replace the optimization failure that ended the Processing Run.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_OptimizationAndCleanupFail_PreservesOptimizationFailure()
+    {
+        var optimizationFailure = new InvalidOperationException("optimization failed");
+        var recordStore = new RecordingRecordStoreSession
+        {
+            OptimizeException = optimizationFailure,
+            DisposeException = new InvalidOperationException("cleanup failed")
+        };
+        using var sut = new ProcessingRunExecutor(
+            null,
+            new PluginIngestion(),
+            new RecordingRecordStoreSessionOpener(recordStore));
+        var events = new List<ProcessingRunEvent>();
+        var progress = new SynchronousProgress<ProcessingRunEvent>(events.Add);
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            sut.ExecuteAsync(CreateTextFileRequest("optimization-failure.txt"), progress));
+
+        Assert.Same(optimizationFailure, exception);
+        Assert.Equal(1, recordStore.OptimizeCallCount);
+        Assert.True(recordStore.Disposed);
+        Assert.Contains(events, runEvent =>
+            runEvent.Kind == ProcessingRunEventKind.Status &&
+            runEvent.Message.Contains("Error during processing: optimization failed", StringComparison.Ordinal));
+        Assert.DoesNotContain(events, runEvent =>
+            runEvent.Message.Contains("cleanup failed", StringComparison.Ordinal));
+        Assert.DoesNotContain(events, runEvent =>
+            runEvent.Message.Contains("Processing completed successfully", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    ///     Verifies that cancellation observed after text import ends the Processing Run without optimization or completion.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_CancelledAfterTextImport_ReportsCancellationWithoutOptimization()
+    {
+        ProcessingRunExecutor? sut = null;
+        var recordStore = new RecordingRecordStoreSession
+        {
+            ImportAction = () => sut!.Cancel()
+        };
+        sut = new ProcessingRunExecutor(
+            null,
+            new PluginIngestion(),
+            new RecordingRecordStoreSessionOpener(recordStore));
+        using (sut)
+        {
+            var events = new List<ProcessingRunEvent>();
+            var progress = new SynchronousProgress<ProcessingRunEvent>(events.Add);
+
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+                sut.ExecuteAsync(CreateTextFileRequest("cancel-after-import.txt"), progress));
+
+            Assert.Equal(0, recordStore.OptimizeCallCount);
+            Assert.True(recordStore.Disposed);
+            Assert.Contains(events, runEvent =>
+                runEvent.Kind == ProcessingRunEventKind.Status &&
+                runEvent.Message.Contains("Processing cancelled", StringComparison.Ordinal));
+            Assert.DoesNotContain(events, runEvent =>
+                runEvent.Message.Contains("Processing completed", StringComparison.Ordinal));
+        }
     }
 
     [Fact]
@@ -259,11 +328,17 @@ public sealed class ProcessingRunExecutorTests : IDisposable
         ingestion.EnqueueResult(PluginIngestionResult.Failed("Bad.esp", "Invalid plugin header."));
         ingestion.EnqueueResult(PluginIngestionResult.Succeeded("Good.esp", recordCount: 3, []));
 
+        var events = new List<ProcessingRunEvent>();
+        var recordStore = new RecordingRecordStoreSession
+        {
+            OptimizeAction = () => Assert.DoesNotContain(events, runEvent =>
+                runEvent.Kind is ProcessingRunEventKind.Warning or ProcessingRunEventKind.Error ||
+                runEvent.Message.Contains("Processing completed", StringComparison.Ordinal))
+        };
         var sut = new ProcessingRunExecutor(
             CreateLoadOrderProvider(gameDirectory, ["Bad.esp", "Good.esp"]).Object,
             ingestion,
-            new RecordingRecordStoreSessionOpener(new RecordingRecordStoreSession()));
-        var events = new List<ProcessingRunEvent>();
+            new RecordingRecordStoreSessionOpener(recordStore));
         var progress = new SynchronousProgress<ProcessingRunEvent>(events.Add);
         var request = new PluginProcessingRunRequest(
             gameDirectory,
@@ -275,6 +350,8 @@ public sealed class ProcessingRunExecutorTests : IDisposable
         await sut.ExecuteAsync(request, progress);
 
         Assert.Equal(["Bad.esp", "Good.esp"], ingestion.IngestedPlugins);
+        Assert.Equal(1, recordStore.OptimizeCallCount);
+        Assert.True(recordStore.Disposed);
         Assert.Contains(events, runEvent =>
             runEvent.Kind == ProcessingRunEventKind.Error &&
             runEvent.Message.Contains("1 failed plugin", StringComparison.Ordinal) &&
@@ -293,13 +370,18 @@ public sealed class ProcessingRunExecutorTests : IDisposable
         Directory.CreateDirectory(Path.Combine(gameDirectory, "Data"));
         var databasePath = Path.Combine(gameDirectory, "plugins.db");
         var ingestion = new RecordingPluginIngestion();
-        ingestion.EnqueueException(new InvalidOperationException("store failed"));
+        var ingestionFailure = new InvalidOperationException("store failed");
+        ingestion.EnqueueException(ingestionFailure);
         ingestion.EnqueueResult(PluginIngestionResult.Succeeded("Never.esp", recordCount: 1, []));
 
+        var recordStore = new RecordingRecordStoreSession
+        {
+            DisposeException = new InvalidOperationException("cleanup failed")
+        };
         var sut = new ProcessingRunExecutor(
             CreateLoadOrderProvider(gameDirectory, ["Bad.esp", "Never.esp"]).Object,
             ingestion,
-            new RecordingRecordStoreSessionOpener(new RecordingRecordStoreSession()));
+            new RecordingRecordStoreSessionOpener(recordStore));
         var events = new List<ProcessingRunEvent>();
         var progress = new SynchronousProgress<ProcessingRunEvent>(events.Add);
         var request = new PluginProcessingRunRequest(
@@ -311,14 +393,18 @@ public sealed class ProcessingRunExecutorTests : IDisposable
 
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => sut.ExecuteAsync(request, progress));
 
-        Assert.Equal("store failed", exception.Message);
+        Assert.Same(ingestionFailure, exception);
         Assert.Equal(["Bad.esp"], ingestion.IngestedPlugins);
+        Assert.Equal(0, recordStore.OptimizeCallCount);
+        Assert.True(recordStore.Disposed);
         Assert.Contains(events, runEvent =>
             runEvent.Kind == ProcessingRunEventKind.Status &&
             runEvent.Message.Contains("Error during processing: store failed", StringComparison.Ordinal));
         Assert.DoesNotContain(events, runEvent =>
             runEvent.Kind == ProcessingRunEventKind.Error &&
             runEvent.Message.Contains("failed plugin", StringComparison.Ordinal));
+        Assert.DoesNotContain(events, runEvent =>
+            runEvent.Message.Contains("cleanup failed", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -329,12 +415,17 @@ public sealed class ProcessingRunExecutorTests : IDisposable
         var databasePath = Path.Combine(gameDirectory, "plugins.db");
         var ingestion = new RecordingPluginIngestion();
         ingestion.EnqueueResult(PluginIngestionResult.Succeeded("Done.esp", recordCount: 1, []));
-        ingestion.EnqueueException(new OperationCanceledException());
+        var cancellation = new OperationCanceledException("cancelled during ingestion");
+        ingestion.EnqueueException(cancellation);
 
+        var recordStore = new RecordingRecordStoreSession
+        {
+            DisposeException = new InvalidOperationException("cleanup failed")
+        };
         var sut = new ProcessingRunExecutor(
             CreateLoadOrderProvider(gameDirectory, ["Done.esp", "Cancelled.esp"]).Object,
             ingestion,
-            new RecordingRecordStoreSessionOpener(new RecordingRecordStoreSession()));
+            new RecordingRecordStoreSessionOpener(recordStore));
         var events = new List<ProcessingRunEvent>();
         var progress = new SynchronousProgress<ProcessingRunEvent>(events.Add);
         var request = new PluginProcessingRunRequest(
@@ -344,14 +435,19 @@ public sealed class ProcessingRunExecutorTests : IDisposable
             ["Done.esp", "Cancelled.esp"],
             UpdateMode.Append);
 
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sut.ExecuteAsync(request, progress));
+        var exception = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sut.ExecuteAsync(request, progress));
 
+        Assert.Same(cancellation, exception);
+        Assert.Equal(0, recordStore.OptimizeCallCount);
+        Assert.True(recordStore.Disposed);
         Assert.Contains(events, runEvent =>
             runEvent.Kind == ProcessingRunEventKind.Status &&
             runEvent.Message.Contains("Processing cancelled", StringComparison.Ordinal));
         Assert.DoesNotContain(events, runEvent =>
             runEvent.Kind == ProcessingRunEventKind.Status &&
             runEvent.Message.Contains("Processing completed", StringComparison.Ordinal));
+        Assert.DoesNotContain(events, runEvent =>
+            runEvent.Message.Contains("cleanup failed", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -829,6 +925,14 @@ public sealed class ProcessingRunExecutorTests : IDisposable
 
         public bool Disposed { get; private set; }
 
+        public Exception? OptimizeException { get; init; }
+
+        public Exception? DisposeException { get; init; }
+
+        public Action? ImportAction { get; init; }
+
+        public Action? OptimizeAction { get; init; }
+
         public FormIdTextFileImportResult TextFileImportResult { get; init; }
 
         public IReadOnlyList<FormIdStoreProgress> TextFileProgressReports { get; init; } = [];
@@ -842,6 +946,7 @@ public sealed class ProcessingRunExecutorTests : IDisposable
             return Task.FromResult(new FormIdPluginWriteResult(0));
         }
 
+        /// <inheritdoc />
         public Task<FormIdTextFileImportResult> ImportFormIdTextFileAsync(
             string formIdTextFilePath,
             UpdateMode updateMode,
@@ -856,19 +961,28 @@ public sealed class ProcessingRunExecutorTests : IDisposable
                 progress?.Report(report);
             }
 
+            ImportAction?.Invoke();
+
             return Task.FromResult(TextFileImportResult);
         }
 
+        /// <inheritdoc />
         public Task OptimizeAsync(CancellationToken cancellationToken = default)
         {
             OptimizeCallCount++;
-            return Task.CompletedTask;
+            OptimizeAction?.Invoke();
+            return OptimizeException is null
+                ? Task.CompletedTask
+                : Task.FromException(OptimizeException);
         }
 
+        /// <inheritdoc />
         public ValueTask DisposeAsync()
         {
             Disposed = true;
-            return ValueTask.CompletedTask;
+            return DisposeException is null
+                ? ValueTask.CompletedTask
+                : ValueTask.FromException(DisposeException);
         }
     }
 }

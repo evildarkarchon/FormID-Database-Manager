@@ -154,6 +154,59 @@ public sealed class FormIdRecordStoreTests : IDisposable
         Assert.Equal(specialEntry, records[0].entry);
     }
 
+    /// <summary>
+    ///     Verifies optimization through the query-planner statistics persisted by SQLite for the Store table.
+    /// </summary>
+    [Fact]
+    public async Task OptimizeAsync_AfterWrite_PersistsStatistics()
+    {
+        await using var store = await OpenStoreAsync();
+        await store.WritePluginAsync(
+            "Plugin.esp",
+            [new FormIdRecord("000001", "Entry1"), new FormIdRecord("000002", "Entry2")],
+            UpdateMode.Append,
+            TestContext.Current.CancellationToken);
+
+        await store.OptimizeAsync(TestContext.Current.CancellationToken);
+
+        await using var connection = await OpenUnpooledDatabaseConnectionAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT COUNT(*) FROM sqlite_stat1 WHERE tbl = @tableName";
+        command.Parameters.AddWithValue("@tableName", GameRelease.SkyrimSE.ToString());
+        var statisticsCount = Convert.ToInt32(
+            await command.ExecuteScalarAsync(TestContext.Current.CancellationToken));
+
+        Assert.True(statisticsCount > 0);
+    }
+
+    /// <summary>
+    ///     Verifies disposal remains cleanup-only and never implicitly optimizes an incomplete Store session.
+    /// </summary>
+    [Fact]
+    public async Task DisposeAsync_WithoutExplicitOptimization_DoesNotPersistStatistics()
+    {
+        var store = await OpenStoreAsync();
+        await store.WritePluginAsync(
+            "Plugin.esp",
+            [new FormIdRecord("000001", "Entry1")],
+            UpdateMode.Append,
+            TestContext.Current.CancellationToken);
+
+        await store.DisposeAsync();
+
+        await using var connection = await OpenUnpooledDatabaseConnectionAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT COUNT(*)
+            FROM sqlite_master
+            WHERE type = 'table' AND name = 'sqlite_stat1'
+            """;
+        var statisticsTableCount = Convert.ToInt32(
+            await command.ExecuteScalarAsync(TestContext.Current.CancellationToken));
+
+        Assert.Equal(0, statisticsTableCount);
+    }
+
     [Fact]
     public async Task OpenAsync_UnsupportedGameRelease_UsesSafeTableNameWhitelist()
     {

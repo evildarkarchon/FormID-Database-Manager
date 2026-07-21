@@ -414,26 +414,42 @@ public sealed class ProcessingRunExecutor : IProcessingRunExecutor
                 return;
             }
 
-            await using var recordStore = await _recordStoreOpener.OpenAsync(
-                    request.DatabasePath,
-                    request.GameRelease,
-                    cancellationToken)
-                .ConfigureAwait(false);
+            var recordStore = await _recordStoreOpener.OpenAsync(
+                request.DatabasePath,
+                request.GameRelease,
+                cancellationToken).ConfigureAwait(false);
 
-            switch (request)
+            try
             {
-                case FormIdTextProcessingRunRequest textRequest:
-                    await ExecuteTextFileRunAsync(textRequest, recordStore, progress, cancellationToken)
-                        .ConfigureAwait(false);
-                    break;
+                switch (request)
+                {
+                    case FormIdTextProcessingRunRequest textRequest:
+                        await ExecuteTextFileRunAsync(textRequest, recordStore, progress, cancellationToken)
+                            .ConfigureAwait(false);
+                        break;
 
-                case PluginProcessingRunRequest pluginRequest:
-                    await ExecutePluginRunAsync(pluginRequest, recordStore, progress, cancellationToken)
-                        .ConfigureAwait(false);
-                    break;
+                    case PluginProcessingRunRequest pluginRequest:
+                        await ExecutePluginRunAsync(pluginRequest, recordStore, progress, cancellationToken)
+                            .ConfigureAwait(false);
+                        break;
 
-                default:
-                    throw new ArgumentOutOfRangeException(nameof(request), request, "Unsupported Processing Run request.");
+                    default:
+                        throw new ArgumentOutOfRangeException(
+                            nameof(request),
+                            request,
+                            "Unsupported Processing Run request.");
+                }
+            }
+            finally
+            {
+                try
+                {
+                    await recordStore.DisposeAsync().ConfigureAwait(false);
+                }
+                catch
+                {
+                    // Store disposal is best-effort cleanup and must not replace the Processing Run outcome.
+                }
             }
         }
         catch (OperationCanceledException)
@@ -482,11 +498,9 @@ public sealed class ProcessingRunExecutor : IProcessingRunExecutor
                 cancellationToken)
             .ConfigureAwait(false);
 
-        if (!cancellationToken.IsCancellationRequested)
-        {
-            await recordStore.OptimizeAsync(cancellationToken).ConfigureAwait(false);
-            ReportStatus(progress, "Processing completed successfully!", 100);
-        }
+        cancellationToken.ThrowIfCancellationRequested();
+        await recordStore.OptimizeAsync(cancellationToken).ConfigureAwait(false);
+        ReportStatus(progress, "Processing completed successfully!", 100);
     }
 
     [RequiresUnreferencedCode(

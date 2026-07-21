@@ -487,28 +487,51 @@ public sealed class FormIdRecordStore : IFormIdRecordStoreSession
     }
 
     /// <summary>
-    ///     Runs database optimization for the store-owned connection.
+    ///     Checkpoints the write-ahead log and updates SQLite query-planner statistics on the Store-owned connection.
     /// </summary>
     /// <param name="cancellationToken">Token to monitor for cancellation.</param>
-    public Task OptimizeAsync(CancellationToken cancellationToken = default)
+    /// <returns>A task that completes when checkpointing and optimization finish.</returns>
+    /// <exception cref="OperationCanceledException">Thrown when optimization is cancelled.</exception>
+    /// <exception cref="SqliteException">Thrown when SQLite cannot checkpoint or optimize the Store.</exception>
+    public async Task OptimizeAsync(CancellationToken cancellationToken = default)
     {
-        return new DatabaseService().OptimizeDatabase(_connection, cancellationToken);
+        await using var command = _connection.CreateCommand();
+        command.CommandText = "PRAGMA wal_checkpoint(TRUNCATE); PRAGMA optimize;";
+        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
-    ///     Releases the run-scoped SQLite connection and temporary staging resources.
+    ///     Releases the run-scoped SQLite connection and temporary staging resources on a best-effort basis without optimizing.
     /// </summary>
+    /// <remarks>
+    ///     Cleanup failures are intentionally suppressed so disposal cannot replace the Processing Run outcome.
+    /// </remarks>
     public async ValueTask DisposeAsync()
     {
         await DropStagingTableBestEffortAsync().ConfigureAwait(false);
 
         if (_stagingInsertCommand is not null)
         {
-            await _stagingInsertCommand.DisposeAsync().ConfigureAwait(false);
+            try
+            {
+                await _stagingInsertCommand.DisposeAsync().ConfigureAwait(false);
+            }
+            catch
+            {
+                // Temporary-command cleanup must not prevent the Store-owned connection from being released.
+            }
+
             _stagingInsertCommand = null;
         }
 
-        await _connection.DisposeAsync().ConfigureAwait(false);
+        try
+        {
+            await _connection.DisposeAsync().ConfigureAwait(false);
+        }
+        catch
+        {
+            // Connection disposal is best-effort cleanup and must not replace the Processing Run outcome.
+        }
     }
 
     /// <summary>
