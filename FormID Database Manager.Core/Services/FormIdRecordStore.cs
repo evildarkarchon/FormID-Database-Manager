@@ -96,25 +96,69 @@ public sealed class FormIdRecordStore : IFormIdRecordStoreSession
     private readonly List<(string PluginName, string FormId, string Entry)> _stagingBatch = new(TextStagingBatchSize);
     private SqliteCommand? _stagingInsertCommand;
 
-    private FormIdRecordStore(SqliteConnection connection, GameRelease gameRelease)
+    private FormIdRecordStore(SqliteConnection connection, string tableName)
     {
         _connection = connection;
-        _tableName = GameReleaseHelper.GetSafeTableName(gameRelease);
+        _tableName = tableName;
     }
 
     /// <summary>
-    ///     Opens a run-scoped SQLite FormID Record Store for the specified database and GameRelease.
+    ///     Opens a ready run-scoped SQLite FormID Record Store for the specified database and GameRelease.
     /// </summary>
     /// <param name="databasePath">The SQLite database path.</param>
     /// <param name="gameRelease">The GameRelease whose FormID table will be used.</param>
     /// <param name="cancellationToken">Token to monitor for cancellation.</param>
-    /// <returns>An opened FormID Record Store that must be disposed after the processing run.</returns>
-    public static Task<FormIdRecordStore> OpenAsync(
+    /// <returns>
+    ///     A FormID Record Store whose owned connection, persisted schema, and temporary staging resources are ready
+    ///     for immediate use. The Store must be disposed after the processing run.
+    /// </returns>
+    /// <exception cref="ArgumentException">
+    ///     Thrown when <paramref name="databasePath"/> is blank or <paramref name="gameRelease"/> is unsupported.
+    /// </exception>
+    /// <exception cref="OperationCanceledException">Thrown when opening or preparation is cancelled.</exception>
+    /// <exception cref="SqliteException">Thrown when SQLite cannot configure or prepare the Store.</exception>
+    public static async Task<FormIdRecordStore> OpenAsync(
         string databasePath,
         GameRelease gameRelease,
         CancellationToken cancellationToken = default)
     {
-        return OpenAsync(new DatabaseService(), databasePath, gameRelease, cancellationToken);
+        ArgumentException.ThrowIfNullOrWhiteSpace(databasePath);
+
+        // Resolve the table name before opening a connection so unsupported releases fail through the whitelist seam.
+        var tableName = GameReleaseHelper.GetSafeTableName(gameRelease);
+        var connection = new SqliteConnection(CreateConnectionString(databasePath));
+        FormIdRecordStore? store = null;
+
+        try
+        {
+            await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+            await ConfigureConnectionAsync(connection, cancellationToken).ConfigureAwait(false);
+
+            store = new FormIdRecordStore(connection, tableName);
+            await PreparePersistedSchemaAsync(connection, tableName, cancellationToken).ConfigureAwait(false);
+            await store.CreateStagingTableAsync(cancellationToken).ConfigureAwait(false);
+            return store;
+        }
+        catch
+        {
+            try
+            {
+                if (store is not null)
+                {
+                    await store.DisposeAsync().ConfigureAwait(false);
+                }
+                else
+                {
+                    await connection.DisposeAsync().ConfigureAwait(false);
+                }
+            }
+            catch
+            {
+                // Failed-open cleanup must not replace the exception that explains why the Store could not open.
+            }
+
+            throw;
+        }
     }
 
     /// <summary>
@@ -145,7 +189,7 @@ public sealed class FormIdRecordStore : IFormIdRecordStoreSession
             await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
             await databaseService.ConfigureConnection(connection, cancellationToken).ConfigureAwait(false);
 
-            var store = new FormIdRecordStore(connection, gameRelease);
+            var store = new FormIdRecordStore(connection, GameReleaseHelper.GetSafeTableName(gameRelease));
             await store.CreateStagingTableAsync(cancellationToken).ConfigureAwait(false);
             return store;
         }
@@ -465,6 +509,98 @@ public sealed class FormIdRecordStore : IFormIdRecordStoreSession
         }
 
         await _connection.DisposeAsync().ConfigureAwait(false);
+    }
+
+    /// <summary>
+    ///     Creates the pooled, read-write-create connection string owned by a FormID Record Store.
+    /// </summary>
+    /// <param name="databasePath">The validated SQLite database path.</param>
+    /// <returns>The connection string used for the Store's single SQLite connection.</returns>
+    private static string CreateConnectionString(string databasePath)
+    {
+        // The legacy DatabaseService retains equivalent setup during the expand step for callers not yet migrated.
+        return new SqliteConnectionStringBuilder
+        {
+            DataSource = databasePath,
+            Pooling = true,
+            Cache = SqliteCacheMode.Default,
+            Mode = SqliteOpenMode.ReadWriteCreate
+        }.ToString();
+    }
+
+    /// <summary>
+    ///     Applies the Store's connection-scoped SQLite performance configuration.
+    /// </summary>
+    /// <param name="connection">The open Store-owned connection to configure.</param>
+    /// <param name="cancellationToken">Token to monitor for cancellation.</param>
+    /// <exception cref="OperationCanceledException">Thrown when configuration is cancelled.</exception>
+    /// <exception cref="SqliteException">Thrown when SQLite cannot apply the connection configuration.</exception>
+    private static async Task ConfigureConnectionAsync(
+        SqliteConnection connection,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = @"
+            PRAGMA journal_mode = WAL;
+            PRAGMA synchronous = NORMAL;
+            PRAGMA cache_size = -64000;
+            PRAGMA mmap_size = 268435456;
+            PRAGMA temp_store = MEMORY;";
+        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    ///     Atomically prepares the persisted table and indexes for one GameRelease.
+    /// </summary>
+    /// <param name="connection">The open Store-owned connection that will also perform ingestion.</param>
+    /// <param name="tableName">The already-whitelisted GameRelease table name.</param>
+    /// <param name="cancellationToken">Token to monitor for cancellation.</param>
+    /// <exception cref="OperationCanceledException">Thrown when schema preparation is cancelled.</exception>
+    /// <exception cref="SqliteException">Thrown when SQLite cannot prepare or commit the selected schema.</exception>
+    private static async Task PreparePersistedSchemaAsync(
+        SqliteConnection connection,
+        string tableName,
+        CancellationToken cancellationToken)
+    {
+        await using var transaction =
+            (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+
+        try
+        {
+            await using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = $@"
+                CREATE TABLE IF NOT EXISTS {tableName} (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    plugin TEXT,
+                    formid TEXT,
+                    entry TEXT
+                );
+
+                CREATE INDEX IF NOT EXISTS {tableName}_covering_idx
+                ON {tableName}(formid, plugin COLLATE nocase, entry);
+
+                CREATE INDEX IF NOT EXISTS {tableName}_plugin_idx
+                ON {tableName}(plugin COLLATE nocase);
+
+                DROP INDEX IF EXISTS {tableName}_index;";
+            await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            try
+            {
+                // Roll back independently of caller cancellation so persisted schema changes never escape a failed open.
+                await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+            }
+            catch
+            {
+                // Connection disposal remains the final cleanup path; preserve the original schema exception.
+            }
+
+            throw;
+        }
     }
 
     private async Task CreateStagingTableAsync(CancellationToken cancellationToken)

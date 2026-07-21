@@ -48,10 +48,10 @@ The solution has four projects in `FormID Database Manager.slnx`:
 ### Core (`FormID Database Manager.Core/`)
 - `ViewModels/MainWindowViewModel.cs` — CommunityToolkit.Mvvm ObservableObject ViewModel with plugin filtering, progress tracking, and thread-safe UI updates via `IThreadDispatcher`
 - `Services/` — All business logic:
-  - `DatabaseService` — SQLite schema, CRUD, optimizations (WAL mode, covering indexes)
+  - `DatabaseService` — Legacy SQLite schema/configuration plus current optimization behavior, retained temporarily for callers not yet migrated to Store ownership
   - `ProcessingRunExecutor` — Reusable Processing Run seam for Plugin Ingestion and Processing Runs that read FormID text files; owns the active-run cancellation lifecycle and emits structured status, warning, and error events
   - `PluginIngestion` — Internal one-Plugin ingestion module; reads Mutagen overlays via `IPluginOverlayReader`, extracts Entries via `EntryExtraction`, and writes through `FormIdRecordStore`
-  - `FormIdRecordStore` — Implements the FormID Record Store and owns SQLite writes plus the import of pipe-delimited FormID text files (`plugin|formid|entry`) with 10000-row staging batches
+  - `FormIdRecordStore` — Implements the FormID Record Store and owns production Store connection configuration, selected-GameRelease schema preparation, SQLite writes, and pipe-delimited FormID text imports (`plugin|formid|entry`) with 10000-row staging batches
   - `PluginListManager` — Loads plugin lists from game directories on background thread
   - `GameDetectionService` — Detects game type from directory structure (master file presence)
   - `IFileDialogService` — UI-neutral file/folder picker abstraction
@@ -91,7 +91,7 @@ The solution has four projects in `FormID Database Manager.slnx`:
 
 - Test naming: `MethodName_StateUnderTest_ExpectedBehavior`
 - Use `SynchronousThreadDispatcher` in tests instead of platform dispatchers
-- Use in-memory SQLite via `DatabaseFixture` for database tests
+- Use in-memory SQLite via `DatabaseFixture` by default; Store-opening tests that verify file persistence, reopening, WAL, or pooling use isolated temporary SQLite files
 - Integration tests requiring game installations use `[RequiresGameInstallationFact]`
 
 ## Important Notes

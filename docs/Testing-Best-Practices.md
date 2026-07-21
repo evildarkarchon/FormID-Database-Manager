@@ -38,7 +38,7 @@ public async Task ProcessPlugin_ThrowsException_WhenGameNotInstalled()
 
 ### 2. Database Testing Pattern
 
-Always use in-memory SQLite for unit tests:
+Use in-memory SQLite by default for unit tests:
 
 ```csharp
 public class MyDatabaseTest : IClassFixture<DatabaseFixture>
@@ -51,6 +51,10 @@ public class MyDatabaseTest : IClassFixture<DatabaseFixture>
     }
 }
 ```
+
+Use a unique temporary SQLite file when file persistence, Store reopening, WAL mode, or connection pooling is the
+behavior under test. Put those tests in the non-parallel `Database Tests` collection and clean up their files and
+connection pools deterministically.
 
 ### 3. Async Testing Patterns
 
@@ -160,7 +164,9 @@ public class FastUnitTest { }
 
 ### 9. Error Message Testing
 
-When testing error handling, verify the exact error messages:
+When testing error handling, verify application-owned messages exactly. For framework or vendor exceptions, assert
+stable semantic details such as the parameter name, error code, and relevant message fragment instead of coupling the
+test to version-specific wrapper text:
 
 ```csharp
 [Fact]

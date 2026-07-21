@@ -11,10 +11,10 @@ using Xunit;
 
 namespace FormID_Database_Manager.Tests.Unit.Services;
 
+[Collection("Database Tests")]
 public sealed class FormIdRecordStoreTests : IDisposable
 {
     private readonly string _testDbPath = Path.Combine(Path.GetTempPath(), $"record_store_{Guid.NewGuid():N}.db");
-    private readonly DatabaseService _databaseService = new();
     private readonly string _testFilesDirectory;
 
     /// <summary>
@@ -157,10 +157,224 @@ public sealed class FormIdRecordStoreTests : IDisposable
     [Fact]
     public async Task OpenAsync_UnsupportedGameRelease_UsesSafeTableNameWhitelist()
     {
-        await Assert.ThrowsAsync<ArgumentException>(() => FormIdRecordStore.OpenAsync(
+        var exception = await Assert.ThrowsAsync<ArgumentException>(() => FormIdRecordStore.OpenAsync(
             _testDbPath,
             (GameRelease)999,
             TestContext.Current.CancellationToken));
+
+        Assert.Equal("release", exception.ParamName);
+        Assert.Contains("Unsupported game release: 999", exception.Message, StringComparison.Ordinal);
+        Assert.False(File.Exists(_testDbPath));
+    }
+
+    /// <summary>
+    ///     Verifies that invalid database paths fail before the Store attempts to open SQLite.
+    /// </summary>
+    [Fact]
+    public async Task OpenAsync_WhitespaceDatabasePath_ThrowsBeforeOpeningConnection()
+    {
+        var exception = await Assert.ThrowsAsync<ArgumentException>(() => FormIdRecordStore.OpenAsync(
+            "   ",
+            GameRelease.SkyrimSE,
+            TestContext.Current.CancellationToken));
+
+        Assert.Equal("databasePath", exception.ParamName);
+    }
+
+    /// <summary>
+    ///     Verifies that opening returns with the selected schema, indexes, and text staging ready for immediate use.
+    /// </summary>
+    [Fact]
+    public async Task OpenAsync_ExistingSchema_ReturnsReadyStoreWithConvergedIndexes()
+    {
+        var tableName = GameRelease.SkyrimSE.ToString();
+        await using (var connection = await OpenUnpooledDatabaseConnectionAsync())
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText = $@"
+                CREATE TABLE {tableName} (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    plugin TEXT,
+                    formid TEXT,
+                    entry TEXT
+                );
+                CREATE INDEX {tableName}_index ON {tableName}(formid);";
+            await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+        }
+
+        var testFile = await WriteFormIdTextFileAsync("ready_store.txt", ["Plugin.esp|000001|Entry1"]);
+        await using (var store = await FormIdRecordStore.OpenAsync(
+                         _testDbPath,
+                         GameRelease.SkyrimSE,
+                         TestContext.Current.CancellationToken))
+        {
+            var importResult = await store.ImportFormIdTextFileAsync(
+                testFile,
+                UpdateMode.Append,
+                cancellationToken: TestContext.Current.CancellationToken);
+
+            Assert.Equal(new FormIdTextFileImportResult(1, 1), importResult);
+        }
+
+        await using var verificationConnection = await OpenUnpooledDatabaseConnectionAsync();
+        await using var verificationCommand = verificationConnection.CreateCommand();
+        verificationCommand.CommandText =
+            "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = @table_name ORDER BY name";
+        verificationCommand.Parameters.AddWithValue("@table_name", tableName);
+
+        var indexes = new List<string>();
+        await using (var reader = await verificationCommand.ExecuteReaderAsync(TestContext.Current.CancellationToken))
+        {
+            while (await reader.ReadAsync(TestContext.Current.CancellationToken))
+            {
+                indexes.Add(reader.GetString(0));
+            }
+        }
+
+        Assert.Equal([$"{tableName}_covering_idx", $"{tableName}_plugin_idx"], indexes);
+
+        verificationCommand.CommandText = "PRAGMA journal_mode";
+        verificationCommand.Parameters.Clear();
+        var journalMode = Convert.ToString(
+            await verificationCommand.ExecuteScalarAsync(TestContext.Current.CancellationToken));
+        Assert.Equal("wal", journalMode, ignoreCase: true);
+    }
+
+    /// <summary>
+    ///     Verifies that reopening the same GameRelease keeps records written by an earlier Store session.
+    /// </summary>
+    [Fact]
+    public async Task OpenAsync_ReopenedGameRelease_PreservesExistingRecords()
+    {
+        await using (var store = await OpenStoreAsync())
+        {
+            await store.WritePluginAsync(
+                "Plugin.esp",
+                [new FormIdRecord("000001", "Entry1")],
+                UpdateMode.Append,
+                TestContext.Current.CancellationToken);
+        }
+
+        await using var reopenedStore = await OpenStoreAsync();
+        var records = await reopenedStore.ReadRecordsAsync(
+            FormIdRecordQuery.All,
+            TestContext.Current.CancellationToken);
+
+        var record = Assert.Single(records);
+        Assert.Equal(new FormIdStoredRecord("Plugin.esp", "000001", "Entry1"), record);
+    }
+
+    /// <summary>
+    ///     Verifies that sequential Store openings prepare independent GameRelease tables in one database file.
+    /// </summary>
+    [Fact]
+    public async Task OpenAsync_DifferentGameReleases_PreparesIndependentTables()
+    {
+        var skyrimStore = await FormIdRecordStore.OpenAsync(
+            _testDbPath,
+            GameRelease.SkyrimSE,
+            TestContext.Current.CancellationToken);
+        await skyrimStore.DisposeAsync();
+
+        var falloutStore = await FormIdRecordStore.OpenAsync(
+            _testDbPath,
+            GameRelease.Fallout4,
+            TestContext.Current.CancellationToken);
+        await falloutStore.DisposeAsync();
+
+        await using var connection = await OpenUnpooledDatabaseConnectionAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = @"
+            SELECT name
+            FROM sqlite_master
+            WHERE type = 'table' AND name IN (@skyrim_table, @fallout_table)
+            ORDER BY name";
+        command.Parameters.AddWithValue("@skyrim_table", GameRelease.SkyrimSE.ToString());
+        command.Parameters.AddWithValue("@fallout_table", GameRelease.Fallout4.ToString());
+
+        var tables = new List<string>();
+        await using var reader = await command.ExecuteReaderAsync(TestContext.Current.CancellationToken);
+        while (await reader.ReadAsync(TestContext.Current.CancellationToken))
+        {
+            tables.Add(reader.GetString(0));
+        }
+
+        Assert.Equal([GameRelease.Fallout4.ToString(), GameRelease.SkyrimSE.ToString()], tables);
+    }
+
+    /// <summary>
+    ///     Verifies that cancellation before schema preparation leaves no selected GameRelease schema behind.
+    /// </summary>
+    [Fact]
+    public async Task OpenAsync_PreCancelled_LeavesNoSelectedGameReleaseSchema()
+    {
+        using var cancellationSource = new CancellationTokenSource();
+        await cancellationSource.CancelAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => FormIdRecordStore.OpenAsync(
+            _testDbPath,
+            GameRelease.SkyrimSE,
+            cancellationSource.Token));
+
+        await using var connection = await OpenUnpooledDatabaseConnectionAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText =
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = @table_name";
+        command.Parameters.AddWithValue("@table_name", GameRelease.SkyrimSE.ToString());
+
+        var selectedTableCount = Convert.ToInt64(
+            await command.ExecuteScalarAsync(TestContext.Current.CancellationToken));
+
+        Assert.Equal(0, selectedTableCount);
+    }
+
+    /// <summary>
+    ///     Verifies that a schema failure after table creation rolls back the selected GameRelease schema as one unit.
+    /// </summary>
+    [Fact]
+    public async Task OpenAsync_SchemaPreparationFails_RollsBackSelectedGameReleaseTable()
+    {
+        var coveringIndexName = $"{GameRelease.SkyrimSE}_covering_idx";
+        await using (var connection = await OpenUnpooledDatabaseConnectionAsync())
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText = $"CREATE TABLE {coveringIndexName} (id INTEGER PRIMARY KEY)";
+            await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+        }
+
+        var exception = await Assert.ThrowsAsync<SqliteException>(() => FormIdRecordStore.OpenAsync(
+            _testDbPath,
+            GameRelease.SkyrimSE,
+            TestContext.Current.CancellationToken));
+
+        Assert.Equal(1, exception.SqliteErrorCode);
+        Assert.Contains(coveringIndexName, exception.Message, StringComparison.Ordinal);
+
+        await using (var verificationConnection = await OpenUnpooledDatabaseConnectionAsync())
+        {
+            await using var verificationCommand = verificationConnection.CreateCommand();
+            verificationCommand.CommandText =
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = @table_name";
+            verificationCommand.Parameters.AddWithValue("@table_name", GameRelease.SkyrimSE.ToString());
+
+            var selectedTableCount = Convert.ToInt64(
+                await verificationCommand.ExecuteScalarAsync(TestContext.Current.CancellationToken));
+
+            Assert.Equal(0, selectedTableCount);
+
+            verificationCommand.CommandText = $"DROP TABLE {coveringIndexName}";
+            verificationCommand.Parameters.Clear();
+            await verificationCommand.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+        }
+
+        await using var reopenedStore = await OpenStoreAsync();
+        var writeResult = await reopenedStore.WritePluginAsync(
+            "Plugin.esp",
+            [new FormIdRecord("000001", "Entry1")],
+            UpdateMode.Append,
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, writeResult.RecordCount);
     }
 
     [Fact]
@@ -584,10 +798,28 @@ public sealed class FormIdRecordStoreTests : IDisposable
     private Task<FormIdRecordStore> OpenStoreAsync()
     {
         return FormIdRecordStore.OpenAsync(
-            _databaseService,
             _testDbPath,
             GameRelease.SkyrimSE,
             TestContext.Current.CancellationToken);
+    }
+
+    /// <summary>
+    ///     Opens an unpooled connection for independent persisted-database setup or verification in Store tests.
+    /// </summary>
+    /// <returns>An open connection that the caller must dispose.</returns>
+    private async Task<SqliteConnection> OpenUnpooledDatabaseConnectionAsync()
+    {
+        var connection = new SqliteConnection($"Data Source={_testDbPath};Pooling=False");
+        try
+        {
+            await connection.OpenAsync(TestContext.Current.CancellationToken);
+            return connection;
+        }
+        catch
+        {
+            await connection.DisposeAsync();
+            throw;
+        }
     }
 
     /// <summary>
@@ -615,13 +847,13 @@ public sealed class FormIdRecordStoreTests : IDisposable
 
     private async Task CreateFailingInsertTriggerAsync(string failingEntry)
     {
-        await _databaseService.InitializeDatabase(
+        var store = await FormIdRecordStore.OpenAsync(
             _testDbPath,
             GameRelease.SkyrimSE,
             TestContext.Current.CancellationToken);
+        await store.DisposeAsync();
 
-        await using var connection = new SqliteConnection(DatabaseService.GetOptimizedConnectionString(_testDbPath));
-        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var connection = await OpenUnpooledDatabaseConnectionAsync();
         await using var command = connection.CreateCommand();
         var escapedEntry = failingEntry.Replace("'", "''", StringComparison.Ordinal);
         command.CommandText = $@"
