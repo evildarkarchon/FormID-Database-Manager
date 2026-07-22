@@ -36,25 +36,32 @@ public async Task ProcessPlugin_ExtractsFormIDsFromRealPlugin()
 public async Task ProcessPlugin_ThrowsException_WhenGameNotInstalled()
 ```
 
-### 2. Database Testing Pattern
+### 2. FormID Record Store Testing Pattern
 
-Use in-memory SQLite by default for unit tests:
+Exercise database readiness through the same public seam used by production:
 
 ```csharp
-public class MyDatabaseTest : IClassFixture<DatabaseFixture>
-{
-    private readonly DatabaseFixture _fixture;
-    
-    public MyDatabaseTest(DatabaseFixture fixture)
-    {
-        _fixture = fixture;
-    }
-}
+await using var store = await FormIdRecordStore.OpenAsync(
+    databasePath,
+    GameRelease.SkyrimSE,
+    cancellationToken);
 ```
 
-Use a unique temporary SQLite file when file persistence, Store reopening, WAL mode, or connection pooling is the
-behavior under test. Put those tests in the non-parallel `Database Tests` collection and clean up their files and
-connection pools deterministically.
+Opening returns a Store whose selected-GameRelease schema, connection configuration, and temporary staging resources
+are ready for use. Use raw SQLite only to generate a workload, inject a failure, or inspect persisted state after Store
+setup; do not recreate schema preparation or optimization outside the Store.
+
+Use a unique temporary SQLite file for Store tests. Put file-persistence, reopening, WAL, pooling, and concurrent-access
+tests in the non-parallel `Database Tests` collection, then clean up files and connection pools deterministically.
+
+Focused commands for this boundary are:
+
+```bash
+dotnet test "FormID Database Manager.Tests" --filter "FullyQualifiedName~FormIdRecordStoreTests"
+dotnet test "FormID Database Manager.Tests" --filter "FullyQualifiedName~ProcessingRunExecutorTests"
+dotnet test "FormID Database Manager.Tests" --filter "FullyQualifiedName~ProcessingRunIntegrationTests"
+dotnet test "FormID Database Manager.Tests" --filter "FullyQualifiedName~DatabaseIntegrationTests"
+```
 
 ### 3. Async Testing Patterns
 

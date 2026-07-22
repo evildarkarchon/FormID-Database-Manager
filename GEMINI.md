@@ -18,11 +18,15 @@ dotnet run --project "FormID Database Manager.WinUI" -p:Platform=x64
 # Run all tests
 dotnet test "FormID Database Manager.Tests"
 
-# Run a specific test class
+# Run the focused FormID Record Store tests
 dotnet test "FormID Database Manager.Tests" --filter "FullyQualifiedName~FormIdRecordStoreTests"
 
-# Run a single test
-dotnet test "FormID Database Manager.Tests" --filter "FullyQualifiedName~FormIdRecordStoreTests.OpenAsync_SupportedGameRelease_PreparesSelectedTable"
+# Run the focused Processing Run tests
+dotnet test "FormID Database Manager.Tests" --filter "FullyQualifiedName~ProcessingRunExecutorTests"
+dotnet test "FormID Database Manager.Tests" --filter "FullyQualifiedName~ProcessingRunIntegrationTests"
+
+# Run the focused database integration tests
+dotnet test "FormID Database Manager.Tests" --filter "FullyQualifiedName~DatabaseIntegrationTests"
 
 # Run tests by category
 dotnet test "FormID Database Manager.Tests" --filter "Category=LoadTest"
@@ -64,7 +68,6 @@ The solution has four projects in `FormID Database Manager.slnx`:
 - `Services/WinUiThreadDispatcher.cs` — WinUI dispatcher implementation
 
 ### Test Utilities (`FormID Database Manager.TestUtilities/`)
-- `Fixtures/DatabaseFixture` — Shared in-memory SQLite setup
 - `Mocks/MockFactory` — Consistent mock creation for services
 - `Mocks/SynchronousThreadDispatcher` — Test-friendly IThreadDispatcher (executes immediately)
 - `Mocks/SynchronousProgress` — Synchronous IProgress for testing
@@ -90,7 +93,8 @@ The solution has four projects in `FormID Database Manager.slnx`:
 
 - Test naming: `MethodName_StateUnderTest_ExpectedBehavior`
 - Use `SynchronousThreadDispatcher` in tests instead of platform dispatchers
-- Use in-memory SQLite via `DatabaseFixture` for database tests
+- Open databases through `FormIdRecordStore.OpenAsync`; use raw SQLite only for workload generation, failure injection, or persisted-state inspection
+- Store-opening tests use isolated temporary SQLite files and clean up connection pools deterministically
 - Integration tests requiring game installations use `[RequiresGameInstallationFact]`
 
 ## Important Notes

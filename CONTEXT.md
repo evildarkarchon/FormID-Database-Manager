@@ -11,8 +11,12 @@ A hexadecimal identifier for a record inside a Bethesda game plugin. A FormID is
 A Bethesda game data file selected for processing, such as an `.esm`, `.esp`, or `.esl` file.
 _Avoid_: Mod, except when referring to Mutagen type names.
 
+**Ingested Plugin**:
+A selected Plugin for which Plugin Ingestion stored one or more FormID records in the FormID Record Store. An Ingested Plugin may still produce Processing Warnings.
+_Avoid_: Successful Plugin, processed Plugin.
+
 **Skipped Plugin**:
-A selected Plugin that a Processing Run did not store records for because it was not present in the load order, its file was unavailable, or it produced zero FormID records. It is reported as a warning and does not count as either successfully processed or failed.
+A selected Plugin that a Processing Run did not store records for because it was not present in the load order, its file was unavailable, or it produced zero FormID records. It is reported as a warning and does not count as either an Ingested Plugin or Failed Plugin.
 _Avoid_: Successful plugin, missing file error, ignored plugin.
 
 **Failed Plugin**:
@@ -20,11 +24,11 @@ A selected Plugin whose ingestion could not complete because of a fatal Plugin-s
 _Avoid_: Run failure, warning, skipped plugin.
 
 **Plugin List**:
-The loaded set of Plugins available for a selected GameRelease and game directory, including the user's current Plugin selection.
+The loaded set of Plugins available for a selected GameRelease and game directory, including the user's current Plugin selection. Plugin names are unique and compared case-insensitively for membership and selection.
 _Avoid_: Mod list, file list.
 
 **Plugin Ingestion**:
-The part of a Processing Run that reads selected Plugins and produces FormID records for a FormID Record Store.
+The part of a Processing Run that reads selected Plugins in selection order and produces FormID records for a FormID Record Store. Plugin Ingestion is best-effort across the selection: a Skipped Plugin or Failed Plugin does not prevent later selected Plugins from being attempted.
 _Avoid_: Mod processing, plugin processing.
 
 **Advanced Mode**:

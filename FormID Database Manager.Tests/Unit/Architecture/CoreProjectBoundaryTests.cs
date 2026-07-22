@@ -85,24 +85,61 @@ public class CoreProjectBoundaryTests
     }
 
     /// <summary>
-    /// Verifies that performance workloads no longer bypass Store-owned database preparation and maintenance.
+    /// Verifies that production SQLite ownership remains inside the FormID Record Store and retired setup seams stay
+    /// absent from every source area.
     /// </summary>
     [Fact]
-    public void PerformanceSources_AfterStoreOwnershipMigration_DoNotReferenceRetiredDatabaseService()
+    public void RepositorySources_AfterStoreOwnershipContract_KeepSqliteOwnershipInsideFormIdRecordStore()
     {
-        var performanceDirectory = Path.Combine(
-            FindRepositoryRoot(),
-            "FormID Database Manager.Tests",
-            "Performance");
+        var repositoryRoot = FindRepositoryRoot();
+        var coreProjectDirectory = GetCoreProjectDirectory();
+        var winUiProjectDirectory = Path.Combine(repositoryRoot, "FormID Database Manager.WinUI");
+        var sourceDirectories = new[]
+        {
+            coreProjectDirectory,
+            winUiProjectDirectory,
+            Path.Combine(repositoryRoot, "FormID Database Manager.TestUtilities"),
+            Path.Combine(repositoryRoot, "FormID Database Manager.Tests")
+        };
 
-        var legacyCallers = Directory
-            .EnumerateFiles(performanceDirectory, "*.cs", SearchOption.AllDirectories)
-            .Where(path => File.ReadAllText(path).Contains("DatabaseService", StringComparison.Ordinal))
-            .Select(Path.GetFileName)
-            .OrderBy(static fileName => fileName, StringComparer.Ordinal)
+        var sourceFiles = sourceDirectories
+            .SelectMany(directory => Directory.EnumerateFiles(directory, "*.cs", SearchOption.AllDirectories))
+            .Where(path => !IsBuildOutput(path))
             .ToArray();
 
-        Assert.Empty(legacyCallers);
+        var retiredSetupTypeNames = new[]
+        {
+            string.Concat("Database", "Service"),
+            string.Concat("Database", "Fixture")
+        };
+        var retiredSetupReferences = sourceFiles
+            .Where(path => retiredSetupTypeNames.Any(typeName =>
+                File.ReadAllText(path).Contains(typeName, StringComparison.Ordinal)))
+            .Select(path => Path.GetRelativePath(repositoryRoot, path))
+            .OrderBy(static path => path, StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.Empty(retiredSetupReferences);
+
+        var productionSqliteOwners = new[] { coreProjectDirectory, winUiProjectDirectory }
+            .SelectMany(directory => Directory.EnumerateFiles(directory, "*.cs", SearchOption.AllDirectories))
+            .Where(path => !IsBuildOutput(path))
+            .Where(path => File.ReadAllText(path).Contains("Microsoft.Data.Sqlite", StringComparison.Ordinal))
+            .Select(path => Path.GetRelativePath(repositoryRoot, path))
+            .OrderBy(static path => path, StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.Equal(
+            new[] { Path.Combine("FormID Database Manager.Core", "Services", "FormIdRecordStore.cs") },
+            productionSqliteOwners);
+    }
+
+    private static bool IsBuildOutput(string path)
+    {
+        return path.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}",
+                   StringComparison.OrdinalIgnoreCase)
+               || path.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}",
+                   StringComparison.OrdinalIgnoreCase);
     }
 
     private static string GetCoreProjectDirectory()
