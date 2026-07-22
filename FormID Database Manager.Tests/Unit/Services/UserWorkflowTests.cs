@@ -43,9 +43,14 @@ public class UserWorkflowTests
         _processingRunExecutor = new RecordingProcessingRunExecutor(_processingRuns);
     }
 
+    /// <summary>
+    /// Verifies that an explicit release intent clears stale source state before installed-location lookup completes.
+    /// </summary>
     [Fact]
-    public async Task ApplyGameContextTransitionAsync_SelectedGameReleaseChanged_ClearsStaleStateLoadsInstalledDirectoriesAndRefreshesPlugins()
+    public async Task SelectGameReleaseAsync_ChangedRelease_ImmediatelyClearsStateThenPublishesOrderedLocations()
     {
+        var lookupStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var allowLookupToFinish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _viewModel.ApplyGameContextProjection(
             GameRelease.SkyrimSE,
             @"C:\Old",
@@ -59,30 +64,93 @@ public class UserWorkflowTests
             TestContext.Current.CancellationToken);
         _pluginListDiscovery.PluginNames = [];
         _refreshes.Clear();
-        _gameLocationService.Setup(x => x.GetGameFolders(GameRelease.SkyrimSE))
-            .Returns([GameDirectory, @"D:\Games\Skyrim"]);
+        _gameLocationService.Setup(x => x.GetGameFolders(GameRelease.Fallout4))
+            .Returns(() =>
+            {
+                lookupStarted.SetResult();
+                allowLookupToFinish.Task.GetAwaiter().GetResult();
+                return [@"C:\Games\Fallout4", @"D:\Games\Fallout4"];
+            });
 
         var sut = CreateSut();
 
-        await sut.ApplyGameContextTransitionAsync(GameContextTransition.SelectedGameReleaseChanged());
+        var selection = sut.SelectGameReleaseAsync(GameRelease.Fallout4);
+        await lookupStarted.Task;
 
-        Assert.Equal(GameDirectory, _viewModel.GameDirectory);
-        Assert.Equal([GameDirectory, @"D:\Games\Skyrim"], _viewModel.DetectedDirectories.ToArray());
+        Assert.Equal(GameRelease.Fallout4, _viewModel.SelectedGame);
+        Assert.Empty(_viewModel.GameDirectory);
+        Assert.Empty(_viewModel.DetectedDirectories);
+        Assert.Null(_pluginList.Current.Confirmed);
         Assert.Empty(_viewModel.Plugins);
-        AssertSingleRefresh(GameDirectory, GameRelease.SkyrimSE, false);
+
+        allowLookupToFinish.SetResult();
+        await selection;
+
+        Assert.Equal(@"C:\Games\Fallout4", _viewModel.GameDirectory);
+        Assert.Equal([@"C:\Games\Fallout4", @"D:\Games\Fallout4"], _viewModel.DetectedDirectories.ToArray());
+        Assert.Empty(_viewModel.Plugins);
+        AssertSingleRefresh(@"C:\Games\Fallout4", GameRelease.Fallout4, false);
     }
 
     /// <summary>
-    /// Verifies that the selection event raised while clearing an old directory does not invalidate the new lookup.
+    /// Verifies that an explicit directory intent retires older location resolution and survives discovery failure.
     /// </summary>
     [Fact]
-    public async Task ApplyGameContextTransitionAsync_SelectedGameReleaseChangedWithExistingDirectory_IgnoresResetSelectionChange()
+    public async Task SelectDetectedDirectoryAsync_DuringLocationLookup_ManualDirectoryRemainsAuthoritative()
+    {
+        const string manualDirectory = @"D:\Games\Skyrim";
+        var lookupStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var allowLookupToFinish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var discoveryCompletion = new TaskCompletionSource<PluginListDiscoveryResult>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        _gameLocationService.Setup(x => x.GetGameFolders(GameRelease.SkyrimSE))
+            .Returns(() =>
+            {
+                lookupStarted.SetResult();
+                allowLookupToFinish.Task.GetAwaiter().GetResult();
+                return [@"C:\Automatic\Skyrim"];
+            });
+        _pluginListDiscovery.Handler = (_, _) => discoveryCompletion.Task;
+        var sut = CreateSut();
+
+        var releaseSelection = sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
+        await lookupStarted.Task;
+
+        var directorySelection = sut.SelectDetectedDirectoryAsync(manualDirectory);
+
+        Assert.Equal(GameRelease.SkyrimSE, _viewModel.SelectedGame);
+        Assert.Equal(manualDirectory, _viewModel.GameDirectory);
+        Assert.Empty(_viewModel.DetectedDirectories);
+        Assert.Equal(@"D:\Games\Skyrim\Data", Assert.Single(_refreshes).DataDirectory);
+
+        allowLookupToFinish.SetResult();
+        await releaseSelection;
+
+        Assert.Equal(manualDirectory, _viewModel.GameDirectory);
+        Assert.Single(_refreshes);
+
+        discoveryCompletion.SetResult(PluginListDiscoveryResult.Failed("selected release does not match directory"));
+        await directorySelection;
+
+        Assert.Equal(GameRelease.SkyrimSE, _viewModel.SelectedGame);
+        Assert.Equal(manualDirectory, _viewModel.GameDirectory);
+        Assert.Null(_pluginList.Current.Confirmed);
+        Assert.Contains(
+            "Failed to load plugins: selected release does not match directory",
+            _viewModel.ErrorMessages);
+    }
+
+    /// <summary>
+    /// Verifies that the equal directory event raised by projection does not retire the release lookup that caused it.
+    /// </summary>
+    [Fact]
+    public async Task SelectDetectedDirectoryAsync_EqualProjectedValue_DoesNotRetireLocationLookup()
     {
         var lookupStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var allowLookupToFinish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
         _viewModel.ApplyGameContextProjection(
-            GameRelease.Fallout4,
+            GameRelease.SkyrimSE,
             @"C:\Old",
             [@"C:\Old"],
             AdvancedMode.Off);
@@ -96,10 +164,10 @@ public class UserWorkflowTests
 
         var sut = CreateSut();
 
-        var gameSelection = sut.ApplyGameContextTransitionAsync(GameContextTransition.SelectedGameReleaseChanged());
+        var gameSelection = sut.SelectGameReleaseAsync(GameRelease.Fallout4);
         await lookupStarted.Task;
 
-        await sut.ApplyGameContextTransitionAsync(GameContextTransition.SelectedDetectedDirectoryChanged());
+        await sut.SelectDetectedDirectoryAsync(null);
 
         allowLookupToFinish.SetResult();
         await gameSelection;
@@ -108,17 +176,22 @@ public class UserWorkflowTests
         AssertSingleRefresh(@"C:\NewFallout", GameRelease.Fallout4, false);
     }
 
+    /// <summary>
+    /// Verifies that an empty current lookup retains the explicit release and presents Browse guidance.
+    /// </summary>
     [Fact]
-    public async Task ApplyGameContextTransitionAsync_SelectedGameReleaseChangedWithoutInstalledFolders_RecordsInformationMessage()
+    public async Task SelectGameReleaseAsync_WithoutInstalledFolders_RetainsIncompleteContextAndRecordsGuidance()
     {
-        _viewModel.SelectedGame = GameRelease.Fallout4;
         _gameLocationService.Setup(x => x.GetGameFolders(GameRelease.Fallout4))
             .Returns([]);
 
         var sut = CreateSut();
 
-        await sut.ApplyGameContextTransitionAsync(GameContextTransition.SelectedGameReleaseChanged());
+        await sut.SelectGameReleaseAsync(GameRelease.Fallout4);
 
+        Assert.Equal(GameRelease.Fallout4, _viewModel.SelectedGame);
+        Assert.Empty(_viewModel.GameDirectory);
+        Assert.Empty(_viewModel.DetectedDirectories);
         Assert.Contains(
             "No installed locations found for Fallout4. Use Browse to select a directory.",
             _viewModel.InformationMessages);
@@ -126,53 +199,88 @@ public class UserWorkflowTests
     }
 
     /// <summary>
+    /// Verifies that an equal explicit release event performs no duplicate lookup or refresh work.
+    /// </summary>
+    [Fact]
+    public async Task SelectGameReleaseAsync_EqualRelease_IsNoOp()
+    {
+        _viewModel.ApplyGameContextProjection(
+            GameRelease.SkyrimSE,
+            GameDirectory,
+            [GameDirectory],
+            AdvancedMode.Off);
+        var sut = CreateSut();
+
+        await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
+
+        _gameLocationService.Verify(
+            x => x.GetGameFolders(It.IsAny<GameRelease>()),
+            Times.Never);
+        Assert.Empty(_refreshes);
+        Assert.Equal(GameDirectory, _viewModel.GameDirectory);
+        Assert.Equal([GameDirectory], _viewModel.DetectedDirectories);
+    }
+
+    /// <summary>
     /// Verifies that a single installed location remains part of the complete ordered available-directory snapshot.
     /// </summary>
     [Fact]
-    public async Task ApplyGameContextTransitionAsync_SingleInstalledDirectory_ProjectsCompleteAvailableSet()
+    public async Task SelectGameReleaseAsync_SingleInstalledDirectory_ProjectsCompleteAvailableSet()
     {
-        _viewModel.SelectedGame = GameRelease.SkyrimSE;
         _gameLocationService.Setup(x => x.GetGameFolders(GameRelease.SkyrimSE))
             .Returns([GameDirectory]);
         var sut = CreateSut();
 
-        await sut.ApplyGameContextTransitionAsync(GameContextTransition.SelectedGameReleaseChanged());
+        await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
 
         Assert.Equal(GameDirectory, _viewModel.GameDirectory);
         Assert.Equal([GameDirectory], _viewModel.DetectedDirectories);
         AssertSingleRefresh(GameDirectory, GameRelease.SkyrimSE, false);
     }
 
+    /// <summary>
+    /// Verifies that the directory projected from a current lookup does not request a duplicate refresh.
+    /// </summary>
     [Fact]
-    public async Task ApplyGameContextTransitionAsync_SelectedDetectedDirectoryChangedAfterWorkflowDirectoryUpdate_IgnoresProgrammaticSelectionChange()
+    public async Task SelectDetectedDirectoryAsync_EqualDetectedDirectory_DoesNotDuplicateRefresh()
     {
-        _viewModel.SelectedGame = GameRelease.SkyrimSE;
         _gameLocationService.Setup(x => x.GetGameFolders(GameRelease.SkyrimSE))
             .Returns([GameDirectory, @"D:\Games\Skyrim"]);
 
         var sut = CreateSut();
 
-        await sut.ApplyGameContextTransitionAsync(GameContextTransition.SelectedGameReleaseChanged());
-        await sut.ApplyGameContextTransitionAsync(GameContextTransition.SelectedDetectedDirectoryChanged());
+        await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
+        await sut.SelectDetectedDirectoryAsync(GameDirectory);
 
         AssertSingleRefresh(GameDirectory, GameRelease.SkyrimSE, false);
     }
 
+    /// <summary>
+    /// Verifies that an explicit changed directory is projected while preserving the ordered suggestions.
+    /// </summary>
     [Fact]
-    public async Task ApplyGameContextTransitionAsync_SelectedDetectedDirectoryChanged_RefreshesPluginListForCurrentGameContext()
+    public async Task SelectDetectedDirectoryAsync_ChangedDirectory_RefreshesPluginListForExplicitValue()
     {
-        _viewModel.SelectedGame = GameRelease.SkyrimSE;
-        _viewModel.GameDirectory = @"D:\Games\Skyrim";
+        _viewModel.ApplyGameContextProjection(
+            GameRelease.SkyrimSE,
+            GameDirectory,
+            [GameDirectory, @"D:\Games\Skyrim"],
+            AdvancedMode.Off);
 
         var sut = CreateSut();
 
-        await sut.ApplyGameContextTransitionAsync(GameContextTransition.SelectedDetectedDirectoryChanged());
+        await sut.SelectDetectedDirectoryAsync(@"D:\Games\Skyrim");
 
+        Assert.Equal(@"D:\Games\Skyrim", _viewModel.GameDirectory);
+        Assert.Equal([GameDirectory, @"D:\Games\Skyrim"], _viewModel.DetectedDirectories);
         AssertSingleRefresh(@"D:\Games\Skyrim", GameRelease.SkyrimSE, false);
     }
 
+    /// <summary>
+    /// Verifies that only the latest of two controlled release lookups can publish guidance, state, or refresh work.
+    /// </summary>
     [Fact]
-    public async Task ApplyGameContextTransitionAsync_OverlappingGameReleaseChanges_AppliesLatestSelectionOnly()
+    public async Task SelectGameReleaseAsync_OverlappingSelections_AppliesLatestSelectionOnly()
     {
         var olderStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var allowOlderToFinish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -182,25 +290,58 @@ public class UserWorkflowTests
             {
                 olderStarted.SetResult();
                 allowOlderToFinish.Task.GetAwaiter().GetResult();
-                return [@"C:\OldSkyrim"];
+                return [];
             });
         _gameLocationService.Setup(x => x.GetGameFolders(GameRelease.Fallout4))
             .Returns([@"C:\NewFallout"]);
 
         var sut = CreateSut();
 
-        _viewModel.SelectedGame = GameRelease.SkyrimSE;
-        var olderSelection = sut.ApplyGameContextTransitionAsync(GameContextTransition.SelectedGameReleaseChanged());
+        var olderSelection = sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
         await olderStarted.Task;
 
-        _viewModel.SelectedGame = GameRelease.Fallout4;
-        var newerSelection = sut.ApplyGameContextTransitionAsync(GameContextTransition.SelectedGameReleaseChanged());
+        var newerSelection = sut.SelectGameReleaseAsync(GameRelease.Fallout4);
 
         allowOlderToFinish.SetResult();
         await Task.WhenAll(olderSelection, newerSelection);
 
         Assert.Equal(@"C:\NewFallout", _viewModel.GameDirectory);
         AssertSingleRefresh(@"C:\NewFallout", GameRelease.Fallout4, false);
+        Assert.DoesNotContain(
+            "No installed locations found for SkyrimSE. Use Browse to select a directory.",
+            _viewModel.InformationMessages);
+    }
+
+    /// <summary>
+    /// Verifies that a retired installed-location failure cannot escape and create an obsolete WinUI message.
+    /// </summary>
+    [Fact]
+    public async Task SelectGameReleaseAsync_RetiredLookupFailure_IsSuppressed()
+    {
+        var olderStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var allowOlderToFail = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _gameLocationService.Setup(x => x.GetGameFolders(GameRelease.SkyrimSE))
+            .Returns(() =>
+            {
+                olderStarted.SetResult();
+                allowOlderToFail.Task.GetAwaiter().GetResult();
+                throw new InvalidOperationException("obsolete lookup failure");
+            });
+        _gameLocationService.Setup(x => x.GetGameFolders(GameRelease.Fallout4))
+            .Returns([@"C:\NewFallout"]);
+        var sut = CreateSut();
+
+        var olderSelection = sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
+        await olderStarted.Task;
+        var newerSelection = sut.SelectGameReleaseAsync(GameRelease.Fallout4);
+
+        allowOlderToFail.SetResult();
+        await Task.WhenAll(olderSelection, newerSelection);
+
+        Assert.Equal(GameRelease.Fallout4, _viewModel.SelectedGame);
+        Assert.Equal(@"C:\NewFallout", _viewModel.GameDirectory);
+        AssertSingleRefresh(@"C:\NewFallout", GameRelease.Fallout4, false);
+        Assert.DoesNotContain(_viewModel.ErrorMessages, message => message.Contains("obsolete", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -417,11 +558,9 @@ public class UserWorkflowTests
         var refreshCompletion = new TaskCompletionSource<PluginListDiscoveryResult>(
             TaskCreationOptions.RunContinuationsAsynchronously);
         _pluginListDiscovery.Handler = (_, _) => refreshCompletion.Task;
-        _viewModel.SelectedGame = GameRelease.Fallout4;
-        _viewModel.GameDirectory = @"D:\Games\Fallout4";
-
-        var transition = sut.ApplyGameContextTransitionAsync(
-            GameContextTransition.SelectedDetectedDirectoryChanged());
+        var transition = sut.SelectDetectedDirectoryAsync(@"D:\Games\Fallout4");
+        Assert.Equal(GameRelease.SkyrimSE, _viewModel.SelectedGame);
+        Assert.Equal(@"D:\Games\Fallout4", _viewModel.GameDirectory);
         Assert.Null(_pluginList.Current.Confirmed);
 
         await sut.ProcessFormIdsAsync();
@@ -535,8 +674,7 @@ public class UserWorkflowTests
         await ConfirmPluginListAsync(sut, ["Old.esp"]);
         Assert.Single(_viewModel.Plugins);
 
-        _viewModel.GameDirectory = string.Empty;
-        await sut.ApplyGameContextTransitionAsync(GameContextTransition.SelectedDetectedDirectoryChanged());
+        await sut.SelectDetectedDirectoryAsync(null);
 
         Assert.Null(_pluginList.Current.Confirmed);
         Assert.IsType<PluginListNoSourceActivity>(_pluginList.Current.Activity);
@@ -594,10 +732,10 @@ public class UserWorkflowTests
         IReadOnlyList<string> pluginNames)
     {
         _pluginListDiscovery.PluginNames = pluginNames;
-        _viewModel.SelectedGame = GameRelease.SkyrimSE;
-        _viewModel.GameDirectory = GameDirectory;
+        _gameLocationService.Setup(x => x.GetGameFolders(GameRelease.SkyrimSE))
+            .Returns([GameDirectory]);
 
-        await sut.ApplyGameContextTransitionAsync(GameContextTransition.SelectedDetectedDirectoryChanged());
+        await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
 
         return Assert.IsType<ConfirmedPluginList>(_pluginList.Current.Confirmed);
     }

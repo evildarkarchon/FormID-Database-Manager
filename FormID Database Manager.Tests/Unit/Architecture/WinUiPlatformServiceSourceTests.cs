@@ -209,7 +209,7 @@ public class WinUiPlatformServiceSourceTests
     }
 
     /// <summary>
-    /// Verifies that Phase 6 keeps binding-critical WinUI state on stable runtime bindings.
+    /// Verifies that Game Context selection is projected OneWay while unrelated editable fields retain their bindings.
     /// </summary>
     [Fact]
     public void WinUiMainWindow_UsesStablePhase6BindingSemantics()
@@ -226,9 +226,22 @@ public class WinUiPlatformServiceSourceTests
         Assert.Contains("public MainWindowViewModel ViewModel", source, StringComparison.Ordinal);
 
         Assert.Contains("ItemsSource=\"{Binding AvailableGames}\"", xaml, StringComparison.Ordinal);
-        Assert.Contains("SelectedItem=\"{Binding SelectedGame, Mode=TwoWay}\"", xaml, StringComparison.Ordinal);
-        Assert.Contains("Text=\"{Binding GameDirectory, Mode=TwoWay}\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("SelectedItem=\"{Binding SelectedGame, Mode=OneWay}\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("Text=\"{Binding GameDirectory, Mode=OneWay}\"", xaml, StringComparison.Ordinal);
         Assert.Contains("ItemsSource=\"{Binding DetectedDirectories}\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("SelectedItem=\"{Binding GameDirectory, Mode=OneWay}\"", xaml, StringComparison.Ordinal);
+        Assert.DoesNotContain("{Binding SelectedGame, Mode=TwoWay}", xaml, StringComparison.Ordinal);
+        Assert.DoesNotContain("{Binding GameDirectory, Mode=TwoWay}", xaml, StringComparison.Ordinal);
+        Assert.Contains("await _userWorkflow.SelectGameReleaseAsync(selectedGameRelease);", source,
+            StringComparison.Ordinal);
+        Assert.Contains("await _userWorkflow.SelectDetectedDirectoryAsync(selectedDirectory);", source,
+            StringComparison.Ordinal);
+        Assert.Contains("sender is ComboBox { SelectedItem: GameRelease gameRelease }", source,
+            StringComparison.Ordinal);
+        Assert.Contains("(sender as ComboBox)?.SelectedItem as string", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("GameContextTransition.SelectedGameReleaseChanged()", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("GameContextTransition.SelectedDetectedDirectoryChanged()", source,
+            StringComparison.Ordinal);
         Assert.Contains("Text=\"{Binding DatabasePath, Mode=TwoWay}\"", xaml, StringComparison.Ordinal);
         Assert.Contains("Text=\"{Binding FormIdListPath, Mode=TwoWay}\"", xaml, StringComparison.Ordinal);
         Assert.Contains("Text=\"{Binding PluginFilter, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}\"", xaml,

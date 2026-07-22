@@ -4,6 +4,7 @@ using FormID_Database_Manager.Models;
 using FormID_Database_Manager.Services;
 using FormID_Database_Manager.ViewModels;
 using FormID_Database_Manager.WinUI.Services;
+using Mutagen.Bethesda;
 
 namespace FormID_Database_Manager.WinUI;
 
@@ -131,13 +132,18 @@ public sealed partial class MainWindow : Window, IDisposable
     }
 
     /// <summary>
-    /// Handles game selection changes by loading installed directories and refreshing plugins.
+    /// Forwards the explicit GameRelease selection to the authoritative User Workflow.
     /// </summary>
+    /// <param name="sender">The ComboBox whose typed selected value is forwarded.</param>
+    /// <param name="e">The selection-change event details.</param>
     private async void GameComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         try
         {
-            await _userWorkflow.ApplyGameContextTransitionAsync(GameContextTransition.SelectedGameReleaseChanged());
+            var selectedGameRelease = sender is ComboBox { SelectedItem: GameRelease gameRelease }
+                ? gameRelease
+                : (GameRelease?)null;
+            await _userWorkflow.SelectGameReleaseAsync(selectedGameRelease);
         }
         catch (Exception ex)
         {
@@ -146,13 +152,16 @@ public sealed partial class MainWindow : Window, IDisposable
     }
 
     /// <summary>
-    /// Handles detected-directory changes by reloading plugins for the current selection.
+    /// Forwards the explicit detected-directory selection to the authoritative User Workflow.
     /// </summary>
+    /// <param name="sender">The ComboBox whose selected directory value is forwarded.</param>
+    /// <param name="e">The selection-change event details.</param>
     private async void DirectoryComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         try
         {
-            await _userWorkflow.ApplyGameContextTransitionAsync(GameContextTransition.SelectedDetectedDirectoryChanged());
+            var selectedDirectory = (sender as ComboBox)?.SelectedItem as string;
+            await _userWorkflow.SelectDetectedDirectoryAsync(selectedDirectory);
         }
         catch (Exception ex)
         {

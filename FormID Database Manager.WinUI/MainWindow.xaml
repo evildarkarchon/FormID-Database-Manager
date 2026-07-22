@@ -47,7 +47,7 @@
                     HorizontalAlignment="Stretch"
                     ItemsSource="{Binding AvailableGames}"
                     PlaceholderText="Select a game"
-                    SelectedItem="{Binding SelectedGame, Mode=TwoWay}"
+                    SelectedItem="{Binding SelectedGame, Mode=OneWay}"
                     SelectionChanged="GameComboBox_SelectionChanged"
                     TabIndex="0" />
 
@@ -70,7 +70,7 @@
                         IsReadOnly="True"
                         Style="{StaticResource PathTextBoxStyle}"
                         TabIndex="1"
-                        Text="{Binding GameDirectory, Mode=TwoWay}" />
+                        Text="{Binding GameDirectory, Mode=OneWay}" />
                     <ComboBox
                         AutomationProperties.AutomationId="DirectoryComboBox"
                         Grid.Column="1"
@@ -80,7 +80,7 @@
                         ItemsSource="{Binding DetectedDirectories}"
                         MinWidth="0"
                         PlaceholderText="Detected directories"
-                        SelectedItem="{Binding GameDirectory, Mode=TwoWay}"
+                        SelectedItem="{Binding GameDirectory, Mode=OneWay}"
                         SelectionChanged="DirectoryComboBox_SelectionChanged"
                         TabIndex="2" />
                     <Button

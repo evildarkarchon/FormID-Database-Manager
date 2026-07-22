@@ -74,6 +74,65 @@ public sealed class UserWorkflow : IDisposable
     }
 
     /// <summary>
+    /// Makes an explicit GameRelease selection authoritative before resolving its installed locations.
+    /// </summary>
+    /// <param name="selectedGameRelease">The selected GameRelease, or null when the selection is cleared.</param>
+    /// <returns>A task that completes after current installed-location resolution and Plugin List refresh finish.</returns>
+    /// <exception cref="ArgumentOutOfRangeException">The selected GameRelease is unsupported.</exception>
+    /// <exception cref="ObjectDisposedException">The workflow-owned Plugin List has been disposed.</exception>
+    /// <exception cref="AggregateException">A registered Plugin List refresh cancellation callback throws.</exception>
+    /// <remarks>Current lookup and fatal discovery failures propagate unchanged; failures from retired lookups are ignored.</remarks>
+    internal async Task SelectGameReleaseAsync(GameRelease? selectedGameRelease)
+    {
+        if (_gameContext.SelectedGameRelease == selectedGameRelease)
+        {
+            return;
+        }
+
+        var gameContextVersion = BeginGameContextDirectoryTransition();
+        _gameContext = _gameContext with
+        {
+            SelectedGameRelease = selectedGameRelease,
+            SelectedGameDirectory = null,
+            AvailableDirectories = ImmutableArray<string>.Empty
+        };
+        ProjectGameContext();
+        _pluginList.Invalidate();
+
+        if (selectedGameRelease is { } gameRelease)
+        {
+            await ResolveInstalledLocationsAsync(gameRelease, gameContextVersion);
+        }
+    }
+
+    /// <summary>
+    /// Makes an explicit detected-directory selection authoritative before refreshing the Plugin List.
+    /// </summary>
+    /// <param name="selectedDirectory">The selected directory, or null when the selection is cleared.</param>
+    /// <returns>A task that completes after current Plugin List discovery finishes.</returns>
+    /// <exception cref="ArgumentException">A complete context contains a whitespace-only directory.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">The authoritative GameRelease is unsupported.</exception>
+    /// <exception cref="ObjectDisposedException">The workflow-owned Plugin List has been disposed.</exception>
+    /// <exception cref="AggregateException">A registered Plugin List refresh cancellation callback throws.</exception>
+    /// <remarks>Programming and fatal Plugin discovery failures propagate unchanged.</remarks>
+    internal Task SelectDetectedDirectoryAsync(string? selectedDirectory)
+    {
+        var domainDirectory = ToDomainDirectory(selectedDirectory);
+        if (string.Equals(
+                _gameContext.SelectedGameDirectory,
+                domainDirectory,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return Task.CompletedTask;
+        }
+
+        var gameContextVersion = BeginGameContextDirectoryTransition();
+        _gameContext = _gameContext with { SelectedGameDirectory = domainDirectory };
+        ProjectGameContext();
+        return RefreshPluginsForCurrentGameContextAsync(gameContextVersion);
+    }
+
+    /// <summary>
     /// Selects a game directory, detects the game when needed, and refreshes the plugin list.
     /// </summary>
     /// <returns>A task that completes after picker handling and plugin refresh finish.</returns>
@@ -227,6 +286,11 @@ public sealed class UserWorkflow : IDisposable
         _pluginList.Dispose();
     }
 
+    /// <summary>
+    /// Preserves the temporary source-only release adapter until every Game Context intent uses named operations.
+    /// </summary>
+    /// <returns>A task that completes after current installed-location resolution and Plugin List refresh finish.</returns>
+    /// <remarks>Current lookup and fatal discovery failures propagate unchanged; failures from retired lookups are ignored.</remarks>
     private async Task ApplySelectedGameReleaseChangedAsync()
     {
         if (_programmaticGameSelectionToIgnore.HasValue &&
@@ -246,8 +310,28 @@ public sealed class UserWorkflow : IDisposable
             return;
         }
 
-        // Mutagen game-location lookup touches registry and file system state, so keep it off the UI thread.
-        var folders = await Task.Run(() => _gameLocationService.GetGameFolders(selectedGame));
+        await ResolveInstalledLocationsAsync(selectedGame, gameContextVersion);
+    }
+
+    /// <summary>
+    /// Resolves installed locations without blocking the UI and publishes only while the initiating intent is current.
+    /// </summary>
+    /// <param name="selectedGame">The GameRelease whose installed locations are requested.</param>
+    /// <param name="gameContextVersion">The resolution generation that owns any resulting state or messages.</param>
+    /// <remarks>Current lookup and fatal discovery failures propagate unchanged; failures from retired lookups are ignored.</remarks>
+    private async Task ResolveInstalledLocationsAsync(GameRelease selectedGame, int gameContextVersion)
+    {
+        List<string> folders;
+        try
+        {
+            // Mutagen game-location lookup touches registry and file system state, so keep it off the UI thread.
+            folders = await Task.Run(() => _gameLocationService.GetGameFolders(selectedGame));
+        }
+        catch (Exception) when (!IsLatestGameContextDirectoryTransition(gameContextVersion))
+        {
+            // An older lookup cannot surface failures after a newer release or directory intent becomes authoritative.
+            return;
+        }
 
         if (!IsLatestGameContextDirectoryTransition(gameContextVersion))
         {
@@ -446,7 +530,7 @@ public sealed class UserWorkflow : IDisposable
     /// </summary>
     /// <param name="directory">The existing presentation directory value.</param>
     /// <returns>The domain directory, or null when the presentation value represents absence.</returns>
-    private static string? ToDomainDirectory(string directory)
+    private static string? ToDomainDirectory(string? directory)
     {
         return string.IsNullOrEmpty(directory) ? null : directory;
     }
