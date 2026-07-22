@@ -90,6 +90,26 @@ public class CoreProjectBoundaryTests
     }
 
     /// <summary>
+    /// Verifies that WinUI can only read the complete Game Context projection and its stable directory collection.
+    /// </summary>
+    /// <param name="propertyName">The projected Game Context property whose public shape is verified.</param>
+    [Theory]
+    [InlineData(nameof(MainWindowViewModel.SelectedGame))]
+    [InlineData(nameof(MainWindowViewModel.GameDirectory))]
+    [InlineData(nameof(MainWindowViewModel.AdvancedMode))]
+    [InlineData(nameof(MainWindowViewModel.DetectedDirectories))]
+    public void GameContextProjectionProperties_PublicContract_ExposeGettersWithoutSetters(string propertyName)
+    {
+        var property = Assert.Single(
+            typeof(MainWindowViewModel).GetProperties(),
+            candidate => candidate.Name == propertyName);
+
+        Assert.NotNull(property.GetMethod);
+        Assert.True(property.GetMethod.IsPublic);
+        Assert.Null(property.SetMethod);
+    }
+
+    /// <summary>
     /// Verifies that production SQLite ownership remains inside the FormID Record Store and retired setup seams stay
     /// absent from every source area.
     /// </summary>

@@ -1,5 +1,4 @@
 using System.Diagnostics.CodeAnalysis;
-using System.ComponentModel;
 using FormID_Database_Manager.Models;
 using FormID_Database_Manager.Services;
 using FormID_Database_Manager.ViewModels;
@@ -81,7 +80,6 @@ public sealed partial class MainWindow : Window, IDisposable
     {
         InitializeComponent();
         Root.DataContext = ViewModel;
-        ViewModel.PropertyChanged += ViewModel_PropertyChanged;
         Closed += MainWindow_Closed;
     }
 
@@ -99,7 +97,6 @@ public sealed partial class MainWindow : Window, IDisposable
 
         _disposed = true;
         Closed -= MainWindow_Closed;
-        ViewModel.PropertyChanged -= ViewModel_PropertyChanged;
         // Detach presentation before the workflow retires its authoritative Plugin List.
         _pluginListPresentationAdapter.Dispose();
         _userWorkflow.Dispose();
@@ -109,26 +106,6 @@ public sealed partial class MainWindow : Window, IDisposable
     private void MainWindow_Closed(object sender, WindowEventArgs args)
     {
         Dispose();
-    }
-
-    private void ViewModel_PropertyChanged(object? sender, PropertyChangedEventArgs args)
-    {
-        if (args.PropertyName == nameof(MainWindowViewModel.AdvancedMode))
-        {
-            _ = RefreshPluginsForAdvancedModeAsync();
-        }
-    }
-
-    private async Task RefreshPluginsForAdvancedModeAsync()
-    {
-        try
-        {
-            await _userWorkflow.ApplyGameContextTransitionAsync(GameContextTransition.AdvancedModeChanged());
-        }
-        catch (Exception ex)
-        {
-            ViewModel.AddErrorMessage($"Unexpected error: {ex.Message}");
-        }
     }
 
     /// <summary>
@@ -160,8 +137,35 @@ public sealed partial class MainWindow : Window, IDisposable
     {
         try
         {
-            var selectedDirectory = (sender as ComboBox)?.SelectedItem as string;
-            await _userWorkflow.ApplyDetectedDirectorySelectionAsync(selectedDirectory);
+            if (sender is not ComboBox { SelectedItem: string selectedDirectory })
+            {
+                return;
+            }
+
+            await _userWorkflow.SelectDetectedDirectoryAsync(selectedDirectory);
+        }
+        catch (Exception ex)
+        {
+            ViewModel.AddErrorMessage($"Unexpected error: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Forwards the explicit Advanced Mode value to the authoritative User Workflow.
+    /// </summary>
+    /// <param name="sender">The CheckBox whose selected mode is forwarded.</param>
+    /// <param name="e">The click event details.</param>
+    private async void AdvancedModeCheckBox_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            if (sender is not CheckBox checkBox)
+            {
+                return;
+            }
+
+            var advancedMode = checkBox.IsChecked == true ? AdvancedMode.On : AdvancedMode.Off;
+            await _userWorkflow.SetAdvancedModeAsync(advancedMode);
         }
         catch (Exception ex)
         {

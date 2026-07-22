@@ -18,19 +18,6 @@ public class DataBindingTests
     }
 
     [Fact]
-    public void GameDirectory_NotifiesPropertyChanged()
-    {
-        var viewModel = new MainWindowViewModel(new SynchronousThreadDispatcher());
-        string? changedProperty = null;
-
-        viewModel.PropertyChanged += (_, e) => changedProperty = e.PropertyName;
-
-        viewModel.GameDirectory = @"C:\Games\Skyrim";
-
-        Assert.Equal(nameof(MainWindowViewModel.GameDirectory), changedProperty);
-    }
-
-    [Fact]
     public void Progress_UpdatesMultipleProperties()
     {
         var viewModel = new MainWindowViewModel(new SynchronousThreadDispatcher());

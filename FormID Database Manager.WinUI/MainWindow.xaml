@@ -249,8 +249,9 @@
                 <CheckBox
                     AutomationProperties.AutomationId="AdvancedModeCheckBox"
                     AutomationProperties.HelpText="Include base game and DLC plugins in the plugin list."
+                    Click="AdvancedModeCheckBox_Click"
                     Content="Show Base Game/DLC Files"
-                    IsChecked="{Binding AdvancedMode, Mode=TwoWay}"
+                    IsChecked="{Binding AdvancedMode, Mode=OneWay}"
                     TabIndex="13" />
             </StackPanel>
 

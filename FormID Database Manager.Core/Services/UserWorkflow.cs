@@ -19,8 +19,6 @@ public sealed class UserWorkflow : IDisposable
     private GameContextSnapshot _gameContext;
     private bool _disposed;
     private int _gameContextVersion;
-    private string? _programmaticDirectorySelectionToIgnore;
-    private GameRelease? _programmaticGameSelectionToIgnore;
 
     /// <summary>
     /// Creates a workflow module that coordinates existing Core modules behind one UI-neutral interface.
@@ -46,32 +44,11 @@ public sealed class UserWorkflow : IDisposable
         _pluginList = pluginList ?? throw new ArgumentNullException(nameof(pluginList));
         _processingRunExecutor = processingRunExecutor ??
                                  throw new ArgumentNullException(nameof(processingRunExecutor));
-        _gameContext = CaptureGameContextFromCompatibilityProjection();
-    }
-
-    /// <summary>
-    /// Applies a source-aware Game Context transition and refreshes the Plugin List when the context is complete.
-    /// </summary>
-    /// <param name="transition">The Game Context source that changed.</param>
-    /// <returns>A task that completes after the applicable workflow transition and refresh finish.</returns>
-    internal Task ApplyGameContextTransitionAsync(GameContextTransition transition)
-    {
-        _gameContext = CaptureGameContextFromCompatibilityProjection();
-
-        return transition.Source switch
-        {
-            GameContextTransitionSource.SelectedGameReleaseChanged => ApplySelectedGameReleaseChangedAsync(),
-            GameContextTransitionSource.SelectedDetectedDirectoryChanged => ApplySelectedDetectedDirectoryChangedAsync(),
-            GameContextTransitionSource.AdvancedModeChanged => RefreshPluginsForCurrentGameContextAsync(),
-            GameContextTransitionSource.BrowsedDirectorySelected => ApplyBrowsedDirectorySelectedAsync(
-                transition.BrowsedDirectoryPath ??
-                throw new ArgumentException("A browsed directory transition requires a path.", nameof(transition)),
-                BeginGameContextDirectoryTransition()),
-            _ => throw new ArgumentOutOfRangeException(
-                nameof(transition),
-                transition.Source,
-                "Unsupported Game Context transition source.")
-        };
+        _gameContext = new GameContextSnapshot(
+            null,
+            null,
+            ImmutableArray<string>.Empty,
+            AdvancedMode.Off);
     }
 
     /// <summary>
@@ -134,19 +111,41 @@ public sealed class UserWorkflow : IDisposable
     }
 
     /// <summary>
-    /// Applies a concrete detected-directory control selection without treating loss of selection as an explicit clear.
+    /// Makes an explicit Advanced Mode value authoritative and refreshes the current Plugin List source.
     /// </summary>
-    /// <param name="selectedDirectory">The selected directory, or null when the control has no matching item.</param>
+    /// <param name="advancedMode">The Advanced Mode value selected by the user.</param>
     /// <returns>A task that completes after applicable Plugin List discovery finishes.</returns>
-    internal Task ApplyDetectedDirectorySelectionAsync(string? selectedDirectory)
+    /// <exception cref="ArgumentException">The complete Game Context contains an invalid directory.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// The Advanced Mode or authoritative GameRelease is unsupported, or discovery returns an unsupported result.
+    /// </exception>
+    /// <exception cref="OperationCanceledException">Current Plugin discovery propagates an unexpected cancellation.</exception>
+    /// <exception cref="AggregateException">A registered Plugin List refresh cancellation callback throws.</exception>
+    /// <exception cref="ObjectDisposedException">The workflow-owned Plugin List has been disposed.</exception>
+    /// <remarks>
+    /// The authoritative snapshot is projected before discovery starts. Programming and fatal discovery failures propagate
+    /// unchanged, and Plugin List discovery may continue off the caller thread.
+    /// </remarks>
+    internal Task SetAdvancedModeAsync(AdvancedMode advancedMode)
     {
-        if (selectedDirectory is null)
+        if (advancedMode is not AdvancedMode.Off and not AdvancedMode.On)
         {
-            // A custom Browse path is absent from suggestions, so OneWay projection clears the ComboBox selection.
+            throw new ArgumentOutOfRangeException(
+                nameof(advancedMode),
+                advancedMode,
+                "Unsupported Advanced Mode value.");
+        }
+
+        if (_gameContext.AdvancedMode == advancedMode)
+        {
             return Task.CompletedTask;
         }
 
-        return SelectDetectedDirectoryAsync(selectedDirectory);
+        // Display mode changes do not retire location resolution; a current lookup reads this latest snapshot
+        // when it eventually requests Plugin List refresh.
+        _gameContext = _gameContext with { AdvancedMode = advancedMode };
+        ProjectGameContext();
+        return RefreshPluginsForCurrentGameContextAsync();
     }
 
     /// <summary>
@@ -255,24 +254,31 @@ public sealed class UserWorkflow : IDisposable
 
         try
         {
-            if (_viewModel.SelectedGame is not { } gameRelease)
+            // Projection notifications are reentrant, so every validation and source check for this run must use
+            // the same authoritative Game Context even if a new user intent is accepted before request creation ends.
+            var gameContext = _gameContext;
+            if (gameContext.SelectedGameRelease is not { } gameRelease)
             {
                 _viewModel.AddErrorMessage("Please select a game from the dropdown first.");
                 return;
             }
 
-            var confirmedPluginList = string.IsNullOrWhiteSpace(_viewModel.FormIdListPath)
-                ? _pluginList.Current.Confirmed
+            var formIdListPath = _viewModel.FormIdListPath;
+            var confirmedPluginList = string.IsNullOrWhiteSpace(formIdListPath)
+                ? GetConfirmedPluginListFor(gameContext)
                 : null;
-            var requestGameRelease = confirmedPluginList?.Source.GameRelease ?? gameRelease;
             var databasePath = _viewModel.DatabasePath;
             if (string.IsNullOrEmpty(databasePath))
             {
-                databasePath = DefaultDatabasePathProvider.CreateDefaultDatabasePath(requestGameRelease);
+                databasePath = DefaultDatabasePathProvider.CreateDefaultDatabasePath(gameRelease);
                 _viewModel.DatabasePath = databasePath;
             }
 
-            var request = CreateProcessingRunRequest(gameRelease, databasePath, confirmedPluginList);
+            var request = CreateProcessingRunRequest(
+                gameContext,
+                formIdListPath,
+                databasePath,
+                confirmedPluginList);
             var progress = new ProcessingRunProgressAdapter(ApplyProcessingRunEvent);
 
             await _processingRunExecutor.ExecuteAsync(request, progress);
@@ -308,36 +314,11 @@ public sealed class UserWorkflow : IDisposable
         }
 
         _disposed = true;
+        // Retire resolution before disposing collaborators so late lookup or picker work cannot publish into torn-down state.
+        Interlocked.Increment(ref _gameContextVersion);
         _processingRunExecutor.Cancel();
         _processingRunExecutor.Dispose();
         _pluginList.Dispose();
-    }
-
-    /// <summary>
-    /// Preserves the temporary source-only release adapter until every Game Context intent uses named operations.
-    /// </summary>
-    /// <returns>A task that completes after current installed-location resolution and Plugin List refresh finish.</returns>
-    /// <remarks>Current lookup and fatal discovery failures propagate unchanged; failures from retired lookups are ignored.</remarks>
-    private async Task ApplySelectedGameReleaseChangedAsync()
-    {
-        if (_programmaticGameSelectionToIgnore.HasValue &&
-            _programmaticGameSelectionToIgnore == _gameContext.SelectedGameRelease)
-        {
-            _programmaticGameSelectionToIgnore = null;
-            return;
-        }
-
-        _programmaticGameSelectionToIgnore = null;
-
-        var gameContextVersion = BeginGameContextDirectoryTransition();
-        ResetGameSelectionState();
-
-        if (_gameContext.SelectedGameRelease is not { } selectedGame)
-        {
-            return;
-        }
-
-        await ResolveInstalledLocationsAsync(selectedGame, gameContextVersion);
     }
 
     /// <summary>
@@ -376,25 +357,6 @@ public sealed class UserWorkflow : IDisposable
         await RefreshPluginsForCurrentGameContextAsync(gameContextVersion);
     }
 
-    private Task ApplySelectedDetectedDirectoryChangedAsync()
-    {
-        if (_programmaticDirectorySelectionToIgnore is { } ignoredDirectory)
-        {
-            _programmaticDirectorySelectionToIgnore = null;
-
-            if (string.Equals(
-                    ignoredDirectory,
-                    _gameContext.SelectedGameDirectory ?? string.Empty,
-                    StringComparison.OrdinalIgnoreCase))
-            {
-                return Task.CompletedTask;
-            }
-        }
-
-        var gameContextVersion = BeginGameContextDirectoryTransition();
-        return RefreshPluginsForCurrentGameContextAsync(gameContextVersion);
-    }
-
     /// <summary>
     /// Applies one current Browse result while preserving an explicit release and treating suggestions as non-binding.
     /// </summary>
@@ -412,7 +374,8 @@ public sealed class UserWorkflow : IDisposable
             _gameContext = _gameContext with { AvailableDirectories = ImmutableArray<string>.Empty };
         }
 
-        SetGameDirectoryFromWorkflow(path);
+        _gameContext = _gameContext with { SelectedGameDirectory = ToDomainDirectory(path) };
+        ProjectGameContext();
         if (!IsLatestGameContextDirectoryTransition(gameContextVersion))
         {
             return;
@@ -441,7 +404,6 @@ public sealed class UserWorkflow : IDisposable
 
             if (detectedGame.HasValue)
             {
-                _programmaticGameSelectionToIgnore = detectedGame.Value;
                 _gameContext = _gameContext with { SelectedGameRelease = detectedGame.Value };
                 ProjectGameContext();
             }
@@ -518,23 +480,6 @@ public sealed class UserWorkflow : IDisposable
     }
 
     /// <summary>
-    /// Clears directory state for a changed GameRelease and invalidates the previous Plugin List source.
-    /// </summary>
-    private void ResetGameSelectionState()
-    {
-        // Clearing the bound directory raises SelectionChanged; ignore that programmatic event so it
-        // cannot retire the installed-folder lookup that initiated this reset.
-        _programmaticDirectorySelectionToIgnore = string.Empty;
-        _gameContext = _gameContext with
-        {
-            SelectedGameDirectory = null,
-            AvailableDirectories = ImmutableArray<string>.Empty
-        };
-        ProjectGameContext();
-        _pluginList.Invalidate();
-    }
-
-    /// <summary>
     /// Publishes a non-empty installed-location result as the complete ordered available-directory snapshot.
     /// </summary>
     /// <param name="folders">The installed locations in discovery order.</param>
@@ -542,37 +487,12 @@ public sealed class UserWorkflow : IDisposable
     {
         var availableDirectories = folders.ToImmutableArray();
         var selectedDirectory = folders[0];
-        _programmaticDirectorySelectionToIgnore = selectedDirectory;
         _gameContext = _gameContext with
         {
             SelectedGameDirectory = selectedDirectory,
             AvailableDirectories = availableDirectories
         };
         ProjectGameContext();
-    }
-
-    /// <summary>
-    /// Updates the authoritative directory and projects it through the temporary feedback-loop adapter.
-    /// </summary>
-    /// <param name="path">The selected game directory presentation value.</param>
-    private void SetGameDirectoryFromWorkflow(string path)
-    {
-        _programmaticDirectorySelectionToIgnore = path;
-        _gameContext = _gameContext with { SelectedGameDirectory = ToDomainDirectory(path) };
-        ProjectGameContext();
-    }
-
-    /// <summary>
-    /// Captures the complete mutable presentation state at the temporary transition-adapter boundary.
-    /// </summary>
-    /// <returns>An immutable Game Context snapshot using null for an absent domain directory.</returns>
-    private GameContextSnapshot CaptureGameContextFromCompatibilityProjection()
-    {
-        return new GameContextSnapshot(
-            _viewModel.SelectedGame,
-            ToDomainDirectory(_viewModel.GameDirectory),
-            _viewModel.DetectedDirectories.ToImmutableArray(),
-            _viewModel.AdvancedMode ? AdvancedMode.On : AdvancedMode.Off);
     }
 
     /// <summary>
@@ -588,7 +508,7 @@ public sealed class UserWorkflow : IDisposable
     }
 
     /// <summary>
-    /// Converts the compatibility presentation value to the nullable directory used by the domain snapshot.
+    /// Converts the presentation value to the nullable directory used by the domain snapshot.
     /// </summary>
     /// <param name="directory">The existing presentation directory value.</param>
     /// <returns>The domain directory, or null when the presentation value represents absence.</returns>
@@ -613,23 +533,54 @@ public sealed class UserWorkflow : IDisposable
     }
 
     /// <summary>
+    /// Captures confirmation only when it belongs to the authoritative Plugin List Source for this Processing Run.
+    /// </summary>
+    /// <param name="gameContext">The one authoritative Game Context captured for run creation.</param>
+    /// <returns>
+    /// The matching immutable confirmation, or null when the context is incomplete or confirmation does not match its
+    /// Plugin List Source.
+    /// </returns>
+    /// <exception cref="ArgumentException">The captured directory cannot identify a normalized Plugin List Source.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">The captured GameRelease is unsupported.</exception>
+    private ConfirmedPluginList? GetConfirmedPluginListFor(GameContextSnapshot gameContext)
+    {
+        if (gameContext.SelectedGameRelease is not { } gameRelease ||
+            gameContext.SelectedGameDirectory is not { } gameDirectory ||
+            string.IsNullOrWhiteSpace(gameDirectory))
+        {
+            return null;
+        }
+
+        var expectedSource = PluginListSource.Create(gameRelease, gameDirectory);
+        var confirmedPluginList = _pluginList.Current.Confirmed;
+        return confirmedPluginList?.Source == expectedSource ? confirmedPluginList : null;
+    }
+
+    /// <summary>
     /// Creates one immutable Processing Run request, using a single confirmed Plugin List snapshot for Plugin runs.
     /// </summary>
-    /// <param name="selectedGameRelease">The current selected GameRelease used by FormID text-file validation.</param>
+    /// <param name="gameContext">The one authoritative Game Context captured for run creation.</param>
+    /// <param name="formIdListPath">The captured optional FormID text-file path.</param>
     /// <param name="databasePath">The resolved Store path for the run.</param>
     /// <param name="confirmedPluginList">The one captured confirmation for a Plugin run, when available.</param>
     /// <returns>A validated immutable Processing Run request.</returns>
+    /// <exception cref="InvalidOperationException">The captured Game Context has no selected GameRelease.</exception>
+    /// <exception cref="ProcessingRunValidationException">The captured request facts do not define a valid Processing Run.</exception>
     private ProcessingRunRequest CreateProcessingRunRequest(
-        GameRelease selectedGameRelease,
+        GameContextSnapshot gameContext,
+        string formIdListPath,
         string databasePath,
         ConfirmedPluginList? confirmedPluginList)
     {
+        var selectedGameRelease = gameContext.SelectedGameRelease ??
+                                  throw new InvalidOperationException(
+                                      "Processing Run creation requires an authoritative GameRelease.");
         var updateMode = _viewModel.UpdateMode ? UpdateMode.ReplacePluginRecords : UpdateMode.Append;
 
-        if (!string.IsNullOrWhiteSpace(_viewModel.FormIdListPath))
+        if (!string.IsNullOrWhiteSpace(formIdListPath))
         {
             return new FormIdTextProcessingRunRequest(
-                _viewModel.FormIdListPath,
+                formIdListPath,
                 databasePath,
                 selectedGameRelease,
                 updateMode);
@@ -639,7 +590,7 @@ public sealed class UserWorkflow : IDisposable
         {
             // Preserve legacy validation order without allowing an unconfirmed Plugin request to reach execution.
             return new PluginProcessingRunRequest(
-                _viewModel.GameDirectory,
+                gameContext.SelectedGameDirectory ?? string.Empty,
                 databasePath,
                 selectedGameRelease,
                 [],
@@ -647,9 +598,11 @@ public sealed class UserWorkflow : IDisposable
         }
 
         return new PluginProcessingRunRequest(
-            confirmedPluginList.Source.DataDirectory,
+            PluginListSource.Create(
+                selectedGameRelease,
+                gameContext.SelectedGameDirectory ?? string.Empty).DataDirectory,
             databasePath,
-            confirmedPluginList.Source.GameRelease,
+            selectedGameRelease,
             confirmedPluginList.SelectedPluginNames,
             updateMode);
     }

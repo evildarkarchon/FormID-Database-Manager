@@ -24,15 +24,22 @@ public class MainWindowViewModelTests
 
     #region Property Change Notification Tests
 
+    /// <summary>
+    /// Verifies that a changed projected directory raises its public presentation notification.
+    /// </summary>
     [Fact]
-    public void GameDirectory_RaisesPropertyChanged_WhenSet()
+    public void ApplyGameContextProjection_ChangedDirectory_RaisesPropertyChanged()
     {
         // Arrange
         var propertyName = string.Empty;
         _viewModel.PropertyChanged += (_, args) => propertyName = args.PropertyName;
 
         // Act
-        _viewModel.GameDirectory = @"C:\Games\Skyrim";
+        _viewModel.ApplyGameContextProjection(
+            GameRelease.SkyrimSE,
+            @"C:\Games\Skyrim",
+            [@"C:\Games\Skyrim"],
+            AdvancedMode.Off);
 
         // Assert
         Assert.Equal(nameof(MainWindowViewModel.GameDirectory), propertyName);
@@ -69,8 +76,11 @@ public class MainWindowViewModelTests
         Assert.Equal(@"C:\Lists\formids.txt", _viewModel.FormIdListPath);
     }
 
+    /// <summary>
+    /// Verifies that a changed projected GameRelease raises release and derived-state notifications.
+    /// </summary>
     [Fact]
-    public void SelectedGame_RaisesPropertyChanged_WhenSet()
+    public void ApplyGameContextProjection_ChangedGameRelease_RaisesDependentNotifications()
     {
         // Arrange
         var notifiedProperties = new System.Collections.Generic.List<string>();
@@ -83,7 +93,11 @@ public class MainWindowViewModelTests
         };
 
         // Act
-        _viewModel.SelectedGame = GameRelease.SkyrimSE;
+        _viewModel.ApplyGameContextProjection(
+            GameRelease.SkyrimSE,
+            null,
+            [],
+            AdvancedMode.Off);
 
         // Assert
         Assert.Contains(nameof(MainWindowViewModel.SelectedGame), notifiedProperties);
@@ -109,7 +123,11 @@ public class MainWindowViewModelTests
     public void IsGameSelected_ReturnsTrue_WhenSelectedGameHasValue()
     {
         // Arrange
-        _viewModel.SelectedGame = GameRelease.Fallout4;
+        _viewModel.ApplyGameContextProjection(
+            GameRelease.Fallout4,
+            null,
+            [],
+            AdvancedMode.Off);
 
         // Assert
         Assert.True(_viewModel.IsGameSelected);
@@ -337,15 +355,22 @@ public class MainWindowViewModelTests
         Assert.Equal("Processing plugins...", _viewModel.ProgressStatus);
     }
 
+    /// <summary>
+    /// Verifies that a changed projected Advanced Mode raises its public presentation notification.
+    /// </summary>
     [Fact]
-    public void AdvancedMode_RaisesPropertyChanged_WhenSet()
+    public void ApplyGameContextProjection_ChangedAdvancedMode_RaisesPropertyChanged()
     {
         // Arrange
         var propertyName = string.Empty;
         _viewModel.PropertyChanged += (_, args) => propertyName = args.PropertyName;
 
         // Act
-        _viewModel.AdvancedMode = true;
+        _viewModel.ApplyGameContextProjection(
+            null,
+            null,
+            [],
+            AdvancedMode.On);
 
         // Assert
         Assert.Equal(nameof(MainWindowViewModel.AdvancedMode), propertyName);
@@ -386,12 +411,12 @@ public class MainWindowViewModelTests
     public void Properties_DoNotRaisePropertyChanged_WhenSetToSameValue()
     {
         // Arrange
-        _viewModel.GameDirectory = "TestPath";
+        _viewModel.DatabasePath = "TestPath";
         var eventRaised = false;
         _viewModel.PropertyChanged += (_, _) => eventRaised = true;
 
         // Act
-        _viewModel.GameDirectory = "TestPath"; // Same value
+        _viewModel.DatabasePath = "TestPath"; // Same value
 
         // Assert
         Assert.False(eventRaised);
@@ -1365,16 +1390,16 @@ public class MainWindowViewModelTests
     public void SetProperty_ReturnsFalse_WhenValueUnchanged()
     {
         // Arrange
-        _viewModel.GameDirectory = "TestPath";
+        _viewModel.DatabasePath = "TestPath";
 
         // Act - Test that setting the same value doesn't raise PropertyChanged
         var eventRaised = false;
         _viewModel.PropertyChanged += (_, _) => eventRaised = true;
-        _viewModel.GameDirectory = "TestPath"; // Same value
+        _viewModel.DatabasePath = "TestPath"; // Same value
 
         // Assert
         Assert.False(eventRaised);
-        Assert.Equal("TestPath", _viewModel.GameDirectory);
+        Assert.Equal("TestPath", _viewModel.DatabasePath);
     }
 
     #endregion

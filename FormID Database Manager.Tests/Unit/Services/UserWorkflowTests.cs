@@ -51,17 +51,10 @@ public class UserWorkflowTests
     {
         var lookupStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var allowLookupToFinish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        _viewModel.ApplyGameContextProjection(
-            GameRelease.SkyrimSE,
-            @"C:\Old",
-            [@"C:\Old"],
-            AdvancedMode.Off);
+        _gameLocationService.Setup(x => x.GetGameFolders(GameRelease.SkyrimSE)).Returns([@"C:\Old"]);
         _pluginListDiscovery.PluginNames = ["Old.esp"];
-        await _pluginList.RefreshAsync(
-            GameRelease.SkyrimSE,
-            _viewModel.GameDirectory,
-            AdvancedMode.Off,
-            TestContext.Current.CancellationToken);
+        var sut = CreateSut();
+        await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
         _pluginListDiscovery.PluginNames = [];
         _refreshes.Clear();
         _gameLocationService.Setup(x => x.GetGameFolders(GameRelease.Fallout4))
@@ -71,8 +64,6 @@ public class UserWorkflowTests
                 allowLookupToFinish.Task.GetAwaiter().GetResult();
                 return [@"C:\Games\Fallout4", @"D:\Games\Fallout4"];
             });
-
-        var sut = CreateSut();
 
         var selection = sut.SelectGameReleaseAsync(GameRelease.Fallout4);
         await lookupStarted.Task;
@@ -90,6 +81,55 @@ public class UserWorkflowTests
         Assert.Equal([@"C:\Games\Fallout4", @"D:\Games\Fallout4"], _viewModel.DetectedDirectories.ToArray());
         Assert.Empty(_viewModel.Plugins);
         AssertSingleRefresh(@"C:\Games\Fallout4", GameRelease.Fallout4, false);
+    }
+
+    /// <summary>
+    /// Verifies that Advanced Mode becomes authoritative without retiring a current installed-location lookup.
+    /// </summary>
+    [Fact]
+    public async Task SetAdvancedModeAsync_DuringLocationLookup_ProjectsImmediatelyAndRefreshesWithLatestMode()
+    {
+        var lookupStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var allowLookupToFinish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _gameLocationService.Setup(x => x.GetGameFolders(GameRelease.Fallout4))
+            .Returns(() =>
+            {
+                lookupStarted.SetResult();
+                allowLookupToFinish.Task.GetAwaiter().GetResult();
+                return [@"C:\Games\Fallout4"];
+            });
+        var sut = CreateSut();
+
+        var releaseSelection = sut.SelectGameReleaseAsync(GameRelease.Fallout4);
+        await lookupStarted.Task;
+
+        await sut.SetAdvancedModeAsync(AdvancedMode.On);
+
+        Assert.Equal(GameRelease.Fallout4, _viewModel.SelectedGame);
+        Assert.Empty(_viewModel.GameDirectory);
+        Assert.True(_viewModel.AdvancedMode);
+        Assert.Empty(_refreshes);
+        Assert.Null(_pluginList.Current.Confirmed);
+
+        allowLookupToFinish.SetResult();
+        await releaseSelection;
+
+        Assert.Equal(@"C:\Games\Fallout4", _viewModel.GameDirectory);
+        AssertSingleRefresh(@"C:\Games\Fallout4", GameRelease.Fallout4, true);
+    }
+
+    /// <summary>
+    /// Verifies that an equal Advanced Mode event does not request duplicate Plugin List work.
+    /// </summary>
+    [Fact]
+    public async Task SetAdvancedModeAsync_EqualValue_IsNoOp()
+    {
+        var sut = CreateSut();
+
+        await sut.SetAdvancedModeAsync(AdvancedMode.Off);
+
+        Assert.False(_viewModel.AdvancedMode);
+        Assert.Empty(_refreshes);
     }
 
     /// <summary>
@@ -141,42 +181,6 @@ public class UserWorkflowTests
     }
 
     /// <summary>
-    /// Verifies that the equal directory event raised by projection does not retire the release lookup that caused it.
-    /// </summary>
-    [Fact]
-    public async Task SelectDetectedDirectoryAsync_EqualProjectedValue_DoesNotRetireLocationLookup()
-    {
-        var lookupStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var allowLookupToFinish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-
-        _viewModel.ApplyGameContextProjection(
-            GameRelease.SkyrimSE,
-            @"C:\Old",
-            [@"C:\Old"],
-            AdvancedMode.Off);
-        _gameLocationService.Setup(x => x.GetGameFolders(GameRelease.Fallout4))
-            .Returns(() =>
-            {
-                lookupStarted.SetResult();
-                allowLookupToFinish.Task.GetAwaiter().GetResult();
-                return [@"C:\NewFallout"];
-            });
-
-        var sut = CreateSut();
-
-        var gameSelection = sut.SelectGameReleaseAsync(GameRelease.Fallout4);
-        await lookupStarted.Task;
-
-        await sut.SelectDetectedDirectoryAsync(null);
-
-        allowLookupToFinish.SetResult();
-        await gameSelection;
-
-        Assert.Equal(@"C:\NewFallout", _viewModel.GameDirectory);
-        AssertSingleRefresh(@"C:\NewFallout", GameRelease.Fallout4, false);
-    }
-
-    /// <summary>
     /// Verifies that an empty current lookup retains the explicit release and presents Browse guidance.
     /// </summary>
     [Fact]
@@ -204,12 +208,11 @@ public class UserWorkflowTests
     [Fact]
     public async Task SelectGameReleaseAsync_EqualRelease_IsNoOp()
     {
-        _viewModel.ApplyGameContextProjection(
-            GameRelease.SkyrimSE,
-            GameDirectory,
-            [GameDirectory],
-            AdvancedMode.Off);
+        _gameLocationService.Setup(x => x.GetGameFolders(GameRelease.SkyrimSE)).Returns([GameDirectory]);
         var sut = CreateSut();
+        await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
+        _gameLocationService.Invocations.Clear();
+        _refreshes.Clear();
 
         await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
 
@@ -261,13 +264,11 @@ public class UserWorkflowTests
     [Fact]
     public async Task SelectDetectedDirectoryAsync_ChangedDirectory_RefreshesPluginListForExplicitValue()
     {
-        _viewModel.ApplyGameContextProjection(
-            GameRelease.SkyrimSE,
-            GameDirectory,
-            [GameDirectory, @"D:\Games\Skyrim"],
-            AdvancedMode.Off);
-
+        _gameLocationService.Setup(x => x.GetGameFolders(GameRelease.SkyrimSE))
+            .Returns([GameDirectory, @"D:\Games\Skyrim"]);
         var sut = CreateSut();
+        await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
+        _refreshes.Clear();
 
         await sut.SelectDetectedDirectoryAsync(@"D:\Games\Skyrim");
 
@@ -401,11 +402,8 @@ public class UserWorkflowTests
     [Fact]
     public async Task BrowseGameDirectoryAsync_NewerPickerCancellation_RetiresOlderPickerResult()
     {
-        _viewModel.ApplyGameContextProjection(
-            GameRelease.Fallout4,
-            @"C:\Existing",
-            [@"C:\Existing", @"D:\Suggested"],
-            AdvancedMode.Off);
+        _gameLocationService.Setup(x => x.GetGameFolders(GameRelease.Fallout4))
+            .Returns([@"C:\Existing", @"D:\Suggested"]);
         var olderPicker = new TaskCompletionSource<FileDialogResult>(
             TaskCreationOptions.RunContinuationsAsynchronously);
         var newerPicker = new TaskCompletionSource<FileDialogResult>(
@@ -414,6 +412,8 @@ public class UserWorkflowTests
             .Returns(olderPicker.Task)
             .Returns(newerPicker.Task);
         var sut = CreateSut();
+        await sut.SelectGameReleaseAsync(GameRelease.Fallout4);
+        _refreshes.Clear();
 
         var olderBrowse = sut.BrowseGameDirectoryAsync();
         var newerBrowse = sut.BrowseGameDirectoryAsync();
@@ -496,15 +496,14 @@ public class UserWorkflowTests
     public async Task BrowseGameDirectoryAsync_PickerFailureSupersededByDirectorySelection_IsSilent()
     {
         const string latestDirectory = @"D:\Games\Skyrim";
-        _viewModel.ApplyGameContextProjection(
-            GameRelease.SkyrimSE,
-            GameDirectory,
-            [GameDirectory, latestDirectory],
-            AdvancedMode.Off);
+        _gameLocationService.Setup(x => x.GetGameFolders(GameRelease.SkyrimSE))
+            .Returns([GameDirectory, latestDirectory]);
         var pickerCompletion = new TaskCompletionSource<FileDialogResult>(
             TaskCreationOptions.RunContinuationsAsynchronously);
         _fileDialogService.Setup(x => x.SelectGameDirectory()).Returns(pickerCompletion.Task);
         var sut = CreateSut();
+        await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
+        _refreshes.Clear();
 
         var browse = sut.BrowseGameDirectoryAsync();
         await sut.SelectDetectedDirectoryAsync(latestDirectory);
@@ -527,11 +526,6 @@ public class UserWorkflowTests
     [Fact]
     public async Task BrowseGameDirectoryAsync_SelectedDirectoryDetectsGameAndRefreshesPlugins()
     {
-        _viewModel.ApplyGameContextProjection(
-            null,
-            null,
-            [@"C:\StaleSuggestion"],
-            AdvancedMode.Off);
         _fileDialogService.Setup(x => x.SelectGameDirectory())
             .ReturnsAsync(FileDialogResult.Success(GameDirectory));
         _gameDetectionService.Setup(x => x.DetectGame(GameDirectory)).Returns(GameRelease.SkyrimSE);
@@ -619,47 +613,6 @@ public class UserWorkflowTests
     }
 
     /// <summary>
-    /// Verifies that a projection clear cannot retire discovery for an unsuggested Browse path.
-    /// </summary>
-    /// <returns>A task that completes after the boundary event and custom-path discovery failure finish.</returns>
-    [Fact]
-    public async Task ApplyDetectedDirectorySelectionAsync_ProjectionClearDuringCustomBrowse_DoesNotRetireBrowse()
-    {
-        const string customDirectory = @"Z:\Portable\Skyrim";
-        var refreshStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var refreshCompletion = new TaskCompletionSource<PluginListDiscoveryResult>(
-            TaskCreationOptions.RunContinuationsAsynchronously);
-        _gameLocationService.Setup(x => x.GetGameFolders(GameRelease.SkyrimSE))
-            .Returns([GameDirectory, @"D:\Games\Skyrim"]);
-        _pluginListDiscovery.PluginNames = ["PreviouslyConfirmed.esp"];
-        var sut = CreateSut();
-        await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
-        _refreshes.Clear();
-        _pluginListDiscovery.Handler = (_, _) =>
-        {
-            refreshStarted.SetResult();
-            return refreshCompletion.Task;
-        };
-        _fileDialogService.Setup(x => x.SelectGameDirectory())
-            .ReturnsAsync(FileDialogResult.Success(customDirectory));
-
-        var browse = sut.BrowseGameDirectoryAsync();
-        await refreshStarted.Task;
-        await sut.ApplyDetectedDirectorySelectionAsync(null);
-        refreshCompletion.SetResult(PluginListDiscoveryResult.Failed("release mismatch"));
-        await browse;
-
-        Assert.Equal(GameRelease.SkyrimSE, _viewModel.SelectedGame);
-        Assert.Equal(customDirectory, _viewModel.GameDirectory);
-        Assert.Equal([GameDirectory, @"D:\Games\Skyrim"], _viewModel.DetectedDirectories);
-        Assert.Null(_pluginList.Current.Confirmed);
-        Assert.Equal(PluginListSource.Create(GameRelease.SkyrimSE, customDirectory), Assert.Single(_refreshes));
-        Assert.Contains("Failed to load plugins: release mismatch", _viewModel.ErrorMessages);
-        _gameDetectionService.Verify(x => x.DetectGame(It.IsAny<string>()), Times.Never);
-        _gameLocationService.Verify(x => x.GetGameFolders(GameRelease.SkyrimSE), Times.Once);
-    }
-
-    /// <summary>
     /// Verifies that current detection failure retains the chosen path, clears confirmation, and presents guidance.
     /// </summary>
     /// <returns>A task that completes after detection failure is presented.</returns>
@@ -698,14 +651,13 @@ public class UserWorkflowTests
     [Fact]
     public async Task BrowseGameDirectoryAsync_CurrentPickerFailure_LeavesSnapshotUnchangedAndRecordsError()
     {
-        _viewModel.ApplyGameContextProjection(
-            GameRelease.Fallout4,
-            @"C:\Existing",
-            [@"C:\Existing", @"D:\Suggested"],
-            AdvancedMode.Off);
+        _gameLocationService.Setup(x => x.GetGameFolders(GameRelease.Fallout4))
+            .Returns([@"C:\Existing", @"D:\Suggested"]);
         _fileDialogService.Setup(x => x.SelectGameDirectory())
             .ReturnsAsync(FileDialogResult.Failure("picker unavailable"));
         var sut = CreateSut();
+        await sut.SelectGameReleaseAsync(GameRelease.Fallout4);
+        _refreshes.Clear();
 
         await sut.BrowseGameDirectoryAsync();
 
@@ -723,12 +675,13 @@ public class UserWorkflowTests
     [Fact]
     public async Task BrowseGameDirectoryAsync_PickerCancel_LeavesStateUnchangedAndAddsNoError()
     {
-        _viewModel.GameDirectory = @"C:\Existing";
-        _viewModel.SelectedGame = GameRelease.Fallout4;
+        _gameLocationService.Setup(x => x.GetGameFolders(GameRelease.Fallout4)).Returns([@"C:\Existing"]);
         _fileDialogService.Setup(x => x.SelectGameDirectory())
             .ReturnsAsync(FileDialogResult.Cancelled());
 
         var sut = CreateSut();
+        await sut.SelectGameReleaseAsync(GameRelease.Fallout4);
+        _refreshes.Clear();
 
         await sut.BrowseGameDirectoryAsync();
 
@@ -769,9 +722,9 @@ public class UserWorkflowTests
     [Fact]
     public async Task ProcessFormIdsAsync_PluginIngestionWithoutGameDirectory_RecordsValidationMessage()
     {
-        _viewModel.SelectedGame = GameRelease.SkyrimSE;
-
+        _gameLocationService.Setup(x => x.GetGameFolders(GameRelease.SkyrimSE)).Returns([]);
         var sut = CreateSut();
+        await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
 
         await sut.ProcessFormIdsAsync();
 
@@ -782,10 +735,9 @@ public class UserWorkflowTests
     [Fact]
     public async Task ProcessFormIdsAsync_PluginIngestionWithoutSelectedPlugins_RecordsValidationMessage()
     {
-        _viewModel.SelectedGame = GameRelease.SkyrimSE;
-        _viewModel.GameDirectory = GameDirectory;
-
+        _gameLocationService.Setup(x => x.GetGameFolders(GameRelease.SkyrimSE)).Returns([GameDirectory]);
         var sut = CreateSut();
+        await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
         await sut.ProcessFormIdsAsync();
         Assert.Contains("No plugins selected", _viewModel.ErrorMessages);
         Assert.Empty(_processingRuns);
@@ -809,15 +761,58 @@ public class UserWorkflowTests
     [Fact]
     public async Task ProcessFormIdsAsync_FormIdTextFile_SkipsPluginSelectionValidation()
     {
-        _viewModel.SelectedGame = GameRelease.SkyrimSE;
         _viewModel.DatabasePath = DatabasePath;
         _viewModel.FormIdListPath = FormIdListPath;
-
+        _gameLocationService.Setup(x => x.GetGameFolders(GameRelease.SkyrimSE)).Returns([]);
         var sut = CreateSut();
+        await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
         await sut.ProcessFormIdsAsync();
 
         var run = Assert.IsType<FormIdTextProcessingRunRequest>(Assert.Single(_processingRuns));
         Assert.Equal(FormIdListPath, run.FormIdListPath);
+    }
+
+    /// <summary>
+    /// Verifies that text-run validation and default Store naming use authority even while presentation is still queued.
+    /// </summary>
+    [Fact]
+    public async Task ProcessFormIdsAsync_FormIdTextFile_UsesAuthoritativeReleaseBeforeQueuedProjection()
+    {
+        var queuedActions = new Queue<Action>();
+        var dispatcher = new QueuedThreadDispatcher(
+            () => false,
+            action =>
+            {
+                queuedActions.Enqueue(action);
+                return true;
+            },
+            "Dispatcher rejected test work.");
+        var viewModel = new MainWindowViewModel(dispatcher)
+        {
+            FormIdListPath = FormIdListPath
+        };
+        var pluginList = new PluginList(_gameDetectionService.Object, _pluginListDiscovery);
+        var processingRuns = new List<ProcessingRunRequest>();
+        var executor = new RecordingProcessingRunExecutor(processingRuns);
+        _gameLocationService.Setup(x => x.GetGameFolders(GameRelease.Fallout4)).Returns([]);
+        using var sut = new UserWorkflow(
+            viewModel,
+            _fileDialogService.Object,
+            _gameDetectionService.Object,
+            _gameLocationService.Object,
+            pluginList,
+            executor);
+
+        await sut.SelectGameReleaseAsync(GameRelease.Fallout4);
+        Assert.Null(viewModel.SelectedGame);
+        Assert.NotEmpty(queuedActions);
+
+        await sut.ProcessFormIdsAsync();
+
+        var run = Assert.IsType<FormIdTextProcessingRunRequest>(Assert.Single(processingRuns));
+        Assert.Equal(GameRelease.Fallout4, run.GameRelease);
+        Assert.Equal("Fallout4.db", Path.GetFileName(run.DatabasePath));
+        Assert.Equal(run.DatabasePath, viewModel.DatabasePath);
     }
 
     [Fact]
@@ -870,7 +865,7 @@ public class UserWorkflowTests
         var refreshCompletion = new TaskCompletionSource<PluginListDiscoveryResult>(
             TaskCreationOptions.RunContinuationsAsynchronously);
         _pluginListDiscovery.Handler = (_, _) => refreshCompletion.Task;
-        var refresh = sut.ApplyGameContextTransitionAsync(GameContextTransition.AdvancedModeChanged());
+        var refresh = sut.SetAdvancedModeAsync(AdvancedMode.On);
 
         await sut.ProcessFormIdsAsync();
         var run = Assert.IsType<PluginProcessingRunRequest>(Assert.Single(_processingRuns));
@@ -911,6 +906,99 @@ public class UserWorkflowTests
 
         refreshCompletion.SetResult(PluginListDiscoveryResult.Completed(["New.esp"]));
         await transition;
+    }
+
+    /// <summary>
+    /// Verifies that a run started reentrantly from release projection cannot reuse the previous source confirmation.
+    /// </summary>
+    [Fact]
+    public async Task ProcessFormIdsAsync_DuringReleaseProjection_UsesCapturedAuthoritativeContext()
+    {
+        var sut = CreateSut();
+        var confirmed = await ConfirmPluginListAsync(sut, ["Old.esp"]);
+        sut.SetPluginSelection(confirmed.MembershipVersion, "Old.esp", true);
+        _viewModel.DatabasePath = string.Empty;
+        _gameLocationService.Setup(x => x.GetGameFolders(GameRelease.Fallout4)).Returns([]);
+        Task? reentrantRun = null;
+        _viewModel.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(MainWindowViewModel.SelectedGame))
+            {
+                reentrantRun = sut.ProcessFormIdsAsync();
+            }
+        };
+
+        await sut.SelectGameReleaseAsync(GameRelease.Fallout4);
+        Assert.NotNull(reentrantRun);
+        await reentrantRun;
+
+        Assert.Empty(_processingRuns);
+        Assert.Contains("Game directory must be specified when processing plugins", _viewModel.ErrorMessages);
+        Assert.Equal(
+            "Fallout4.db",
+            Path.GetFileName(_viewModel.DatabasePath));
+    }
+
+    /// <summary>
+    /// Verifies that a run started reentrantly from directory projection rejects confirmation for the previous source.
+    /// </summary>
+    [Fact]
+    public async Task ProcessFormIdsAsync_DuringDirectoryProjection_RejectsMismatchedConfirmation()
+    {
+        var sut = CreateSut();
+        var confirmed = await ConfirmPluginListAsync(sut, ["Old.esp"]);
+        sut.SetPluginSelection(confirmed.MembershipVersion, "Old.esp", true);
+        _viewModel.DatabasePath = DatabasePath;
+        var refreshCompletion = new TaskCompletionSource<PluginListDiscoveryResult>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        _pluginListDiscovery.Handler = (_, _) => refreshCompletion.Task;
+        Task? reentrantRun = null;
+        _viewModel.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(MainWindowViewModel.GameDirectory))
+            {
+                reentrantRun = sut.ProcessFormIdsAsync();
+            }
+        };
+
+        var transition = sut.SelectDetectedDirectoryAsync(@"D:\Games\Skyrim");
+        Assert.NotNull(reentrantRun);
+        await reentrantRun;
+
+        Assert.Empty(_processingRuns);
+        Assert.Contains("No plugins selected", _viewModel.ErrorMessages);
+
+        refreshCompletion.SetResult(PluginListDiscoveryResult.Completed(["New.esp"]));
+        await transition;
+    }
+
+    /// <summary>
+    /// Verifies that source matching accepts an equivalent normalized directory spelling during projection.
+    /// </summary>
+    [Fact]
+    public async Task ProcessFormIdsAsync_DuringEquivalentSourceProjection_AcceptsConfirmedSelection()
+    {
+        var sut = CreateSut();
+        var confirmed = await ConfirmPluginListAsync(sut, ["User.esp"]);
+        sut.SetPluginSelection(confirmed.MembershipVersion, "User.esp", true);
+        _viewModel.DatabasePath = DatabasePath;
+        Task? reentrantRun = null;
+        _viewModel.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(MainWindowViewModel.GameDirectory))
+            {
+                reentrantRun = sut.ProcessFormIdsAsync();
+            }
+        };
+
+        await sut.SelectDetectedDirectoryAsync(Path.Combine(GameDirectory, "Data", "."));
+        Assert.NotNull(reentrantRun);
+        await reentrantRun;
+
+        var run = Assert.IsType<PluginProcessingRunRequest>(Assert.Single(_processingRuns));
+        Assert.Equal(confirmed.Source.DataDirectory, run.GameDirectory);
+        Assert.Equal(GameRelease.SkyrimSE, run.GameRelease);
+        Assert.Equal(["User.esp"], run.PluginNames);
     }
 
     [Fact]
@@ -991,16 +1079,87 @@ public class UserWorkflowTests
         Assert.Throws<ObjectDisposedException>(() => _pluginList.Invalidate());
     }
 
+    /// <summary>
+    /// Verifies that disposal prevents a late installed-location result from projecting directories or refreshing Plugins.
+    /// </summary>
     [Fact]
-    public async Task ApplyGameContextTransitionAsync_AdvancedModeChanged_RefreshesPluginListForCurrentGameContext()
+    public async Task Dispose_DuringInstalledLocationLookup_RetiresLateProjectionAndRefresh()
     {
-        _viewModel.SelectedGame = GameRelease.SkyrimSE;
-        _viewModel.GameDirectory = GameDirectory;
-        _viewModel.AdvancedMode = true;
-
+        var lookupStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var allowLookupToFinish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _gameLocationService.Setup(x => x.GetGameFolders(GameRelease.Fallout4))
+            .Returns(() =>
+            {
+                lookupStarted.SetResult();
+                allowLookupToFinish.Task.GetAwaiter().GetResult();
+                return [@"C:\Games\Fallout4"];
+            });
         var sut = CreateSut();
+        var selection = sut.SelectGameReleaseAsync(GameRelease.Fallout4);
+        await lookupStarted.Task;
 
-        await sut.ApplyGameContextTransitionAsync(GameContextTransition.AdvancedModeChanged());
+        _pluginListPresentationAdapter.Dispose();
+        sut.Dispose();
+        allowLookupToFinish.SetResult();
+        await selection;
+
+        Assert.Equal(GameRelease.Fallout4, _viewModel.SelectedGame);
+        Assert.Empty(_viewModel.GameDirectory);
+        Assert.Empty(_viewModel.DetectedDirectories);
+        Assert.Empty(_refreshes);
+    }
+
+    /// <summary>
+    /// Verifies that disposal prevents a late folder-picker failure from publishing an obsolete error.
+    /// </summary>
+    [Fact]
+    public async Task Dispose_DuringFolderPicker_RetiresLateFailureMessage()
+    {
+        var pickerStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var allowPickerToFinish = new TaskCompletionSource<FileDialogResult>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        _fileDialogService.Setup(x => x.SelectGameDirectory())
+            .Returns(() =>
+            {
+                pickerStarted.SetResult();
+                return allowPickerToFinish.Task;
+            });
+        var sut = CreateSut();
+        var browse = sut.BrowseGameDirectoryAsync();
+        await pickerStarted.Task;
+
+        _pluginListPresentationAdapter.Dispose();
+        sut.Dispose();
+        allowPickerToFinish.SetResult(FileDialogResult.Failure("picker unavailable"));
+        await browse;
+
+        Assert.Empty(_viewModel.ErrorMessages);
+        Assert.Empty(_refreshes);
+    }
+
+    /// <summary>
+    /// Verifies that a changed Advanced Mode value is projected before same-source Plugin List refresh completes.
+    /// </summary>
+    [Fact]
+    public async Task SetAdvancedModeAsync_ChangedCompleteContext_ProjectsAndRefreshesCurrentSource()
+    {
+        _gameLocationService.Setup(x => x.GetGameFolders(GameRelease.SkyrimSE)).Returns([GameDirectory]);
+        var sut = CreateSut();
+        await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
+        _refreshes.Clear();
+        var refreshCompletion = new TaskCompletionSource<PluginListDiscoveryResult>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        _pluginListDiscovery.Handler = (_, _) => refreshCompletion.Task;
+
+        var refresh = sut.SetAdvancedModeAsync(AdvancedMode.On);
+
+        Assert.True(_viewModel.AdvancedMode);
+        Assert.Equal(
+            PluginListSource.Create(GameRelease.SkyrimSE, GameDirectory),
+            Assert.Single(_refreshes));
+
+        refreshCompletion.SetResult(PluginListDiscoveryResult.Completed([]));
+        await refresh;
 
         AssertSingleRefresh(GameDirectory, GameRelease.SkyrimSE, true);
     }
@@ -1009,7 +1168,7 @@ public class UserWorkflowTests
     /// Verifies that incomplete Game Context explicitly invalidates confirmation and its presentation projection.
     /// </summary>
     [Fact]
-    public async Task ApplyGameContextTransitionAsync_IncompleteContext_InvalidatesConfirmedPluginList()
+    public async Task SelectDetectedDirectoryAsync_ClearedSelection_InvalidatesConfirmedPluginList()
     {
         var sut = CreateSut();
         await ConfirmPluginListAsync(sut, ["Old.esp"]);

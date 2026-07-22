@@ -112,37 +112,19 @@ public partial class MainWindowViewModel : ObservableObject, IDisposable
     public ReadOnlyObservableCollection<string> DetectedDirectories { get; }
 
     /// <summary>
-    /// Gets or sets the projected Advanced Mode value through the temporary compatibility surface.
+    /// Gets the projected Advanced Mode value.
     /// </summary>
-    public bool AdvancedMode
-    {
-        get => _advancedMode;
-        set => SetProperty(ref _advancedMode, value);
-    }
+    public bool AdvancedMode => _advancedMode;
 
     /// <summary>
-    /// Gets or sets the projected game-directory presentation value through the temporary compatibility surface.
+    /// Gets the projected game-directory presentation value.
     /// </summary>
-    public string GameDirectory
-    {
-        get => _gameDirectory;
-        set => SetProperty(ref _gameDirectory, value);
-    }
+    public string GameDirectory => _gameDirectory;
 
     /// <summary>
-    /// Gets or sets the projected GameRelease through the temporary compatibility surface.
+    /// Gets the projected GameRelease.
     /// </summary>
-    public GameRelease? SelectedGame
-    {
-        get => _selectedGame;
-        set
-        {
-            if (SetProperty(ref _selectedGame, value))
-            {
-                OnPropertyChanged(nameof(IsGameSelected));
-            }
-        }
-    }
+    public GameRelease? SelectedGame => _selectedGame;
 
     public bool IsGameSelected => SelectedGame.HasValue;
 

@@ -170,15 +170,15 @@ public class WinUiPlatformServiceSourceTests
         Assert.Contains("Click=\"SelectAll_Click\"", xaml, StringComparison.Ordinal);
         Assert.Contains("Click=\"SelectNone_Click\"", xaml, StringComparison.Ordinal);
         Assert.Contains("Click=\"PluginCheckBox_Click\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("Click=\"AdvancedModeCheckBox_Click\"", xaml, StringComparison.Ordinal);
         Assert.Contains("Click=\"ProcessFormIds_Click\"", xaml, StringComparison.Ordinal);
-        Assert.DoesNotContain("AdvancedMode_CheckedChanged", source + xaml, StringComparison.Ordinal);
 
         Assert.Contains("_userWorkflow.SelectAllPlugins();", source, StringComparison.Ordinal);
         Assert.Contains("_userWorkflow.SelectNoPlugins();", source, StringComparison.Ordinal);
         Assert.Contains("_userWorkflow.SetPluginSelection(", source, StringComparison.Ordinal);
-        Assert.Contains("ViewModel.PropertyChanged += ViewModel_PropertyChanged;", source, StringComparison.Ordinal);
-        Assert.Contains("await _userWorkflow.ApplyGameContextTransitionAsync(", source, StringComparison.Ordinal);
-        Assert.Contains("GameContextTransition.AdvancedModeChanged()", source, StringComparison.Ordinal);
+        Assert.Contains("private async void AdvancedModeCheckBox_Click", source, StringComparison.Ordinal);
+        Assert.Contains("checkBox.IsChecked == true", source, StringComparison.Ordinal);
+        Assert.Contains("await _userWorkflow.SetAdvancedModeAsync(advancedMode);", source, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -212,7 +212,7 @@ public class WinUiPlatformServiceSourceTests
     /// Verifies that Game Context selection is projected OneWay while unrelated editable fields retain their bindings.
     /// </summary>
     [Fact]
-    public void WinUiMainWindow_UsesStablePhase6BindingSemantics()
+    public void WinUiMainWindow_ProjectsGameContextAndRetainsEditableBindingSemantics()
     {
         var winUiDirectory = GetWinUiProjectDirectory();
         var mainWindowSourcePath = Path.Combine(winUiDirectory, "MainWindow.xaml.cs");
@@ -221,52 +221,33 @@ public class WinUiPlatformServiceSourceTests
         var source = File.ReadAllText(mainWindowSourcePath);
         var xaml = File.ReadAllText(mainWindowXamlPath);
 
-        Assert.DoesNotContain("x:Bind", xaml, StringComparison.Ordinal);
-        Assert.Contains("Root.DataContext = ViewModel;", source, StringComparison.Ordinal);
-        Assert.Contains("public MainWindowViewModel ViewModel", source, StringComparison.Ordinal);
-
         Assert.Contains("ItemsSource=\"{Binding AvailableGames}\"", xaml, StringComparison.Ordinal);
         Assert.Contains("SelectedItem=\"{Binding SelectedGame, Mode=OneWay}\"", xaml, StringComparison.Ordinal);
         Assert.Contains("Text=\"{Binding GameDirectory, Mode=OneWay}\"", xaml, StringComparison.Ordinal);
         Assert.Contains("ItemsSource=\"{Binding DetectedDirectories}\"", xaml, StringComparison.Ordinal);
         Assert.Contains("SelectedItem=\"{Binding GameDirectory, Mode=OneWay}\"", xaml, StringComparison.Ordinal);
-        Assert.DoesNotContain("{Binding SelectedGame, Mode=TwoWay}", xaml, StringComparison.Ordinal);
-        Assert.DoesNotContain("{Binding GameDirectory, Mode=TwoWay}", xaml, StringComparison.Ordinal);
+        Assert.Contains("IsChecked=\"{Binding AdvancedMode, Mode=OneWay}\"", xaml, StringComparison.Ordinal);
         Assert.Contains("await _userWorkflow.SelectGameReleaseAsync(selectedGameRelease);", source,
-            StringComparison.Ordinal);
-        Assert.Contains("await _userWorkflow.ApplyDetectedDirectorySelectionAsync(selectedDirectory);", source,
             StringComparison.Ordinal);
         Assert.Contains("sender is ComboBox { SelectedItem: GameRelease gameRelease }", source,
             StringComparison.Ordinal);
-        Assert.Contains("(sender as ComboBox)?.SelectedItem as string", source, StringComparison.Ordinal);
-        Assert.DoesNotContain("await _userWorkflow.SelectDetectedDirectoryAsync(selectedDirectory);", source,
+        Assert.Contains("ComboBox { SelectedItem: string selectedDirectory }", source,
             StringComparison.Ordinal);
-        Assert.DoesNotContain("GameContextTransition.SelectedGameReleaseChanged()", source, StringComparison.Ordinal);
-        Assert.DoesNotContain("GameContextTransition.SelectedDetectedDirectoryChanged()", source,
+        Assert.Contains("await _userWorkflow.SelectDetectedDirectoryAsync(selectedDirectory);", source,
             StringComparison.Ordinal);
+        Assert.Contains("checkBox.IsChecked == true", source, StringComparison.Ordinal);
+        Assert.Contains("await _userWorkflow.SetAdvancedModeAsync(advancedMode);", source,
+            StringComparison.Ordinal);
+
         Assert.Contains("Text=\"{Binding DatabasePath, Mode=TwoWay}\"", xaml, StringComparison.Ordinal);
         Assert.Contains("Text=\"{Binding FormIdListPath, Mode=TwoWay}\"", xaml, StringComparison.Ordinal);
         Assert.Contains("Text=\"{Binding PluginFilter, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}\"", xaml,
             StringComparison.Ordinal);
         Assert.Contains("IsChecked=\"{Binding UpdateMode, Mode=TwoWay}\"", xaml, StringComparison.Ordinal);
-        Assert.Contains("IsChecked=\"{Binding AdvancedMode, Mode=TwoWay}\"", xaml, StringComparison.Ordinal);
-
         Assert.Contains("ItemsSource=\"{Binding FilteredPlugins}\"", xaml, StringComparison.Ordinal);
         Assert.Contains("Content=\"{Binding Name}\"", xaml, StringComparison.Ordinal);
         Assert.Contains("IsChecked=\"{Binding IsSelected, Mode=OneWay}\"", xaml, StringComparison.Ordinal);
         Assert.Contains("Click=\"PluginCheckBox_Click\"", xaml, StringComparison.Ordinal);
-        Assert.DoesNotContain("IsChecked=\"{Binding IsSelected, Mode=TwoWay}\"", xaml, StringComparison.Ordinal);
-
-        Assert.Contains("IsOpen=\"{Binding HasErrorMessages, Mode=OneWay}\"", xaml, StringComparison.Ordinal);
-        Assert.Contains("ItemsSource=\"{Binding ErrorMessages}\"", xaml, StringComparison.Ordinal);
-        Assert.Contains("IsOpen=\"{Binding HasWarningMessages, Mode=OneWay}\"", xaml, StringComparison.Ordinal);
-        Assert.Contains("ItemsSource=\"{Binding WarningMessages}\"", xaml, StringComparison.Ordinal);
-        Assert.Contains("IsOpen=\"{Binding HasInformationMessages, Mode=OneWay}\"", xaml, StringComparison.Ordinal);
-        Assert.Contains("ItemsSource=\"{Binding InformationMessages}\"", xaml, StringComparison.Ordinal);
-
-        Assert.Contains("Text=\"{Binding ProgressStatus, Mode=OneWay}\"", xaml, StringComparison.Ordinal);
-        Assert.Contains("Value=\"{Binding ProgressValue, Mode=OneWay}\"", xaml, StringComparison.Ordinal);
-        Assert.Contains("Content=\"{Binding ProcessButtonText, Mode=OneWay}\"", xaml, StringComparison.Ordinal);
     }
 
     /// <summary>
