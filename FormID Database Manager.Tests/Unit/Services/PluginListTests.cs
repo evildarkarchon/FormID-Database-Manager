@@ -96,6 +96,279 @@ public sealed class PluginListTests
         Assert.Equal(["skyrim.ESM", "User.esp"], confirmed.Entries.Select(entry => entry.Name).ToArray());
     }
 
+    /// <summary>
+    ///     Verifies individual intent matches case-insensitively and materializes selection in Plugin List order.
+    /// </summary>
+    [Fact]
+    public async Task Apply_CurrentIndividualIntent_PublishesCaseInsensitiveSelectionInPluginListOrder()
+    {
+        var gameDetectionService = new Mock<GameDetectionService>();
+        gameDetectionService.Setup(service => service.GetBaseGamePlugins(GameRelease.SkyrimSE))
+            .Returns([]);
+        var discovery = new DeterministicPluginListDiscovery("First.esp", "Second.esp");
+        using var sut = new PluginList(gameDetectionService.Object, discovery);
+        await sut.RefreshAsync(
+            GameRelease.SkyrimSE,
+            discovery.GameDirectory,
+            AdvancedMode.Off,
+            TestContext.Current.CancellationToken);
+        var beforeSelection = sut.Current;
+        var changedCount = 0;
+        sut.Changed += (_, _) => changedCount++;
+
+        sut.Apply(
+            new PluginSelectionByNameIntent(
+                beforeSelection.Confirmed!.MembershipVersion,
+                "second.ESP",
+                true));
+        sut.Apply(
+            new PluginSelectionByNameIntent(
+                beforeSelection.Confirmed.MembershipVersion,
+                "FIRST.ESP",
+                true));
+
+        Assert.Equal(beforeSelection.StateRevision + 2, sut.Current.StateRevision);
+        Assert.Equal(["First.esp", "Second.esp"], sut.Current.Confirmed!.SelectedPluginNames);
+        Assert.Equal(2, changedCount);
+    }
+
+    /// <summary>
+    ///     Verifies whole-list selection derives its target from the complete confirmed membership.
+    /// </summary>
+    [Fact]
+    public async Task Apply_CurrentWholeListIntent_SelectsCompleteConfirmedMembershipInOrder()
+    {
+        var gameDetectionService = new Mock<GameDetectionService>();
+        gameDetectionService.Setup(service => service.GetBaseGamePlugins(GameRelease.SkyrimSE))
+            .Returns([]);
+        var discovery = new DeterministicPluginListDiscovery("First.esp", "Second.esp", "Third.esp");
+        using var sut = new PluginList(gameDetectionService.Object, discovery);
+        await sut.RefreshAsync(
+            GameRelease.SkyrimSE,
+            discovery.GameDirectory,
+            AdvancedMode.Off,
+            TestContext.Current.CancellationToken);
+        var membershipVersion = sut.Current.Confirmed!.MembershipVersion;
+
+        sut.Apply(new PluginSelectionForAllIntent(membershipVersion, true));
+
+        Assert.Equal(
+            ["First.esp", "Second.esp", "Third.esp"],
+            sut.Current.Confirmed!.SelectedPluginNames);
+    }
+
+    /// <summary>
+    ///     Verifies whole-list deselection clears every selected Plugin from a partial selection.
+    /// </summary>
+    [Fact]
+    public async Task Apply_WholeListDeselection_ClearsPartialSelection()
+    {
+        var gameDetectionService = new Mock<GameDetectionService>();
+        gameDetectionService.Setup(service => service.GetBaseGamePlugins(GameRelease.SkyrimSE))
+            .Returns([]);
+        var discovery = new DeterministicPluginListDiscovery("First.esp", "Second.esp");
+        using var sut = new PluginList(gameDetectionService.Object, discovery);
+        await sut.RefreshAsync(
+            GameRelease.SkyrimSE,
+            discovery.GameDirectory,
+            AdvancedMode.Off,
+            TestContext.Current.CancellationToken);
+        var membershipVersion = sut.Current.Confirmed!.MembershipVersion;
+        sut.Apply(new PluginSelectionByNameIntent(membershipVersion, "First.esp", true));
+        var partiallySelectedRevision = sut.Current.StateRevision;
+
+        sut.Apply(new PluginSelectionForAllIntent(membershipVersion, false));
+
+        Assert.Empty(sut.Current.Confirmed!.SelectedPluginNames);
+        Assert.Equal(partiallySelectedRevision + 1, sut.Current.StateRevision);
+    }
+
+    /// <summary>
+    ///     Verifies whole-list intent over empty confirmed membership does not publish a redundant state.
+    /// </summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Apply_WholeListIntent_EmptyMembershipDoesNotPublishRedundantState(bool isSelected)
+    {
+        var gameDetectionService = new Mock<GameDetectionService>();
+        gameDetectionService.Setup(service => service.GetBaseGamePlugins(GameRelease.SkyrimSE))
+            .Returns([]);
+        var discovery = new DeterministicPluginListDiscovery();
+        using var sut = new PluginList(gameDetectionService.Object, discovery);
+        await sut.RefreshAsync(
+            GameRelease.SkyrimSE,
+            discovery.GameDirectory,
+            AdvancedMode.Off,
+            TestContext.Current.CancellationToken);
+        var unchanged = sut.Current;
+        var changedCount = 0;
+        sut.Changed += (_, _) => changedCount++;
+
+        sut.Apply(new PluginSelectionForAllIntent(unchanged.Confirmed!.MembershipVersion, isSelected));
+
+        Assert.Same(unchanged, sut.Current);
+        Assert.Equal(0, changedCount);
+    }
+
+    /// <summary>
+    ///     Verifies same-source discovery reconciles selection without retaining removed Plugin intent.
+    /// </summary>
+    [Fact]
+    public async Task RefreshAsync_SameSource_ReconcilesSelectionWithNewMembershipOrderAndCasing()
+    {
+        var gameDetectionService = new Mock<GameDetectionService>();
+        gameDetectionService.Setup(service => service.GetBaseGamePlugins(GameRelease.SkyrimSE))
+            .Returns([]);
+        var discovery = new ControlledPluginListDiscovery();
+        var initial = discovery.Enqueue();
+        var refreshed = discovery.Enqueue();
+        var reappeared = discovery.Enqueue();
+        using var sut = new PluginList(gameDetectionService.Object, discovery);
+        var gameDirectory = CreateGameDirectory();
+
+        var initialRefresh = sut.RefreshAsync(
+            GameRelease.SkyrimSE,
+            gameDirectory,
+            AdvancedMode.Off,
+            TestContext.Current.CancellationToken);
+        initial.Complete("StayA.esp", "Removed.esp", "StayB.esp");
+        await initialRefresh;
+        sut.Apply(new PluginSelectionForAllIntent(sut.Current.Confirmed!.MembershipVersion, true));
+        var initialSnapshot = sut.Current.Confirmed;
+
+        var sameSourceRefresh = sut.RefreshAsync(
+            GameRelease.SkyrimSE,
+            gameDirectory,
+            AdvancedMode.Off,
+            TestContext.Current.CancellationToken);
+        refreshed.Complete("stayb.ESP", "New.esp", "staya.ESP");
+        await sameSourceRefresh;
+
+        Assert.Equal(["stayb.ESP", "staya.ESP"], sut.Current.Confirmed!.SelectedPluginNames);
+        Assert.Equal(
+            ["StayA.esp", "Removed.esp", "StayB.esp"],
+            initialSnapshot.SelectedPluginNames);
+
+        var reappearanceRefresh = sut.RefreshAsync(
+            GameRelease.SkyrimSE,
+            gameDirectory,
+            AdvancedMode.Off,
+            TestContext.Current.CancellationToken);
+        reappeared.Complete("Removed.esp", "STAYA.esp", "STAYB.esp");
+        await reappearanceRefresh;
+
+        Assert.Equal(["STAYA.esp", "STAYB.esp"], sut.Current.Confirmed!.SelectedPluginNames);
+    }
+
+    /// <summary>
+    ///     Verifies rejected and already-satisfied intent does not publish another immutable state.
+    /// </summary>
+    [Fact]
+    public async Task Apply_RejectedAndAlreadySatisfiedIntent_DoesNotPublishRedundantState()
+    {
+        var gameDetectionService = new Mock<GameDetectionService>();
+        gameDetectionService.Setup(service => service.GetBaseGamePlugins(GameRelease.SkyrimSE))
+            .Returns([]);
+        var discovery = new DeterministicPluginListDiscovery("First.esp", "Second.esp");
+        using var sut = new PluginList(gameDetectionService.Object, discovery);
+        await sut.RefreshAsync(
+            GameRelease.SkyrimSE,
+            discovery.GameDirectory,
+            AdvancedMode.Off,
+            TestContext.Current.CancellationToken);
+        var staleMembershipVersion = sut.Current.Confirmed!.MembershipVersion;
+        await sut.RefreshAsync(
+            GameRelease.SkyrimSE,
+            discovery.GameDirectory,
+            AdvancedMode.Off,
+            TestContext.Current.CancellationToken);
+        var unchanged = sut.Current;
+        var membershipVersion = unchanged.Confirmed!.MembershipVersion;
+        var changedCount = 0;
+        sut.Changed += (_, _) => changedCount++;
+
+        sut.Apply(new PluginSelectionByNameIntent(staleMembershipVersion, "First.esp", true));
+        sut.Apply(new PluginSelectionForAllIntent(staleMembershipVersion, true));
+        sut.Apply(new PluginSelectionByNameIntent(membershipVersion, "Absent.esp", true));
+        sut.Apply(new PluginSelectionByNameIntent(membershipVersion, "First.esp", false));
+        sut.Apply(new PluginSelectionForAllIntent(membershipVersion, false));
+
+        Assert.Same(unchanged, sut.Current);
+        Assert.Equal(0, changedCount);
+
+        sut.Apply(new PluginSelectionByNameIntent(membershipVersion, "First.esp", true));
+        var selected = sut.Current;
+        sut.Apply(new PluginSelectionByNameIntent(membershipVersion, "FIRST.ESP", true));
+
+        Assert.Same(selected, sut.Current);
+        Assert.Equal(1, changedCount);
+    }
+
+    /// <summary>
+    ///     Verifies later selection mutation cannot alter a previously captured selected-name snapshot.
+    /// </summary>
+    [Fact]
+    public async Task Apply_LaterSelectionMutation_DoesNotChangeCapturedSnapshot()
+    {
+        var gameDetectionService = new Mock<GameDetectionService>();
+        gameDetectionService.Setup(service => service.GetBaseGamePlugins(GameRelease.SkyrimSE))
+            .Returns([]);
+        var discovery = new DeterministicPluginListDiscovery("First.esp", "Second.esp");
+        using var sut = new PluginList(gameDetectionService.Object, discovery);
+        await sut.RefreshAsync(
+            GameRelease.SkyrimSE,
+            discovery.GameDirectory,
+            AdvancedMode.Off,
+            TestContext.Current.CancellationToken);
+        var membershipVersion = sut.Current.Confirmed!.MembershipVersion;
+        sut.Apply(new PluginSelectionForAllIntent(membershipVersion, true));
+        var selectedSnapshot = sut.Current.Confirmed;
+
+        sut.Apply(new PluginSelectionForAllIntent(membershipVersion, false));
+
+        Assert.Empty(sut.Current.Confirmed!.SelectedPluginNames);
+        Assert.Equal(["First.esp", "Second.esp"], selectedSnapshot.SelectedPluginNames);
+    }
+
+    /// <summary>
+    ///     Verifies selection applied during same-source discovery participates in that refresh commit.
+    /// </summary>
+    [Fact]
+    public async Task RefreshAsync_SelectionAppliedDuringSameSourceRefresh_ParticipatesInCommit()
+    {
+        var gameDetectionService = new Mock<GameDetectionService>();
+        gameDetectionService.Setup(service => service.GetBaseGamePlugins(GameRelease.SkyrimSE))
+            .Returns([]);
+        var discovery = new ControlledPluginListDiscovery();
+        var initial = discovery.Enqueue();
+        var refreshed = discovery.Enqueue();
+        using var sut = new PluginList(gameDetectionService.Object, discovery);
+        var gameDirectory = CreateGameDirectory();
+        var initialRefresh = sut.RefreshAsync(
+            GameRelease.SkyrimSE,
+            gameDirectory,
+            AdvancedMode.Off,
+            TestContext.Current.CancellationToken);
+        initial.Complete("First.esp", "Second.esp");
+        await initialRefresh;
+
+        var sameSourceRefresh = sut.RefreshAsync(
+            GameRelease.SkyrimSE,
+            gameDirectory,
+            AdvancedMode.Off,
+            TestContext.Current.CancellationToken);
+        sut.Apply(
+            new PluginSelectionByNameIntent(
+                sut.Current.Confirmed!.MembershipVersion,
+                "second.ESP",
+                true));
+        refreshed.Complete("SECOND.esp", "First.esp", "New.esp");
+        await sameSourceRefresh;
+
+        Assert.Equal(["SECOND.esp"], sut.Current.Confirmed!.SelectedPluginNames);
+    }
+
     [Fact]
     public async Task RefreshAsync_ExpectedDiscoveryFailure_PublishesUiNeutralFailureWithoutConfirmedList()
     {

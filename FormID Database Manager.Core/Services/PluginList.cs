@@ -162,16 +162,99 @@ internal sealed class PluginList : IDisposable
     /// </summary>
     /// <param name="intent">The desired individual or whole-list selection state.</param>
     /// <exception cref="ArgumentNullException"><paramref name="intent" /> is null.</exception>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="intent" /> has an unsupported concrete type.</exception>
     /// <exception cref="ObjectDisposedException">The Plugin List has been disposed.</exception>
     /// <remarks>
-    ///     Initial discovery deliberately leaves membership unselected while the legacy production path remains active;
-    ///     authoritative versioned selection behavior is introduced by the dependent selection slice.
+    ///     Rejected and already-satisfied intent does not publish another state revision. Published selected names retain
+    ///     confirmed Plugin List order and discovery casing.
     /// </remarks>
     public void Apply(PluginSelectionIntent intent)
     {
         ThrowIfDisposed();
         ArgumentNullException.ThrowIfNull(intent);
-        // The legacy path still owns selection in this expansion slice; accepting intent here stabilizes the final boundary.
+
+        EventHandler? changed;
+        lock (_gate)
+        {
+            ThrowIfDisposed();
+            var confirmed = _current.Confirmed;
+            if (confirmed is null || confirmed.MembershipVersion != intent.MembershipVersion)
+            {
+                return;
+            }
+
+            if (intent is PluginSelectionForAllIntent)
+            {
+                var selectionIsSatisfied = intent.IsSelected
+                    ? confirmed.SelectedPluginNames.Length == confirmed.Entries.Length
+                    : confirmed.SelectedPluginNames.IsEmpty;
+                if (selectionIsSatisfied)
+                {
+                    return;
+                }
+
+                var completeSelection = ImmutableArray<string>.Empty;
+                if (intent.IsSelected)
+                {
+                    var completeSelectionBuilder = ImmutableArray.CreateBuilder<string>(confirmed.Entries.Length);
+                    foreach (var entry in confirmed.Entries)
+                    {
+                        completeSelectionBuilder.Add(entry.Name);
+                    }
+
+                    completeSelection = completeSelectionBuilder.ToImmutable();
+                }
+
+                changed = PublishLocked(
+                    confirmed with { SelectedPluginNames = completeSelection },
+                    _current.Activity);
+            }
+            else if (intent is PluginSelectionByNameIntent individualIntent)
+            {
+                string? confirmedName = null;
+                foreach (var entry in confirmed.Entries)
+                {
+                    if (string.Equals(entry.Name, individualIntent.PluginName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        confirmedName = entry.Name;
+                        break;
+                    }
+                }
+
+                if (confirmedName is null)
+                {
+                    return;
+                }
+
+                var selectedNames = new HashSet<string>(confirmed.SelectedPluginNames, StringComparer.OrdinalIgnoreCase);
+                if (selectedNames.Contains(confirmedName) == intent.IsSelected)
+                {
+                    return;
+                }
+
+                if (intent.IsSelected)
+                {
+                    selectedNames.Add(confirmedName);
+                }
+                else
+                {
+                    selectedNames.Remove(confirmedName);
+                }
+
+                changed = PublishLocked(
+                    confirmed with
+                    {
+                        SelectedPluginNames = MaterializeSelectedPluginNames(confirmed.Entries, selectedNames)
+                    },
+                    _current.Activity);
+            }
+            else
+            {
+                throw new ArgumentOutOfRangeException(nameof(intent), intent, "Unsupported Plugin selection intent.");
+            }
+        }
+
+        changed?.Invoke(this, EventArgs.Empty);
     }
 
     /// <summary>
@@ -240,7 +323,8 @@ internal sealed class PluginList : IDisposable
     }
 
     /// <summary>
-    ///     Applies base-Plugin and uniqueness rules, then publishes a new immutable confirmed membership when still current.
+    ///     Applies base-Plugin and uniqueness rules, reconciles same-source selection, then publishes a new immutable
+    ///     confirmed membership when still current.
     /// </summary>
     /// <param name="operation">The refresh generation that produced the discovery result.</param>
     /// <param name="advancedMode">Whether base Plugins remain eligible for membership.</param>
@@ -284,13 +368,25 @@ internal sealed class PluginList : IDisposable
                 return;
             }
 
+            var confirmedEntries = entries.ToImmutable();
+            var selectedNames = ImmutableArray<string>.Empty;
+            // Reconcile under the publication gate so selection applied during discovery participates in this commit.
+            var previousConfirmed = _current.Confirmed;
+            if (previousConfirmed?.Source == operation.Source)
+            {
+                var previouslySelected = new HashSet<string>(
+                    previousConfirmed.SelectedPluginNames,
+                    StringComparer.OrdinalIgnoreCase);
+                selectedNames = MaterializeSelectedPluginNames(confirmedEntries, previouslySelected);
+            }
+
             var membershipVersion = ++_membershipVersion;
             var confirmed = new ConfirmedPluginList(
                 membershipVersion,
                 operation.Source,
                 advancedMode,
-                entries.ToImmutable(),
-                []);
+                confirmedEntries,
+                selectedNames);
             _activeRefresh = null;
             changed = PublishLocked(
                 confirmed,
@@ -298,6 +394,28 @@ internal sealed class PluginList : IDisposable
         }
 
         changed?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>
+    ///     Materializes selected Plugin names in confirmed membership order and casing.
+    /// </summary>
+    /// <param name="entries">The immutable confirmed membership whose order and casing are authoritative.</param>
+    /// <param name="selectedNames">The case-insensitive set identifying selected membership.</param>
+    /// <returns>An immutable ordered snapshot containing only selected confirmed Plugin names.</returns>
+    private static ImmutableArray<string> MaterializeSelectedPluginNames(
+        ImmutableArray<PluginListEntry> entries,
+        IReadOnlySet<string> selectedNames)
+    {
+        var orderedSelection = ImmutableArray.CreateBuilder<string>(entries.Length);
+        foreach (var entry in entries)
+        {
+            if (selectedNames.Contains(entry.Name))
+            {
+                orderedSelection.Add(entry.Name);
+            }
+        }
+
+        return orderedSelection.ToImmutable();
     }
 
     /// <summary>
