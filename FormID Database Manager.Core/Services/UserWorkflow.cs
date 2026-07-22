@@ -134,6 +134,22 @@ public sealed class UserWorkflow : IDisposable
     }
 
     /// <summary>
+    /// Applies a concrete detected-directory control selection without treating loss of selection as an explicit clear.
+    /// </summary>
+    /// <param name="selectedDirectory">The selected directory, or null when the control has no matching item.</param>
+    /// <returns>A task that completes after applicable Plugin List discovery finishes.</returns>
+    internal Task ApplyDetectedDirectorySelectionAsync(string? selectedDirectory)
+    {
+        if (selectedDirectory is null)
+        {
+            // A custom Browse path is absent from suggestions, so OneWay projection clears the ComboBox selection.
+            return Task.CompletedTask;
+        }
+
+        return SelectDetectedDirectoryAsync(selectedDirectory);
+    }
+
+    /// <summary>
     /// Opens the game-directory picker as a latest-intent operation, detects a missing GameRelease, and refreshes the Plugin List.
     /// </summary>
     /// <returns>A task that completes after picker handling and plugin refresh finish.</returns>

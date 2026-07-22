@@ -234,11 +234,13 @@ public class WinUiPlatformServiceSourceTests
         Assert.DoesNotContain("{Binding GameDirectory, Mode=TwoWay}", xaml, StringComparison.Ordinal);
         Assert.Contains("await _userWorkflow.SelectGameReleaseAsync(selectedGameRelease);", source,
             StringComparison.Ordinal);
-        Assert.Contains("await _userWorkflow.SelectDetectedDirectoryAsync(selectedDirectory);", source,
+        Assert.Contains("await _userWorkflow.ApplyDetectedDirectorySelectionAsync(selectedDirectory);", source,
             StringComparison.Ordinal);
         Assert.Contains("sender is ComboBox { SelectedItem: GameRelease gameRelease }", source,
             StringComparison.Ordinal);
         Assert.Contains("(sender as ComboBox)?.SelectedItem as string", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("await _userWorkflow.SelectDetectedDirectoryAsync(selectedDirectory);", source,
+            StringComparison.Ordinal);
         Assert.DoesNotContain("GameContextTransition.SelectedGameReleaseChanged()", source, StringComparison.Ordinal);
         Assert.DoesNotContain("GameContextTransition.SelectedDetectedDirectoryChanged()", source,
             StringComparison.Ordinal);

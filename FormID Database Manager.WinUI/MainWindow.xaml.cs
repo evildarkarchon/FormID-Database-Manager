@@ -152,7 +152,7 @@ public sealed partial class MainWindow : Window, IDisposable
     }
 
     /// <summary>
-    /// Forwards the explicit detected-directory selection to the authoritative User Workflow.
+    /// Forwards detected-directory control changes to the authoritative User Workflow boundary.
     /// </summary>
     /// <param name="sender">The ComboBox whose selected directory value is forwarded.</param>
     /// <param name="e">The selection-change event details.</param>
@@ -161,7 +161,7 @@ public sealed partial class MainWindow : Window, IDisposable
         try
         {
             var selectedDirectory = (sender as ComboBox)?.SelectedItem as string;
-            await _userWorkflow.SelectDetectedDirectoryAsync(selectedDirectory);
+            await _userWorkflow.ApplyDetectedDirectorySelectionAsync(selectedDirectory);
         }
         catch (Exception ex)
         {

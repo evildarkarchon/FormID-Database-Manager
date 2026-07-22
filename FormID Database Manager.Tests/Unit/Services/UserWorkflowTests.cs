@@ -619,13 +619,16 @@ public class UserWorkflowTests
     }
 
     /// <summary>
-    /// Verifies that an explicit release accepts an unsuggested Browse path and reports discovery failure normally.
+    /// Verifies that a projection clear cannot retire discovery for an unsuggested Browse path.
     /// </summary>
-    /// <returns>A task that completes after discovery for the custom path fails.</returns>
+    /// <returns>A task that completes after the boundary event and custom-path discovery failure finish.</returns>
     [Fact]
-    public async Task BrowseGameDirectoryAsync_CustomPathWithSelectedRelease_PreservesReleaseAndSuggestions()
+    public async Task ApplyDetectedDirectorySelectionAsync_ProjectionClearDuringCustomBrowse_DoesNotRetireBrowse()
     {
         const string customDirectory = @"Z:\Portable\Skyrim";
+        var refreshStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var refreshCompletion = new TaskCompletionSource<PluginListDiscoveryResult>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
         _gameLocationService.Setup(x => x.GetGameFolders(GameRelease.SkyrimSE))
             .Returns([GameDirectory, @"D:\Games\Skyrim"]);
         _pluginListDiscovery.PluginNames = ["PreviouslyConfirmed.esp"];
@@ -633,11 +636,18 @@ public class UserWorkflowTests
         await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
         _refreshes.Clear();
         _pluginListDiscovery.Handler = (_, _) =>
-            Task.FromResult<PluginListDiscoveryResult>(PluginListDiscoveryResult.Failed("release mismatch"));
+        {
+            refreshStarted.SetResult();
+            return refreshCompletion.Task;
+        };
         _fileDialogService.Setup(x => x.SelectGameDirectory())
             .ReturnsAsync(FileDialogResult.Success(customDirectory));
 
-        await sut.BrowseGameDirectoryAsync();
+        var browse = sut.BrowseGameDirectoryAsync();
+        await refreshStarted.Task;
+        await sut.ApplyDetectedDirectorySelectionAsync(null);
+        refreshCompletion.SetResult(PluginListDiscoveryResult.Failed("release mismatch"));
+        await browse;
 
         Assert.Equal(GameRelease.SkyrimSE, _viewModel.SelectedGame);
         Assert.Equal(customDirectory, _viewModel.GameDirectory);
