@@ -10,8 +10,11 @@ internal sealed class PluginList : IDisposable
 {
     private readonly IPluginListDiscovery _discovery;
     private readonly GameDetectionService _gameDetectionService;
+    private readonly object _gate = new();
+    private RefreshOperation? _activeRefresh;
     private PluginListState _current = PluginListState.Initial;
     private long _membershipVersion;
+    private long _refreshGeneration;
     private long _stateRevision;
     private int _disposed;
 
@@ -52,7 +55,13 @@ internal sealed class PluginList : IDisposable
     ///     <paramref name="gameRelease" /> or <paramref name="advancedMode" /> is undefined, or discovery returns an
     ///     unsupported result.
     /// </exception>
-    /// <exception cref="OperationCanceledException"><paramref name="cancellationToken" /> is cancelled.</exception>
+    /// <exception cref="OperationCanceledException">
+    ///     <paramref name="cancellationToken" /> is cancelled, or discovery propagates an unexpected cancellation. Caller
+    ///     cancellation activity is published only while this refresh is current.
+    /// </exception>
+    /// <exception cref="AggregateException">
+    ///     A cancellation callback throws while retiring the previous active refresh.
+    /// </exception>
     /// <exception cref="ObjectDisposedException">The Plugin List has been disposed.</exception>
     /// <remarks>
     ///     Discovery may run off the caller thread. State signals are synchronous on whichever thread publishes each fact.
@@ -71,26 +80,56 @@ internal sealed class PluginList : IDisposable
         }
 
         var source = PluginListSource.Create(gameRelease, gameDirectory);
-        Publish(null, new PluginListRefreshingActivity(source, 0, 0));
+        var operation = BeginRefresh(source);
 
-        var progress = new DiscoveryProgress(this, source);
-        var result = await _discovery
-            .DiscoverAsync(source, progress, cancellationToken)
-            .ConfigureAwait(false);
-
-        ThrowIfDisposed();
-        switch (result)
+        try
         {
-            case PluginListDiscoveryCompleted completed:
-                PublishCompleted(source, advancedMode, completed.PluginNames);
-                return;
+            using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+                cancellationToken,
+                operation.RetirementToken);
+            var progress = new DiscoveryProgress(this, operation);
+            var result = await _discovery
+                .DiscoverAsync(source, progress, linkedCancellation.Token)
+                .ConfigureAwait(false);
 
-            case PluginListDiscoveryFailed failed:
-                Publish(null, new PluginListFailedActivity(source, failed.ErrorMessage));
+            cancellationToken.ThrowIfCancellationRequested();
+            // A non-cooperative discovery adapter can finish after retirement; its result is intentionally ignored.
+            if (!IsCurrent(operation))
+            {
                 return;
+            }
 
-            default:
-                throw new ArgumentOutOfRangeException(nameof(result), result, "Unsupported Plugin List discovery result.");
+            switch (result)
+            {
+                case PluginListDiscoveryCompleted completed:
+                    PublishCompleted(operation, advancedMode, completed.PluginNames);
+                    return;
+
+                case PluginListDiscoveryFailed failed:
+                    PublishFailure(operation, failed.ErrorMessage);
+                    return;
+
+                default:
+                    throw new ArgumentOutOfRangeException(
+                        nameof(result),
+                        result,
+                        "Unsupported Plugin List discovery result.");
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            PublishCancellation(operation);
+            // Caller cancellation always remains exceptional, but only a still-current refresh publishes its activity.
+            throw;
+        }
+        catch (OperationCanceledException) when (!IsCurrent(operation))
+        {
+            // Supersession, invalidation, and disposal alone are routine retirement, not user-visible cancellation.
+        }
+        finally
+        {
+            FinishRefresh(operation);
+            operation.Dispose();
         }
     }
 
@@ -98,10 +137,24 @@ internal sealed class PluginList : IDisposable
     ///     Invalidates any confirmed membership and returns the module to no-source activity.
     /// </summary>
     /// <exception cref="ObjectDisposedException">The Plugin List has been disposed.</exception>
+    /// <exception cref="AggregateException">A registered refresh cancellation callback throws.</exception>
     public void Invalidate()
     {
         ThrowIfDisposed();
-        Publish(null, new PluginListNoSourceActivity());
+        RefreshOperation? retired;
+        EventHandler? changed;
+        lock (_gate)
+        {
+            ThrowIfDisposed();
+            retired = _activeRefresh;
+            _activeRefresh = null;
+            _refreshGeneration++;
+            changed = PublishLocked(null, new PluginListNoSourceActivity());
+        }
+
+        // Removing the active generation before cancellation prevents non-cooperative work from republishing stale facts.
+        retired?.Retire();
+        changed?.Invoke(this, EventArgs.Empty);
     }
 
     /// <summary>
@@ -124,25 +177,86 @@ internal sealed class PluginList : IDisposable
     /// <summary>
     ///     Releases this workflow-scoped Plugin List. Disposal is idempotent.
     /// </summary>
+    /// <exception cref="AggregateException">A registered refresh cancellation callback throws.</exception>
     /// <remarks>Disposal prevents subsequent state publication but does not block waiting for synchronous discovery work.</remarks>
     public void Dispose()
     {
-        Interlocked.Exchange(ref _disposed, 1);
+        RefreshOperation? retired;
+        lock (_gate)
+        {
+            if (Volatile.Read(ref _disposed) != 0)
+            {
+                return;
+            }
+
+            Volatile.Write(ref _disposed, 1);
+            retired = _activeRefresh;
+            _activeRefresh = null;
+            _refreshGeneration++;
+        }
+
+        // Disposal only retires work; it deliberately does not publish another state during workflow shutdown.
+        retired?.Retire();
     }
 
     /// <summary>
-    ///     Applies base-Plugin and uniqueness rules, then publishes a new immutable confirmed membership.
+    ///     Installs the next refresh generation and synchronously exposes its source-aware refreshing state.
     /// </summary>
-    /// <param name="source">The normalized source that produced the discovery result.</param>
+    /// <param name="source">The normalized Plugin List Source being refreshed.</param>
+    /// <returns>The operation identity and retirement lifetime for the new refresh.</returns>
+    private RefreshOperation BeginRefresh(PluginListSource source)
+    {
+        RefreshOperation? retired;
+        RefreshOperation operation;
+        EventHandler? changed;
+        lock (_gate)
+        {
+            ThrowIfDisposed();
+            operation = new RefreshOperation(++_refreshGeneration, source);
+            retired = _activeRefresh;
+            _activeRefresh = operation;
+
+            var currentConfirmed = _current.Confirmed;
+            // The last confirmed membership remains coherent only when the normalized Plugin List Source is unchanged.
+            var retainedConfirmed = currentConfirmed?.Source == source ? currentConfirmed : null;
+            changed = PublishLocked(retainedConfirmed, new PluginListRefreshingActivity(source, 0, 0));
+        }
+
+        // The generation changes before cancellation so late callbacks cannot win even when discovery ignores its token.
+        retired?.Retire();
+        try
+        {
+            changed?.Invoke(this, EventArgs.Empty);
+        }
+        catch
+        {
+            FinishRefresh(operation);
+            operation.Retire();
+            operation.Dispose();
+            throw;
+        }
+
+        return operation;
+    }
+
+    /// <summary>
+    ///     Applies base-Plugin and uniqueness rules, then publishes a new immutable confirmed membership when still current.
+    /// </summary>
+    /// <param name="operation">The refresh generation that produced the discovery result.</param>
     /// <param name="advancedMode">Whether base Plugins remain eligible for membership.</param>
     /// <param name="discoveredNames">Ordered available names reported by discovery.</param>
     private void PublishCompleted(
-        PluginListSource source,
+        RefreshOperation operation,
         AdvancedMode advancedMode,
         ImmutableArray<string> discoveredNames)
     {
+        if (!IsCurrent(operation))
+        {
+            return;
+        }
+
         var basePlugins = new HashSet<string>(
-            _gameDetectionService.GetBaseGamePlugins(source.GameRelease),
+            _gameDetectionService.GetBaseGamePlugins(operation.Source.GameRelease),
             StringComparer.OrdinalIgnoreCase);
         var addedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var entries = ImmutableArray.CreateBuilder<PluginListEntry>();
@@ -162,40 +276,150 @@ internal sealed class PluginList : IDisposable
             }
         }
 
-        var membershipVersion = Interlocked.Increment(ref _membershipVersion);
-        var confirmed = new ConfirmedPluginList(
-            membershipVersion,
-            source,
-            advancedMode,
-            entries.ToImmutable(),
-            []);
-        Publish(confirmed, new PluginListReadyActivity(source, membershipVersion));
+        EventHandler? changed;
+        lock (_gate)
+        {
+            if (!IsCurrentLocked(operation))
+            {
+                return;
+            }
+
+            var membershipVersion = ++_membershipVersion;
+            var confirmed = new ConfirmedPluginList(
+                membershipVersion,
+                operation.Source,
+                advancedMode,
+                entries.ToImmutable(),
+                []);
+            _activeRefresh = null;
+            changed = PublishLocked(
+                confirmed,
+                new PluginListReadyActivity(operation.Source, membershipVersion));
+        }
+
+        changed?.Invoke(this, EventArgs.Empty);
     }
 
     /// <summary>
-    ///     Atomically replaces current state and synchronously signals subscribers without capturing the state in the event.
+    ///     Publishes one expected local discovery failure when its refresh generation is still current.
+    /// </summary>
+    /// <param name="operation">The refresh generation that produced the failure.</param>
+    /// <param name="errorMessage">The UI-neutral local failure detail.</param>
+    private void PublishFailure(RefreshOperation operation, string errorMessage)
+    {
+        PublishTerminal(
+            operation,
+            new PluginListFailedActivity(operation.Source, errorMessage));
+    }
+
+    /// <summary>
+    ///     Publishes caller-requested cancellation when its refresh generation is still current.
+    /// </summary>
+    /// <param name="operation">The refresh generation cancelled by its caller.</param>
+    private void PublishCancellation(RefreshOperation operation)
+    {
+        PublishTerminal(operation, new PluginListCancelledActivity(operation.Source));
+    }
+
+    /// <summary>
+    ///     Publishes a non-success terminal activity while retaining only coherent same-source confirmation.
+    /// </summary>
+    /// <param name="operation">The refresh generation that produced the terminal activity.</param>
+    /// <param name="activity">The UI-neutral failure or cancellation fact to publish.</param>
+    private void PublishTerminal(RefreshOperation operation, PluginListActivity activity)
+    {
+        EventHandler? changed;
+        lock (_gate)
+        {
+            if (!IsCurrentLocked(operation))
+            {
+                return;
+            }
+
+            var retainedConfirmed = _current.Confirmed?.Source == operation.Source ? _current.Confirmed : null;
+            _activeRefresh = null;
+            changed = PublishLocked(retainedConfirmed, activity);
+        }
+
+        changed?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>
+    ///     Publishes raw discovery counts only while their refresh generation remains current.
+    /// </summary>
+    /// <param name="operation">The refresh generation whose discovery emitted the counts.</param>
+    /// <param name="progress">The scanned and total count facts.</param>
+    private void PublishProgress(RefreshOperation operation, PluginListDiscoveryProgress progress)
+    {
+        EventHandler? changed;
+        lock (_gate)
+        {
+            if (!IsCurrentLocked(operation))
+            {
+                return;
+            }
+
+            changed = PublishLocked(
+                _current.Confirmed,
+                new PluginListRefreshingActivity(
+                    operation.Source,
+                    progress.ScannedCount,
+                    progress.TotalCount));
+        }
+
+        changed?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>
+    ///     Replaces current state while the caller holds the publication gate.
     /// </summary>
     /// <param name="confirmed">The optional confirmed membership exposed by the new state.</param>
     /// <param name="activity">The UI-neutral activity exposed by the new state.</param>
-    private void Publish(ConfirmedPluginList? confirmed, PluginListActivity activity)
+    /// <returns>The signal-only change handlers to invoke after releasing the gate.</returns>
+    private EventHandler? PublishLocked(ConfirmedPluginList? confirmed, PluginListActivity activity)
     {
-        var state = new PluginListState(
-            Interlocked.Increment(ref _stateRevision),
-            confirmed,
-            activity);
+        var state = new PluginListState(++_stateRevision, confirmed, activity);
         Volatile.Write(ref _current, state);
-        Changed?.Invoke(this, EventArgs.Empty);
+        return Changed;
     }
 
     /// <summary>
-    ///     Publishes raw discovery counts as UI-neutral refreshing activity for the requested source.
+    ///     Reports whether an operation owns the newest live refresh generation.
     /// </summary>
-    /// <param name="source">The source whose discovery emitted the counts.</param>
-    /// <param name="progress">The scanned and total count facts.</param>
-    private void PublishProgress(PluginListSource source, PluginListDiscoveryProgress progress)
+    /// <param name="operation">The refresh operation whose ownership is tested.</param>
+    /// <returns><see langword="true" /> when the module is live and the operation is its active generation.</returns>
+    private bool IsCurrent(RefreshOperation operation)
     {
-        ThrowIfDisposed();
-        Publish(Current.Confirmed, new PluginListRefreshingActivity(source, progress.ScannedCount, progress.TotalCount));
+        lock (_gate)
+        {
+            return IsCurrentLocked(operation);
+        }
+    }
+
+    /// <summary>
+    ///     Tests live generation ownership while the caller holds the publication gate.
+    /// </summary>
+    /// <param name="operation">The refresh operation whose ownership is tested.</param>
+    /// <returns><see langword="true" /> when the operation can still publish state.</returns>
+    private bool IsCurrentLocked(RefreshOperation operation)
+    {
+        return Volatile.Read(ref _disposed) == 0 &&
+               _activeRefresh?.Generation == operation.Generation;
+    }
+
+    /// <summary>
+    ///     Releases active ownership when a refresh exits exceptionally without publishing a terminal fact.
+    /// </summary>
+    /// <param name="operation">The exiting refresh operation.</param>
+    private void FinishRefresh(RefreshOperation operation)
+    {
+        lock (_gate)
+        {
+            if (_activeRefresh?.Generation == operation.Generation)
+            {
+                _activeRefresh = null;
+            }
+        }
     }
 
     /// <summary>
@@ -206,12 +430,103 @@ internal sealed class PluginList : IDisposable
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
     }
 
-    private sealed class DiscoveryProgress(PluginList owner, PluginListSource source)
+    private sealed class DiscoveryProgress(PluginList owner, RefreshOperation operation)
         : IProgress<PluginListDiscoveryProgress>
     {
         public void Report(PluginListDiscoveryProgress value)
         {
-            owner.PublishProgress(source, value);
+            owner.PublishProgress(operation, value);
+        }
+    }
+
+    private sealed class RefreshOperation(
+        long generation,
+        PluginListSource source) : IDisposable
+    {
+        private readonly object _lifetimeGate = new();
+        private readonly CancellationTokenSource _retirement = new();
+        private RefreshLifetimeState _lifetimeState;
+
+        public long Generation { get; } = generation;
+
+        public PluginListSource Source { get; } = source;
+
+        public CancellationToken RetirementToken => _retirement.Token;
+
+        /// <summary>
+        ///     Requests cooperative retirement while coordinating with completion that can dispose concurrently.
+        /// </summary>
+        /// <exception cref="AggregateException">One or more registered cancellation callbacks throw.</exception>
+        public void Retire()
+        {
+            lock (_lifetimeGate)
+            {
+                if (_lifetimeState != RefreshLifetimeState.Active)
+                {
+                    return;
+                }
+
+                _lifetimeState = RefreshLifetimeState.Retiring;
+            }
+
+            var disposeAfterRetirement = false;
+            try
+            {
+                _retirement.Cancel();
+            }
+            finally
+            {
+                lock (_lifetimeGate)
+                {
+                    if (_lifetimeState == RefreshLifetimeState.DisposeRequested)
+                    {
+                        _lifetimeState = RefreshLifetimeState.Disposed;
+                        disposeAfterRetirement = true;
+                    }
+                    else
+                    {
+                        _lifetimeState = RefreshLifetimeState.Active;
+                    }
+                }
+
+                if (disposeAfterRetirement)
+                {
+                    _retirement.Dispose();
+                }
+            }
+        }
+
+        /// <summary>
+        ///     Releases the retirement source immediately or defers release until in-progress cancellation returns.
+        /// </summary>
+        public void Dispose()
+        {
+            lock (_lifetimeGate)
+            {
+                if (_lifetimeState == RefreshLifetimeState.Disposed)
+                {
+                    return;
+                }
+
+                if (_lifetimeState is RefreshLifetimeState.Retiring or RefreshLifetimeState.DisposeRequested)
+                {
+                    // Cancellation can run task continuations inline, so disposal must wait until Cancel has unwound.
+                    _lifetimeState = RefreshLifetimeState.DisposeRequested;
+                    return;
+                }
+
+                _lifetimeState = RefreshLifetimeState.Disposed;
+            }
+
+            _retirement.Dispose();
+        }
+
+        private enum RefreshLifetimeState
+        {
+            Active,
+            Retiring,
+            DisposeRequested,
+            Disposed
         }
     }
 }
