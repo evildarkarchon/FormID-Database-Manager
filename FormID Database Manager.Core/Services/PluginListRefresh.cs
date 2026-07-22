@@ -10,12 +10,6 @@ internal interface IPluginListRefresh
         CancellationToken cancellationToken = default);
 }
 
-internal enum AdvancedMode
-{
-    Off,
-    On
-}
-
 internal sealed record PluginListRefreshRequest(
     string GameDirectory,
     GameRelease GameRelease,
@@ -28,8 +22,6 @@ internal enum PluginListRefreshStatus
     Cancelled,
     Failed
 }
-
-internal sealed record PluginListEntry(string Name);
 
 internal readonly record struct PluginListRefreshProgress(int ScannedCount, int TotalCount);
 
