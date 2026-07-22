@@ -242,8 +242,7 @@ public sealed class ProcessingRunExecutor : IProcessingRunExecutor
     private const int OutcomeDetailLimit = 5;
 
     private readonly Lock _cancellationLock = new();
-    private readonly IGameLoadOrderProvider _loadOrderProvider;
-    private readonly PluginIngestion _pluginIngestion;
+    private readonly IPluginIngestion _pluginIngestion;
     private readonly IFormIdRecordStoreSessionOpener _recordStoreOpener;
     private CancellationTokenSource? _activeCancellationSource;
     private bool _disposed;
@@ -253,23 +252,22 @@ public sealed class ProcessingRunExecutor : IProcessingRunExecutor
     /// </summary>
     /// <param name="loadOrderProvider">Optional Plugin load-order provider; production uses Mutagen-backed lookup.</param>
     public ProcessingRunExecutor(IGameLoadOrderProvider? loadOrderProvider = null)
-        : this(loadOrderProvider, new PluginIngestion(), new FormIdRecordStoreSessionOpener())
+        : this(
+            new PluginIngestion(loadOrderProvider ?? new GameLoadOrderProvider()),
+            new FormIdRecordStoreSessionOpener())
     {
     }
 
+    /// <summary>
+    ///     Creates a Processing Run executor from its complete Plugin Ingestion and run-scoped Store seams.
+    /// </summary>
+    /// <param name="pluginIngestion">The complete selected-Plugin operation.</param>
+    /// <param name="recordStoreOpener">The opener for the Store session owned by each non-dry run.</param>
+    /// <exception cref="ArgumentNullException">Either dependency is null.</exception>
     internal ProcessingRunExecutor(
-        IGameLoadOrderProvider? loadOrderProvider,
-        PluginIngestion pluginIngestion)
-        : this(loadOrderProvider, pluginIngestion, new FormIdRecordStoreSessionOpener())
-    {
-    }
-
-    internal ProcessingRunExecutor(
-        IGameLoadOrderProvider? loadOrderProvider,
-        PluginIngestion pluginIngestion,
+        IPluginIngestion pluginIngestion,
         IFormIdRecordStoreSessionOpener recordStoreOpener)
     {
-        _loadOrderProvider = loadOrderProvider ?? new GameLoadOrderProvider();
         _pluginIngestion = pluginIngestion ?? throw new ArgumentNullException(nameof(pluginIngestion));
         _recordStoreOpener = recordStoreOpener ?? throw new ArgumentNullException(nameof(recordStoreOpener));
     }
@@ -505,6 +503,16 @@ public sealed class ProcessingRunExecutor : IProcessingRunExecutor
         ReportStatus(progress, "Processing completed successfully!", 100);
     }
 
+    /// <summary>
+    ///     Runs one complete selected-Plugin operation, performs explicit successful-run maintenance, then formats the
+    ///     authoritative ordered report into Processing Run events.
+    /// </summary>
+    /// <param name="request">The validated immutable selected-Plugin request.</param>
+    /// <param name="recordStore">The already-open Store session owned by the surrounding Processing Run.</param>
+    /// <param name="progress">Optional user-facing Processing Run event reporter.</param>
+    /// <param name="cancellationToken">The execution-owned token shared with Plugin Ingestion and Store maintenance.</param>
+    /// <returns>A task that completes after optimization and terminal reporting.</returns>
+    /// <exception cref="OperationCanceledException"><paramref name="cancellationToken" /> requests cancellation.</exception>
     [RequiresUnreferencedCode(
         "Uses reflection-based name extraction for Mutagen records via PluginIngestion.")]
     private async Task ExecutePluginRunAsync(
@@ -513,68 +521,38 @@ public sealed class ProcessingRunExecutor : IProcessingRunExecutor
         IProgress<ProcessingRunEvent>? progress,
         CancellationToken cancellationToken)
     {
-        ReportStatus(progress, "Initializing plugin ingestion...", 0);
-
-        var pluginNames = request.PluginNames.ToList();
-        var dataPath = GameReleaseHelper.ResolveDataPath(request.GameDirectory);
-        var loadOrderSnapshot = _loadOrderProvider.BuildSnapshot(
+        var ingestionRequest = new SelectedPluginIngestionRequest(
+            request.GameDirectory,
             request.GameRelease,
-            dataPath,
-            includeMasterFlagsLookup: true);
+            request.PluginNames,
+            request.UpdateMode);
+        var report = await _pluginIngestion.IngestAsync(
+                ingestionRequest,
+                recordStore,
+                CreatePluginIngestionProgressAdapter(progress),
+                cancellationToken)
+            .ConfigureAwait(false);
 
-        var successfulPlugins = 0;
-        var skippedPlugins = 0;
-        var failedPlugins = 0;
-        var warningDetails = new List<string>();
-        var failedDetails = new List<string>();
-
-        for (var i = 0; i < pluginNames.Count; i++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            var pluginName = pluginNames[i];
-            var progressPercent = (double)(i + 1) / pluginNames.Count * 100;
-            ReportStatus(progress, $"Ingesting plugin {i + 1} of {pluginNames.Count}: {pluginName}", progressPercent);
-
-            var result = await _pluginIngestion.IngestAsync(
-                    new PluginIngestionRequest(
-                        request.GameDirectory,
-                        request.GameRelease,
-                        pluginName,
-                        loadOrderSnapshot,
-                        request.UpdateMode),
-                    recordStore,
-                    cancellationToken)
-                .ConfigureAwait(false);
-
-            switch (result.Kind)
-            {
-                case PluginIngestionResultKind.Succeeded:
-                    successfulPlugins++;
-                    warningDetails.AddRange(result.Warnings);
-                    break;
-
-                case PluginIngestionResultKind.Skipped:
-                    skippedPlugins++;
-                    warningDetails.Add(FormatPluginOutcomeDetail(result));
-                    break;
-
-                case PluginIngestionResultKind.Failed:
-                    failedPlugins++;
-                    failedDetails.Add(FormatPluginOutcomeDetail(result));
-                    break;
-
-                default:
-                    throw new ArgumentOutOfRangeException(
-                        nameof(result),
-                        result.Kind,
-                        "Unsupported Plugin Ingestion outcome.");
-            }
-        }
-
+        // A collaborator can return while cancellation is racing; incomplete work must never reach successful-run maintenance.
         cancellationToken.ThrowIfCancellationRequested();
-
         await recordStore.OptimizeAsync(cancellationToken).ConfigureAwait(false);
+
+        // Outcome wording is intentionally delayed until maintenance succeeds so a failed optimization has no terminal summary.
+        var warningDetails = report.Outcomes
+            .SelectMany(outcome => outcome switch
+            {
+                IngestedPlugin { Warning: not null } ingested => [FormatProcessingWarning(ingested)],
+                SkippedPlugin skipped => [FormatSkippedPluginDetail(skipped, request.GameDirectory)],
+                _ => Array.Empty<string>()
+            })
+            .ToList();
+        var failedDetails = report.Outcomes
+            .OfType<FailedPlugin>()
+            .Select(FormatFailedPluginDetail)
+            .ToList();
+        var ingestedPlugins = report.Outcomes.OfType<IngestedPlugin>().Count();
+        var skippedPlugins = report.Outcomes.OfType<SkippedPlugin>().Count();
+        var failedPlugins = report.Outcomes.OfType<FailedPlugin>().Count();
 
         if (warningDetails.Count > 0)
         {
@@ -600,7 +578,7 @@ public sealed class ProcessingRunExecutor : IProcessingRunExecutor
                 progress,
                 FormatCompletionStatus(
                     "Processing completed with failures",
-                    successfulPlugins,
+                    ingestedPlugins,
                     skippedPlugins,
                     failedPlugins),
                 100);
@@ -611,7 +589,7 @@ public sealed class ProcessingRunExecutor : IProcessingRunExecutor
                 progress,
                 FormatCompletionStatus(
                     "Processing completed with warnings",
-                    successfulPlugins,
+                    ingestedPlugins,
                     skippedPlugins,
                     failedPlugins),
                 100);
@@ -622,11 +600,80 @@ public sealed class ProcessingRunExecutor : IProcessingRunExecutor
         }
     }
 
-    private static string FormatPluginOutcomeDetail(PluginIngestionResult result)
+    /// <summary>
+    ///     Formats one warned Ingested Plugin from structured warning facts retained by Plugin Ingestion.
+    /// </summary>
+    /// <param name="ingestedPlugin">The Ingested Plugin carrying a Processing Warning.</param>
+    /// <returns>User-facing warning detail with bounded diagnostics and an omitted-detail count.</returns>
+    /// <exception cref="ArgumentException"><paramref name="ingestedPlugin" /> has no warning facts.</exception>
+    private static string FormatProcessingWarning(IngestedPlugin ingestedPlugin)
     {
-        return string.IsNullOrWhiteSpace(result.Detail)
-            ? result.PluginName
-            : $"{result.PluginName}: {result.Detail}";
+        var warning = ingestedPlugin.Warning ?? throw new ArgumentException(
+            "An Ingested Plugin must carry warning facts before warning formatting.",
+            nameof(ingestedPlugin));
+        var message = $"{ingestedPlugin.PluginName}: {warning.TotalIssueCount} recoverable record issue" +
+                      $"{(warning.TotalIssueCount == 1 ? string.Empty : "s")}.";
+        if (!warning.DiagnosticDetails.IsEmpty)
+        {
+            message += $" {string.Join("; ", warning.DiagnosticDetails)}";
+        }
+
+        if (warning.OmittedDetailCount > 0)
+        {
+            message += $"; and {warning.OmittedDetailCount} more.";
+        }
+
+        return message;
+    }
+
+    /// <summary>
+    ///     Formats one typed Skipped Plugin reason without exposing presentation wording through Plugin Ingestion.
+    /// </summary>
+    /// <param name="skippedPlugin">The Skipped Plugin facts.</param>
+    /// <param name="gameDirectory">The selected game root or Data directory used to preserve file-warning wording.</param>
+    /// <returns>User-facing detail for the stable skip reason.</returns>
+    /// <exception cref="ArgumentOutOfRangeException">The skip reason is unsupported.</exception>
+    private static string FormatSkippedPluginDetail(SkippedPlugin skippedPlugin, string gameDirectory)
+    {
+        // The report carries stable facts only; reconstruct the prior display path here to preserve presentation wording.
+        var detail = skippedPlugin.Reason switch
+        {
+            SkippedPluginReason.NotPresentInLoadOrder =>
+                $"Could not find plugin in load order: {skippedPlugin.PluginName}",
+            SkippedPluginReason.PluginFileUnavailable =>
+                $"Could not find plugin file: {Path.Combine(GameReleaseHelper.ResolveDataPath(gameDirectory), skippedPlugin.PluginName)}",
+            SkippedPluginReason.ZeroFormIdRecords =>
+                $"{skippedPlugin.PluginName} produced zero FormID records.",
+            _ => throw new ArgumentOutOfRangeException(
+                nameof(skippedPlugin),
+                skippedPlugin.Reason,
+                "Unsupported skipped Plugin reason.")
+        };
+
+        return $"{skippedPlugin.PluginName}: {detail}";
+    }
+
+    /// <summary>
+    ///     Formats one Failed Plugin from its stable reason and internal diagnostic phase.
+    /// </summary>
+    /// <param name="failedPlugin">The Failed Plugin facts.</param>
+    /// <returns>User-facing failure detail.</returns>
+    /// <exception cref="ArgumentOutOfRangeException">The Plugin-read phase is unsupported.</exception>
+    private static string FormatFailedPluginDetail(FailedPlugin failedPlugin)
+    {
+        var detail = failedPlugin.Diagnostic.Phase switch
+        {
+            PluginReadPhase.OpeningPlugin =>
+                $"Error opening {failedPlugin.PluginName}: {failedPlugin.Diagnostic.Message}",
+            PluginReadPhase.ReadingRecords =>
+                $"Error enumerating records in {failedPlugin.PluginName}: {failedPlugin.Diagnostic.Message}",
+            _ => throw new ArgumentOutOfRangeException(
+                nameof(failedPlugin),
+                failedPlugin.Diagnostic.Phase,
+                "Unsupported Plugin-read phase.")
+        };
+
+        return $"{failedPlugin.PluginName}: {detail}";
     }
 
     private static string FormatOutcomeDetails(string summary, IReadOnlyList<string> details)
@@ -645,17 +692,23 @@ public sealed class ProcessingRunExecutor : IProcessingRunExecutor
 
     private static string FormatCompletionStatus(
         string prefix,
-        int successfulPlugins,
+        int ingestedPlugins,
         int skippedPlugins,
         int failedPlugins)
     {
-        return $"{prefix}: {successfulPlugins} successful, {skippedPlugins} skipped, and {failedPlugins} failed plugins.";
+        return $"{prefix}: {ingestedPlugins} ingested, {skippedPlugins} skipped, and {failedPlugins} failed Plugins.";
     }
 
     private static IProgress<FormIdStoreProgress>? CreateStoreProgressAdapter(
         IProgress<ProcessingRunEvent>? progress)
     {
         return progress is null ? null : new StoreProgressAdapter(progress);
+    }
+
+    private static IProgress<PluginIngestionProgress>? CreatePluginIngestionProgressAdapter(
+        IProgress<ProcessingRunEvent>? progress)
+    {
+        return progress is null ? null : new PluginIngestionProgressAdapter(progress);
     }
 
     /// <summary>
@@ -698,6 +751,37 @@ public sealed class ProcessingRunExecutor : IProcessingRunExecutor
         public void Report(FormIdStoreProgress value)
         {
             inner.Report(ProcessingRunEvent.Status(value.Message, value.Value));
+        }
+    }
+
+    private sealed class PluginIngestionProgressAdapter(IProgress<ProcessingRunEvent> inner)
+        : IProgress<PluginIngestionProgress>
+    {
+        /// <inheritdoc />
+        public void Report(PluginIngestionProgress value)
+        {
+            ArgumentNullException.ThrowIfNull(value);
+
+            switch (value.Stage)
+            {
+                case PluginIngestionProgressStage.PreparingLoadOrder:
+                    ReportStatus(inner, "Initializing plugin ingestion...", 0);
+                    break;
+
+                case PluginIngestionProgressStage.IngestingPlugin:
+                    var progressPercent = (double)value.PluginPosition!.Value / value.TotalPluginCount * 100;
+                    ReportStatus(
+                        inner,
+                        $"Ingesting plugin {value.PluginPosition} of {value.TotalPluginCount}: {value.PluginName}",
+                        progressPercent);
+                    break;
+
+                default:
+                    throw new ArgumentOutOfRangeException(
+                        nameof(value),
+                        value.Stage,
+                        "Unsupported Plugin Ingestion progress stage.");
+            }
         }
     }
 }

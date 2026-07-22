@@ -10,6 +10,19 @@ namespace FormID_Database_Manager.Tests.Unit.Services;
 
 public sealed class PluginIngestionContractTests
 {
+    /// <summary>
+    ///     Verifies production Plugin Ingestion cannot be subclassed as an alternate Processing Run test seam.
+    /// </summary>
+    [Fact]
+    public void PluginIngestion_TypeDefinition_IsInternalSealedInterfaceImplementation()
+    {
+        var implementationType = typeof(PluginIngestion);
+
+        Assert.True(implementationType.IsNotPublic);
+        Assert.True(implementationType.IsSealed);
+        Assert.Contains(typeof(IPluginIngestion), implementationType.GetInterfaces());
+    }
+
     [Fact]
     public void IPluginIngestion_TypeDefinition_IsInternalInterfaceWithOneSelectedSetOperation()
     {

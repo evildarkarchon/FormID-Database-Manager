@@ -811,119 +811,6 @@ public sealed class PluginIngestionTests : IDisposable
         }
     }
 
-    [Fact]
-    public async Task IngestAsync_PluginNotInLoadOrder_ReturnsSkippedOutcome()
-    {
-        var gameDirectory = CreateGameDirectory();
-        var recordStore = new UnusedRecordStoreSession();
-        var sut = CreateSut(new ThrowingOverlayReader(new InvalidOperationException("Should not read overlay.")));
-
-        var result = await sut.IngestAsync(
-            new PluginIngestionRequest(
-                gameDirectory,
-                GameRelease.SkyrimSE,
-                "Missing.esp",
-                new GameLoadOrderSnapshot(["Other.esp"]),
-                UpdateMode.Append),
-            recordStore,
-            TestContext.Current.CancellationToken);
-
-        Assert.Equal(PluginIngestionResultKind.Skipped, result.Kind);
-        Assert.Contains("load order", result.Detail, StringComparison.OrdinalIgnoreCase);
-    }
-
-    [Fact]
-    public async Task IngestAsync_PluginFileMissing_ReturnsSkippedOutcome()
-    {
-        var gameDirectory = CreateGameDirectory();
-        var recordStore = new UnusedRecordStoreSession();
-        var sut = CreateSut(new ThrowingOverlayReader(new InvalidOperationException("Should not read overlay.")));
-
-        var result = await sut.IngestAsync(
-            new PluginIngestionRequest(
-                gameDirectory,
-                GameRelease.SkyrimSE,
-                "Missing.esp",
-                new GameLoadOrderSnapshot(["Missing.esp"]),
-                UpdateMode.Append),
-            recordStore,
-            TestContext.Current.CancellationToken);
-
-        Assert.Equal(PluginIngestionResultKind.Skipped, result.Kind);
-        Assert.Contains("Could not find plugin file", result.Detail, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public async Task IngestAsync_CancelledBeforeOverlay_ThrowsOperationCanceledException()
-    {
-        var gameDirectory = CreateGameDirectory();
-        await CreatePluginFileAsync(gameDirectory, "Plugin.esp");
-        var recordStore = new UnusedRecordStoreSession();
-        var sut = CreateSut(new ThrowingOverlayReader(new InvalidOperationException("Should not read overlay.")));
-        using var cancellationTokenSource = new CancellationTokenSource();
-        await cancellationTokenSource.CancelAsync();
-
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sut.IngestAsync(
-            new PluginIngestionRequest(
-                gameDirectory,
-                GameRelease.SkyrimSE,
-                "Plugin.esp",
-                new GameLoadOrderSnapshot(["Plugin.esp"]),
-                UpdateMode.Append),
-            recordStore,
-            cancellationTokenSource.Token));
-    }
-
-    [Fact]
-    public async Task IngestAsync_OverlayReaderFailure_ReturnsFailedOutcome()
-    {
-        var gameDirectory = CreateGameDirectory();
-        await CreatePluginFileAsync(gameDirectory, "Bad.esp");
-        var recordStore = new UnusedRecordStoreSession();
-        var sut = CreateSut(new ThrowingOverlayReader(CreatePluginOverlayReadException("Invalid plugin header.")));
-
-        var result = await sut.IngestAsync(
-            new PluginIngestionRequest(
-                gameDirectory,
-                GameRelease.SkyrimSE,
-                "Bad.esp",
-                new GameLoadOrderSnapshot(["Bad.esp"]),
-                UpdateMode.Append),
-            recordStore,
-            TestContext.Current.CancellationToken);
-
-        Assert.Equal(PluginIngestionResultKind.Failed, result.Kind);
-        Assert.Contains("Error opening Bad.esp", result.Detail, StringComparison.Ordinal);
-        Assert.Contains("Invalid plugin header", result.Detail, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public async Task IngestAsync_StarfieldSnapshot_PassesMasterFlagsLookupToOverlayReader()
-    {
-        var gameDirectory = CreateGameDirectory();
-        await CreatePluginFileAsync(gameDirectory, "TestPlugin.esm");
-        var recordStore = new UnusedRecordStoreSession();
-        var overlayReader = new ThrowingOverlayReader(
-            CreatePluginOverlayReadException("Overlay creation intercepted."));
-        var sut = CreateSut(overlayReader);
-
-        var result = await sut.IngestAsync(
-            new PluginIngestionRequest(
-                gameDirectory,
-                GameRelease.Starfield,
-                "TestPlugin.esm",
-                new GameLoadOrderSnapshot(
-                    ["TestPlugin.esm"],
-                    [new KeyedMasterStyle(ModKey.FromNameAndExtension("TestPlugin.esm"), MasterStyle.Full)]),
-                UpdateMode.Append),
-            recordStore,
-            TestContext.Current.CancellationToken);
-
-        Assert.Equal(PluginIngestionResultKind.Failed, result.Kind);
-        Assert.NotNull(overlayReader.CapturedReadParameters);
-        Assert.NotNull(overlayReader.CapturedReadParameters.MasterFlagsLookup);
-    }
-
     /// <summary>
     ///     Verifies through the aggregate ingestion and production Store-opening seams that Update Mode never replaces
     ///     existing rows for a zero-record Skipped Plugin.
@@ -996,11 +883,6 @@ public sealed class PluginIngestionTests : IDisposable
         var thrown = Assert.Throws<OperationCanceledException>(() => sut.TryExtract(record.Object, _ => { }));
 
         Assert.Same(cancellation, thrown);
-    }
-
-    private PluginIngestion CreateSut(IPluginOverlayReader overlayReader)
-    {
-        return new PluginIngestion(overlayReader, new EntryExtraction());
     }
 
     private string CreateGameDirectory()

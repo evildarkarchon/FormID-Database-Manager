@@ -7,85 +7,22 @@ using Mutagen.Bethesda.Plugins.Records;
 
 namespace FormID_Database_Manager.Services;
 
-internal enum PluginIngestionResultKind
-{
-    Succeeded,
-    Skipped,
-    Failed
-}
-
-internal sealed record PluginIngestionRequest(
-    string GameDirectory,
-    GameRelease GameRelease,
-    string PluginName,
-    GameLoadOrderSnapshot LoadOrderSnapshot,
-    UpdateMode UpdateMode);
-
-internal sealed record PluginIngestionResult(
-    PluginIngestionResultKind Kind,
-    string PluginName,
-    int RecordCount,
-    IReadOnlyList<string> Warnings,
-    string? Detail)
-{
-    public static PluginIngestionResult Succeeded(
-        string pluginName,
-        int recordCount,
-        IReadOnlyList<string> warnings)
-    {
-        return new PluginIngestionResult(
-            PluginIngestionResultKind.Succeeded,
-            pluginName,
-            recordCount,
-            warnings,
-            null);
-    }
-
-    public static PluginIngestionResult Skipped(string pluginName, string detail)
-    {
-        return new PluginIngestionResult(
-            PluginIngestionResultKind.Skipped,
-            pluginName,
-            0,
-            [],
-            detail);
-    }
-
-    public static PluginIngestionResult Failed(string pluginName, string detail)
-    {
-        return new PluginIngestionResult(
-            PluginIngestionResultKind.Failed,
-            pluginName,
-            0,
-            [],
-            detail);
-    }
-}
-
 /// <summary>
-///     Owns ordered Plugin Ingestion for a complete captured selection and retains the legacy one-Plugin transport until
-///     Processing Run migrates to the aggregate seam.
+///     Owns ordered Plugin Ingestion for one complete captured selection.
 /// </summary>
-internal class PluginIngestion : IPluginIngestion
+internal sealed class PluginIngestion : IPluginIngestion
 {
     private readonly EntryExtraction _entryExtraction;
     private readonly IGameLoadOrderProvider _loadOrderProvider;
     private readonly IPluginOverlayReader _overlayReader;
 
-    internal PluginIngestion()
-        : this(new GameLoadOrderProvider(), new MutagenPluginOverlayReader(), new EntryExtraction())
-    {
-    }
-
     /// <summary>
-    ///     Creates the temporary legacy one-Plugin path with production load-order preparation available to the aggregate
-    ///     operation.
+    ///     Creates production Plugin Ingestion with a supplied load-order boundary.
     /// </summary>
-    /// <param name="overlayReader">The Plugin overlay adapter.</param>
-    /// <param name="entryExtraction">The Entry Extraction module.</param>
-    /// <exception cref="ArgumentNullException">Either adapter is null.</exception>
-    internal PluginIngestion(IPluginOverlayReader overlayReader, EntryExtraction entryExtraction)
-        : this(new GameLoadOrderProvider(), overlayReader, entryExtraction)
+    /// <param name="loadOrderProvider">The provider used once for the complete captured selection.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="loadOrderProvider" /> is null.</exception>
+    internal PluginIngestion(IGameLoadOrderProvider loadOrderProvider)
+        : this(loadOrderProvider, new MutagenPluginOverlayReader(), new EntryExtraction())
     {
     }
 
@@ -179,50 +116,6 @@ internal class PluginIngestion : IPluginIngestion
         // Close the final classification race so cancellation cannot produce a misleading completed report.
         cancellationToken.ThrowIfCancellationRequested();
         return new PluginIngestionReport(request, outcomes);
-    }
-
-    /// <summary>
-    ///     Preserves the one-Plugin transport used by the current Processing Run caller while delegating ingestion to the
-    ///     same eligibility and available-Plugin path as the aggregate operation.
-    /// </summary>
-    /// <param name="request">The temporary one-Plugin request, including its caller-prepared load-order snapshot.</param>
-    /// <param name="recordStore">The already-open Store session.</param>
-    /// <param name="cancellationToken">Stops the Plugin attempt.</param>
-    /// <returns>The legacy presentation-oriented one-Plugin result.</returns>
-    /// <exception cref="ArgumentNullException"><paramref name="request" /> or <paramref name="recordStore" /> is null.</exception>
-    /// <exception cref="ArgumentException">A required request path or Plugin name is blank.</exception>
-    /// <exception cref="OperationCanceledException"><paramref name="cancellationToken" /> requests cancellation.</exception>
-    [RequiresUnreferencedCode(
-        "Uses reflection to discover INamedGetter interface and Name/String properties on Mutagen record types for name extraction.")]
-    internal virtual async Task<PluginIngestionResult> IngestAsync(
-        PluginIngestionRequest request,
-        IFormIdRecordStoreSession recordStore,
-        CancellationToken cancellationToken)
-    {
-        ArgumentNullException.ThrowIfNull(request);
-        ArgumentNullException.ThrowIfNull(recordStore);
-        ArgumentException.ThrowIfNullOrWhiteSpace(request.GameDirectory);
-        ArgumentException.ThrowIfNullOrWhiteSpace(request.PluginName);
-
-        var dataPath = GameReleaseHelper.ResolveDataPath(request.GameDirectory);
-        var pluginPath = Path.Combine(dataPath, request.PluginName);
-        var skipReason = GetSkipReason(request.PluginName, dataPath, request.LoadOrderSnapshot);
-        if (skipReason is { } reason)
-        {
-            return CreateLegacySkippedResult(request.PluginName, pluginPath, reason);
-        }
-
-        var outcome = await IngestAvailablePluginAsync(
-                request.PluginName,
-                pluginPath,
-                request.GameRelease,
-                request.LoadOrderSnapshot,
-                request.UpdateMode,
-                recordStore,
-                cancellationToken)
-            .ConfigureAwait(false);
-
-        return CreateLegacyResult(outcome, pluginPath);
     }
 
     /// <summary>
@@ -354,77 +247,6 @@ internal class PluginIngestion : IPluginIngestion
     }
 
     /// <summary>
-    ///     Adapts one typed outcome to the presentation-oriented transport retained by the current Processing Run caller.
-    /// </summary>
-    /// <param name="outcome">The authoritative Plugin Ingestion facts.</param>
-    /// <param name="pluginPath">The resolved path used by the unavailable-file compatibility detail.</param>
-    /// <returns>The temporary legacy result.</returns>
-    private static PluginIngestionResult CreateLegacyResult(
-        PluginIngestionOutcome outcome,
-        string pluginPath)
-    {
-        return outcome switch
-        {
-            IngestedPlugin ingested => PluginIngestionResult.Succeeded(
-                ingested.PluginName,
-                ingested.FormIdCount,
-                FormatLegacyWarnings(ingested.PluginName, ingested.Warning)),
-            SkippedPlugin skipped => CreateLegacySkippedResult(
-                skipped.PluginName,
-                pluginPath,
-                skipped.Reason),
-            FailedPlugin failed => PluginIngestionResult.Failed(
-                failed.PluginName,
-                FormatLegacyFailureDetail(failed)),
-            _ => throw new ArgumentOutOfRangeException(nameof(outcome), outcome, "Unsupported Plugin Ingestion outcome.")
-        };
-    }
-
-    /// <summary>
-    ///     Formats typed Plugin-read diagnostics for the temporary one-Plugin Processing Run transport.
-    /// </summary>
-    /// <param name="failed">The typed Failed Plugin facts.</param>
-    /// <returns>The legacy failure detail expected by the current Processing Run formatter.</returns>
-    private static string FormatLegacyFailureDetail(FailedPlugin failed)
-    {
-        return failed.Diagnostic.Phase switch
-        {
-            PluginReadPhase.OpeningPlugin =>
-                $"Error opening {failed.PluginName}: {failed.Diagnostic.Message}",
-            PluginReadPhase.ReadingRecords =>
-                $"Error enumerating records in {failed.PluginName}: {failed.Diagnostic.Message}",
-            _ => throw new ArgumentOutOfRangeException(
-                nameof(failed),
-                failed.Diagnostic.Phase,
-                "Unsupported Plugin-read phase.")
-        };
-    }
-
-    /// <summary>
-    ///     Adapts a typed skip reason to the presentation-oriented result retained for the current Processing Run caller.
-    /// </summary>
-    /// <param name="pluginName">The selected Plugin name.</param>
-    /// <param name="pluginPath">The resolved Plugin path used by the unavailable-file detail.</param>
-    /// <param name="reason">The typed nonfatal skip reason.</param>
-    /// <returns>The legacy Skipped result.</returns>
-    /// <exception cref="ArgumentOutOfRangeException"><paramref name="reason" /> is unsupported.</exception>
-    private static PluginIngestionResult CreateLegacySkippedResult(
-        string pluginName,
-        string pluginPath,
-        SkippedPluginReason reason)
-    {
-        var detail = reason switch
-        {
-            SkippedPluginReason.NotPresentInLoadOrder => $"Could not find plugin in load order: {pluginName}",
-            SkippedPluginReason.PluginFileUnavailable => $"Could not find plugin file: {pluginPath}",
-            SkippedPluginReason.ZeroFormIdRecords => $"{pluginName} produced zero FormID records.",
-            _ => throw new ArgumentOutOfRangeException(nameof(reason), reason, "Unsupported skipped Plugin reason.")
-        };
-
-        return PluginIngestionResult.Skipped(pluginName, detail);
-    }
-
-    /// <summary>
     ///     Lazily extracts storable records while retaining recoverable warning facts.
     /// </summary>
     /// <param name="plugin">The opened Plugin overlay.</param>
@@ -535,34 +357,6 @@ internal class PluginIngestion : IPluginIngestion
                 ExceptionDispatchInfo.Capture(cancellation).Throw();
             }
         }
-    }
-
-    /// <summary>
-    ///     Formats structured warning facts for the temporary one-Plugin Processing Run compatibility transport.
-    /// </summary>
-    /// <param name="pluginName">The selected Plugin name used only by legacy presentation.</param>
-    /// <param name="warning">The structured warning facts, or <see langword="null" />.</param>
-    /// <returns>Zero or one legacy warning string.</returns>
-    private static IReadOnlyList<string> FormatLegacyWarnings(string pluginName, ProcessingWarning? warning)
-    {
-        if (warning is null)
-        {
-            return [];
-        }
-
-        var message = $"{pluginName}: {warning.TotalIssueCount} recoverable record issue" +
-                      $"{(warning.TotalIssueCount == 1 ? string.Empty : "s")}.";
-        if (!warning.DiagnosticDetails.IsEmpty)
-        {
-            message += $" {string.Join("; ", warning.DiagnosticDetails)}";
-        }
-
-        if (warning.OmittedDetailCount > 0)
-        {
-            message += $"; and {warning.OmittedDetailCount} more.";
-        }
-
-        return [message];
     }
 
     private sealed class RecordWarningCollector
