@@ -211,48 +211,58 @@ public sealed class FormIdRecordStore : IFormIdRecordStoreSession
             new FileStream(formIdTextFilePath, FileMode.Open, FileAccess.Read, FileShare.Read, 81920);
         using var reader = new StreamReader(stream, Encoding.UTF8);
 
-        while (true)
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            var line = await reader.ReadLineAsync(cancellationToken).ConfigureAwait(false);
-            if (line == null)
+            while (true)
             {
-                break;
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var line = await reader.ReadLineAsync(cancellationToken).ConfigureAwait(false);
+                if (line == null)
+                {
+                    break;
+                }
+
+                var bytesRead = stream.Position;
+
+                if (string.IsNullOrWhiteSpace(line))
+                {
+                    continue;
+                }
+
+                if (!TryParseFormIdTextLine(line, out var pluginName, out var formId, out var entry))
+                {
+                    continue;
+                }
+
+                recordCount++;
+
+                if (recordCount % TextProgressInterval == 0)
+                {
+                    var progressPercent = totalBytes > 0 ? (double)bytesRead / totalBytes * 100 : 0;
+                    progress?.Report(new FormIdStoreProgress(
+                        $"Processing: {progressPercent:F1}% ({recordCount:N0} records)",
+                        progressPercent));
+                }
+
+                if (processedPlugins.Add(pluginName) && updateMode == UpdateMode.ReplacePluginRecords)
+                {
+                    progress?.Report(new FormIdStoreProgress($"Processing plugin: {pluginName}", null));
+                }
+
+                await StageTextRecordAsync(pluginName, formId, entry, cancellationToken).ConfigureAwait(false);
             }
 
-            var bytesRead = stream.Position;
-
-            if (string.IsNullOrWhiteSpace(line))
-            {
-                continue;
-            }
-
-            if (!TryParseFormIdTextLine(line, out var pluginName, out var formId, out var entry))
-            {
-                continue;
-            }
-
-            recordCount++;
-
-            if (recordCount % TextProgressInterval == 0)
-            {
-                var progressPercent = totalBytes > 0 ? (double)bytesRead / totalBytes * 100 : 0;
-                progress?.Report(new FormIdStoreProgress(
-                    $"Processing: {progressPercent:F1}% ({recordCount:N0} records)",
-                    progressPercent));
-            }
-
-            if (processedPlugins.Add(pluginName) && updateMode == UpdateMode.ReplacePluginRecords)
-            {
-                progress?.Report(new FormIdStoreProgress($"Processing plugin: {pluginName}", null));
-            }
-
-            await StageTextRecordAsync(pluginName, formId, entry, cancellationToken).ConfigureAwait(false);
+            await CommitStagedTextRecordsAsync(ShouldReplacePluginRows(updateMode), cancellationToken)
+                .ConfigureAwait(false);
         }
-
-        await CommitStagedTextRecordsAsync(ShouldReplacePluginRows(updateMode), cancellationToken)
-            .ConfigureAwait(false);
+        catch
+        {
+            // The Store is reusable, so an aborted import must not expose staged rows to the next import.
+            _stagingBatch.Clear();
+            await ClearStagingTableBestEffortAsync().ConfigureAwait(false);
+            throw;
+        }
 
         progress?.Report(new FormIdStoreProgress(
             $"Completed processing {processedPlugins.Count} plugins ({recordCount:N0} total records)",

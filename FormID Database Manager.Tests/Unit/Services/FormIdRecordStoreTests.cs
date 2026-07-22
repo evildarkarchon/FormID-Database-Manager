@@ -747,17 +747,24 @@ public sealed class FormIdRecordStoreTests : IDisposable
     }
 
     /// <summary>
-    ///     Verifies that cancellation during parsing stops the import before target rows are committed.
+    ///     Verifies that cancellation after a staging flush does not expose managed or TEMP rows to a later import.
     /// </summary>
     [Fact]
-    public async Task ImportFormIdTextFileAsync_CancelledDuringParsing_ThrowsAndCommitsNoRecords()
+    public async Task ImportFormIdTextFileAsync_CancelledAfterStagingFlush_ReusedStoreDoesNotCommitStaleRows()
     {
-        var lines = Enumerable.Range(0, 2500).Select(i => $"Plugin.esp|{i:X6}|Entry{i}");
+        const int cancelledRecordCount = 11000;
+        var lines = Enumerable.Range(0, cancelledRecordCount)
+            .Select(i => $"Cancelled.esp|{i:X6}|CancelledEntry{i}");
         var testFile = await WriteFormIdTextFileAsync("cancelled.txt", lines);
+        var freshFile = await WriteFormIdTextFileAsync(
+            "after_cancelled.txt",
+            ["Fresh.esp|FFFFFF|FreshEntry"]);
         using var cancellationSource = new CancellationTokenSource();
+        var processingReportCount = 0;
         var progress = new SynchronousProgress<FormIdStoreProgress>(report =>
         {
-            if (report.Message.Contains("Processing:", StringComparison.Ordinal))
+            // The 11th report leaves one full batch in TEMP and 999 rows managed before cancellation is observed.
+            if (report.Message.Contains("Processing:", StringComparison.Ordinal) && ++processingReportCount == 11)
             {
                 cancellationSource.Cancel();
             }
@@ -772,6 +779,17 @@ public sealed class FormIdRecordStoreTests : IDisposable
 
         var records = await store.ReadRecordsAsync(FormIdRecordQuery.All, TestContext.Current.CancellationToken);
         Assert.Empty(records);
+
+        var result = await store.ImportFormIdTextFileAsync(
+            freshFile,
+            UpdateMode.Append,
+            cancellationToken: TestContext.Current.CancellationToken);
+        records = await store.ReadRecordsAsync(FormIdRecordQuery.All, TestContext.Current.CancellationToken);
+
+        Assert.Equal(new FormIdTextFileImportResult(1, 1), result);
+        Assert.Equal(
+            new FormIdStoredRecord("Fresh.esp", "FFFFFF", "FreshEntry"),
+            Assert.Single(records));
     }
 
     /// <summary>
