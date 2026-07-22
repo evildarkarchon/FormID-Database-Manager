@@ -503,6 +503,55 @@ public sealed class ProcessingRunExecutorTests : IDisposable
     }
 
     [Fact]
+    public void PluginProcessingRunRequest_BlankPluginName_ThrowsRunValidationException()
+    {
+        var exception = Assert.Throws<ProcessingRunValidationException>(() =>
+            new PluginProcessingRunRequest(
+                @"C:\Games\Skyrim",
+                @"C:\Databases\formids.db",
+                GameRelease.SkyrimSE,
+                ["Valid.esp", " "],
+                UpdateMode.Append));
+
+        Assert.Equal("Plugin name must be specified", exception.Message);
+    }
+
+    [Fact]
+    public async Task PluginProcessingRunRequest_CaseInsensitiveDuplicateNames_RejectsBeforeStoreCanOpen()
+    {
+        var opener = new RecordingRecordStoreSessionOpener(new RecordingRecordStoreSession());
+        using var sut = new ProcessingRunExecutor(null, new PluginIngestion(), opener);
+
+        var exception = await Assert.ThrowsAsync<ProcessingRunValidationException>(() =>
+            sut.ExecuteAsync(new PluginProcessingRunRequest(
+                @"C:\Games\Skyrim",
+                @"C:\Databases\formids.db",
+                GameRelease.SkyrimSE,
+                ["Duplicate.esp", "DUPLICATE.ESP"],
+                UpdateMode.Append)));
+
+        Assert.Equal("Plugin names must be unique", exception.Message);
+        Assert.Empty(opener.OpenCalls);
+    }
+
+    [Fact]
+    public void PluginProcessingRunRequest_CallerMutatesSource_PreservesCapturedNamesAndOrder()
+    {
+        var pluginNames = new List<string> { "First.esp", "Second.esp" };
+        var request = new PluginProcessingRunRequest(
+            @"C:\Games\Skyrim",
+            @"C:\Databases\formids.db",
+            GameRelease.SkyrimSE,
+            pluginNames,
+            UpdateMode.Append);
+
+        pluginNames[0] = "Changed.esp";
+        pluginNames.Reverse();
+
+        Assert.Equal(["First.esp", "Second.esp"], request.PluginNames);
+    }
+
+    [Fact]
     public async Task ExecuteAsync_CancelledDuringPluginIngestion_ReportsCancelledAndThrows()
     {
         var gameDirectory = CreateTempDirectory();

@@ -74,6 +74,10 @@ public sealed record PluginProcessingRunRequest : ProcessingRunRequest
     /// <param name="pluginNames">The selected Plugin names to process, captured as an immutable snapshot.</param>
     /// <param name="updateMode">The storage update behavior for ingested Plugin records.</param>
     /// <param name="dryRun">Whether to report the planned work without writing to the store.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="pluginNames" /> is <see langword="null" />.</exception>
+    /// <exception cref="ProcessingRunValidationException">
+    ///     A required path or Plugin name is blank, the selection is empty, or Plugin names are duplicated.
+    /// </exception>
     public PluginProcessingRunRequest(
         string? gameDirectory,
         string databasePath,
@@ -90,19 +94,17 @@ public sealed record PluginProcessingRunRequest : ProcessingRunRequest
 
         ArgumentNullException.ThrowIfNull(pluginNames);
 
-        var pluginNameSnapshot = pluginNames.ToArray();
-        if (pluginNameSnapshot.Length == 0)
+        try
         {
-            throw new ProcessingRunValidationException("No plugins selected");
+            PluginNames = PluginSelectionSnapshot.Capture(pluginNames);
         }
-
-        if (pluginNameSnapshot.Any(string.IsNullOrWhiteSpace))
+        catch (ArgumentException ex)
         {
-            throw new ProcessingRunValidationException("Plugin name must be specified");
+            // Public requests translate internal selection invariants into the Processing Run validation contract.
+            throw new ProcessingRunValidationException(ex.Message);
         }
 
         GameDirectory = gameDirectory;
-        PluginNames = pluginNameSnapshot;
     }
 
     /// <summary>
