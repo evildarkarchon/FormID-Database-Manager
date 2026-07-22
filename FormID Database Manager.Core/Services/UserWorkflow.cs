@@ -65,7 +65,8 @@ public sealed class UserWorkflow : IDisposable
             GameContextTransitionSource.AdvancedModeChanged => RefreshPluginsForCurrentGameContextAsync(),
             GameContextTransitionSource.BrowsedDirectorySelected => ApplyBrowsedDirectorySelectedAsync(
                 transition.BrowsedDirectoryPath ??
-                throw new ArgumentException("A browsed directory transition requires a path.", nameof(transition))),
+                throw new ArgumentException("A browsed directory transition requires a path.", nameof(transition)),
+                BeginGameContextDirectoryTransition()),
             _ => throw new ArgumentOutOfRangeException(
                 nameof(transition),
                 transition.Source,
@@ -133,18 +134,28 @@ public sealed class UserWorkflow : IDisposable
     }
 
     /// <summary>
-    /// Selects a game directory, detects the game when needed, and refreshes the plugin list.
+    /// Opens the game-directory picker as a latest-intent operation, detects a missing GameRelease, and refreshes the Plugin List.
     /// </summary>
     /// <returns>A task that completes after picker handling and plugin refresh finish.</returns>
+    /// <exception cref="ObjectDisposedException">The workflow-owned Plugin List has been disposed.</exception>
+    /// <exception cref="AggregateException">A registered Plugin List refresh cancellation callback throws.</exception>
+    /// <remarks>Current unexpected picker, detection, and fatal discovery failures propagate to WinUI's final boundary.</remarks>
     public async Task BrowseGameDirectoryAsync()
     {
+        // Opening the picker is itself an intent, so cancellation must still retire older asynchronous resolution.
+        var gameContextVersion = BeginGameContextDirectoryTransition();
         var result = await _fileDialogService.SelectGameDirectory();
+        if (!IsLatestGameContextDirectoryTransition(gameContextVersion))
+        {
+            return;
+        }
+
         if (!TryGetSelectedPath(result, "Error selecting game directory", out var path))
         {
             return;
         }
 
-        await ApplyGameContextTransitionAsync(GameContextTransition.BrowsedDirectorySelected(path));
+        await ApplyBrowsedDirectorySelectedAsync(path, gameContextVersion);
     }
 
     /// <summary>
@@ -368,14 +379,50 @@ public sealed class UserWorkflow : IDisposable
         return RefreshPluginsForCurrentGameContextAsync(gameContextVersion);
     }
 
-    private async Task ApplyBrowsedDirectorySelectedAsync(string path)
+    /// <summary>
+    /// Applies one current Browse result while preserving an explicit release and treating suggestions as non-binding.
+    /// </summary>
+    /// <param name="path">The user-selected game root or Data directory.</param>
+    /// <param name="gameContextVersion">The Browse resolution generation allowed to publish resulting state.</param>
+    /// <returns>A task that completes after applicable detection and Plugin List discovery finish.</returns>
+    /// <exception cref="ArgumentOutOfRangeException">The detected or selected GameRelease is unsupported.</exception>
+    /// <exception cref="ObjectDisposedException">The workflow-owned Plugin List has been disposed.</exception>
+    /// <exception cref="AggregateException">A registered Plugin List refresh cancellation callback throws.</exception>
+    /// <remarks>Current unexpected detection and fatal discovery failures propagate unchanged.</remarks>
+    private async Task ApplyBrowsedDirectorySelectedAsync(string path, int gameContextVersion)
     {
-        var gameContextVersion = BeginGameContextDirectoryTransition();
+        if (_gameContext.SelectedGameRelease is null)
+        {
+            _gameContext = _gameContext with { AvailableDirectories = ImmutableArray<string>.Empty };
+        }
+
         SetGameDirectoryFromWorkflow(path);
+        if (!IsLatestGameContextDirectoryTransition(gameContextVersion))
+        {
+            return;
+        }
+
+        // Browse is an explicit retry even for the same path, so a failed retry must not retain old confirmation.
+        _pluginList.Invalidate();
 
         if (_gameContext.SelectedGameRelease is null)
         {
-            var detectedGame = _gameDetectionService.DetectGame(path);
+            GameRelease? detectedGame;
+            try
+            {
+                detectedGame = _gameDetectionService.DetectGame(path);
+            }
+            catch (Exception) when (!IsLatestGameContextDirectoryTransition(gameContextVersion))
+            {
+                // A detector overtaken by a newer intent cannot escape into WinUI's current error boundary.
+                return;
+            }
+
+            if (!IsLatestGameContextDirectoryTransition(gameContextVersion))
+            {
+                return;
+            }
+
             if (detectedGame.HasValue)
             {
                 _programmaticGameSelectionToIgnore = detectedGame.Value;
@@ -384,7 +431,6 @@ public sealed class UserWorkflow : IDisposable
             }
             else
             {
-                _pluginList.Invalidate();
                 _viewModel.AddErrorMessage(
                     "Could not detect game from directory. Please select a game from the dropdown.");
                 return;

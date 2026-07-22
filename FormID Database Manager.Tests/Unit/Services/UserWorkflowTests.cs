@@ -344,9 +344,194 @@ public class UserWorkflowTests
         Assert.DoesNotContain(_viewModel.ErrorMessages, message => message.Contains("obsolete", StringComparison.Ordinal));
     }
 
+    /// <summary>
+    /// Verifies that opening Browse retires older location resolution even when the picker is later cancelled.
+    /// </summary>
+    /// <returns>A task that completes after the controlled resolution and picker operations settle.</returns>
+    [Fact]
+    public async Task BrowseGameDirectoryAsync_PickerCancellation_RetiresOlderLocationLookupWithoutChangingSnapshot()
+    {
+        var lookupStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var allowLookupToFinish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var pickerStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var pickerCompletion = new TaskCompletionSource<FileDialogResult>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        _gameLocationService.Setup(x => x.GetGameFolders(GameRelease.SkyrimSE))
+            .Returns(() =>
+            {
+                lookupStarted.SetResult();
+                allowLookupToFinish.Task.GetAwaiter().GetResult();
+                return [GameDirectory];
+            });
+        _fileDialogService.Setup(x => x.SelectGameDirectory())
+            .Returns(() =>
+            {
+                pickerStarted.SetResult();
+                return pickerCompletion.Task;
+            });
+        var sut = CreateSut();
+
+        var releaseSelection = sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
+        await lookupStarted.Task;
+        var browse = sut.BrowseGameDirectoryAsync();
+        await pickerStarted.Task;
+
+        allowLookupToFinish.SetResult();
+        await releaseSelection;
+
+        Assert.Equal(GameRelease.SkyrimSE, _viewModel.SelectedGame);
+        Assert.Empty(_viewModel.GameDirectory);
+        Assert.Empty(_viewModel.DetectedDirectories);
+        Assert.Empty(_refreshes);
+
+        pickerCompletion.SetResult(FileDialogResult.Cancelled());
+        await browse;
+
+        Assert.Equal(GameRelease.SkyrimSE, _viewModel.SelectedGame);
+        Assert.Empty(_viewModel.GameDirectory);
+        Assert.Empty(_viewModel.DetectedDirectories);
+        Assert.Empty(_viewModel.ErrorMessages);
+        Assert.Empty(_refreshes);
+    }
+
+    /// <summary>
+    /// Verifies that cancelling a newer Browse leaves the snapshot unchanged and retires an older picker result.
+    /// </summary>
+    /// <returns>A task that completes after both controlled picker operations settle.</returns>
+    [Fact]
+    public async Task BrowseGameDirectoryAsync_NewerPickerCancellation_RetiresOlderPickerResult()
+    {
+        _viewModel.ApplyGameContextProjection(
+            GameRelease.Fallout4,
+            @"C:\Existing",
+            [@"C:\Existing", @"D:\Suggested"],
+            AdvancedMode.Off);
+        var olderPicker = new TaskCompletionSource<FileDialogResult>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var newerPicker = new TaskCompletionSource<FileDialogResult>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        _fileDialogService.SetupSequence(x => x.SelectGameDirectory())
+            .Returns(olderPicker.Task)
+            .Returns(newerPicker.Task);
+        var sut = CreateSut();
+
+        var olderBrowse = sut.BrowseGameDirectoryAsync();
+        var newerBrowse = sut.BrowseGameDirectoryAsync();
+        newerPicker.SetResult(FileDialogResult.Cancelled());
+        await newerBrowse;
+        olderPicker.SetResult(FileDialogResult.Success(GameDirectory));
+        await olderBrowse;
+
+        Assert.Equal(GameRelease.Fallout4, _viewModel.SelectedGame);
+        Assert.Equal(@"C:\Existing", _viewModel.GameDirectory);
+        Assert.Equal([@"C:\Existing", @"D:\Suggested"], _viewModel.DetectedDirectories);
+        Assert.Empty(_viewModel.ErrorMessages);
+        Assert.Empty(_refreshes);
+        _gameDetectionService.Verify(x => x.DetectGame(It.IsAny<string>()), Times.Never);
+    }
+
+    /// <summary>
+    /// Verifies that only the latest of two controlled Browse pickers can publish its selected directory.
+    /// </summary>
+    /// <returns>A task that completes after both controlled picker operations settle.</returns>
+    [Fact]
+    public async Task BrowseGameDirectoryAsync_OverlappingPickers_LatestSelectionWins()
+    {
+        const string latestDirectory = @"D:\Games\Fallout4";
+        var olderPicker = new TaskCompletionSource<FileDialogResult>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var newerPicker = new TaskCompletionSource<FileDialogResult>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        _fileDialogService.SetupSequence(x => x.SelectGameDirectory())
+            .Returns(olderPicker.Task)
+            .Returns(newerPicker.Task);
+        _gameDetectionService.Setup(x => x.DetectGame(latestDirectory)).Returns(GameRelease.Fallout4);
+        var sut = CreateSut();
+
+        var olderBrowse = sut.BrowseGameDirectoryAsync();
+        var newerBrowse = sut.BrowseGameDirectoryAsync();
+        newerPicker.SetResult(FileDialogResult.Success(latestDirectory));
+        await newerBrowse;
+        olderPicker.SetResult(FileDialogResult.Success(GameDirectory));
+        await olderBrowse;
+
+        Assert.Equal(GameRelease.Fallout4, _viewModel.SelectedGame);
+        Assert.Equal(latestDirectory, _viewModel.GameDirectory);
+        Assert.Empty(_viewModel.DetectedDirectories);
+        AssertSingleRefresh(latestDirectory, GameRelease.Fallout4, false);
+        _gameDetectionService.Verify(x => x.DetectGame(GameDirectory), Times.Never);
+    }
+
+    /// <summary>
+    /// Verifies that a newer release intent prevents an older picker result from publishing any Browse state.
+    /// </summary>
+    /// <returns>A task that completes after the release intent and controlled picker settle.</returns>
+    [Fact]
+    public async Task BrowseGameDirectoryAsync_PickerSupersededByReleaseSelection_IgnoresOlderResult()
+    {
+        const string latestDirectory = @"C:\Games\Fallout4";
+        var pickerCompletion = new TaskCompletionSource<FileDialogResult>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        _fileDialogService.Setup(x => x.SelectGameDirectory()).Returns(pickerCompletion.Task);
+        _gameLocationService.Setup(x => x.GetGameFolders(GameRelease.Fallout4)).Returns([latestDirectory]);
+        var sut = CreateSut();
+
+        var browse = sut.BrowseGameDirectoryAsync();
+        var releaseSelection = sut.SelectGameReleaseAsync(GameRelease.Fallout4);
+        pickerCompletion.SetResult(FileDialogResult.Success(GameDirectory));
+        await Task.WhenAll(browse, releaseSelection);
+
+        Assert.Equal(GameRelease.Fallout4, _viewModel.SelectedGame);
+        Assert.Equal(latestDirectory, _viewModel.GameDirectory);
+        Assert.Equal([latestDirectory], _viewModel.DetectedDirectories);
+        AssertSingleRefresh(latestDirectory, GameRelease.Fallout4, false);
+        _gameDetectionService.Verify(x => x.DetectGame(It.IsAny<string>()), Times.Never);
+    }
+
+    /// <summary>
+    /// Verifies that a newer explicit directory suppresses an older picker failure and its error message.
+    /// </summary>
+    /// <returns>A task that completes after the directory intent and controlled picker settle.</returns>
+    [Fact]
+    public async Task BrowseGameDirectoryAsync_PickerFailureSupersededByDirectorySelection_IsSilent()
+    {
+        const string latestDirectory = @"D:\Games\Skyrim";
+        _viewModel.ApplyGameContextProjection(
+            GameRelease.SkyrimSE,
+            GameDirectory,
+            [GameDirectory, latestDirectory],
+            AdvancedMode.Off);
+        var pickerCompletion = new TaskCompletionSource<FileDialogResult>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        _fileDialogService.Setup(x => x.SelectGameDirectory()).Returns(pickerCompletion.Task);
+        var sut = CreateSut();
+
+        var browse = sut.BrowseGameDirectoryAsync();
+        await sut.SelectDetectedDirectoryAsync(latestDirectory);
+        pickerCompletion.SetResult(FileDialogResult.Failure("obsolete picker failure"));
+        await browse;
+
+        Assert.Equal(GameRelease.SkyrimSE, _viewModel.SelectedGame);
+        Assert.Equal(latestDirectory, _viewModel.GameDirectory);
+        Assert.Equal([GameDirectory, latestDirectory], _viewModel.DetectedDirectories);
+        AssertSingleRefresh(latestDirectory, GameRelease.SkyrimSE, false);
+        Assert.DoesNotContain(
+            _viewModel.ErrorMessages,
+            message => message.Contains("obsolete picker failure", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// Verifies that Browse detects a missing release without retaining suggestions or starting location lookup.
+    /// </summary>
+    /// <returns>A task that completes after Browse detection and Plugin List discovery finish.</returns>
     [Fact]
     public async Task BrowseGameDirectoryAsync_SelectedDirectoryDetectsGameAndRefreshesPlugins()
     {
+        _viewModel.ApplyGameContextProjection(
+            null,
+            null,
+            [@"C:\StaleSuggestion"],
+            AdvancedMode.Off);
         _fileDialogService.Setup(x => x.SelectGameDirectory())
             .ReturnsAsync(FileDialogResult.Success(GameDirectory));
         _gameDetectionService.Setup(x => x.DetectGame(GameDirectory)).Returns(GameRelease.SkyrimSE);
@@ -357,12 +542,128 @@ public class UserWorkflowTests
 
         Assert.Equal(GameDirectory, _viewModel.GameDirectory);
         Assert.Equal(GameRelease.SkyrimSE, _viewModel.SelectedGame);
+        Assert.Empty(_viewModel.DetectedDirectories);
+        _gameLocationService.Verify(
+            x => x.GetGameFolders(It.IsAny<GameRelease>()),
+            Times.Never);
         AssertSingleRefresh(GameDirectory, GameRelease.SkyrimSE, false);
     }
 
+    /// <summary>
+    /// Verifies that a newer release intent prevents an older Browse detection result from publishing context or refresh.
+    /// </summary>
+    /// <returns>A task that completes after the controlled detection and newer release intent settle.</returns>
+    [Fact]
+    public async Task BrowseGameDirectoryAsync_DetectionSupersededByReleaseSelection_CannotPublishDetectedContext()
+    {
+        var pickerCompletion = new TaskCompletionSource<FileDialogResult>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var detectionStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var allowDetectionToFinish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _fileDialogService.Setup(x => x.SelectGameDirectory())
+            .Returns(pickerCompletion.Task);
+        _gameDetectionService.Setup(x => x.DetectGame(GameDirectory))
+            .Returns(() =>
+            {
+                detectionStarted.SetResult();
+                allowDetectionToFinish.Task.GetAwaiter().GetResult();
+                return GameRelease.SkyrimSE;
+            });
+        _gameLocationService.Setup(x => x.GetGameFolders(GameRelease.Fallout4))
+            .Returns([@"C:\Games\Fallout4"]);
+        var sut = CreateSut();
+
+        var browse = sut.BrowseGameDirectoryAsync();
+        pickerCompletion.SetResult(FileDialogResult.Success(GameDirectory));
+        await detectionStarted.Task;
+        var newerRelease = sut.SelectGameReleaseAsync(GameRelease.Fallout4);
+
+        allowDetectionToFinish.SetResult();
+        await Task.WhenAll(browse, newerRelease);
+
+        Assert.Equal(GameRelease.Fallout4, _viewModel.SelectedGame);
+        Assert.Equal(@"C:\Games\Fallout4", _viewModel.GameDirectory);
+        Assert.Equal([@"C:\Games\Fallout4"], _viewModel.DetectedDirectories);
+        AssertSingleRefresh(@"C:\Games\Fallout4", GameRelease.Fallout4, false);
+    }
+
+    /// <summary>
+    /// Verifies that browsing the current path retries discovery and leaves prior confirmation cleared on failure.
+    /// </summary>
+    /// <returns>A task that completes after the same-path discovery retry fails.</returns>
+    [Fact]
+    public async Task BrowseGameDirectoryAsync_SamePathDiscoveryFailure_RetriesAndClearsConfirmation()
+    {
+        _gameLocationService.Setup(x => x.GetGameFolders(GameRelease.SkyrimSE))
+            .Returns([GameDirectory, @"D:\Games\Skyrim"]);
+        _pluginListDiscovery.PluginNames = ["PreviouslyConfirmed.esp"];
+        var sut = CreateSut();
+        await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
+        Assert.NotNull(_pluginList.Current.Confirmed);
+        _refreshes.Clear();
+        _pluginListDiscovery.Handler = (_, _) =>
+            Task.FromResult<PluginListDiscoveryResult>(PluginListDiscoveryResult.Failed("directory mismatch"));
+        _fileDialogService.Setup(x => x.SelectGameDirectory())
+            .ReturnsAsync(FileDialogResult.Success(GameDirectory));
+
+        await sut.BrowseGameDirectoryAsync();
+
+        Assert.Equal(GameRelease.SkyrimSE, _viewModel.SelectedGame);
+        Assert.Equal(GameDirectory, _viewModel.GameDirectory);
+        Assert.Equal([GameDirectory, @"D:\Games\Skyrim"], _viewModel.DetectedDirectories);
+        Assert.Null(_pluginList.Current.Confirmed);
+        Assert.Equal(PluginListSource.Create(GameRelease.SkyrimSE, GameDirectory), Assert.Single(_refreshes));
+        Assert.Contains("Failed to load plugins: directory mismatch", _viewModel.ErrorMessages);
+        _gameDetectionService.Verify(x => x.DetectGame(It.IsAny<string>()), Times.Never);
+        _gameLocationService.Verify(x => x.GetGameFolders(GameRelease.SkyrimSE), Times.Once);
+    }
+
+    /// <summary>
+    /// Verifies that an explicit release accepts an unsuggested Browse path and reports discovery failure normally.
+    /// </summary>
+    /// <returns>A task that completes after discovery for the custom path fails.</returns>
+    [Fact]
+    public async Task BrowseGameDirectoryAsync_CustomPathWithSelectedRelease_PreservesReleaseAndSuggestions()
+    {
+        const string customDirectory = @"Z:\Portable\Skyrim";
+        _gameLocationService.Setup(x => x.GetGameFolders(GameRelease.SkyrimSE))
+            .Returns([GameDirectory, @"D:\Games\Skyrim"]);
+        _pluginListDiscovery.PluginNames = ["PreviouslyConfirmed.esp"];
+        var sut = CreateSut();
+        await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
+        _refreshes.Clear();
+        _pluginListDiscovery.Handler = (_, _) =>
+            Task.FromResult<PluginListDiscoveryResult>(PluginListDiscoveryResult.Failed("release mismatch"));
+        _fileDialogService.Setup(x => x.SelectGameDirectory())
+            .ReturnsAsync(FileDialogResult.Success(customDirectory));
+
+        await sut.BrowseGameDirectoryAsync();
+
+        Assert.Equal(GameRelease.SkyrimSE, _viewModel.SelectedGame);
+        Assert.Equal(customDirectory, _viewModel.GameDirectory);
+        Assert.Equal([GameDirectory, @"D:\Games\Skyrim"], _viewModel.DetectedDirectories);
+        Assert.Null(_pluginList.Current.Confirmed);
+        Assert.Equal(PluginListSource.Create(GameRelease.SkyrimSE, customDirectory), Assert.Single(_refreshes));
+        Assert.Contains("Failed to load plugins: release mismatch", _viewModel.ErrorMessages);
+        _gameDetectionService.Verify(x => x.DetectGame(It.IsAny<string>()), Times.Never);
+        _gameLocationService.Verify(x => x.GetGameFolders(GameRelease.SkyrimSE), Times.Once);
+    }
+
+    /// <summary>
+    /// Verifies that current detection failure retains the chosen path, clears confirmation, and presents guidance.
+    /// </summary>
+    /// <returns>A task that completes after detection failure is presented.</returns>
     [Fact]
     public async Task BrowseGameDirectoryAsync_SelectedDirectoryWithoutDetectableGame_RecordsWorkflowError()
     {
+        _pluginListDiscovery.PluginNames = ["PreviouslyConfirmed.esp"];
+        await _pluginList.RefreshAsync(
+            GameRelease.SkyrimSE,
+            GameDirectory,
+            AdvancedMode.Off,
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(_pluginList.Current.Confirmed);
+        _refreshes.Clear();
         _fileDialogService.Setup(x => x.SelectGameDirectory())
             .ReturnsAsync(FileDialogResult.Success(GameDirectory));
         _gameDetectionService.Setup(x => x.DetectGame(GameDirectory)).Returns((GameRelease?)null);
@@ -373,12 +674,42 @@ public class UserWorkflowTests
 
         Assert.Equal(GameDirectory, _viewModel.GameDirectory);
         Assert.Null(_viewModel.SelectedGame);
+        Assert.Null(_pluginList.Current.Confirmed);
         Assert.Contains(
             "Could not detect game from directory. Please select a game from the dropdown.",
             _viewModel.ErrorMessages);
         Assert.Empty(_refreshes);
     }
 
+    /// <summary>
+    /// Verifies that current picker failure leaves the existing Game Context unchanged and reports the failure.
+    /// </summary>
+    /// <returns>A task that completes after picker failure is presented.</returns>
+    [Fact]
+    public async Task BrowseGameDirectoryAsync_CurrentPickerFailure_LeavesSnapshotUnchangedAndRecordsError()
+    {
+        _viewModel.ApplyGameContextProjection(
+            GameRelease.Fallout4,
+            @"C:\Existing",
+            [@"C:\Existing", @"D:\Suggested"],
+            AdvancedMode.Off);
+        _fileDialogService.Setup(x => x.SelectGameDirectory())
+            .ReturnsAsync(FileDialogResult.Failure("picker unavailable"));
+        var sut = CreateSut();
+
+        await sut.BrowseGameDirectoryAsync();
+
+        Assert.Equal(GameRelease.Fallout4, _viewModel.SelectedGame);
+        Assert.Equal(@"C:\Existing", _viewModel.GameDirectory);
+        Assert.Equal([@"C:\Existing", @"D:\Suggested"], _viewModel.DetectedDirectories);
+        Assert.Contains("Error selecting game directory: picker unavailable", _viewModel.ErrorMessages);
+        Assert.Empty(_refreshes);
+    }
+
+    /// <summary>
+    /// Verifies that picker cancellation leaves an existing Game Context unchanged without adding an error.
+    /// </summary>
+    /// <returns>A task that completes after picker cancellation is observed.</returns>
     [Fact]
     public async Task BrowseGameDirectoryAsync_PickerCancel_LeavesStateUnchangedAndAddsNoError()
     {
