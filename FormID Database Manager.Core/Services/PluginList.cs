@@ -126,6 +126,20 @@ internal sealed class PluginList : IDisposable
         {
             // Supersession, invalidation, and disposal alone are routine retirement, not user-visible cancellation.
         }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            try
+            {
+                PublishTerminal(operation, new PluginListFaultedActivity(operation.Source));
+            }
+            catch
+            {
+                // Discovery remains the primary failure; terminal notification is best-effort while unwinding.
+            }
+
+            // Unexpected failures remain exceptional; this terminal fact only releases source-aware presentation state.
+            throw;
+        }
         finally
         {
             FinishRefresh(operation);

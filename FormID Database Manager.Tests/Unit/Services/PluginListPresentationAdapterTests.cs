@@ -186,6 +186,39 @@ public sealed class PluginListPresentationAdapterTests
     }
 
     /// <summary>
+    ///     Verifies propagated discovery faults publish a silent terminal fact that clears transient scanning state.
+    /// </summary>
+    [Fact]
+    public async Task Projection_CurrentDiscoveryFault_ClearsScanningWithoutTerminalMessage()
+    {
+        var gameDetectionService = new Mock<GameDetectionService>();
+        var discovery = new ControlledPluginListDiscovery();
+        using var pluginList = new PluginList(gameDetectionService.Object, discovery);
+        var dispatcher = new SynchronousThreadDispatcher();
+        using var viewModel = new MainWindowViewModel(dispatcher);
+        using var sut = new PluginListPresentationAdapter(pluginList, viewModel, dispatcher);
+        var refresh = pluginList.RefreshAsync(
+            GameRelease.SkyrimSE,
+            discovery.GameDirectory,
+            AdvancedMode.Off,
+            TestContext.Current.CancellationToken);
+        await discovery.Started.Task.WaitAsync(TestContext.Current.CancellationToken);
+        discovery.ReportProgress(1, 4);
+        Assert.True(viewModel.IsScanning);
+        var exception = new InvalidOperationException("Synthetic discovery fault.");
+
+        discovery.Fault(exception);
+
+        var propagated = await Record.ExceptionAsync(() => refresh);
+        Assert.Same(exception, propagated);
+        Assert.False(viewModel.IsScanning);
+        Assert.Equal(0, viewModel.ProgressValue);
+        Assert.Equal(string.Empty, viewModel.ProgressStatus);
+        Assert.Empty(viewModel.InformationMessages);
+        Assert.Empty(viewModel.ErrorMessages);
+    }
+
+    /// <summary>
     ///     Verifies same-source failure retains confirmed membership and reports its terminal errors only once.
     /// </summary>
     [Fact]
@@ -393,6 +426,11 @@ public sealed class PluginListPresentationAdapterTests
         public void Complete(params string[] pluginNames)
         {
             _result.SetResult(PluginListDiscoveryResult.Completed(pluginNames));
+        }
+
+        public void Fault(Exception exception)
+        {
+            _result.SetException(exception);
         }
     }
 

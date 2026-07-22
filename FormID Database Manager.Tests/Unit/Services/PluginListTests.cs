@@ -726,25 +726,47 @@ public sealed class PluginListTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task RefreshAsync_ProgrammingAndFatalDiscoveryFailures_PreserveExceptionalBehavior(bool fatal)
+    public async Task RefreshAsync_CurrentProgrammingAndFatalDiscoveryFailures_PublishFaultedAndPropagate(bool fatal)
     {
+        var gameDetectionService = new Mock<GameDetectionService>();
+        gameDetectionService.Setup(service => service.GetBaseGamePlugins(GameRelease.SkyrimSE))
+            .Returns([]);
         var discovery = new ControlledPluginListDiscovery();
-        var operation = discovery.Enqueue();
-        using var sut = new PluginList(new Mock<GameDetectionService>().Object, discovery);
-        var refresh = sut.RefreshAsync(
+        var initial = discovery.Enqueue();
+        var faulting = discovery.Enqueue();
+        using var sut = new PluginList(gameDetectionService.Object, discovery);
+        var gameDirectory = CreateGameDirectory();
+        var initialRefresh = sut.RefreshAsync(
             GameRelease.SkyrimSE,
-            CreateGameDirectory(),
+            gameDirectory,
             AdvancedMode.Off,
             TestContext.Current.CancellationToken);
+        initial.Complete("Retained.esp");
+        await initialRefresh;
+        var confirmed = Assert.IsType<ConfirmedPluginList>(sut.Current.Confirmed);
+        var refresh = sut.RefreshAsync(
+            GameRelease.SkyrimSE,
+            gameDirectory,
+            AdvancedMode.Off,
+            TestContext.Current.CancellationToken);
+        var terminalNotificationAttempted = false;
+        sut.Changed += (_, _) =>
+        {
+            terminalNotificationAttempted = true;
+            throw new InvalidOperationException("Synthetic terminal notification failure.");
+        };
         Exception exception = fatal
             ? new OutOfMemoryException("Synthetic fatal discovery failure.")
             : new InvalidOperationException("Synthetic programming failure.");
 
-        operation.Fault(exception);
+        faulting.Fault(exception);
 
         var propagated = await Record.ExceptionAsync(() => refresh);
         Assert.Same(exception, propagated);
-        Assert.IsType<PluginListRefreshingActivity>(sut.Current.Activity);
+        Assert.True(terminalNotificationAttempted);
+        Assert.Same(confirmed, sut.Current.Confirmed);
+        var faulted = Assert.IsType<PluginListFaultedActivity>(sut.Current.Activity);
+        Assert.Equal(confirmed.Source, faulted.Source);
     }
 
     [Fact]
