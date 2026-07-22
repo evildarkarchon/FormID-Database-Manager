@@ -115,6 +115,10 @@ internal class PluginIngestion : IPluginIngestion
     /// <param name="progress">Optional transient preparation and current-Plugin facts.</param>
     /// <param name="cancellationToken">Stops the selected set without returning a completed report.</param>
     /// <returns>One ordered outcome for every selected Plugin on normal completion.</returns>
+    /// <remarks>
+    ///     Only normalized Plugin-read failures become Plugin outcomes. Cancellation and infrastructure failures propagate
+    ///     without a report, and the caller retains Store optimization and disposal ownership.
+    /// </remarks>
     /// <exception cref="ArgumentNullException"><paramref name="request" /> or <paramref name="recordStore" /> is null.</exception>
     /// <exception cref="OperationCanceledException"><paramref name="cancellationToken" /> requests cancellation.</exception>
     [RequiresUnreferencedCode(
@@ -128,11 +132,14 @@ internal class PluginIngestion : IPluginIngestion
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(recordStore);
 
+        // A pre-cancelled selection must not announce preparation or consult any external adapter.
         cancellationToken.ThrowIfCancellationRequested();
 
         var totalPluginCount = request.PluginNames.Length;
         var dataPath = GameReleaseHelper.ResolveDataPath(request.GameDirectory);
         progress?.Report(PluginIngestionProgress.PreparingLoadOrder(totalPluginCount));
+        // Synchronous progress callbacks can request cancellation before load-order initialization begins.
+        cancellationToken.ThrowIfCancellationRequested();
         var loadOrderSnapshot = _loadOrderProvider.BuildSnapshot(
             request.GameRelease,
             dataPath,
@@ -146,6 +153,8 @@ internal class PluginIngestion : IPluginIngestion
 
             var pluginName = request.PluginNames[index];
             progress?.Report(PluginIngestionProgress.IngestingPlugin(pluginName, index + 1, totalPluginCount));
+            // A synchronous reporter can cancel after the selection gate but before this Plugin attempt begins.
+            cancellationToken.ThrowIfCancellationRequested();
 
             var skipReason = GetSkipReason(pluginName, dataPath, loadOrderSnapshot);
             if (skipReason is { } reason)
@@ -167,6 +176,8 @@ internal class PluginIngestion : IPluginIngestion
             outcomes.Add(outcome);
         }
 
+        // Close the final classification race so cancellation cannot produce a misleading completed report.
+        cancellationToken.ThrowIfCancellationRequested();
         return new PluginIngestionReport(request, outcomes);
     }
 
@@ -225,7 +236,12 @@ internal class PluginIngestion : IPluginIngestion
     /// <param name="recordStore">The already-open Store session.</param>
     /// <param name="cancellationToken">Stops overlay enumeration or the Store write.</param>
     /// <returns>Facts describing the one selected Plugin attempt.</returns>
+    /// <remarks>
+    ///     The overlay is always disposed. A standalone disposal failure propagates, while cleanup is best-effort when a
+    ///     cancellation or infrastructure exception is already in flight so the primary exception retains its identity.
+    /// </remarks>
     /// <exception cref="OperationCanceledException"><paramref name="cancellationToken" /> requests cancellation.</exception>
+    /// <exception cref="Exception">An unexpected infrastructure or standalone overlay-cleanup failure occurs.</exception>
     [RequiresUnreferencedCode(
         "Uses reflection to discover INamedGetter interface and Name/String properties on Mutagen record types for name extraction.")]
     private async Task<PluginIngestionOutcome> IngestAvailablePluginAsync(
@@ -246,36 +262,59 @@ internal class PluginIngestion : IPluginIngestion
         }
         catch (PluginReadException ex)
         {
+            // Only normalized Plugin-read failures are nonfatal; every infrastructure exception aborts the selected set.
             return CreateFailedPlugin(pluginName, ex);
         }
 
-        using var pluginToDispose = plugin;
-
-        var warningCollector = new RecordWarningCollector();
-        var records = EnumeratePluginRecords(pluginToDispose, warningCollector, cancellationToken);
-
+        Exception? primaryException = null;
         try
         {
-            var writeResult = await recordStore.WritePluginAsync(
-                    pluginName,
-                    records,
-                    updateMode,
-                    cancellationToken)
-                .ConfigureAwait(false);
+            var warningCollector = new RecordWarningCollector();
+            var records = EnumeratePluginRecords(plugin, warningCollector, cancellationToken);
 
-            if (writeResult.RecordCount == 0)
+            try
             {
-                return new SkippedPlugin(pluginName, SkippedPluginReason.ZeroFormIdRecords);
-            }
+                var writeResult = await recordStore.WritePluginAsync(
+                        pluginName,
+                        records,
+                        updateMode,
+                        cancellationToken)
+                    .ConfigureAwait(false);
 
-            return new IngestedPlugin(
-                pluginName,
-                writeResult.RecordCount,
-                warningCollector.CreateWarning());
+                // The Store may finish as cancellation arrives, so recheck before turning that write into a normal outcome.
+                cancellationToken.ThrowIfCancellationRequested();
+
+                if (writeResult.RecordCount == 0)
+                {
+                    return new SkippedPlugin(pluginName, SkippedPluginReason.ZeroFormIdRecords);
+                }
+
+                return new IngestedPlugin(
+                    pluginName,
+                    writeResult.RecordCount,
+                    warningCollector.CreateWarning());
+            }
+            catch (PluginReadException ex)
+            {
+                // Lazy enumeration uses the same narrow marker boundary while Store and cancellation failures escape unchanged.
+                return CreateFailedPlugin(pluginName, ex);
+            }
         }
-        catch (PluginReadException ex)
+        catch (Exception ex)
         {
-            return CreateFailedPlugin(pluginName, ex);
+            primaryException = ex;
+            throw;
+        }
+        finally
+        {
+            try
+            {
+                plugin.Dispose();
+            }
+            catch when (primaryException is not null)
+            {
+                // Overlay cleanup is best-effort while preserving the cancellation or infrastructure failure in flight.
+            }
         }
     }
 

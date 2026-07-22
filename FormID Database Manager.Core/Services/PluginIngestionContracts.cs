@@ -17,6 +17,10 @@ internal interface IPluginIngestion
     /// <param name="progress">Optional transient preparation and current-Plugin facts.</param>
     /// <param name="cancellationToken">Stops the selected set without returning a completed report.</param>
     /// <returns>The authoritative ordered outcome report for the complete selection.</returns>
+    /// <remarks>
+    ///     Plugin-specific read failures may become typed outcomes. Cancellation and infrastructure failures propagate
+    ///     without a report; Store optimization and disposal remain the surrounding Processing Run's responsibility.
+    /// </remarks>
     /// <exception cref="OperationCanceledException"><paramref name="cancellationToken" /> requests cancellation.</exception>
     [RequiresUnreferencedCode(
         "Uses reflection-based name extraction for Mutagen records through EntryExtraction.")]
