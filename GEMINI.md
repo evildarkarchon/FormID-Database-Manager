@@ -55,7 +55,7 @@ The solution has four projects in `FormID Database Manager.slnx`:
   - `ProcessingRunExecutor` — Reusable Processing Run seam for selected-Plugin and FormID text-file runs; owns active-run cancellation, run-scoped Store opening, explicit successful-run optimization, best-effort cleanup, and terminal event formatting, and delegates the complete immutable Plugin selection once through internal `IPluginIngestion`
   - `PluginIngestion` — Internal sealed aggregate selected-Plugin implementation; owns Data-path resolution, load-order preparation, `IPluginOverlayReader`, and `EntryExtraction`, attempts Plugins sequentially with best-effort outcomes, and writes only through the supplied `IFormIdRecordStoreSession`
   - `FormIdRecordStore` — Implements the FormID Record Store and solely owns production Store connection configuration, selected-GameRelease schema preparation, SQLite writes, explicit optimization, and pipe-delimited FormID text imports (`plugin|formid|entry`) with 10000-row staging batches
-  - `PluginListManager` — Loads plugin lists from game directories on background thread
+  - `PluginList` / `PluginListDiscovery` — Own authoritative Plugin List membership, selection, refresh generations, and ordered discovery; `UserWorkflow` owns their lifetime and `PluginListPresentationAdapter` projects immutable facts to the ViewModel
   - `GameDetectionService` — Detects game type from directory structure (master file presence)
   - `IFileDialogService` — UI-neutral file/folder picker abstraction
   - `IThreadDispatcher` / `ImmediateThreadDispatcher` / `QueuedThreadDispatcher` — Abstractions for UI thread marshalling (testable)
@@ -83,7 +83,7 @@ The solution has four projects in `FormID Database Manager.slnx`:
 
 ## Key Patterns
 
-- **Thread safety**: UI updates go through `IThreadDispatcher`. ViewModel uses `Interlocked` for filter reentrancy guard and `lock` for plugins collection access.
+- **Thread safety**: UI updates go through `IThreadDispatcher`. Plugin List presentation membership is dispatcher-confined and exposed read-only; the ViewModel uses `Interlocked` for filter reentrancy.
 - **SQL injection prevention**: `GameReleaseHelper.GetSafeTableName()` uses an explicit whitelist switch on `GameRelease` enum.
 - **Cancellation**: All async processing supports `CancellationToken`. `ProcessingRunExecutor` owns the active Processing Run's `CancellationTokenSource` lifecycle. Note: Mutagen's `CreateFromBinaryOverlay` is synchronous and not cancellable.
 - **Test collections**: Database tests use `[Collection(...)]` for sequential execution. Unit tests run in parallel.

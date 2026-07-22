@@ -539,6 +539,46 @@ public sealed class PluginListTests
         Assert.Equal(PluginListSource.Create(GameRelease.SkyrimSE, newerDirectory), newerConfirmed.Source);
     }
 
+    /// <summary>
+    ///     Verifies an older non-cooperative failure cannot replace a newer ready Plugin List state.
+    /// </summary>
+    [Fact]
+    public async Task RefreshAsync_OlderFailureAfterNewerReady_DoesNotOverwriteNewerState()
+    {
+        var gameDetectionService = new Mock<GameDetectionService>();
+        gameDetectionService.Setup(service => service.GetBaseGamePlugins(GameRelease.SkyrimSE))
+            .Returns([]);
+        var discovery = new ControlledPluginListDiscovery();
+        var older = discovery.Enqueue();
+        var newer = discovery.Enqueue();
+        using var sut = new PluginList(gameDetectionService.Object, discovery);
+
+        var olderRefresh = sut.RefreshAsync(
+            GameRelease.SkyrimSE,
+            CreateGameDirectory(),
+            AdvancedMode.Off,
+            TestContext.Current.CancellationToken);
+        var newerDirectory = CreateGameDirectory();
+        var newerRefresh = sut.RefreshAsync(
+            GameRelease.SkyrimSE,
+            newerDirectory,
+            AdvancedMode.Off,
+            TestContext.Current.CancellationToken);
+
+        newer.Complete("Newer.esp");
+        await newerRefresh;
+        var newerState = sut.Current;
+        var newerConfirmed = Assert.IsType<ConfirmedPluginList>(newerState.Confirmed);
+
+        older.Fail("Older discovery failed after retirement.");
+        await olderRefresh;
+
+        Assert.Same(newerState, sut.Current);
+        Assert.IsType<PluginListReadyActivity>(sut.Current.Activity);
+        Assert.Equal(["Newer.esp"], newerConfirmed.Entries.Select(entry => entry.Name).ToArray());
+        Assert.Equal(PluginListSource.Create(GameRelease.SkyrimSE, newerDirectory), newerConfirmed.Source);
+    }
+
     [Fact]
     public async Task RefreshAsync_CurrentCallerCancellation_PublishesCancelledAndPropagates()
     {

@@ -5,7 +5,6 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
-using FormID_Database_Manager.Models;
 using FormID_Database_Manager.Services;
 using FormID_Database_Manager.TestUtilities;
 using FormID_Database_Manager.ViewModels;
@@ -193,6 +192,9 @@ public class StressTests : IDisposable
             $"Too many connection failures: {errors.Count}/{maxConnections}");
     }
 
+    /// <summary>
+    ///     Stresses concurrent progress and message presentation updates without bypassing Plugin List ownership.
+    /// </summary>
     [ManualPerformanceFact(Timeout = 60000)]
     [Trait("Category", "ManualPerformance")]
     [Trait("Category", "StressTest")]
@@ -201,7 +203,7 @@ public class StressTests : IDisposable
         // Arrange
         const int updateCount = 10000;
         const int threadCount = 5;
-        var viewModel = new MainWindowViewModel();
+        using var viewModel = new MainWindowViewModel();
         var errors = new List<Exception>();
         var updateTimes = new List<long>();
         var updateLock = new object();
@@ -226,11 +228,6 @@ public class StressTests : IDisposable
                         if (i % 10 == 0)
                         {
                             viewModel.AddErrorMessage($"T{threadId}: Error message {i}");
-                        }
-
-                        if (i % 50 == 0)
-                        {
-                            viewModel.Plugins.Add(new PluginListItem { Name = $"Plugin_T{threadId}_{i}.esp" });
                         }
 
                         stopwatch.Stop();
@@ -369,95 +366,6 @@ public class StressTests : IDisposable
         Assert.True(fileInfo.Length > 0, "Database file is empty");
         Assert.True(searchStopwatch.ElapsedMilliseconds < 1200,
             $"Search too slow: {searchStopwatch.ElapsedMilliseconds} ms");
-    }
-
-    [ManualPerformanceFact]
-    [Trait("Category", "ManualPerformance")]
-    [Trait("Category", "StressTest")]
-    public void StressTest_OutOfMemoryScenario()
-    {
-        // Arrange
-        var viewModel = new MainWindowViewModel();
-        const int pluginCount = 4_096; // Realistic maximum - game plugin limit
-
-        _output.WriteLine($"Testing memory stress with {pluginCount:N0} plugins...");
-
-        // Monitor memory
-        var initialMemory = GC.GetTotalMemory(true);
-        var peakMemory = initialMemory;
-
-        // Act
-        Exception? caughtException = null;
-        try
-        {
-            for (var i = 0; i < pluginCount; i++)
-            {
-                viewModel.Plugins.Add(new PluginListItem
-                {
-                    Name =
-                        $"VeryLongPluginNameToIncreaseMemoryUsage_ThisIsIntentionallyLongToStressTestMemory_{i:D8}.esp"
-                });
-
-                // Also add error messages
-                if (i % 100 == 0)
-                {
-                    viewModel.AddErrorMessage($"This is a very long error message designed to consume memory. " +
-                                              $"Error number {i} with additional details and stack trace information " +
-                                              $"that would typically be included in a real error scenario.");
-                }
-
-                // Monitor memory inline (every 512 plugins)
-                if (i % 512 == 0)
-                {
-                    var currentMemory = GC.GetTotalMemory(false);
-                    if (currentMemory > peakMemory)
-                    {
-                        peakMemory = currentMemory;
-                    }
-                }
-            }
-        }
-        catch (OutOfMemoryException ex)
-        {
-            caughtException = ex;
-        }
-
-        // Final memory check
-        var currentMem = GC.GetTotalMemory(false);
-        if (currentMem > peakMemory)
-        {
-            peakMemory = currentMem;
-        }
-
-        // Force cleanup
-        viewModel.Plugins.Clear();
-        viewModel.ErrorMessages.Clear();
-        GC.Collect();
-        GC.WaitForPendingFinalizers();
-        GC.Collect();
-
-        var finalMemory = GC.GetTotalMemory(true);
-
-        // Assert
-        _output.WriteLine("Memory stress test results:");
-        _output.WriteLine($"Initial memory: {initialMemory / 1024.0 / 1024.0:F2} MB");
-        _output.WriteLine($"Peak memory: {peakMemory / 1024.0 / 1024.0:F2} MB");
-        _output.WriteLine($"Final memory: {finalMemory / 1024.0 / 1024.0:F2} MB");
-        _output.WriteLine($"Memory increase: {(peakMemory - initialMemory) / 1024.0 / 1024.0:F2} MB");
-        _output.WriteLine($"Items successfully added: {viewModel.Plugins.Count}");
-
-        if (caughtException != null)
-        {
-            _output.WriteLine("OutOfMemoryException caught as expected");
-        }
-
-        // Memory should be properly released after cleanup
-        // Due to GC behavior and test environment differences, we'll skip the memory assertion
-        // The important thing is that no OutOfMemoryException was thrown unexpectedly
-        if (caughtException == null)
-        {
-            _output.WriteLine("No OutOfMemoryException was thrown - memory handling is acceptable");
-        }
     }
 
     private sealed class CancelOnFirstStatusProgress(ProcessingRunExecutor executor)

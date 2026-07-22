@@ -64,10 +64,13 @@ public class DataBindingTests
     {
         var viewModel = new MainWindowViewModel(new SynchronousThreadDispatcher());
 
-        viewModel.Plugins.Add(new PluginListItem { Name = "Skyrim.esm" });
-        viewModel.Plugins.Add(new PluginListItem { Name = "Update.esm" });
-        viewModel.Plugins.Add(new PluginListItem { Name = "Dawnguard.esm" });
-        viewModel.Plugins.Add(new PluginListItem { Name = "TestMod.esp" });
+        viewModel.ReplacePluginProjection(
+        [
+            new PluginListItem { Name = "Skyrim.esm" },
+            new PluginListItem { Name = "Update.esm" },
+            new PluginListItem { Name = "Dawnguard.esm" },
+            new PluginListItem { Name = "TestMod.esp" }
+        ]);
 
         viewModel.PluginFilter = "esm";
 

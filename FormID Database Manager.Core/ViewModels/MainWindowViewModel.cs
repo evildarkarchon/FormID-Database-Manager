@@ -12,7 +12,6 @@ public partial class MainWindowViewModel : ObservableObject, IDisposable
     private readonly int _debounceMs;
     private readonly IThreadDispatcher _dispatcher;
     private readonly Lock _messagesLock = new();
-    private readonly object _pluginsLock = new();
     private CancellationTokenSource? _debounceCts;
 
     [ObservableProperty] private bool _advancedMode;
@@ -24,7 +23,7 @@ public partial class MainWindowViewModel : ObservableObject, IDisposable
     [ObservableProperty] [NotifyPropertyChangedFor(nameof(HasErrorMessages))]
     private ObservableCollection<string> _errorMessages = [];
 
-    private ObservableCollection<PluginListItem> _filteredPlugins = [];
+    private readonly ObservableCollection<PluginListItem> _filteredPlugins = [];
 
     [ObservableProperty] private string _formIdListPath = string.Empty;
 
@@ -47,7 +46,7 @@ public partial class MainWindowViewModel : ObservableObject, IDisposable
 
     [ObservableProperty] private string _pluginFilter = string.Empty;
 
-    private readonly ObservableCollection<PluginListItem> _plugins;
+    private readonly ObservableCollection<PluginListItem> _plugins = [];
 
     [ObservableProperty] private string _processButtonText = "Process FormIDs";
 
@@ -68,7 +67,8 @@ public partial class MainWindowViewModel : ObservableObject, IDisposable
     {
         _dispatcher = dispatcher ?? new ImmediateThreadDispatcher();
         _debounceMs = debounceMs;
-        _plugins = CreatePluginsCollection();
+        Plugins = new ReadOnlyObservableCollection<PluginListItem>(_plugins);
+        FilteredPlugins = new ReadOnlyObservableCollection<PluginListItem>(_filteredPlugins);
         _plugins.CollectionChanged += OnPluginsCollectionChanged;
 
         AvailableGames = new List<GameRelease>
@@ -91,11 +91,6 @@ public partial class MainWindowViewModel : ObservableObject, IDisposable
         _warningMessages.CollectionChanged += OnWarningMessagesCollectionChanged;
     }
 
-    private LockedObservableCollection<PluginListItem> CreatePluginsCollection()
-    {
-        return new LockedObservableCollection<PluginListItem>(_pluginsLock);
-    }
-
     private void OnPluginsCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
     {
         ApplyFilter();
@@ -116,21 +111,15 @@ public partial class MainWindowViewModel : ObservableObject, IDisposable
     public bool IsProgressVisible => IsProcessing || IsScanning;
 
     /// <summary>
-    ///     Gets the mutable Main Window projection used by the active legacy path and the Plugin List presentation adapter.
+    ///     Gets the read-only Main Window projection published by the Plugin List presentation adapter.
     /// </summary>
-    /// <remarks>The collection identity is stable; authoritative Plugin List operations never accept it as input.</remarks>
-    public ObservableCollection<PluginListItem> Plugins
-    {
-        get
-        {
-            lock (_pluginsLock)
-            {
-                return _plugins;
-            }
-        }
-    }
+    /// <remarks>The observable collection identity is stable for the lifetime of this ViewModel.</remarks>
+    public ReadOnlyObservableCollection<PluginListItem> Plugins { get; }
 
-    public ObservableCollection<PluginListItem> FilteredPlugins => _filteredPlugins;
+    /// <summary>
+    ///     Gets the read-only filtered view of the current Plugin List projection.
+    /// </summary>
+    public ReadOnlyObservableCollection<PluginListItem> FilteredPlugins { get; }
 
     /// <summary>
     ///     Replaces projected Plugin items as one UI-dispatched membership update, then reapplies the current text filter.
@@ -142,7 +131,7 @@ public partial class MainWindowViewModel : ObservableObject, IDisposable
     {
         ArgumentNullException.ThrowIfNull(projectedItems);
 
-        SuspendFilter();
+        _filterSuspended = true;
         try
         {
             _plugins.Clear();
@@ -153,7 +142,8 @@ public partial class MainWindowViewModel : ObservableObject, IDisposable
         }
         finally
         {
-            ResumeFilter();
+            _filterSuspended = false;
+            ApplyFilter();
         }
     }
 
@@ -248,17 +238,6 @@ public partial class MainWindowViewModel : ObservableObject, IDisposable
         }, token, TaskContinuationOptions.OnlyOnRanToCompletion, TaskScheduler.Default);
     }
 
-    public void SuspendFilter()
-    {
-        _filterSuspended = true;
-    }
-
-    public void ResumeFilter()
-    {
-        _filterSuspended = false;
-        ApplyFilter();
-    }
-
     private void ApplyFilter()
     {
         ApplyFilter(PluginFilter);
@@ -293,14 +272,9 @@ public partial class MainWindowViewModel : ObservableObject, IDisposable
         try
         {
             // Reconcile the existing collection in Plugin List order so filtering preserves item identity and selection.
-            // All operations run on the UI thread; the lock only protects the authoritative projection snapshot.
-            List<PluginListItem> filtered;
-            lock (_pluginsLock)
-            {
-                filtered = string.IsNullOrWhiteSpace(pluginFilter)
-                    ? _plugins.ToList()
-                    : _plugins.Where(p => p.Name.Contains(pluginFilter, StringComparison.OrdinalIgnoreCase)).ToList();
-            }
+            var filtered = string.IsNullOrWhiteSpace(pluginFilter)
+                ? _plugins.ToList()
+                : _plugins.Where(p => p.Name.Contains(pluginFilter, StringComparison.OrdinalIgnoreCase)).ToList();
 
             var filteredSet = new HashSet<PluginListItem>(filtered);
             for (var index = _filteredPlugins.Count - 1; index >= 0; index--)
@@ -414,18 +388,6 @@ public partial class MainWindowViewModel : ObservableObject, IDisposable
         }
     }
 
-    /// <summary>
-    /// Gets a thread-safe snapshot of selected plugins.
-    /// </summary>
-    /// <returns>A list of selected plugins at the time of the call.</returns>
-    public List<PluginListItem> GetSelectedPlugins()
-    {
-        lock (_pluginsLock)
-        {
-            return _plugins.Where(p => p.IsSelected).ToList();
-        }
-    }
-
     public void UpdateProgress(string status, double? value = null)
     {
         // Ensure UI updates happen on UI thread
@@ -449,53 +411,4 @@ public partial class MainWindowViewModel : ObservableObject, IDisposable
         _debounceCts = null;
     }
 
-    private sealed class LockedObservableCollection<T> : ObservableCollection<T>
-    {
-        private readonly object _syncRoot;
-
-        public LockedObservableCollection(object syncRoot)
-        {
-            _syncRoot = syncRoot;
-        }
-
-        protected override void InsertItem(int index, T item)
-        {
-            lock (_syncRoot)
-            {
-                base.InsertItem(index, item);
-            }
-        }
-
-        protected override void RemoveItem(int index)
-        {
-            lock (_syncRoot)
-            {
-                base.RemoveItem(index);
-            }
-        }
-
-        protected override void SetItem(int index, T item)
-        {
-            lock (_syncRoot)
-            {
-                base.SetItem(index, item);
-            }
-        }
-
-        protected override void MoveItem(int oldIndex, int newIndex)
-        {
-            lock (_syncRoot)
-            {
-                base.MoveItem(oldIndex, newIndex);
-            }
-        }
-
-        protected override void ClearItems()
-        {
-            lock (_syncRoot)
-            {
-                base.ClearItems();
-            }
-        }
-    }
 }

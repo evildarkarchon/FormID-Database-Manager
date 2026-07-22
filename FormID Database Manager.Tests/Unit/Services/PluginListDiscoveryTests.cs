@@ -66,6 +66,44 @@ public sealed class PluginListDiscoveryTests : IDisposable
         loadOrderProvider.VerifyAll();
     }
 
+    /// <summary>
+    ///     Verifies production discovery bounds progress reports while preserving startup, interval, and completion facts.
+    /// </summary>
+    [Fact]
+    public async Task DiscoverAsync_TwelveLoadOrderEntries_ReportsBoundedRawProgressAtStartIntervalAndCompletion()
+    {
+        var pluginNames = Enumerable.Range(1, 12).Select(index => $"Plugin{index}.esp").ToArray();
+        foreach (var pluginName in pluginNames)
+        {
+            File.WriteAllBytes(Path.Combine(DataDirectory, pluginName), [1]);
+        }
+
+        var loadOrderProvider = new Mock<IGameLoadOrderProvider>();
+        loadOrderProvider.Setup(provider => provider.BuildSnapshot(
+                GameRelease.SkyrimSE,
+                Path.GetFullPath(DataDirectory),
+                false))
+            .Returns(GameLoadOrderSnapshotFactory.CreateSnapshot(pluginNames));
+        var progressReports = new List<PluginListDiscoveryProgress>();
+        var sut = new PluginListDiscovery(loadOrderProvider.Object);
+
+        var result = await sut.DiscoverAsync(
+            PluginListSource.Create(GameRelease.SkyrimSE, _gameDirectory),
+            new SynchronousProgress<PluginListDiscoveryProgress>(progressReports.Add),
+            TestContext.Current.CancellationToken);
+
+        var completed = Assert.IsType<PluginListDiscoveryCompleted>(result);
+        Assert.Equal(pluginNames, completed.PluginNames);
+        Assert.Equal(
+            [
+                new PluginListDiscoveryProgress(0, 12),
+                new PluginListDiscoveryProgress(10, 12),
+                new PluginListDiscoveryProgress(12, 12)
+            ],
+            progressReports);
+        loadOrderProvider.VerifyAll();
+    }
+
     [Fact]
     public async Task DiscoverAsync_LoadOrderReadHasExpectedLocalFailure_ReturnsFailedDiscoveryFact()
     {

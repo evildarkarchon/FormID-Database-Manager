@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Linq;
@@ -314,9 +315,11 @@ public class MainWindowViewModelTests
     public void PluginFilter_UpdatesFilteredPlugins_WhenChanged()
     {
         // Arrange
-        _viewModel.Plugins.Add(new PluginListItem { Name = "Plugin1.esp" });
-        _viewModel.Plugins.Add(new PluginListItem { Name = "Plugin2.esp" });
-        _viewModel.Plugins.Add(new PluginListItem { Name = "TestMod.esp" });
+        ProjectPlugins(
+            _viewModel,
+            new PluginListItem { Name = "Plugin1.esp" },
+            new PluginListItem { Name = "Plugin2.esp" },
+            new PluginListItem { Name = "TestMod.esp" });
 
         // Act
         _viewModel.PluginFilter = "Plugin";
@@ -330,9 +333,11 @@ public class MainWindowViewModelTests
     public void ApplyFilter_FiltersCaseInsensitive()
     {
         // Arrange
-        _viewModel.Plugins.Add(new PluginListItem { Name = "PLUGIN.esp" });
-        _viewModel.Plugins.Add(new PluginListItem { Name = "plugin.esp" });
-        _viewModel.Plugins.Add(new PluginListItem { Name = "PlUgIn.esp" });
+        ProjectPlugins(
+            _viewModel,
+            new PluginListItem { Name = "PLUGIN.esp" },
+            new PluginListItem { Name = "plugin.esp" },
+            new PluginListItem { Name = "PlUgIn.esp" });
 
         // Act
         _viewModel.PluginFilter = "plugin";
@@ -345,8 +350,10 @@ public class MainWindowViewModelTests
     public void ApplyFilter_ShowsAllPlugins_WhenFilterIsEmpty()
     {
         // Arrange
-        _viewModel.Plugins.Add(new PluginListItem { Name = "Plugin1.esp" });
-        _viewModel.Plugins.Add(new PluginListItem { Name = "Plugin2.esp" });
+        ProjectPlugins(
+            _viewModel,
+            new PluginListItem { Name = "Plugin1.esp" },
+            new PluginListItem { Name = "Plugin2.esp" });
         _viewModel.PluginFilter = "Test";
 
         // Act
@@ -360,8 +367,10 @@ public class MainWindowViewModelTests
     public void ApplyFilter_ShowsAllPlugins_WhenFilterIsWhitespace()
     {
         // Arrange
-        _viewModel.Plugins.Add(new PluginListItem { Name = "Plugin1.esp" });
-        _viewModel.Plugins.Add(new PluginListItem { Name = "Plugin2.esp" });
+        ProjectPlugins(
+            _viewModel,
+            new PluginListItem { Name = "Plugin1.esp" },
+            new PluginListItem { Name = "Plugin2.esp" });
 
         // Act
         _viewModel.PluginFilter = "   ";
@@ -379,9 +388,7 @@ public class MainWindowViewModelTests
         var first = new PluginListItem { Name = "First.esp", IsSelected = true, MembershipVersion = 7 };
         var second = new PluginListItem { Name = "Second.esp", MembershipVersion = 7 };
         var third = new PluginListItem { Name = "Third.esp", IsSelected = true, MembershipVersion = 7 };
-        _viewModel.Plugins.Add(first);
-        _viewModel.Plugins.Add(second);
-        _viewModel.Plugins.Add(third);
+        ProjectPlugins(_viewModel, first, second, third);
 
         _viewModel.PluginFilter = "Second";
 
@@ -397,33 +404,18 @@ public class MainWindowViewModelTests
     }
 
     /// <summary>
-    ///     Verifies callers can mutate the active legacy projection but cannot replace its collection identity.
+    ///     Verifies presentation consumers can observe the stable projection without mutating its membership.
     /// </summary>
     [Fact]
-    public void Plugins_PublicContract_DoesNotExposeCollectionReplacement()
+    public void Plugins_PublicContract_ExposesReadOnlyProjection()
     {
         var property = typeof(MainWindowViewModel).GetProperty(nameof(MainWindowViewModel.Plugins));
 
         Assert.NotNull(property);
-        Assert.False(property.SetMethod?.IsPublic ?? false);
-    }
-
-    [Fact]
-    public void GetSelectedPlugins_ReturnsOnlySelectedPluginSnapshot()
-    {
-        // Arrange
-        var selectedPlugin = new PluginListItem { Name = "Selected.esp", IsSelected = true };
-        var unselectedPlugin = new PluginListItem { Name = "Unselected.esp", IsSelected = false };
-        _viewModel.Plugins.Add(selectedPlugin);
-        _viewModel.Plugins.Add(unselectedPlugin);
-
-        // Act
-        var selectedPlugins = _viewModel.GetSelectedPlugins();
-        selectedPlugin.IsSelected = false;
-
-        // Assert
-        Assert.Single(selectedPlugins);
-        Assert.Same(selectedPlugin, selectedPlugins[0]);
+        Assert.Equal(typeof(ReadOnlyObservableCollection<PluginListItem>), property.PropertyType);
+        var collection = Assert.IsAssignableFrom<ICollection<PluginListItem>>(_viewModel.Plugins);
+        Assert.True(collection.IsReadOnly);
+        Assert.Throws<NotSupportedException>(() => collection.Add(new PluginListItem { Name = "Injected.esp" }));
     }
 
     #endregion
@@ -1024,17 +1016,18 @@ public class MainWindowViewModelTests
         Assert.Contains(nameof(MainWindowViewModel.HasWarningMessages), notifiedProperties);
     }
 
+    /// <summary>
+    ///     Verifies mutable message presentation remains independent from read-only Plugin membership projection.
+    /// </summary>
     [Fact]
-    public void Collections_CanBeModified()
+    public void MessageCollections_PublicMutation_RetainsItems()
     {
         // Act
-        _viewModel.Plugins.Add(new PluginListItem { Name = "Test.esp" });
         _viewModel.ErrorMessages.Add("Error");
         _viewModel.InformationMessages.Add("Info");
         _viewModel.WarningMessages.Add("Warning");
 
         // Assert
-        Assert.Single(_viewModel.Plugins);
         Assert.Single(_viewModel.ErrorMessages);
         Assert.Single(_viewModel.InformationMessages);
         Assert.Single(_viewModel.WarningMessages);
@@ -1050,8 +1043,10 @@ public class MainWindowViewModelTests
         // Arrange - Use SynchronousThreadDispatcher for deterministic debounce behavior
         var dispatcher = new SynchronousThreadDispatcher();
         var debouncedVm = new MainWindowViewModel(dispatcher, 200);
-        debouncedVm.Plugins.Add(new PluginListItem { Name = "Plugin1.esp" });
-        debouncedVm.Plugins.Add(new PluginListItem { Name = "TestMod.esp" });
+        ProjectPlugins(
+            debouncedVm,
+            new PluginListItem { Name = "Plugin1.esp" },
+            new PluginListItem { Name = "TestMod.esp" });
 
         // Act - Set filter (should not apply immediately due to debounce)
         debouncedVm.PluginFilter = "Plugin";
@@ -1070,8 +1065,10 @@ public class MainWindowViewModelTests
         // Arrange
         var dispatcher = new RecordingThreadDispatcher(hasAccess: true);
         using var debouncedVm = new MainWindowViewModel(dispatcher, 50);
-        debouncedVm.Plugins.Add(new PluginListItem { Name = "Plugin1.esp" });
-        debouncedVm.Plugins.Add(new PluginListItem { Name = "TestMod.esp" });
+        ProjectPlugins(
+            debouncedVm,
+            new PluginListItem { Name = "Plugin1.esp" },
+            new PluginListItem { Name = "TestMod.esp" });
         dispatcher.HasAccess = false;
 
         // Act
@@ -1096,8 +1093,7 @@ public class MainWindowViewModelTests
         using var debouncedVm = new MainWindowViewModel(dispatcher, 25);
         var selectedPlugin = new PluginListItem { Name = "SelectedPlugin.esp", IsSelected = true };
         var otherPlugin = new PluginListItem { Name = "OtherPlugin.esp" };
-        debouncedVm.Plugins.Add(selectedPlugin);
-        debouncedVm.Plugins.Add(otherPlugin);
+        ProjectPlugins(debouncedVm, selectedPlugin, otherPlugin);
 
         // Act
         debouncedVm.PluginFilter = "Other";
@@ -1122,8 +1118,10 @@ public class MainWindowViewModelTests
     {
         // Arrange - Zero debounce (default for existing tests)
         var vm = new MainWindowViewModel(null, 0);
-        vm.Plugins.Add(new PluginListItem { Name = "Plugin1.esp" });
-        vm.Plugins.Add(new PluginListItem { Name = "TestMod.esp" });
+        ProjectPlugins(
+            vm,
+            new PluginListItem { Name = "Plugin1.esp" },
+            new PluginListItem { Name = "TestMod.esp" });
 
         // Act
         vm.PluginFilter = "Plugin";
@@ -1136,36 +1134,20 @@ public class MainWindowViewModelTests
 
     #region Filter Suspension Tests
 
+    /// <summary>
+    ///     Verifies an adapter-owned membership replacement reapplies the active presentation filter atomically.
+    /// </summary>
     [Fact]
-    public void SuspendFilter_PreventsApplyFilterDuringBulkAdd()
-    {
-        // Arrange
-        // Act - Suspend, add many plugins, resume
-        _viewModel.SuspendFilter();
-        for (var i = 0; i < 100; i++)
-        {
-            _viewModel.Plugins.Add(new PluginListItem { Name = $"Plugin{i}.esp" });
-        }
-
-        Assert.Empty(_viewModel.FilteredPlugins);
-
-        _viewModel.ResumeFilter();
-
-        // Assert - All plugins should be in filtered list
-        Assert.Equal(100, _viewModel.FilteredPlugins.Count);
-    }
-
-    [Fact]
-    public void ResumeFilter_AppliesCurrentFilter()
+    public void ReplacePluginProjection_ActiveFilter_AppliesFilteredMembership()
     {
         // Arrange
         _viewModel.PluginFilter = "Test";
-        _viewModel.SuspendFilter();
-        _viewModel.Plugins.Add(new PluginListItem { Name = "TestPlugin.esp" });
-        _viewModel.Plugins.Add(new PluginListItem { Name = "OtherPlugin.esp" });
 
         // Act
-        _viewModel.ResumeFilter();
+        ProjectPlugins(
+            _viewModel,
+            new PluginListItem { Name = "TestPlugin.esp" },
+            new PluginListItem { Name = "OtherPlugin.esp" });
 
         // Assert - Filter "Test" should be applied
         Assert.Single(_viewModel.FilteredPlugins);
@@ -1203,10 +1185,11 @@ public class MainWindowViewModelTests
     public void ApplyFilter_HandlesLargePluginList()
     {
         // Arrange - Add 1000 plugins
-        for (var i = 0; i < 1000; i++)
-        {
-            _viewModel.Plugins.Add(new PluginListItem { Name = $"Plugin{i}.esp" });
-        }
+        ProjectPlugins(
+            _viewModel,
+            Enumerable.Range(0, 1000)
+                .Select(i => new PluginListItem { Name = $"Plugin{i}.esp" })
+                .ToArray());
 
         // Act
         _viewModel.PluginFilter = "Plugin99";
@@ -1271,45 +1254,14 @@ public class MainWindowViewModelTests
     }
 
     [Fact]
-    public async Task Plugins_Add_IsThreadSafeUnderConcurrentCalls()
-    {
-        // Arrange
-        const int threadCount = 8;
-        const int perThreadPlugins = 100;
-        var errors = new ConcurrentQueue<Exception>();
-
-        // Act
-        var tasks = Enumerable.Range(0, threadCount)
-            .Select(threadId => Task.Run(() =>
-            {
-                for (var i = 0; i < perThreadPlugins; i++)
-                {
-                    try
-                    {
-                        _viewModel.Plugins.Add(new PluginListItem { Name = $"T{threadId}_{i}.esp" });
-                    }
-                    catch (Exception ex)
-                    {
-                        errors.Enqueue(ex);
-                    }
-                }
-            }, TestContext.Current.CancellationToken))
-            .ToArray();
-
-        await Task.WhenAll(tasks);
-        // Assert
-        Assert.Empty(errors);
-        Assert.Equal(threadCount * perThreadPlugins, _viewModel.Plugins.Count);
-        Assert.Equal(_viewModel.Plugins.Count, _viewModel.FilteredPlugins.Count);
-    }
-
-    [Fact]
     public void Filter_HandlesSpecialCharacters()
     {
         // Arrange
-        _viewModel.Plugins.Add(new PluginListItem { Name = "Plugin[Special].esp" });
-        _viewModel.Plugins.Add(new PluginListItem { Name = "Plugin(Test).esp" });
-        _viewModel.Plugins.Add(new PluginListItem { Name = "Plugin.Test.esp" });
+        ProjectPlugins(
+            _viewModel,
+            new PluginListItem { Name = "Plugin[Special].esp" },
+            new PluginListItem { Name = "Plugin(Test).esp" },
+            new PluginListItem { Name = "Plugin.Test.esp" });
 
         // Act
         _viewModel.PluginFilter = "[Special]";
@@ -1412,6 +1364,15 @@ public class MainWindowViewModelTests
 
     #endregion
 
+    /// <summary>
+    ///     Publishes one ordered membership through the adapter-owned ViewModel projection seam.
+    /// </summary>
+    private static void ProjectPlugins(
+        MainWindowViewModel viewModel,
+        params PluginListItem[] projectedItems)
+    {
+        viewModel.ReplacePluginProjection(projectedItems);
+    }
 
     private sealed class RecordingThreadDispatcher(bool hasAccess) : IThreadDispatcher
     {

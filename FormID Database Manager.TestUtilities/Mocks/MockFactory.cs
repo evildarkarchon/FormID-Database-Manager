@@ -1,11 +1,7 @@
 using System;
 using System.Collections.Generic;
-using System.Collections.ObjectModel;
 using System.Threading;
-using System.Threading.Tasks;
-using FormID_Database_Manager.Models;
 using FormID_Database_Manager.Services;
-using FormID_Database_Manager.ViewModels;
 using Moq;
 using Mutagen.Bethesda;
 
@@ -43,30 +39,6 @@ public static class MockFactory
 
         mock.Setup(x => x.GetGameFolders(It.IsAny<GameRelease>()))
             .Returns(folders ?? []);
-
-        return mock;
-    }
-
-    public static Mock<PluginListManager> CreatePluginListManagerMock(GameDetectionService gameDetectionService,
-        MainWindowViewModel viewModel, IThreadDispatcher? dispatcher = null)
-    {
-        if (dispatcher == null)
-        {
-            var mockDispatcher = new Mock<IThreadDispatcher>();
-            mockDispatcher.Setup(d => d.InvokeAsync(It.IsAny<Action>()))
-                .Callback<Action>(a => a())
-                .Returns(Task.CompletedTask);
-            dispatcher = mockDispatcher.Object;
-        }
-
-        var mock = new Mock<PluginListManager>(gameDetectionService, viewModel, dispatcher);
-
-        mock.Setup(x => x.RefreshPluginList(
-                It.IsAny<string>(),
-                It.IsAny<GameRelease>(),
-                It.IsAny<ObservableCollection<PluginListItem>>(),
-                It.IsAny<bool>()))
-            .Returns(Task.CompletedTask);
 
         return mock;
     }

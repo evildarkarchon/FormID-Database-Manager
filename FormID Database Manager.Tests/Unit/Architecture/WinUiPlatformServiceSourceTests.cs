@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Text.RegularExpressions;
 using System.Xml.Linq;
 using Xunit;
 
@@ -67,15 +68,44 @@ public class WinUiPlatformServiceSourceTests
         Assert.DoesNotContain("PluginListManager", source, StringComparison.Ordinal);
         Assert.Contains("ProcessingRunExecutor", source, StringComparison.Ordinal);
         Assert.Contains("DirectoryComboBox_SelectionChanged", source, StringComparison.Ordinal);
-        Assert.Contains("_pluginListPresentationAdapter.Dispose();", source, StringComparison.Ordinal);
+
+        var adapterField = Regex.Match(
+            source,
+            @"private readonly PluginListPresentationAdapter\s+(?<field>_\w+);").Groups["field"].Value;
+        var workflowField = Regex.Match(
+            source,
+            @"private readonly UserWorkflow\s+(?<field>_\w+);").Groups["field"].Value;
+        Assert.NotEmpty(adapterField);
+        Assert.NotEmpty(workflowField);
+        var adapterDispose = $"{adapterField}.Dispose();";
+        var workflowDispose = $"{workflowField}.Dispose();";
+        Assert.Contains(adapterDispose, source, StringComparison.Ordinal);
+        Assert.Contains(workflowDispose, source, StringComparison.Ordinal);
         Assert.True(
-            source.IndexOf("_pluginListPresentationAdapter.Dispose();", StringComparison.Ordinal) <
-            source.IndexOf("_userWorkflow.Dispose();", StringComparison.Ordinal),
+            source.IndexOf(adapterDispose, StringComparison.Ordinal) <
+            source.IndexOf(workflowDispose, StringComparison.Ordinal),
             "The projection adapter must detach before User Workflow disposal retires the Plugin List.");
 
         var xaml = File.ReadAllText(mainWindowXamlPath);
         Assert.Contains("AutomationProperties.AutomationId=\"DirectoryComboBox\"", xaml, StringComparison.Ordinal);
         Assert.Contains("SelectionChanged=\"DirectoryComboBox_SelectionChanged\"", xaml, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    ///     Verifies each production window composition shares one authoritative Plugin List with projection and workflow.
+    /// </summary>
+    [Fact]
+    public void WinUiMainWindow_ProductionComposition_SharesAuthoritativePluginListWithProjectionAndWorkflow()
+    {
+        var mainWindowSourcePath = Path.Combine(GetWinUiProjectDirectory(), "MainWindow.xaml.cs");
+        var source = File.ReadAllText(mainWindowSourcePath);
+        var compositions = Regex.Matches(
+            source,
+            @"var\s+(?<pluginList>\w+)\s*=\s*new PluginList\([^;]+;" +
+            @"[\s\S]*?new PluginListPresentationAdapter\(\s*\k<pluginList>\s*," +
+            @"[\s\S]*?new UserWorkflow\([\s\S]*?\b\k<pluginList>\s*,");
+
+        Assert.Equal(2, compositions.Count);
     }
 
     /// <summary>

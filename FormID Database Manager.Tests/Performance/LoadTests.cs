@@ -1,12 +1,14 @@
+#nullable enable
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
-using FormID_Database_Manager.Models;
 using FormID_Database_Manager.Services;
 using FormID_Database_Manager.TestUtilities;
+using FormID_Database_Manager.TestUtilities.Mocks;
 using FormID_Database_Manager.ViewModels;
 using Microsoft.Data.Sqlite;
 using Mutagen.Bethesda;
@@ -211,6 +213,9 @@ public class LoadTests : IDisposable
             $"Expected at least {expectedRecords * 0.5} records, but got {totalRecords}");
     }
 
+    /// <summary>
+    ///     Measures managed-memory growth across successive authoritative Plugin List confirmations and projection work.
+    /// </summary>
     [ManualPerformanceFact]
     [Trait("Category", "ManualPerformance")]
     [Trait("Category", "LoadTest")]
@@ -220,7 +225,17 @@ public class LoadTests : IDisposable
         const int iterations = 5;
         const int pluginsPerIteration = 20;
         var memoryReadings = new List<long>();
-        var viewModel = new MainWindowViewModel();
+        var membershipSnapshots = Enumerable.Range(1, iterations)
+            .Select(iteration => (IReadOnlyList<string>)Enumerable.Range(0, iteration * pluginsPerIteration)
+                .Select(static pluginIndex => $"Plugin_{pluginIndex:D4}.esp")
+                .ToArray())
+            .ToArray();
+        var dispatcher = new SynchronousThreadDispatcher();
+        using var viewModel = new MainWindowViewModel(dispatcher);
+        using var pluginList = new PluginList(
+            new GameDetectionService(),
+            new SequencedPluginListDiscovery(membershipSnapshots));
+        using var presentationAdapter = new PluginListPresentationAdapter(pluginList, viewModel, dispatcher);
 
         // Act
         for (var i = 0; i < iterations; i++)
@@ -234,11 +249,11 @@ public class LoadTests : IDisposable
 
             var beforeMemory = GC.GetTotalMemory(false);
 
-            // Add plugins to viewmodel
-            for (var j = 0; j < pluginsPerIteration; j++)
-            {
-                viewModel.Plugins.Add(new PluginListItem { Name = $"Plugin_{i}_{j}.esp" });
-            }
+            // Refreshing the same source grows confirmed membership through the production projection boundary.
+            await pluginList.RefreshAsync(
+                GameRelease.SkyrimSE,
+                _testDirectory,
+                AdvancedMode.On);
 
             // Process some operations
             viewModel.PluginFilter = "Plugin_";
@@ -257,6 +272,7 @@ public class LoadTests : IDisposable
         }
 
         // Assert
+        Assert.Equal(iterations * pluginsPerIteration, viewModel.Plugins.Count);
         var avgMemory = memoryReadings.Average();
         var maxMemory = memoryReadings.Max();
 
@@ -268,15 +284,32 @@ public class LoadTests : IDisposable
             $"Average memory usage too high: {avgMemory / 1024.0 / 1024.0:F2} MB");
     }
 
+    /// <summary>
+    ///     Measures rapid presentation updates and filtering against a realistically projected large Plugin List.
+    /// </summary>
     [ManualPerformanceFact]
     [Trait("Category", "ManualPerformance")]
     [Trait("Category", "LoadTest")]
-    public Task LoadTest_UIResponsivenessUnderLoad()
+    public async Task LoadTest_UIResponsivenessUnderLoad()
     {
         // Arrange
-        var viewModel = new MainWindowViewModel();
         var uiUpdateTimes = new List<long>();
         const int updateCount = 1000;
+        var pluginNames = Enumerable.Range(0, updateCount)
+            .Select(static pluginIndex => $"Plugin_{pluginIndex:D4}.esp")
+            .ToArray();
+        var dispatcher = new SynchronousThreadDispatcher();
+        using var viewModel = new MainWindowViewModel(dispatcher);
+        using var pluginList = new PluginList(
+            new GameDetectionService(),
+            new SequencedPluginListDiscovery([pluginNames]));
+        using var presentationAdapter = new PluginListPresentationAdapter(pluginList, viewModel, dispatcher);
+
+        await pluginList.RefreshAsync(
+            GameRelease.SkyrimSE,
+            _testDirectory,
+            AdvancedMode.On);
+        Assert.Equal(updateCount, viewModel.Plugins.Count);
 
         // Act
         for (var i = 0; i < updateCount; i++)
@@ -286,9 +319,6 @@ public class LoadTests : IDisposable
             // Simulate UI updates
             viewModel.ProgressValue = i * 100.0 / updateCount;
             viewModel.ProgressStatus = $"Processing item {i + 1} of {updateCount}";
-
-            // Add plugin
-            viewModel.Plugins.Add(new PluginListItem { Name = $"Plugin_{i:D4}.esp" });
 
             // Update search filter periodically
             if (i % 100 == 0)
@@ -317,8 +347,6 @@ public class LoadTests : IDisposable
         // UI updates should be fast (< 1ms average, < 10ms max)
         Assert.True(avgMs < 1.0, $"Average UI update time too slow: {avgMs:F3} ms");
         Assert.True(maxMs < 10.0, $"Maximum UI update time too slow: {maxMs:F3} ms");
-
-        return Task.CompletedTask;
     }
 
     private async Task<List<string>> CreateTestPlugins(string dataPath, int count, int recordsPerPlugin)
@@ -371,6 +399,48 @@ public class LoadTests : IDisposable
 
             mod.WriteToBinary(path);
         });
+    }
+
+    /// <summary>
+    ///     Supplies a deterministic sequence of immutable discovery results to retained Plugin List load coverage.
+    /// </summary>
+    private sealed class SequencedPluginListDiscovery : IPluginListDiscovery
+    {
+        private readonly IReadOnlyList<IReadOnlyList<string>> _membershipSnapshots;
+        private int _nextSnapshotIndex = -1;
+
+        /// <summary>
+        ///     Creates a discovery adapter that returns each ordered membership snapshot once.
+        /// </summary>
+        /// <param name="membershipSnapshots">The ordered discovery results returned by successive requests.</param>
+        /// <exception cref="ArgumentNullException"><paramref name="membershipSnapshots" /> is null.</exception>
+        public SequencedPluginListDiscovery(IReadOnlyList<IReadOnlyList<string>> membershipSnapshots)
+        {
+            _membershipSnapshots = membershipSnapshots ?? throw new ArgumentNullException(nameof(membershipSnapshots));
+        }
+
+        /// <summary>
+        ///     Returns the next configured Plugin membership after observing caller cancellation.
+        /// </summary>
+        /// <param name="source">The normalized source requested by the Plugin List.</param>
+        /// <param name="progress">The optional discovery progress sink; no incremental progress is reported.</param>
+        /// <param name="cancellationToken">Cancels the discovery request.</param>
+        /// <returns>The next completed immutable discovery result.</returns>
+        /// <exception cref="InvalidOperationException">No configured discovery result remains.</exception>
+        public Task<PluginListDiscoveryResult> DiscoverAsync(
+            PluginListSource source,
+            IProgress<PluginListDiscoveryProgress>? progress = null,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var snapshotIndex = Interlocked.Increment(ref _nextSnapshotIndex);
+            if (snapshotIndex >= _membershipSnapshots.Count)
+            {
+                throw new InvalidOperationException("No configured Plugin List discovery result remains.");
+            }
+
+            return Task.FromResult(PluginListDiscoveryResult.Completed(_membershipSnapshots[snapshotIndex]));
+        }
     }
 
 }

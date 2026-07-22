@@ -6,7 +6,6 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using FormID_Database_Manager.Models;
 using FormID_Database_Manager.Services;
 using FormID_Database_Manager.TestUtilities.Mocks;
 using FormID_Database_Manager.ViewModels;
@@ -50,7 +49,14 @@ public class UserWorkflowTests
         _viewModel.SelectedGame = GameRelease.SkyrimSE;
         _viewModel.GameDirectory = @"C:\Old";
         _viewModel.DetectedDirectories.Add(@"C:\Old");
-        _viewModel.Plugins.Add(new PluginListItem { Name = "Old.esp" });
+        _pluginListDiscovery.PluginNames = ["Old.esp"];
+        await _pluginList.RefreshAsync(
+            GameRelease.SkyrimSE,
+            _viewModel.GameDirectory,
+            AdvancedMode.Off,
+            TestContext.Current.CancellationToken);
+        _pluginListDiscovery.PluginNames = [];
+        _refreshes.Clear();
         _gameLocationService.Setup(x => x.GetGameFolders(GameRelease.SkyrimSE))
             .Returns([GameDirectory, @"D:\Games\Skyrim"]);
 

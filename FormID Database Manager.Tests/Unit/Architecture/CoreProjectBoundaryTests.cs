@@ -1,8 +1,12 @@
 using System;
+using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Xml.Linq;
+using FormID_Database_Manager.Models;
 using FormID_Database_Manager.Services;
+using FormID_Database_Manager.ViewModels;
 using Xunit;
 
 namespace FormID_Database_Manager.Tests.Unit.Architecture;
@@ -190,6 +194,45 @@ public class CoreProjectBoundaryTests
 
         Assert.All(retiredTypeNames, typeName =>
             Assert.Null(coreAssembly.GetType($"{serviceNamespace}.{typeName}")));
+    }
+
+    /// <summary>
+    ///     Verifies production exposes one authoritative Plugin List path and only a read-only presentation projection.
+    /// </summary>
+    [Fact]
+    public void CoreAssembly_PluginListOwnership_HasNoRetiredMutableCollectionProtocol()
+    {
+        var coreAssembly = typeof(PluginList).Assembly;
+        var serviceNamespace = typeof(PluginList).Namespace;
+        var retiredTypeNames = new[]
+        {
+            string.Concat("PluginList", "Manager"),
+            string.Concat("PluginList", "Refresh"),
+            string.Concat("IPluginList", "Refresh"),
+            string.Concat("PluginListRefresh", "Request"),
+            string.Concat("PluginListRefresh", "Status"),
+            string.Concat("PluginListRefresh", "Progress"),
+            string.Concat("PluginListRefresh", "Result")
+        };
+
+        Assert.All(retiredTypeNames, typeName =>
+            Assert.Null(coreAssembly.GetType($"{serviceNamespace}.{typeName}")));
+
+        var pluginsProperty = typeof(MainWindowViewModel).GetProperty(nameof(MainWindowViewModel.Plugins));
+        Assert.NotNull(pluginsProperty);
+        Assert.Equal(typeof(ReadOnlyObservableCollection<PluginListItem>), pluginsProperty.PropertyType);
+        Assert.Null(typeof(MainWindowViewModel).GetMethod(
+            string.Concat("GetSelected", "Plugins"),
+            BindingFlags.Instance | BindingFlags.Public));
+
+        var publicMethodsWithMutablePluginCollections = typeof(MainWindowViewModel)
+            .GetMethods(BindingFlags.Instance | BindingFlags.Public)
+            .Where(method => method.GetParameters().Any(parameter =>
+                parameter.ParameterType == typeof(ObservableCollection<PluginListItem>)))
+            .Select(method => method.Name)
+            .ToArray();
+
+        Assert.Empty(publicMethodsWithMutablePluginCollections);
     }
 
     private static bool IsBuildOutput(string path)
