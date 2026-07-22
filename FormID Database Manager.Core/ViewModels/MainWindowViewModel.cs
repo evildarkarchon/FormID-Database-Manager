@@ -47,7 +47,7 @@ public partial class MainWindowViewModel : ObservableObject, IDisposable
 
     [ObservableProperty] private string _pluginFilter = string.Empty;
 
-    private ObservableCollection<PluginListItem> _plugins;
+    private readonly ObservableCollection<PluginListItem> _plugins;
 
     [ObservableProperty] private string _processButtonText = "Process FormIDs";
 
@@ -91,12 +91,9 @@ public partial class MainWindowViewModel : ObservableObject, IDisposable
         _warningMessages.CollectionChanged += OnWarningMessagesCollectionChanged;
     }
 
-    private LockedObservableCollection<PluginListItem> CreatePluginsCollection(
-        IEnumerable<PluginListItem>? source = null)
+    private LockedObservableCollection<PluginListItem> CreatePluginsCollection()
     {
-        return source == null
-            ? new LockedObservableCollection<PluginListItem>(_pluginsLock)
-            : new LockedObservableCollection<PluginListItem>(_pluginsLock, source);
+        return new LockedObservableCollection<PluginListItem>(_pluginsLock);
     }
 
     private void OnPluginsCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
@@ -118,6 +115,10 @@ public partial class MainWindowViewModel : ObservableObject, IDisposable
 
     public bool IsProgressVisible => IsProcessing || IsScanning;
 
+    /// <summary>
+    ///     Gets the mutable Main Window projection used by the active legacy path and the Plugin List presentation adapter.
+    /// </summary>
+    /// <remarks>The collection identity is stable; authoritative Plugin List operations never accept it as input.</remarks>
     public ObservableCollection<PluginListItem> Plugins
     {
         get
@@ -127,31 +128,34 @@ public partial class MainWindowViewModel : ObservableObject, IDisposable
                 return _plugins;
             }
         }
-
-        set
-        {
-            lock (_pluginsLock)
-            {
-                if (ReferenceEquals(_plugins, value))
-                {
-                    return;
-                }
-
-                var normalizedPlugins =
-                    value as LockedObservableCollection<PluginListItem> ?? CreatePluginsCollection(value);
-                var previousPlugins = _plugins;
-
-                if (SetProperty(ref _plugins, normalizedPlugins))
-                {
-                    previousPlugins.CollectionChanged -= OnPluginsCollectionChanged;
-                    _plugins.CollectionChanged += OnPluginsCollectionChanged;
-                    ApplyFilter();
-                }
-            }
-        }
     }
 
     public ObservableCollection<PluginListItem> FilteredPlugins => _filteredPlugins;
+
+    /// <summary>
+    ///     Replaces projected Plugin items as one UI-dispatched membership update, then reapplies the current text filter.
+    /// </summary>
+    /// <param name="projectedItems">The ordered presentation items copied from current confirmed membership.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="projectedItems" /> is null.</exception>
+    /// <remarks>The caller must run on the dispatcher that owns this ViewModel.</remarks>
+    internal void ReplacePluginProjection(IEnumerable<PluginListItem> projectedItems)
+    {
+        ArgumentNullException.ThrowIfNull(projectedItems);
+
+        SuspendFilter();
+        try
+        {
+            _plugins.Clear();
+            foreach (var item in projectedItems)
+            {
+                _plugins.Add(item);
+            }
+        }
+        finally
+        {
+            ResumeFilter();
+        }
+    }
 
     partial void OnErrorMessagesChanging(ObservableCollection<string> value)
     {
@@ -260,6 +264,10 @@ public partial class MainWindowViewModel : ObservableObject, IDisposable
         ApplyFilter(PluginFilter);
     }
 
+    /// <summary>
+    ///     Reconciles visible Plugin items in authoritative projection order without replacing surviving item instances.
+    /// </summary>
+    /// <param name="pluginFilter">The case-insensitive Plugin-name fragment to display.</param>
     private void ApplyFilter(string pluginFilter)
     {
         // Skip filter application when suspended (during bulk loading)
@@ -284,10 +292,8 @@ public partial class MainWindowViewModel : ObservableObject, IDisposable
 
         try
         {
-            // Incremental update approach: modify existing collection instead of recreating
-            // This prevents O(n) allocations and excessive UI notifications on every filter change
-            // Note: All operations below run on the UI thread, providing implicit synchronization
-            // for _filteredPlugins. The lock only protects the _plugins snapshot.
+            // Reconcile the existing collection in Plugin List order so filtering preserves item identity and selection.
+            // All operations run on the UI thread; the lock only protects the authoritative projection snapshot.
             List<PluginListItem> filtered;
             lock (_pluginsLock)
             {
@@ -296,27 +302,30 @@ public partial class MainWindowViewModel : ObservableObject, IDisposable
                     : _plugins.Where(p => p.Name.Contains(pluginFilter, StringComparison.OrdinalIgnoreCase)).ToList();
             }
 
-            // Use HashSet for O(1) lookup performance
             var filteredSet = new HashSet<PluginListItem>(filtered);
-
-            // Remove items not in filtered set (iterate backwards to avoid index issues)
-            for (var i = _filteredPlugins.Count - 1; i >= 0; i--)
+            for (var index = _filteredPlugins.Count - 1; index >= 0; index--)
             {
-                if (!filteredSet.Contains(_filteredPlugins[i]))
+                if (!filteredSet.Contains(_filteredPlugins[index]))
                 {
-                    _filteredPlugins.RemoveAt(i);
+                    _filteredPlugins.RemoveAt(index);
                 }
             }
 
-            // Add new items that aren't already in the collection
-            // Create a snapshot to avoid collection modified exception during enumeration
-            var existingSet = new HashSet<PluginListItem>(_filteredPlugins.ToList());
-            foreach (var item in filtered)
+            for (var index = 0; index < filtered.Count; index++)
             {
-                if (!existingSet.Contains(item))
+                var item = filtered[index];
+                if (index < _filteredPlugins.Count && ReferenceEquals(_filteredPlugins[index], item))
                 {
-                    _filteredPlugins.Add(item);
+                    continue;
                 }
+
+                // Insertions also repair order changes; any displaced duplicate is trimmed from the tail below.
+                _filteredPlugins.Insert(index, item);
+            }
+
+            while (_filteredPlugins.Count > filtered.Count)
+            {
+                _filteredPlugins.RemoveAt(_filteredPlugins.Count - 1);
             }
         }
         finally
@@ -445,11 +454,6 @@ public partial class MainWindowViewModel : ObservableObject, IDisposable
         private readonly object _syncRoot;
 
         public LockedObservableCollection(object syncRoot)
-        {
-            _syncRoot = syncRoot;
-        }
-
-        public LockedObservableCollection(object syncRoot, IEnumerable<T> source) : base(source)
         {
             _syncRoot = syncRoot;
         }

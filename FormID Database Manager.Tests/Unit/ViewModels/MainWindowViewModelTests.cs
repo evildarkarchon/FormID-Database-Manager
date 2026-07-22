@@ -370,21 +370,42 @@ public class MainWindowViewModelTests
         Assert.Equal(_viewModel.Plugins.Count, _viewModel.FilteredPlugins.Count);
     }
 
+    /// <summary>
+    ///     Verifies filtering changes visibility only and restores projected order, instances, selection, and identity.
+    /// </summary>
     [Fact]
-    public void Plugins_TriggersFilterUpdate_WhenSet()
+    public void PluginFilter_HideShow_PreservesPluginListOrderInstancesAndProjectedSelection()
     {
-        // Arrange
-        var newPlugins = new ObservableCollection<PluginListItem>
-        {
-            new() { Name = "NewPlugin1.esp" }, new() { Name = "NewPlugin2.esp" }
-        };
+        var first = new PluginListItem { Name = "First.esp", IsSelected = true, MembershipVersion = 7 };
+        var second = new PluginListItem { Name = "Second.esp", MembershipVersion = 7 };
+        var third = new PluginListItem { Name = "Third.esp", IsSelected = true, MembershipVersion = 7 };
+        _viewModel.Plugins.Add(first);
+        _viewModel.Plugins.Add(second);
+        _viewModel.Plugins.Add(third);
 
-        // Act
-        _viewModel.Plugins = newPlugins;
+        _viewModel.PluginFilter = "Second";
 
-        // Assert
-        Assert.Equal(2, _viewModel.FilteredPlugins.Count);
-        Assert.Equal(newPlugins.Count, _viewModel.FilteredPlugins.Count);
+        Assert.Same(second, Assert.Single(_viewModel.FilteredPlugins));
+
+        _viewModel.PluginFilter = string.Empty;
+
+        Assert.Equal([first, second, third], _viewModel.FilteredPlugins);
+        Assert.True(_viewModel.FilteredPlugins[0].IsSelected);
+        Assert.False(_viewModel.FilteredPlugins[1].IsSelected);
+        Assert.True(_viewModel.FilteredPlugins[2].IsSelected);
+        Assert.All(_viewModel.FilteredPlugins, plugin => Assert.Equal(7, plugin.MembershipVersion));
+    }
+
+    /// <summary>
+    ///     Verifies callers can mutate the active legacy projection but cannot replace its collection identity.
+    /// </summary>
+    [Fact]
+    public void Plugins_PublicContract_DoesNotExposeCollectionReplacement()
+    {
+        var property = typeof(MainWindowViewModel).GetProperty(nameof(MainWindowViewModel.Plugins));
+
+        Assert.NotNull(property);
+        Assert.False(property.SetMethod?.IsPublic ?? false);
     }
 
     [Fact]
