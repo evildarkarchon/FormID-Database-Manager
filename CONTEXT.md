@@ -27,8 +27,16 @@ _Avoid_: Run failure, warning, skipped plugin.
 The loaded set of Plugins available for a selected GameRelease and game directory, including the user's current Plugin selection. Plugin names are unique and compared case-insensitively for membership and selection.
 _Avoid_: Mod list, file list.
 
+**Plugin List Source**:
+The GameRelease and game directory from which a Plugin List is loaded. Advanced Mode can change which Plugins from that source appear in the Plugin List, but does not change the source itself.
+_Avoid_: List context, scan target.
+
+**Confirmed Plugin List**:
+The most recently loaded Plugin List that still matches its Plugin List Source and can supply selected Plugins to a Processing Run. It remains valid while that same source is refreshed, but changing the source invalidates it immediately.
+_Avoid_: Cached Plugin List, stale Plugin List.
+
 **Plugin Ingestion**:
-The part of a Processing Run that reads selected Plugins in selection order and produces FormID records for a FormID Record Store. Plugin Ingestion is best-effort across the selection: a Skipped Plugin or Failed Plugin does not prevent later selected Plugins from being attempted.
+The part of a Processing Run that reads selected Plugins in Plugin List order and produces FormID records for a FormID Record Store. Plugin Ingestion is best-effort across the selection: a Skipped Plugin or Failed Plugin does not prevent later selected Plugins from being attempted.
 _Avoid_: Mod processing, plugin processing.
 
 **Advanced Mode**:
