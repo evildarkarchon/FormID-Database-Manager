@@ -18,11 +18,15 @@ dotnet run --project "FormID Database Manager.WinUI" -p:Platform=x64
 # Run all tests
 dotnet test "FormID Database Manager.Tests"
 
-# Run a specific test class
-dotnet test "FormID Database Manager.Tests" --filter "FullyQualifiedName~DatabaseServiceTests"
+# Run the focused FormID Record Store tests
+dotnet test "FormID Database Manager.Tests" --filter "FullyQualifiedName~FormIdRecordStoreTests"
 
-# Run a single test
-dotnet test "FormID Database Manager.Tests" --filter "FullyQualifiedName~DatabaseServiceTests.InitializeDatabase_CreatesTableForEachGameRelease"
+# Run the focused Processing Run tests
+dotnet test "FormID Database Manager.Tests" --filter "FullyQualifiedName~ProcessingRunExecutorTests"
+dotnet test "FormID Database Manager.Tests" --filter "FullyQualifiedName~ProcessingRunIntegrationTests"
+
+# Run the focused database integration tests
+dotnet test "FormID Database Manager.Tests" --filter "FullyQualifiedName~DatabaseIntegrationTests"
 
 # Run tests by category
 dotnet test "FormID Database Manager.Tests" --filter "Category=LoadTest"
@@ -48,15 +52,14 @@ The solution has four projects in `FormID Database Manager.slnx`:
 ### Core (`FormID Database Manager.Core/`)
 - `ViewModels/MainWindowViewModel.cs` — CommunityToolkit.Mvvm ObservableObject ViewModel with plugin filtering, progress tracking, and thread-safe UI updates via `IThreadDispatcher`
 - `Services/` — All business logic:
-  - `DatabaseService` — SQLite schema, CRUD, optimizations (WAL mode, covering indexes)
-  - `PluginProcessingService` — Orchestrates plugin processing with cancellation support
-  - `ModProcessor` — Parses plugins via Mutagen's `CreateFromBinaryOverlay`, extracts FormIDs with batched inserts (1000/batch). Uses cached reflection for name extraction
-  - `FormIdTextProcessor` — Parses pipe-delimited text files (`plugin|formid|entry`), batched inserts (10000/batch)
-  - `PluginListManager` — Loads plugin lists from game directories on background thread
+  - `ProcessingRunExecutor` — Reusable Processing Run seam for selected-Plugin and FormID text-file runs; owns active-run cancellation, run-scoped Store opening, explicit successful-run optimization, best-effort cleanup, and terminal event formatting, and delegates the complete immutable Plugin selection once through internal `IPluginIngestion`
+  - `PluginIngestion` — Internal sealed aggregate selected-Plugin implementation; owns Data-path resolution, load-order preparation, `IPluginOverlayReader`, and `EntryExtraction`, attempts Plugins sequentially with best-effort outcomes, and writes only through the supplied `IFormIdRecordStoreSession`
+  - `FormIdRecordStore` — Implements the FormID Record Store and solely owns production Store connection configuration, selected-GameRelease schema preparation, SQLite writes, explicit optimization, and pipe-delimited FormID text imports (`plugin|formid|entry`) with 10000-row staging batches
+  - `PluginList` / `PluginListDiscovery` — Own authoritative Plugin List membership, selection, refresh generations, and ordered discovery; `UserWorkflow` owns their lifetime and `PluginListPresentationAdapter` projects immutable facts to the ViewModel
   - `GameDetectionService` — Detects game type from directory structure (master file presence)
   - `IFileDialogService` — UI-neutral file/folder picker abstraction
   - `IThreadDispatcher` / `ImmediateThreadDispatcher` / `QueuedThreadDispatcher` — Abstractions for UI thread marshalling (testable)
-- `Models/` — `PluginListItem` (CommunityToolkit.Mvvm ObservableObject), `ProcessingParameters`
+- `Models/` — `PluginListItem` (CommunityToolkit.Mvvm ObservableObject)
 
 ### Main App (`FormID Database Manager.WinUI/`)
 - `App.xaml.cs` — WinUI application startup
@@ -65,7 +68,6 @@ The solution has four projects in `FormID Database Manager.slnx`:
 - `Services/WinUiThreadDispatcher.cs` — WinUI dispatcher implementation
 
 ### Test Utilities (`FormID Database Manager.TestUtilities/`)
-- `Fixtures/DatabaseFixture` — Shared in-memory SQLite setup
 - `Mocks/MockFactory` — Consistent mock creation for services
 - `Mocks/SynchronousThreadDispatcher` — Test-friendly IThreadDispatcher (executes immediately)
 - `Mocks/SynchronousProgress` — Synchronous IProgress for testing
@@ -81,9 +83,9 @@ The solution has four projects in `FormID Database Manager.slnx`:
 
 ## Key Patterns
 
-- **Thread safety**: UI updates go through `IThreadDispatcher`. ViewModel uses `Interlocked` for filter reentrancy guard and `lock` for plugins collection access.
+- **Thread safety**: UI updates go through `IThreadDispatcher`. Plugin List presentation membership is dispatcher-confined and exposed read-only; the ViewModel uses `Interlocked` for filter reentrancy.
 - **SQL injection prevention**: `GameReleaseHelper.GetSafeTableName()` uses an explicit whitelist switch on `GameRelease` enum.
-- **Cancellation**: All async processing supports `CancellationToken`. `PluginProcessingService` manages `CancellationTokenSource` lifecycle with a lock. Note: Mutagen's `CreateFromBinaryOverlay` is synchronous and not cancellable.
+- **Cancellation**: All async processing supports `CancellationToken`. `ProcessingRunExecutor` owns the active Processing Run's `CancellationTokenSource` lifecycle. Note: Mutagen's `CreateFromBinaryOverlay` is synchronous and not cancellable.
 - **Test collections**: Database tests use `[Collection(...)]` for sequential execution. Unit tests run in parallel.
 - **InternalsVisibleTo**: The core project exposes internals to the test and WinUI projects.
 
@@ -91,10 +93,27 @@ The solution has four projects in `FormID Database Manager.slnx`:
 
 - Test naming: `MethodName_StateUnderTest_ExpectedBehavior`
 - Use `SynchronousThreadDispatcher` in tests instead of platform dispatchers
-- Use in-memory SQLite via `DatabaseFixture` for database tests
+- Open databases through `FormIdRecordStore.OpenAsync`; use raw SQLite only for workload generation, failure injection, or persisted-state inspection
+- Store-opening tests use isolated temporary SQLite files and clean up connection pools deterministically
 - Integration tests requiring game installations use `[RequiresGameInstallationFact]`
 
 ## Important Notes
 
 - **Mutagen API Reference**: When looking up Mutagen types, interfaces, or method signatures, consult `docs/mutagen/` first — it contains pre-generated API documentation (one markdown file per project) with organized type catalogs, method signatures, and common patterns. If the documentation doesn't have the detail you need, fall back to the `Mutagen/` git submodule source code as a secondary reference. The submodule is read-only and should never be modified. The app references Mutagen via NuGet package, not the submodule source.
+- `docs/WinUI-Migration-Plan.md` is a dated historical checkpoint; leave it unchanged and exclude it from live architecture-reference sweeps.
 - `CS1998` (async method lacks await) is treated as an error via `WarningsAsErrors`.
+- Comments are welcome and encouraged; this project overrides the default "no comments" agent rule. Prefer WHY-comments over WHAT-comments — explain non-obvious decisions, invariants, and the reasoning behind intentional patterns (e.g. sync-over-async in disposal, sequential-only cleaning, the single process slot). Do not strip accurate existing comments as cleanup. Add XML doc comments (`///`) on new or substantially rewritten public members unless trivial.
+
+## Agent skills
+
+### Issue tracker
+
+Track work and PRDs as GitHub Issues in `evildarkarchon/FormID-Database-Manager`; external pull requests are not a triage request surface. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Use the canonical triage-state labels: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, and `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Use the single-context layout rooted at `CONTEXT.md`, with architectural decisions under `docs/adr/`. See `docs/agents/domain.md`.

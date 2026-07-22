@@ -36,20 +36,31 @@ public async Task ProcessPlugin_ExtractsFormIDsFromRealPlugin()
 public async Task ProcessPlugin_ThrowsException_WhenGameNotInstalled()
 ```
 
-### 2. Database Testing Pattern
+### 2. FormID Record Store Testing Pattern
 
-Always use in-memory SQLite for unit tests:
+Exercise database readiness through the same public seam used by production:
 
 ```csharp
-public class MyDatabaseTest : IClassFixture<DatabaseFixture>
-{
-    private readonly DatabaseFixture _fixture;
-    
-    public MyDatabaseTest(DatabaseFixture fixture)
-    {
-        _fixture = fixture;
-    }
-}
+await using var store = await FormIdRecordStore.OpenAsync(
+    databasePath,
+    GameRelease.SkyrimSE,
+    cancellationToken);
+```
+
+Opening returns a Store whose selected-GameRelease schema, connection configuration, and temporary staging resources
+are ready for use. Use raw SQLite only to generate a workload, inject a failure, or inspect persisted state after Store
+setup; do not recreate schema preparation or optimization outside the Store.
+
+Use a unique temporary SQLite file for Store tests. Put file-persistence, reopening, WAL, pooling, and concurrent-access
+tests in the non-parallel `Database Tests` collection, then clean up files and connection pools deterministically.
+
+Focused commands for this boundary are:
+
+```bash
+dotnet test "FormID Database Manager.Tests" --filter "FullyQualifiedName~FormIdRecordStoreTests"
+dotnet test "FormID Database Manager.Tests" --filter "FullyQualifiedName~ProcessingRunExecutorTests"
+dotnet test "FormID Database Manager.Tests" --filter "FullyQualifiedName~ProcessingRunIntegrationTests"
+dotnet test "FormID Database Manager.Tests" --filter "FullyQualifiedName~DatabaseIntegrationTests"
 ```
 
 ### 3. Async Testing Patterns
@@ -74,9 +85,8 @@ public async Task MyMethod_CancelsCleanly_WhenTokenSignaled()
 Use the MockFactory for consistent mock setups:
 
 ```csharp
-var mockFactory = new MockFactory();
-var mockGameDetection = mockFactory.CreateGameDetectionServiceMock(GameRelease.SkyrimSE);
-var mockDatabase = mockFactory.CreateDatabaseServiceMock();
+var mockGameDetection = MockFactory.CreateGameDetectionServiceMock();
+var cancellationSource = MockFactory.CreateCancellationTokenSource();
 ```
 
 ### 5. Test Data Management
@@ -160,7 +170,9 @@ public class FastUnitTest { }
 
 ### 9. Error Message Testing
 
-When testing error handling, verify the exact error messages:
+When testing error handling, verify application-owned messages exactly. For framework or vendor exceptions, assert
+stable semantic details such as the parameter name, error code, and relevant message fragment instead of coupling the
+test to version-specific wrapper text:
 
 ```csharp
 [Fact]
@@ -197,7 +209,7 @@ public async Task Process_ReportsProgressAccurately()
 Follow the pattern: `MethodName_StateUnderTest_ExpectedBehavior`
 
 Examples:
-- `InitializeDatabase_CreatesTableForEachGameRelease`
+- `OpenAsync_SupportedGameRelease_PreparesSelectedTable`
 - `ProcessPlugins_CancelsCleanly_WhenTokenSignaled`
 - `SelectGameDirectory_ReturnsNull_WhenNoFolderSelected`
 

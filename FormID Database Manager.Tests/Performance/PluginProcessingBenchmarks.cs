@@ -6,13 +6,9 @@ using System.Threading;
 using System.Threading.Tasks;
 using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Engines;
-using FormID_Database_Manager.Models;
 using FormID_Database_Manager.Services;
-using Microsoft.Data.Sqlite;
-using Moq;
 using Mutagen.Bethesda;
 using Mutagen.Bethesda.Plugins;
-using Mutagen.Bethesda.Plugins.Order;
 using Mutagen.Bethesda.Plugins.Records;
 using Mutagen.Bethesda.Skyrim;
 
@@ -23,12 +19,9 @@ namespace FormID_Database_Manager.Tests.Performance;
 public class PluginProcessingBenchmarks : IDisposable
 {
     private readonly Consumer _consumer = new();
-    private SqliteConnection _connection = null!;
     private string _databasePath = null!;
-    private DatabaseService _databaseService = null!;
-    private ModProcessor _modProcessor = null!;
     private string _testDirectory = null!;
-    private List<PluginListItem> _testPlugins = null!;
+    private List<string> _testPlugins = null!;
 
     [Params(1, 5, 10)] public int PluginCount { get; set; }
 
@@ -46,25 +39,18 @@ public class PluginProcessingBenchmarks : IDisposable
 
         // Create database
         _databasePath = Path.Combine(_testDirectory, "benchmark.db");
-        _databaseService = new DatabaseService();
-        _modProcessor = new ModProcessor(_databaseService, _ => { });
 
-        // Initialize database
-        _databaseService.InitializeDatabase(_databasePath, GameRelease.SkyrimSE).Wait();
+        // Processing Run owns Store opening so the end-to-end benchmark does not pre-initialize its database.
 
         // Create test plugins
-        _testPlugins = CreateTestPlugins(PluginCount);
-
-        // Setup connection
-        _connection = new SqliteConnection($"Data Source={_databasePath}");
-        _connection.Open();
+        var dataPath = GameReleaseHelper.ResolveDataPath(_testDirectory);
+        Directory.CreateDirectory(dataPath);
+        _testPlugins = CreateTestPlugins(dataPath, PluginCount);
     }
 
     [GlobalCleanup]
     public void Cleanup()
     {
-        _connection?.Dispose();
-
         if (Directory.Exists(_testDirectory))
         {
             try
@@ -91,34 +77,14 @@ public class PluginProcessingBenchmarks : IDisposable
         }
 
         var plugin = _testPlugins[0];
-        var loadOrder = CreateLoadOrder([plugin]);
 
-        await _modProcessor.ProcessPlugin(
-            _testDirectory,
-            _connection,
-            GameRelease.SkyrimSE,
-            plugin,
-            loadOrder,
-            false,
-            CancellationToken.None);
+        await ExecuteBenchmarkRunAsync(CreateRequest([plugin], UpdateMode.Append));
     }
 
     [Benchmark]
     public async Task ProcessMultiplePlugins_Sequential()
     {
-        foreach (var plugin in _testPlugins)
-        {
-            var loadOrder = CreateLoadOrder(_testPlugins);
-
-            await _modProcessor.ProcessPlugin(
-                _testDirectory,
-                _connection,
-                GameRelease.SkyrimSE,
-                plugin,
-                loadOrder,
-                false,
-                CancellationToken.None);
-        }
+        await ExecuteBenchmarkRunAsync(CreateRequest(_testPlugins, UpdateMode.Append));
     }
 
     [Benchmark]
@@ -130,19 +96,13 @@ public class PluginProcessingBenchmarks : IDisposable
         }
 
         var plugin = _testPlugins[0];
-        var loadOrder = CreateLoadOrder([plugin]);
-        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
+        using var processingRunExecutor = CreateProcessingRun();
+        var processingTask = processingRunExecutor.ExecuteAsync(CreateRequest([plugin], UpdateMode.Append));
+        processingRunExecutor.Cancel();
 
         try
         {
-            await _modProcessor.ProcessPlugin(
-                _testDirectory,
-                _connection,
-                GameRelease.SkyrimSE,
-                plugin,
-                loadOrder,
-                false,
-                cts.Token);
+            await processingTask;
         }
         catch (OperationCanceledException)
         {
@@ -159,27 +119,12 @@ public class PluginProcessingBenchmarks : IDisposable
         }
 
         var plugin = _testPlugins[0];
-        var loadOrder = CreateLoadOrder([plugin]);
 
         // First insert some data
-        await _modProcessor.ProcessPlugin(
-            _testDirectory,
-            _connection,
-            GameRelease.SkyrimSE,
-            plugin,
-            loadOrder,
-            false,
-            CancellationToken.None);
+        await ExecuteBenchmarkRunAsync(CreateRequest([plugin], UpdateMode.Append));
 
         // Then update
-        await _modProcessor.ProcessPlugin(
-            _testDirectory,
-            _connection,
-            GameRelease.SkyrimSE,
-            plugin,
-            loadOrder,
-            true,
-            CancellationToken.None);
+        await ExecuteBenchmarkRunAsync(CreateRequest([plugin], UpdateMode.ReplacePluginRecords));
     }
 
     [Benchmark]
@@ -204,32 +149,28 @@ public class PluginProcessingBenchmarks : IDisposable
             armor.Name = $"Test Armor {i}";
         }
 
-        // Extract entries (this would normally be done internally by ProcessPlugin)
+        // Extract entries through the same internal Entry Extraction module used by Plugin Ingestion.
+        var extraction = new EntryExtraction();
         var entries = new List<(string formid, string entry)>();
         foreach (var record in mod.EnumerateMajorRecords())
         {
-            if (record is IMajorRecordGetter majorRecord)
+            if (record is IMajorRecordGetter majorRecord && extraction.TryExtract(majorRecord, _ => { }) is { } entry)
             {
-                var formId = majorRecord.FormKey.ToString();
-                var editorId = majorRecord.EditorID ?? "";
-                var name = GetRecordName(majorRecord);
-                var entry = string.IsNullOrEmpty(name) ? editorId : $"{editorId} - {name}";
-
-                entries.Add((formId, entry));
+                entries.Add((entry.FormId, entry.Entry));
             }
         }
 
         _consumer.Consume(entries);
     }
 
-    private List<PluginListItem> CreateTestPlugins(int count)
+    private List<string> CreateTestPlugins(string dataPath, int count)
     {
-        var plugins = new List<PluginListItem>();
+        var plugins = new List<string>();
 
         for (var i = 0; i < count; i++)
         {
             var pluginName = $"TestPlugin_{i:D3}.esp";
-            var pluginPath = Path.Combine(_testDirectory, pluginName);
+            var pluginPath = Path.Combine(dataPath, pluginName);
 
             // Create a simple plugin file (mock)
             var mod = new SkyrimMod(ModKey.FromNameAndExtension(pluginName), SkyrimRelease.SkyrimSE);
@@ -244,56 +185,52 @@ public class PluginProcessingBenchmarks : IDisposable
             // Write the plugin
             mod.WriteToBinary(pluginPath);
 
-            plugins.Add(new PluginListItem { Name = pluginName, IsSelected = true });
+            plugins.Add(pluginName);
         }
 
         return plugins;
     }
 
-    private IReadOnlyDictionary<string, IModListingGetter<IModGetter>> CreateLoadOrder(
-        IEnumerable<PluginListItem> plugins)
+    private ProcessingRunExecutor CreateProcessingRun()
     {
-        var loadOrder = new Dictionary<string, IModListingGetter<IModGetter>>(StringComparer.OrdinalIgnoreCase);
-
-        foreach (var plugin in plugins)
-        {
-            var modKey = ModKey.FromNameAndExtension(plugin.Name);
-            // Create a simple mock listing
-            var mockListing = new Mock<IModListingGetter<IModGetter>>();
-            mockListing.Setup(x => x.ModKey).Returns(modKey);
-            mockListing.Setup(x => x.Enabled).Returns(true);
-            mockListing.Setup(x => x.ModExists).Returns(true);
-
-            loadOrder.TryAdd(plugin.Name, mockListing.Object);
-        }
-
-        return loadOrder;
+        return PerformanceProcessingRunFactory.Create(_testPlugins);
     }
 
-    private string GetRecordName(IMajorRecordGetter record)
+    private async Task ExecuteBenchmarkRunAsync(PluginProcessingRunRequest request)
     {
-        if (!string.IsNullOrEmpty(record.EditorID))
-        {
-            return record.EditorID;
-        }
+        var progress = new CapturingRunProgress();
+        using var processingRunExecutor = CreateProcessingRun();
+        await processingRunExecutor.ExecuteAsync(request, progress);
 
-        var namedRecord = record.GetType().GetInterfaces()
-            .FirstOrDefault(i => i.Name.Contains("INamedGetter"));
-        if (namedRecord != null)
-        {
-            var nameProperty = namedRecord.GetProperty("Name");
-            var nameValue = nameProperty?.GetValue(record);
-            if (nameValue != null)
-            {
-                var stringProperty = nameValue.GetType().GetProperty("String");
-                var stringValue = stringProperty?.GetValue(nameValue) as string;
-                if (!string.IsNullOrEmpty(stringValue))
-                {
-                    return stringValue;
-                }
-            }
-        }
+        var issues = progress.Events
+            .Where(static e => e.Kind is ProcessingRunEventKind.Warning or ProcessingRunEventKind.Error)
+            .Select(static e => e.Message)
+            .ToArray();
 
-        return $"[{record.GetType().Name}_{record.FormKey.ID:X6}]";
+        if (issues.Length > 0)
+        {
+            throw new InvalidOperationException(
+                $"Benchmark plugin processing did not complete cleanly:{Environment.NewLine}{string.Join(Environment.NewLine, issues)}");
+        }
+    }
+
+    private PluginProcessingRunRequest CreateRequest(IEnumerable<string> pluginNames, UpdateMode updateMode)
+    {
+        return new PluginProcessingRunRequest(
+            _testDirectory,
+            _databasePath,
+            GameRelease.SkyrimSE,
+            pluginNames,
+            updateMode);
+    }
+
+    private sealed class CapturingRunProgress : IProgress<ProcessingRunEvent>
+    {
+        public List<ProcessingRunEvent> Events { get; } = [];
+
+        public void Report(ProcessingRunEvent value)
+        {
+            Events.Add(value);
+        }
     }
 }

@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Linq;
@@ -23,15 +24,22 @@ public class MainWindowViewModelTests
 
     #region Property Change Notification Tests
 
+    /// <summary>
+    /// Verifies that a changed projected directory raises its public presentation notification.
+    /// </summary>
     [Fact]
-    public void GameDirectory_RaisesPropertyChanged_WhenSet()
+    public void ApplyGameContextProjection_ChangedDirectory_RaisesPropertyChanged()
     {
         // Arrange
         var propertyName = string.Empty;
         _viewModel.PropertyChanged += (_, args) => propertyName = args.PropertyName;
 
         // Act
-        _viewModel.GameDirectory = @"C:\Games\Skyrim";
+        _viewModel.ApplyGameContextProjection(
+            GameRelease.SkyrimSE,
+            @"C:\Games\Skyrim",
+            [@"C:\Games\Skyrim"],
+            AdvancedMode.Off);
 
         // Assert
         Assert.Equal(nameof(MainWindowViewModel.GameDirectory), propertyName);
@@ -68,8 +76,11 @@ public class MainWindowViewModelTests
         Assert.Equal(@"C:\Lists\formids.txt", _viewModel.FormIdListPath);
     }
 
+    /// <summary>
+    /// Verifies that a changed projected GameRelease raises release and derived-state notifications.
+    /// </summary>
     [Fact]
-    public void SelectedGame_RaisesPropertyChanged_WhenSet()
+    public void ApplyGameContextProjection_ChangedGameRelease_RaisesDependentNotifications()
     {
         // Arrange
         var notifiedProperties = new System.Collections.Generic.List<string>();
@@ -82,7 +93,11 @@ public class MainWindowViewModelTests
         };
 
         // Act
-        _viewModel.SelectedGame = GameRelease.SkyrimSE;
+        _viewModel.ApplyGameContextProjection(
+            GameRelease.SkyrimSE,
+            null,
+            [],
+            AdvancedMode.Off);
 
         // Assert
         Assert.Contains(nameof(MainWindowViewModel.SelectedGame), notifiedProperties);
@@ -108,10 +123,72 @@ public class MainWindowViewModelTests
     public void IsGameSelected_ReturnsTrue_WhenSelectedGameHasValue()
     {
         // Arrange
-        _viewModel.SelectedGame = GameRelease.Fallout4;
+        _viewModel.ApplyGameContextProjection(
+            GameRelease.Fallout4,
+            null,
+            [],
+            AdvancedMode.Off);
 
         // Assert
         Assert.True(_viewModel.IsGameSelected);
+    }
+
+    /// <summary>
+    /// Verifies that a complete Game Context projection is queued as one dispatcher action and observed coherently.
+    /// </summary>
+    [Fact]
+    public void ApplyGameContextProjection_OffDispatcher_QueuesOneCoherentUpdate()
+    {
+        var dispatcher = new RecordingThreadDispatcher(hasAccess: true);
+        var viewModel = new MainWindowViewModel(dispatcher);
+        viewModel.ApplyGameContextProjection(
+            GameRelease.Fallout4,
+            @"C:\OldFallout",
+            [@"C:\OldFallout"],
+            AdvancedMode.Off);
+        var observedSnapshots = new List<(GameRelease? Game, string Directory, string Directories, bool Mode)>();
+        viewModel.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName is nameof(MainWindowViewModel.SelectedGame)
+                or nameof(MainWindowViewModel.GameDirectory)
+                or nameof(MainWindowViewModel.DetectedDirectories)
+                or nameof(MainWindowViewModel.AdvancedMode)
+                or nameof(MainWindowViewModel.IsGameSelected)
+                or nameof(MainWindowViewModel.HasMultipleDirectories))
+            {
+                observedSnapshots.Add((
+                    viewModel.SelectedGame,
+                    viewModel.GameDirectory,
+                    string.Join('|', viewModel.DetectedDirectories),
+                    viewModel.AdvancedMode));
+            }
+        };
+        dispatcher.HasAccess = false;
+
+        viewModel.ApplyGameContextProjection(
+            GameRelease.SkyrimSE,
+            null,
+            [@"D:\Skyrim", @"C:\Skyrim"],
+            AdvancedMode.On);
+
+        Assert.Equal(1, dispatcher.PostCount);
+        Assert.Equal(GameRelease.Fallout4, viewModel.SelectedGame);
+        Assert.Equal(@"C:\OldFallout", viewModel.GameDirectory);
+        Assert.Equal([@"C:\OldFallout"], viewModel.DetectedDirectories);
+        Assert.False(viewModel.AdvancedMode);
+
+        dispatcher.DrainPostedActions(hasAccessDuringDrain: true);
+
+        Assert.Equal(GameRelease.SkyrimSE, viewModel.SelectedGame);
+        Assert.Equal(string.Empty, viewModel.GameDirectory);
+        Assert.Equal([@"D:\Skyrim", @"C:\Skyrim"], viewModel.DetectedDirectories);
+        Assert.True(viewModel.AdvancedMode);
+        Assert.True(viewModel.IsGameSelected);
+        Assert.True(viewModel.HasMultipleDirectories);
+        Assert.NotEmpty(observedSnapshots);
+        Assert.All(observedSnapshots, snapshot => Assert.Equal(
+            (GameRelease.SkyrimSE, string.Empty, @"D:\Skyrim|C:\Skyrim", true),
+            snapshot));
     }
 
     [Fact]
@@ -146,6 +223,40 @@ public class MainWindowViewModelTests
         Assert.Empty(_viewModel.DetectedDirectories);
     }
 
+    /// <summary>
+    /// Verifies that available directories retain one ordered, read-only presentation collection across projections.
+    /// </summary>
+    [Fact]
+    public void DetectedDirectories_CompleteProjections_PreserveStableReadOnlyOrderedMembership()
+    {
+        var property = typeof(MainWindowViewModel).GetProperty(nameof(MainWindowViewModel.DetectedDirectories));
+        var originalProjection = _viewModel.DetectedDirectories;
+
+        _viewModel.ApplyGameContextProjection(
+            GameRelease.SkyrimSE,
+            @"D:\Skyrim",
+            [@"D:\Skyrim", @"C:\Skyrim"],
+            AdvancedMode.Off);
+
+        Assert.NotNull(property);
+        Assert.Equal(typeof(ReadOnlyObservableCollection<string>), property.PropertyType);
+        Assert.Null(property.SetMethod);
+        Assert.Same(originalProjection, _viewModel.DetectedDirectories);
+        Assert.Equal([@"D:\Skyrim", @"C:\Skyrim"], _viewModel.DetectedDirectories);
+
+        _viewModel.ApplyGameContextProjection(
+            GameRelease.Fallout4,
+            @"E:\Fallout4",
+            [@"E:\Fallout4", @"B:\Fallout4"],
+            AdvancedMode.On);
+
+        Assert.Same(originalProjection, _viewModel.DetectedDirectories);
+        Assert.Equal([@"E:\Fallout4", @"B:\Fallout4"], _viewModel.DetectedDirectories);
+        var collection = Assert.IsAssignableFrom<ICollection<string>>(_viewModel.DetectedDirectories);
+        Assert.True(collection.IsReadOnly);
+        Assert.Throws<NotSupportedException>(() => collection.Add(@"Z:\Injected"));
+    }
+
     [Fact]
     public void HasMultipleDirectories_ReturnsFalse_WhenEmpty()
     {
@@ -157,7 +268,7 @@ public class MainWindowViewModelTests
     public void HasMultipleDirectories_ReturnsFalse_WhenSingleEntry()
     {
         // Arrange
-        _viewModel.DetectedDirectories.Add(@"C:\Games\Fallout4");
+        ProjectGameContext(@"C:\Games\Fallout4");
 
         // Assert
         Assert.False(_viewModel.HasMultipleDirectories);
@@ -167,8 +278,7 @@ public class MainWindowViewModelTests
     public void HasMultipleDirectories_ReturnsTrue_WhenMultipleEntries()
     {
         // Arrange
-        _viewModel.DetectedDirectories.Add(@"C:\Games\Fallout4");
-        _viewModel.DetectedDirectories.Add(@"D:\Games\Fallout4");
+        ProjectGameContext(@"C:\Games\Fallout4", @"D:\Games\Fallout4");
 
         // Assert
         Assert.True(_viewModel.HasMultipleDirectories);
@@ -188,8 +298,7 @@ public class MainWindowViewModelTests
         };
 
         // Act
-        _viewModel.DetectedDirectories.Add(@"C:\Games\Fallout4");
-        _viewModel.DetectedDirectories.Add(@"D:\Games\Fallout4");
+        ProjectGameContext(@"C:\Games\Fallout4", @"D:\Games\Fallout4");
 
         // Assert
         Assert.Contains(nameof(MainWindowViewModel.HasMultipleDirectories), notifiedProperties);
@@ -246,16 +355,68 @@ public class MainWindowViewModelTests
         Assert.Equal("Processing plugins...", _viewModel.ProgressStatus);
     }
 
+    /// <summary>
+    /// Verifies that a changed projected Advanced Mode raises its public presentation notification.
+    /// </summary>
+    [Fact]
+    public void ApplyGameContextProjection_ChangedAdvancedMode_RaisesPropertyChanged()
+    {
+        // Arrange
+        var propertyName = string.Empty;
+        _viewModel.PropertyChanged += (_, args) => propertyName = args.PropertyName;
+
+        // Act
+        _viewModel.ApplyGameContextProjection(
+            null,
+            null,
+            [],
+            AdvancedMode.On);
+
+        // Assert
+        Assert.Equal(nameof(MainWindowViewModel.AdvancedMode), propertyName);
+        Assert.True(_viewModel.AdvancedMode);
+    }
+
+    [Fact]
+    public void UpdateMode_RaisesPropertyChanged_WhenSet()
+    {
+        // Arrange
+        var propertyName = string.Empty;
+        _viewModel.PropertyChanged += (_, args) => propertyName = args.PropertyName;
+
+        // Act
+        _viewModel.UpdateMode = true;
+
+        // Assert
+        Assert.Equal(nameof(MainWindowViewModel.UpdateMode), propertyName);
+        Assert.True(_viewModel.UpdateMode);
+    }
+
+    [Fact]
+    public void ProcessButtonText_RaisesPropertyChanged_WhenSet()
+    {
+        // Arrange
+        var propertyName = string.Empty;
+        _viewModel.PropertyChanged += (_, args) => propertyName = args.PropertyName;
+
+        // Act
+        _viewModel.ProcessButtonText = "Cancel Processing";
+
+        // Assert
+        Assert.Equal(nameof(MainWindowViewModel.ProcessButtonText), propertyName);
+        Assert.Equal("Cancel Processing", _viewModel.ProcessButtonText);
+    }
+
     [Fact]
     public void Properties_DoNotRaisePropertyChanged_WhenSetToSameValue()
     {
         // Arrange
-        _viewModel.GameDirectory = "TestPath";
+        _viewModel.DatabasePath = "TestPath";
         var eventRaised = false;
         _viewModel.PropertyChanged += (_, _) => eventRaised = true;
 
         // Act
-        _viewModel.GameDirectory = "TestPath"; // Same value
+        _viewModel.DatabasePath = "TestPath"; // Same value
 
         // Assert
         Assert.False(eventRaised);
@@ -269,9 +430,11 @@ public class MainWindowViewModelTests
     public void PluginFilter_UpdatesFilteredPlugins_WhenChanged()
     {
         // Arrange
-        _viewModel.Plugins.Add(new PluginListItem { Name = "Plugin1.esp" });
-        _viewModel.Plugins.Add(new PluginListItem { Name = "Plugin2.esp" });
-        _viewModel.Plugins.Add(new PluginListItem { Name = "TestMod.esp" });
+        ProjectPlugins(
+            _viewModel,
+            new PluginListItem { Name = "Plugin1.esp" },
+            new PluginListItem { Name = "Plugin2.esp" },
+            new PluginListItem { Name = "TestMod.esp" });
 
         // Act
         _viewModel.PluginFilter = "Plugin";
@@ -285,9 +448,11 @@ public class MainWindowViewModelTests
     public void ApplyFilter_FiltersCaseInsensitive()
     {
         // Arrange
-        _viewModel.Plugins.Add(new PluginListItem { Name = "PLUGIN.esp" });
-        _viewModel.Plugins.Add(new PluginListItem { Name = "plugin.esp" });
-        _viewModel.Plugins.Add(new PluginListItem { Name = "PlUgIn.esp" });
+        ProjectPlugins(
+            _viewModel,
+            new PluginListItem { Name = "PLUGIN.esp" },
+            new PluginListItem { Name = "plugin.esp" },
+            new PluginListItem { Name = "PlUgIn.esp" });
 
         // Act
         _viewModel.PluginFilter = "plugin";
@@ -300,8 +465,10 @@ public class MainWindowViewModelTests
     public void ApplyFilter_ShowsAllPlugins_WhenFilterIsEmpty()
     {
         // Arrange
-        _viewModel.Plugins.Add(new PluginListItem { Name = "Plugin1.esp" });
-        _viewModel.Plugins.Add(new PluginListItem { Name = "Plugin2.esp" });
+        ProjectPlugins(
+            _viewModel,
+            new PluginListItem { Name = "Plugin1.esp" },
+            new PluginListItem { Name = "Plugin2.esp" });
         _viewModel.PluginFilter = "Test";
 
         // Act
@@ -315,8 +482,10 @@ public class MainWindowViewModelTests
     public void ApplyFilter_ShowsAllPlugins_WhenFilterIsWhitespace()
     {
         // Arrange
-        _viewModel.Plugins.Add(new PluginListItem { Name = "Plugin1.esp" });
-        _viewModel.Plugins.Add(new PluginListItem { Name = "Plugin2.esp" });
+        ProjectPlugins(
+            _viewModel,
+            new PluginListItem { Name = "Plugin1.esp" },
+            new PluginListItem { Name = "Plugin2.esp" });
 
         // Act
         _viewModel.PluginFilter = "   ";
@@ -325,39 +494,43 @@ public class MainWindowViewModelTests
         Assert.Equal(_viewModel.Plugins.Count, _viewModel.FilteredPlugins.Count);
     }
 
+    /// <summary>
+    ///     Verifies filtering changes visibility only and restores projected order, instances, selection, and identity.
+    /// </summary>
     [Fact]
-    public void Plugins_TriggersFilterUpdate_WhenSet()
+    public void PluginFilter_HideShow_PreservesPluginListOrderInstancesAndProjectedSelection()
     {
-        // Arrange
-        var newPlugins = new ObservableCollection<PluginListItem>
-        {
-            new() { Name = "NewPlugin1.esp" }, new() { Name = "NewPlugin2.esp" }
-        };
+        var first = new PluginListItem { Name = "First.esp", IsSelected = true, MembershipVersion = 7 };
+        var second = new PluginListItem { Name = "Second.esp", MembershipVersion = 7 };
+        var third = new PluginListItem { Name = "Third.esp", IsSelected = true, MembershipVersion = 7 };
+        ProjectPlugins(_viewModel, first, second, third);
 
-        // Act
-        _viewModel.Plugins = newPlugins;
+        _viewModel.PluginFilter = "Second";
 
-        // Assert
-        Assert.Equal(2, _viewModel.FilteredPlugins.Count);
-        Assert.Equal(newPlugins.Count, _viewModel.FilteredPlugins.Count);
+        Assert.Same(second, Assert.Single(_viewModel.FilteredPlugins));
+
+        _viewModel.PluginFilter = string.Empty;
+
+        Assert.Equal([first, second, third], _viewModel.FilteredPlugins);
+        Assert.True(_viewModel.FilteredPlugins[0].IsSelected);
+        Assert.False(_viewModel.FilteredPlugins[1].IsSelected);
+        Assert.True(_viewModel.FilteredPlugins[2].IsSelected);
+        Assert.All(_viewModel.FilteredPlugins, plugin => Assert.Equal(7, plugin.MembershipVersion));
     }
 
+    /// <summary>
+    ///     Verifies presentation consumers can observe the stable projection without mutating its membership.
+    /// </summary>
     [Fact]
-    public void GetSelectedPlugins_ReturnsOnlySelectedPluginSnapshot()
+    public void Plugins_PublicContract_ExposesReadOnlyProjection()
     {
-        // Arrange
-        var selectedPlugin = new PluginListItem { Name = "Selected.esp", IsSelected = true };
-        var unselectedPlugin = new PluginListItem { Name = "Unselected.esp", IsSelected = false };
-        _viewModel.Plugins.Add(selectedPlugin);
-        _viewModel.Plugins.Add(unselectedPlugin);
+        var property = typeof(MainWindowViewModel).GetProperty(nameof(MainWindowViewModel.Plugins));
 
-        // Act
-        var selectedPlugins = _viewModel.GetSelectedPlugins();
-        selectedPlugin.IsSelected = false;
-
-        // Assert
-        Assert.Single(selectedPlugins);
-        Assert.Same(selectedPlugin, selectedPlugins[0]);
+        Assert.NotNull(property);
+        Assert.Equal(typeof(ReadOnlyObservableCollection<PluginListItem>), property.PropertyType);
+        var collection = Assert.IsAssignableFrom<ICollection<PluginListItem>>(_viewModel.Plugins);
+        Assert.True(collection.IsReadOnly);
+        Assert.Throws<NotSupportedException>(() => collection.Add(new PluginListItem { Name = "Injected.esp" }));
     }
 
     #endregion
@@ -496,11 +669,44 @@ public class MainWindowViewModelTests
     }
 
     [Fact]
+    public void AddWarningMessage_AddsToCollection()
+    {
+        // Arrange
+        var message = "Test warning message";
+
+        // Act
+        _viewModel.AddWarningMessage(message);
+
+        // Assert
+        Assert.Single(_viewModel.WarningMessages);
+        Assert.Contains(message, _viewModel.WarningMessages);
+    }
+
+    [Fact]
+    public void AddWarningMessage_MaintainsMaxMessages()
+    {
+        // Arrange
+        const int maxMessages = 5;
+
+        // Act
+        for (var i = 0; i < 10; i++)
+        {
+            _viewModel.AddWarningMessage($"Warning {i}", maxMessages);
+        }
+
+        // Assert
+        Assert.Equal(maxMessages, _viewModel.WarningMessages.Count);
+        Assert.Equal("Warning 5", _viewModel.WarningMessages.First());
+        Assert.Equal("Warning 9", _viewModel.WarningMessages.Last());
+    }
+
+    [Fact]
     public async Task AddMessages_WorksFromBackgroundThread()
     {
         // Arrange
         var errorAdded = false;
         var infoAdded = false;
+        var warningAdded = false;
 
         // Act - Add messages from background thread
         await Task.Run(() =>
@@ -509,13 +715,17 @@ public class MainWindowViewModelTests
             errorAdded = true;
             _viewModel.AddInformationMessage("Background info");
             infoAdded = true;
+            _viewModel.AddWarningMessage("Background warning");
+            warningAdded = true;
         }, TestContext.Current.CancellationToken);
 
         // Assert
         Assert.True(errorAdded);
         Assert.True(infoAdded);
+        Assert.True(warningAdded);
         Assert.Contains("Background error", _viewModel.ErrorMessages);
         Assert.Contains("Background info", _viewModel.InformationMessages);
+        Assert.Contains("Background warning", _viewModel.WarningMessages);
     }
 
     #endregion
@@ -531,6 +741,7 @@ public class MainWindowViewModelTests
         _viewModel.IsProcessing = true;
         _viewModel.ErrorMessages.Add("Error");
         _viewModel.InformationMessages.Add("Info");
+        _viewModel.WarningMessages.Add("Warning");
 
         // Act
         _viewModel.ResetProgress();
@@ -541,6 +752,7 @@ public class MainWindowViewModelTests
         Assert.False(_viewModel.IsProcessing);
         Assert.Empty(_viewModel.ErrorMessages);
         Assert.Empty(_viewModel.InformationMessages);
+        Assert.Empty(_viewModel.WarningMessages);
     }
 
     [Fact]
@@ -660,11 +872,20 @@ public class MainWindowViewModelTests
     }
 
     [Fact]
+    public void WarningMessages_InitializesAsEmptyCollection()
+    {
+        // Assert
+        Assert.NotNull(_viewModel.WarningMessages);
+        Assert.Empty(_viewModel.WarningMessages);
+    }
+
+    [Fact]
     public void MessageVisibilityProperties_ReturnFalseByDefault()
     {
         // Assert
         Assert.False(GetBooleanProperty(_viewModel, "HasErrorMessages"));
         Assert.False(GetBooleanProperty(_viewModel, "HasInformationMessages"));
+        Assert.False(GetBooleanProperty(_viewModel, "HasWarningMessages"));
     }
 
     [Fact]
@@ -707,6 +928,27 @@ public class MainWindowViewModelTests
         // Assert
         Assert.True(GetBooleanProperty(_viewModel, "HasInformationMessages"));
         Assert.Contains("HasInformationMessages", notifiedProperties);
+    }
+
+    [Fact]
+    public void AddWarningMessage_UpdatesHasWarningMessages()
+    {
+        // Arrange
+        var notifiedProperties = new System.Collections.Generic.List<string>();
+        _viewModel.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName != null)
+            {
+                notifiedProperties.Add(args.PropertyName);
+            }
+        };
+
+        // Act
+        _viewModel.AddWarningMessage("Binding support warning");
+
+        // Assert
+        Assert.True(GetBooleanProperty(_viewModel, "HasWarningMessages"));
+        Assert.Contains("HasWarningMessages", notifiedProperties);
     }
 
     [Fact]
@@ -765,6 +1007,35 @@ public class MainWindowViewModelTests
         // Assert
         Assert.False(_viewModel.HasInformationMessages);
         Assert.Contains(nameof(MainWindowViewModel.HasInformationMessages), notifiedProperties);
+    }
+
+    [Fact]
+    public void WarningMessages_CollectionChangesNotifyHasWarningMessagesForAddAndClear()
+    {
+        // Arrange
+        var notifiedProperties = new System.Collections.Generic.List<string>();
+        _viewModel.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName != null)
+            {
+                notifiedProperties.Add(args.PropertyName);
+            }
+        };
+
+        // Act
+        _viewModel.WarningMessages.Add("Binding support warning");
+
+        // Assert
+        Assert.True(_viewModel.HasWarningMessages);
+        Assert.Contains(nameof(MainWindowViewModel.HasWarningMessages), notifiedProperties);
+
+        // Act
+        notifiedProperties.Clear();
+        _viewModel.WarningMessages.Clear();
+
+        // Assert
+        Assert.False(_viewModel.HasWarningMessages);
+        Assert.Contains(nameof(MainWindowViewModel.HasWarningMessages), notifiedProperties);
     }
 
     [Fact]
@@ -830,17 +1101,51 @@ public class MainWindowViewModelTests
     }
 
     [Fact]
-    public void Collections_CanBeModified()
+    public void WarningMessages_ReplacedCollectionContinuesNotifyingHasWarningMessages()
     {
+        // Arrange
+        var replacement = new ObservableCollection<string>();
+        var notifiedProperties = new System.Collections.Generic.List<string>();
+        _viewModel.WarningMessages = replacement;
+        _viewModel.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName != null)
+            {
+                notifiedProperties.Add(args.PropertyName);
+            }
+        };
+
         // Act
-        _viewModel.Plugins.Add(new PluginListItem { Name = "Test.esp" });
-        _viewModel.ErrorMessages.Add("Error");
-        _viewModel.InformationMessages.Add("Info");
+        replacement.Add("Replacement warning");
 
         // Assert
-        Assert.Single(_viewModel.Plugins);
+        Assert.True(_viewModel.HasWarningMessages);
+        Assert.Contains(nameof(MainWindowViewModel.HasWarningMessages), notifiedProperties);
+
+        // Act
+        notifiedProperties.Clear();
+        replacement.Clear();
+
+        // Assert
+        Assert.False(_viewModel.HasWarningMessages);
+        Assert.Contains(nameof(MainWindowViewModel.HasWarningMessages), notifiedProperties);
+    }
+
+    /// <summary>
+    ///     Verifies mutable message presentation remains independent from read-only Plugin membership projection.
+    /// </summary>
+    [Fact]
+    public void MessageCollections_PublicMutation_RetainsItems()
+    {
+        // Act
+        _viewModel.ErrorMessages.Add("Error");
+        _viewModel.InformationMessages.Add("Info");
+        _viewModel.WarningMessages.Add("Warning");
+
+        // Assert
         Assert.Single(_viewModel.ErrorMessages);
         Assert.Single(_viewModel.InformationMessages);
+        Assert.Single(_viewModel.WarningMessages);
     }
 
     #endregion
@@ -853,8 +1158,10 @@ public class MainWindowViewModelTests
         // Arrange - Use SynchronousThreadDispatcher for deterministic debounce behavior
         var dispatcher = new SynchronousThreadDispatcher();
         var debouncedVm = new MainWindowViewModel(dispatcher, 200);
-        debouncedVm.Plugins.Add(new PluginListItem { Name = "Plugin1.esp" });
-        debouncedVm.Plugins.Add(new PluginListItem { Name = "TestMod.esp" });
+        ProjectPlugins(
+            debouncedVm,
+            new PluginListItem { Name = "Plugin1.esp" },
+            new PluginListItem { Name = "TestMod.esp" });
 
         // Act - Set filter (should not apply immediately due to debounce)
         debouncedVm.PluginFilter = "Plugin";
@@ -873,8 +1180,10 @@ public class MainWindowViewModelTests
         // Arrange
         var dispatcher = new RecordingThreadDispatcher(hasAccess: true);
         using var debouncedVm = new MainWindowViewModel(dispatcher, 50);
-        debouncedVm.Plugins.Add(new PluginListItem { Name = "Plugin1.esp" });
-        debouncedVm.Plugins.Add(new PluginListItem { Name = "TestMod.esp" });
+        ProjectPlugins(
+            debouncedVm,
+            new PluginListItem { Name = "Plugin1.esp" },
+            new PluginListItem { Name = "TestMod.esp" });
         dispatcher.HasAccess = false;
 
         // Act
@@ -899,8 +1208,7 @@ public class MainWindowViewModelTests
         using var debouncedVm = new MainWindowViewModel(dispatcher, 25);
         var selectedPlugin = new PluginListItem { Name = "SelectedPlugin.esp", IsSelected = true };
         var otherPlugin = new PluginListItem { Name = "OtherPlugin.esp" };
-        debouncedVm.Plugins.Add(selectedPlugin);
-        debouncedVm.Plugins.Add(otherPlugin);
+        ProjectPlugins(debouncedVm, selectedPlugin, otherPlugin);
 
         // Act
         debouncedVm.PluginFilter = "Other";
@@ -925,8 +1233,10 @@ public class MainWindowViewModelTests
     {
         // Arrange - Zero debounce (default for existing tests)
         var vm = new MainWindowViewModel(null, 0);
-        vm.Plugins.Add(new PluginListItem { Name = "Plugin1.esp" });
-        vm.Plugins.Add(new PluginListItem { Name = "TestMod.esp" });
+        ProjectPlugins(
+            vm,
+            new PluginListItem { Name = "Plugin1.esp" },
+            new PluginListItem { Name = "TestMod.esp" });
 
         // Act
         vm.PluginFilter = "Plugin";
@@ -939,36 +1249,20 @@ public class MainWindowViewModelTests
 
     #region Filter Suspension Tests
 
+    /// <summary>
+    ///     Verifies an adapter-owned membership replacement reapplies the active presentation filter atomically.
+    /// </summary>
     [Fact]
-    public void SuspendFilter_PreventsApplyFilterDuringBulkAdd()
-    {
-        // Arrange
-        // Act - Suspend, add many plugins, resume
-        _viewModel.SuspendFilter();
-        for (var i = 0; i < 100; i++)
-        {
-            _viewModel.Plugins.Add(new PluginListItem { Name = $"Plugin{i}.esp" });
-        }
-
-        Assert.Empty(_viewModel.FilteredPlugins);
-
-        _viewModel.ResumeFilter();
-
-        // Assert - All plugins should be in filtered list
-        Assert.Equal(100, _viewModel.FilteredPlugins.Count);
-    }
-
-    [Fact]
-    public void ResumeFilter_AppliesCurrentFilter()
+    public void ReplacePluginProjection_ActiveFilter_AppliesFilteredMembership()
     {
         // Arrange
         _viewModel.PluginFilter = "Test";
-        _viewModel.SuspendFilter();
-        _viewModel.Plugins.Add(new PluginListItem { Name = "TestPlugin.esp" });
-        _viewModel.Plugins.Add(new PluginListItem { Name = "OtherPlugin.esp" });
 
         // Act
-        _viewModel.ResumeFilter();
+        ProjectPlugins(
+            _viewModel,
+            new PluginListItem { Name = "TestPlugin.esp" },
+            new PluginListItem { Name = "OtherPlugin.esp" });
 
         // Assert - Filter "Test" should be applied
         Assert.Single(_viewModel.FilteredPlugins);
@@ -1006,10 +1300,11 @@ public class MainWindowViewModelTests
     public void ApplyFilter_HandlesLargePluginList()
     {
         // Arrange - Add 1000 plugins
-        for (var i = 0; i < 1000; i++)
-        {
-            _viewModel.Plugins.Add(new PluginListItem { Name = $"Plugin{i}.esp" });
-        }
+        ProjectPlugins(
+            _viewModel,
+            Enumerable.Range(0, 1000)
+                .Select(i => new PluginListItem { Name = $"Plugin{i}.esp" })
+                .ToArray());
 
         // Act
         _viewModel.PluginFilter = "Plugin99";
@@ -1027,13 +1322,17 @@ public class MainWindowViewModelTests
         {
             _viewModel.AddErrorMessage($"Error {i}", 50);
             _viewModel.AddInformationMessage($"Info {i}", 50);
+            _viewModel.AddWarningMessage($"Warning {i}", 50);
         }
 
         // Assert
         Assert.Equal(50, _viewModel.ErrorMessages.Count);
         Assert.Equal(50, _viewModel.InformationMessages.Count);
+        Assert.Equal(50, _viewModel.WarningMessages.Count);
         Assert.Equal("Error 50", _viewModel.ErrorMessages.First());
         Assert.Equal("Error 99", _viewModel.ErrorMessages.Last());
+        Assert.Equal("Warning 50", _viewModel.WarningMessages.First());
+        Assert.Equal("Warning 99", _viewModel.WarningMessages.Last());
     }
 
     [Fact]
@@ -1070,45 +1369,14 @@ public class MainWindowViewModelTests
     }
 
     [Fact]
-    public async Task Plugins_Add_IsThreadSafeUnderConcurrentCalls()
-    {
-        // Arrange
-        const int threadCount = 8;
-        const int perThreadPlugins = 100;
-        var errors = new ConcurrentQueue<Exception>();
-
-        // Act
-        var tasks = Enumerable.Range(0, threadCount)
-            .Select(threadId => Task.Run(() =>
-            {
-                for (var i = 0; i < perThreadPlugins; i++)
-                {
-                    try
-                    {
-                        _viewModel.Plugins.Add(new PluginListItem { Name = $"T{threadId}_{i}.esp" });
-                    }
-                    catch (Exception ex)
-                    {
-                        errors.Enqueue(ex);
-                    }
-                }
-            }, TestContext.Current.CancellationToken))
-            .ToArray();
-
-        await Task.WhenAll(tasks);
-        // Assert
-        Assert.Empty(errors);
-        Assert.Equal(threadCount * perThreadPlugins, _viewModel.Plugins.Count);
-        Assert.Equal(_viewModel.Plugins.Count, _viewModel.FilteredPlugins.Count);
-    }
-
-    [Fact]
     public void Filter_HandlesSpecialCharacters()
     {
         // Arrange
-        _viewModel.Plugins.Add(new PluginListItem { Name = "Plugin[Special].esp" });
-        _viewModel.Plugins.Add(new PluginListItem { Name = "Plugin(Test).esp" });
-        _viewModel.Plugins.Add(new PluginListItem { Name = "Plugin.Test.esp" });
+        ProjectPlugins(
+            _viewModel,
+            new PluginListItem { Name = "Plugin[Special].esp" },
+            new PluginListItem { Name = "Plugin(Test).esp" },
+            new PluginListItem { Name = "Plugin.Test.esp" });
 
         // Act
         _viewModel.PluginFilter = "[Special]";
@@ -1122,16 +1390,16 @@ public class MainWindowViewModelTests
     public void SetProperty_ReturnsFalse_WhenValueUnchanged()
     {
         // Arrange
-        _viewModel.GameDirectory = "TestPath";
+        _viewModel.DatabasePath = "TestPath";
 
         // Act - Test that setting the same value doesn't raise PropertyChanged
         var eventRaised = false;
         _viewModel.PropertyChanged += (_, _) => eventRaised = true;
-        _viewModel.GameDirectory = "TestPath"; // Same value
+        _viewModel.DatabasePath = "TestPath"; // Same value
 
         // Assert
         Assert.False(eventRaised);
-        Assert.Equal("TestPath", _viewModel.GameDirectory);
+        Assert.Equal("TestPath", _viewModel.DatabasePath);
     }
 
     #endregion
@@ -1211,6 +1479,27 @@ public class MainWindowViewModelTests
 
     #endregion
 
+    /// <summary>
+    ///     Publishes one ordered membership through the adapter-owned ViewModel projection seam.
+    /// </summary>
+    private static void ProjectPlugins(
+        MainWindowViewModel viewModel,
+        params PluginListItem[] projectedItems)
+    {
+        viewModel.ReplacePluginProjection(projectedItems);
+    }
+
+    /// <summary>
+    /// Publishes one available-directory membership through the complete Game Context projection seam.
+    /// </summary>
+    private void ProjectGameContext(params string[] availableDirectories)
+    {
+        _viewModel.ApplyGameContextProjection(
+            _viewModel.SelectedGame,
+            string.IsNullOrEmpty(_viewModel.GameDirectory) ? null : _viewModel.GameDirectory,
+            availableDirectories,
+            _viewModel.AdvancedMode ? AdvancedMode.On : AdvancedMode.Off);
+    }
 
     private sealed class RecordingThreadDispatcher(bool hasAccess) : IThreadDispatcher
     {

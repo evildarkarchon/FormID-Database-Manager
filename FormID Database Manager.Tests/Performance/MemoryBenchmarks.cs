@@ -1,16 +1,17 @@
+#nullable enable
 using System;
 using System.Collections.Generic;
-using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Columns;
 using BenchmarkDotNet.Configs;
 using BenchmarkDotNet.Diagnosers;
 using BenchmarkDotNet.Engines;
-using FormID_Database_Manager.Models;
 using FormID_Database_Manager.Services;
+using FormID_Database_Manager.TestUtilities.Mocks;
 using FormID_Database_Manager.ViewModels;
 using Microsoft.Data.Sqlite;
 using Mutagen.Bethesda;
@@ -23,20 +24,40 @@ namespace FormID_Database_Manager.Tests.Performance;
 [ThreadingDiagnoser]
 public class MemoryBenchmarks
 {
+    private string _formIdTextDatabasePath = null!;
+    private string _formIdTextFilePath = null!;
+    private IReadOnlyList<string> _pluginNames = null!;
     private string _testDirectory = null!;
 
     [Params(1000, 10000, 50000)] public int ItemCount { get; set; }
 
+    /// <summary>
+    ///     Creates reusable Plugin names, FormID text input, and database paths for each benchmark parameter set.
+    /// </summary>
     [GlobalSetup]
     public void Setup()
     {
         _testDirectory = Path.Combine(Path.GetTempPath(), $"membench_{Guid.NewGuid()}");
         Directory.CreateDirectory(_testDirectory);
+        _formIdTextDatabasePath = Path.Combine(_testDirectory, "text_import.db");
+        _formIdTextFilePath = Path.Combine(_testDirectory, "formids.txt");
+        _pluginNames = Enumerable.Range(0, ItemCount)
+            .Select(static i => $"Plugin_{i:D6}.esp")
+            .ToArray();
+        File.WriteAllLines(
+            _formIdTextFilePath,
+            Enumerable.Range(0, ItemCount).Select(static i => $"Plugin.esp|{i:X8}|Entry_{i}"));
     }
 
+    /// <summary>
+    ///     Releases SQLite file handles and removes the benchmark's temporary workspace.
+    /// </summary>
     [GlobalCleanup]
     public void Cleanup()
     {
+        // Pooled SQLite connections can retain Windows file handles after each store is disposed.
+        SqliteConnection.ClearAllPools();
+
         if (Directory.Exists(_testDirectory))
         {
             try
@@ -56,51 +77,36 @@ public class MemoryBenchmarks
         }
     }
 
+    /// <summary>
+    ///     Measures a large authoritative Plugin List confirmation projected into the Main Window ViewModel.
+    /// </summary>
+    /// <returns>The number of projected Plugins matching the benchmark filter.</returns>
     [Benchmark(Baseline = true)]
-    public int PluginCollection_Memory()
+    public async Task<int> ViewModel_WithLargePluginList()
     {
-        var plugins = new ObservableCollection<PluginListItem>();
+        var dispatcher = new SynchronousThreadDispatcher();
+        using var viewModel = new MainWindowViewModel(dispatcher);
+        using var pluginList = new PluginList(
+            new GameDetectionService(),
+            new DeterministicPluginListDiscovery(_pluginNames));
+        using var presentationAdapter = new PluginListPresentationAdapter(pluginList, viewModel, dispatcher);
 
-        for (var i = 0; i < ItemCount; i++)
-        {
-            plugins.Add(new PluginListItem
-            {
-                Name = $"Plugin_{i:D6}.esp", IsSelected = i % 2 == 0
-                // LoadIndex not available
-            });
-        }
-
-        // Force collection to ensure memory is allocated
-        GC.Collect();
-        GC.WaitForPendingFinalizers();
-        GC.Collect();
-
-        return plugins.Count;
-    }
-
-    [Benchmark]
-    public void ViewModel_WithLargePluginList()
-    {
-        var viewModel = new MainWindowViewModel();
-
-        for (var i = 0; i < ItemCount; i++)
-        {
-            viewModel.Plugins.Add(new PluginListItem
-            {
-                Name = $"Plugin_{i:D6}.esp", IsSelected = i % 2 == 0
-                // LoadIndex not available
-            });
-        }
+        await pluginList.RefreshAsync(
+            GameRelease.SkyrimSE,
+            _testDirectory,
+            AdvancedMode.On);
 
         // Apply filter to test filtered collection memory
         viewModel.PluginFilter = "Plugin_1";
 
         // Access filtered plugins to ensure they're created
-        _ = viewModel.FilteredPlugins.Count;
+        var filteredCount = viewModel.FilteredPlugins.Count;
 
         GC.Collect();
         GC.WaitForPendingFinalizers();
         GC.Collect();
+
+        return filteredCount;
     }
 
     [Benchmark]
@@ -125,90 +131,52 @@ public class MemoryBenchmarks
     }
 
     [Benchmark]
-    public async Task DatabaseService_LargeTransaction()
+    public async Task FormIdRecordStore_LargeTransaction()
     {
-        var dbPath = Path.Combine(_testDirectory, "memory_test.db");
-        var databaseService = new DatabaseService();
+        var dbPath = Path.Combine(_testDirectory, $"memory_test_{Guid.NewGuid():N}.db");
 
-        await databaseService.InitializeDatabase(dbPath, GameRelease.SkyrimSE);
-
-        await using (var conn = new SqliteConnection($"Data Source={dbPath}"))
-        {
-            await conn.OpenAsync();
-
-            // Simulate large batch insert
-            var entries = new List<(string plugin, string formid, string entry)>();
-            for (var i = 0; i < ItemCount; i++)
-            {
-                entries.Add(("Plugin.esp", $"{i:X8}", $"Entry_{i}"));
-            }
-
-            // Insert in batches
-            await using var transaction = conn.BeginTransaction();
-            foreach (var entry in entries)
-            {
-                await databaseService.InsertRecord(conn, GameRelease.SkyrimSE, entry.plugin, entry.formid, entry.entry);
-            }
-
-            await transaction.CommitAsync();
-        }
-
-        // Clean up
-        if (File.Exists(dbPath))
-        {
-            File.Delete(dbPath);
-        }
-    }
-
-    [Benchmark]
-    public void FormIdTextProcessor_ParseLargeFile()
-    {
-        // FormIdTextProcessor requires DatabaseService parameter
-        // Test removed as it requires constructor changes
-
-        // Simulate memory usage of large collection instead
-        var testData = new List<string>(ItemCount);
+        var entries = new List<FormIdRecord>();
         for (var i = 0; i < ItemCount; i++)
         {
-            testData.Add($"{i:X8} # Item_{i} - Description of item {i}");
+            entries.Add(new FormIdRecord($"{i:X8}", $"Entry_{i}"));
         }
 
-        _ = testData.Count;
+        await using var store = await FormIdRecordStore.OpenAsync(dbPath, GameRelease.SkyrimSE);
+        await store.WritePluginAsync("Plugin.esp", entries, UpdateMode.Append);
+    }
+
+    /// <summary>
+    ///     Measures managed allocations while importing a FormID text file through the production record-store seam.
+    /// </summary>
+    [Benchmark]
+    public async Task<FormIdTextFileImportResult> FormIdRecordStore_ImportTextFile()
+    {
+        await using var store = await FormIdRecordStore.OpenAsync(
+            _formIdTextDatabasePath,
+            GameRelease.SkyrimSE);
+        return await store.ImportFormIdTextFileAsync(
+            _formIdTextFilePath,
+            UpdateMode.ReplacePluginRecords);
+    }
+
+    /// <summary>
+    ///     Measures the immutable Plugin-name snapshot captured by a typed Processing Run request.
+    /// </summary>
+    [Benchmark]
+    public int PluginProcessingRunRequest_LargePluginList()
+    {
+        var request = new PluginProcessingRunRequest(
+            @"C:\Games\Skyrim",
+            @"C:\Games\test.db",
+            GameRelease.SkyrimSE,
+            _pluginNames,
+            UpdateMode.Append);
 
         GC.Collect();
         GC.WaitForPendingFinalizers();
         GC.Collect();
 
-        // Cleanup not needed
-    }
-
-    [Benchmark]
-    public int ProcessingParameters_LargePluginList()
-    {
-        var parameters = new ProcessingParameters
-        {
-            GameDirectory = @"C:\Games\Skyrim",
-            DatabasePath = @"C:\Games\test.db",
-            GameRelease = GameRelease.SkyrimSE,
-            SelectedPlugins = [],
-            UpdateMode = false
-        };
-
-        // Add many selected plugins
-        for (var i = 0; i < ItemCount; i++)
-        {
-            parameters.SelectedPlugins.Add(new PluginListItem
-            {
-                Name = $"Plugin_{i:D6}.esp", IsSelected = true
-                // LoadIndex not available
-            });
-        }
-
-        GC.Collect();
-        GC.WaitForPendingFinalizers();
-        GC.Collect();
-
-        return parameters.SelectedPlugins.Count;
+        return request.PluginNames.Count;
     }
 
     [Benchmark]
@@ -269,6 +237,29 @@ public class MemoryBenchmarks
         GC.Collect();
 
         return memoryDeltas.Sum();
+    }
+
+    /// <summary>
+    ///     Supplies one immutable, precomputed discovery result to the authoritative Plugin List benchmark.
+    /// </summary>
+    /// <param name="pluginNames">The ordered Plugin names returned for every discovery request.</param>
+    private sealed class DeterministicPluginListDiscovery(IReadOnlyList<string> pluginNames) : IPluginListDiscovery
+    {
+        /// <summary>
+        ///     Returns the configured ordered Plugin names after observing caller cancellation.
+        /// </summary>
+        /// <param name="source">The normalized source requested by the Plugin List.</param>
+        /// <param name="progress">The optional discovery progress sink; no incremental progress is reported.</param>
+        /// <param name="cancellationToken">Cancels the discovery request.</param>
+        /// <returns>A completed immutable discovery result.</returns>
+        public Task<PluginListDiscoveryResult> DiscoverAsync(
+            PluginListSource source,
+            IProgress<PluginListDiscoveryProgress>? progress = null,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult(PluginListDiscoveryResult.Completed(pluginNames));
+        }
     }
 
     public class MemoryConfig : ManualConfig
