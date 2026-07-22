@@ -1,6 +1,8 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Runtime.ExceptionServices;
 using Mutagen.Bethesda;
 using Mutagen.Bethesda.Plugins.Binary.Parameters;
+using Mutagen.Bethesda.Plugins.Exceptions;
 using Mutagen.Bethesda.Plugins.Records;
 
 namespace FormID_Database_Manager.Services;
@@ -66,8 +68,6 @@ internal sealed record PluginIngestionResult(
 /// </summary>
 internal class PluginIngestion : IPluginIngestion
 {
-    private const int WarningDetailLimit = 5;
-
     private readonly EntryExtraction _entryExtraction;
     private readonly IGameLoadOrderProvider _loadOrderProvider;
     private readonly IPluginOverlayReader _overlayReader;
@@ -154,7 +154,7 @@ internal class PluginIngestion : IPluginIngestion
                 continue;
             }
 
-            var legacyResult = await IngestAvailablePluginAsync(
+            var outcome = await IngestAvailablePluginAsync(
                     pluginName,
                     Path.Combine(dataPath, pluginName),
                     request.GameRelease,
@@ -164,20 +164,7 @@ internal class PluginIngestion : IPluginIngestion
                     cancellationToken)
                 .ConfigureAwait(false);
 
-            // Failed Plugin diagnostics are completed in the next contract slice; do not publish a guessed read phase.
-            outcomes.Add(legacyResult.Kind switch
-            {
-                PluginIngestionResultKind.Succeeded => new IngestedPlugin(pluginName, legacyResult.RecordCount),
-                PluginIngestionResultKind.Skipped => new SkippedPlugin(
-                    pluginName,
-                    SkippedPluginReason.ZeroFormIdRecords),
-                PluginIngestionResultKind.Failed => throw new InvalidOperationException(
-                    legacyResult.Detail ?? $"Could not read {pluginName}."),
-                _ => throw new ArgumentOutOfRangeException(
-                    nameof(legacyResult),
-                    legacyResult.Kind,
-                    "Unsupported legacy Plugin Ingestion outcome.")
-            });
+            outcomes.Add(outcome);
         }
 
         return new PluginIngestionReport(request, outcomes);
@@ -214,7 +201,7 @@ internal class PluginIngestion : IPluginIngestion
             return CreateLegacySkippedResult(request.PluginName, pluginPath, reason);
         }
 
-        return await IngestAvailablePluginAsync(
+        var outcome = await IngestAvailablePluginAsync(
                 request.PluginName,
                 pluginPath,
                 request.GameRelease,
@@ -223,6 +210,8 @@ internal class PluginIngestion : IPluginIngestion
                 recordStore,
                 cancellationToken)
             .ConfigureAwait(false);
+
+        return CreateLegacyResult(outcome, pluginPath);
     }
 
     /// <summary>
@@ -235,11 +224,11 @@ internal class PluginIngestion : IPluginIngestion
     /// <param name="updateMode">The Store update behavior.</param>
     /// <param name="recordStore">The already-open Store session.</param>
     /// <param name="cancellationToken">Stops overlay enumeration or the Store write.</param>
-    /// <returns>The temporary one-Plugin result consumed by the aggregate and compatibility transports.</returns>
+    /// <returns>Facts describing the one selected Plugin attempt.</returns>
     /// <exception cref="OperationCanceledException"><paramref name="cancellationToken" /> requests cancellation.</exception>
     [RequiresUnreferencedCode(
         "Uses reflection to discover INamedGetter interface and Name/String properties on Mutagen record types for name extraction.")]
-    private async Task<PluginIngestionResult> IngestAvailablePluginAsync(
+    private async Task<PluginIngestionOutcome> IngestAvailablePluginAsync(
         string pluginName,
         string pluginPath,
         GameRelease gameRelease,
@@ -253,21 +242,17 @@ internal class PluginIngestion : IPluginIngestion
         IModDisposeGetter plugin;
         try
         {
-            plugin = TryCreateOverlay(
-                pluginName,
-                pluginPath,
-                gameRelease,
-                loadOrderSnapshot.ReadParameters);
+            plugin = TryCreateOverlay(pluginPath, gameRelease, loadOrderSnapshot.ReadParameters);
         }
-        catch (PluginRecordExtractionException ex)
+        catch (PluginReadException ex)
         {
-            return PluginIngestionResult.Failed(pluginName, ex.Message);
+            return CreateFailedPlugin(pluginName, ex);
         }
 
         using var pluginToDispose = plugin;
 
-        var warningCollector = new RecordWarningCollector(pluginName, WarningDetailLimit);
-        var records = EnumeratePluginRecords(pluginName, pluginToDispose, warningCollector, cancellationToken);
+        var warningCollector = new RecordWarningCollector();
+        var records = EnumeratePluginRecords(pluginToDispose, warningCollector, cancellationToken);
 
         try
         {
@@ -280,21 +265,31 @@ internal class PluginIngestion : IPluginIngestion
 
             if (writeResult.RecordCount == 0)
             {
-                return CreateLegacySkippedResult(
-                    pluginName,
-                    pluginPath,
-                    SkippedPluginReason.ZeroFormIdRecords);
+                return new SkippedPlugin(pluginName, SkippedPluginReason.ZeroFormIdRecords);
             }
 
-            return PluginIngestionResult.Succeeded(
+            return new IngestedPlugin(
                 pluginName,
                 writeResult.RecordCount,
-                warningCollector.CreateWarnings());
+                warningCollector.CreateWarning());
         }
-        catch (PluginRecordExtractionException ex)
+        catch (PluginReadException ex)
         {
-            return PluginIngestionResult.Failed(pluginName, ex.Message);
+            return CreateFailedPlugin(pluginName, ex);
         }
+    }
+
+    /// <summary>
+    ///     Converts an application-owned read marker into the stable Failed Plugin facts exposed by aggregate ingestion.
+    /// </summary>
+    /// <param name="pluginName">The selected Plugin name.</param>
+    /// <param name="exception">The phase-aware Plugin-read marker.</param>
+    /// <returns>The stable Failed Plugin outcome.</returns>
+    private static FailedPlugin CreateFailedPlugin(string pluginName, PluginReadException exception)
+    {
+        return new FailedPlugin(
+            pluginName,
+            new PluginReadDiagnostic(exception.Phase, exception.DiagnosticMessage));
     }
 
     /// <summary>
@@ -317,6 +312,53 @@ internal class PluginIngestion : IPluginIngestion
         return File.Exists(Path.Combine(dataPath, pluginName))
             ? null
             : SkippedPluginReason.PluginFileUnavailable;
+    }
+
+    /// <summary>
+    ///     Adapts one typed outcome to the presentation-oriented transport retained by the current Processing Run caller.
+    /// </summary>
+    /// <param name="outcome">The authoritative Plugin Ingestion facts.</param>
+    /// <param name="pluginPath">The resolved path used by the unavailable-file compatibility detail.</param>
+    /// <returns>The temporary legacy result.</returns>
+    private static PluginIngestionResult CreateLegacyResult(
+        PluginIngestionOutcome outcome,
+        string pluginPath)
+    {
+        return outcome switch
+        {
+            IngestedPlugin ingested => PluginIngestionResult.Succeeded(
+                ingested.PluginName,
+                ingested.FormIdCount,
+                FormatLegacyWarnings(ingested.PluginName, ingested.Warning)),
+            SkippedPlugin skipped => CreateLegacySkippedResult(
+                skipped.PluginName,
+                pluginPath,
+                skipped.Reason),
+            FailedPlugin failed => PluginIngestionResult.Failed(
+                failed.PluginName,
+                FormatLegacyFailureDetail(failed)),
+            _ => throw new ArgumentOutOfRangeException(nameof(outcome), outcome, "Unsupported Plugin Ingestion outcome.")
+        };
+    }
+
+    /// <summary>
+    ///     Formats typed Plugin-read diagnostics for the temporary one-Plugin Processing Run transport.
+    /// </summary>
+    /// <param name="failed">The typed Failed Plugin facts.</param>
+    /// <returns>The legacy failure detail expected by the current Processing Run formatter.</returns>
+    private static string FormatLegacyFailureDetail(FailedPlugin failed)
+    {
+        return failed.Diagnostic.Phase switch
+        {
+            PluginReadPhase.OpeningPlugin =>
+                $"Error opening {failed.PluginName}: {failed.Diagnostic.Message}",
+            PluginReadPhase.ReadingRecords =>
+                $"Error enumerating records in {failed.PluginName}: {failed.Diagnostic.Message}",
+            _ => throw new ArgumentOutOfRangeException(
+                nameof(failed),
+                failed.Diagnostic.Phase,
+                "Unsupported Plugin-read phase.")
+        };
     }
 
     /// <summary>
@@ -343,16 +385,22 @@ internal class PluginIngestion : IPluginIngestion
         return PluginIngestionResult.Skipped(pluginName, detail);
     }
 
+    /// <summary>
+    ///     Lazily extracts storable records while retaining recoverable warning facts.
+    /// </summary>
+    /// <param name="plugin">The opened Plugin overlay.</param>
+    /// <param name="warningCollector">The bounded recoverable-diagnostic collector.</param>
+    /// <param name="cancellationToken">Stops record extraction.</param>
+    /// <returns>The lazy sequence consumed inside the Store's atomic Plugin write.</returns>
     [RequiresUnreferencedCode("Uses reflection-based name extraction for Mutagen records via EntryExtraction.")]
     private IEnumerable<FormIdRecord> EnumeratePluginRecords(
-        string pluginName,
         IModGetter plugin,
         RecordWarningCollector warningCollector,
         CancellationToken cancellationToken)
     {
-        using var records = CreateRecordEnumerator(pluginName, plugin);
+        using var records = CreateRecordEnumerator(plugin);
 
-        while (MoveNextRecord(pluginName, records))
+        while (MoveNextRecord(records))
         {
             cancellationToken.ThrowIfCancellationRequested();
 
@@ -363,32 +411,59 @@ internal class PluginIngestion : IPluginIngestion
         }
     }
 
-    private static IEnumerator<IMajorRecordGetter> CreateRecordEnumerator(string pluginName, IModGetter plugin)
+    /// <summary>
+    ///     Creates the Mutagen record enumerator and marks expected record-read failures with their internal phase.
+    /// </summary>
+    /// <param name="plugin">The opened Plugin overlay.</param>
+    /// <returns>The lazy major-record enumerator.</returns>
+    /// <exception cref="PluginReadException">Mutagen reports an expected record-read failure.</exception>
+    private static IEnumerator<IMajorRecordGetter> CreateRecordEnumerator(IModGetter plugin)
     {
         try
         {
             return plugin.EnumerateMajorRecords().GetEnumerator();
         }
-        catch (Exception ex)
+        catch (RecordException ex)
         {
-            throw new PluginRecordExtractionException($"Error enumerating records in {pluginName}: {ex.Message}", ex);
+            RethrowNestedCancellation(ex);
+            throw new PluginReadException(
+                PluginReadPhase.ReadingRecords,
+                ex.Message,
+                ex);
         }
     }
 
-    private static bool MoveNextRecord(string pluginName, IEnumerator<IMajorRecordGetter> records)
+    /// <summary>
+    ///     Advances a lazy Mutagen enumerator while preserving expected record-read classification.
+    /// </summary>
+    /// <param name="records">The active major-record enumerator.</param>
+    /// <returns><see langword="true" /> when another record is available.</returns>
+    /// <exception cref="PluginReadException">Mutagen reports an expected record-read failure.</exception>
+    private static bool MoveNextRecord(IEnumerator<IMajorRecordGetter> records)
     {
         try
         {
             return records.MoveNext();
         }
-        catch (Exception ex)
+        catch (RecordException ex)
         {
-            throw new PluginRecordExtractionException($"Error enumerating records in {pluginName}: {ex.Message}", ex);
+            RethrowNestedCancellation(ex);
+            throw new PluginReadException(
+                PluginReadPhase.ReadingRecords,
+                ex.Message,
+                ex);
         }
     }
 
+    /// <summary>
+    ///     Opens an overlay and attaches the opening phase to adapter-normalized Plugin-read failures.
+    /// </summary>
+    /// <param name="pluginPath">The available selected Plugin path.</param>
+    /// <param name="gameRelease">The target GameRelease.</param>
+    /// <param name="readParameters">The shared load-order-aware binary read parameters.</param>
+    /// <returns>The disposable Plugin overlay.</returns>
+    /// <exception cref="PluginReadException">The overlay adapter reports an expected Plugin-specific failure.</exception>
     private IModDisposeGetter TryCreateOverlay(
-        string pluginName,
         string pluginPath,
         GameRelease gameRelease,
         BinaryReadParameters readParameters)
@@ -397,53 +472,107 @@ internal class PluginIngestion : IPluginIngestion
         {
             return _overlayReader.ReadOverlay(pluginPath, gameRelease, readParameters);
         }
-        catch (OperationCanceledException)
+        catch (PluginOverlayReadException ex)
         {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            throw new PluginRecordExtractionException($"Error opening {pluginName}: {ex.Message}", ex);
+            RethrowNestedCancellation(ex);
+            throw new PluginReadException(
+                PluginReadPhase.OpeningPlugin,
+                ex.Message,
+                ex);
         }
     }
 
-    private sealed class RecordWarningCollector(string pluginName, int detailLimit)
+    /// <summary>
+    ///     Preserves cancellation even when Mutagen enriches it inside a record-reading exception.
+    /// </summary>
+    /// <param name="exception">The possible wrapper raised by the Plugin adapter or enumerator.</param>
+    /// <exception cref="OperationCanceledException">The exception chain contains cancellation.</exception>
+    private static void RethrowNestedCancellation(Exception exception)
+    {
+        for (Exception? current = exception; current is not null; current = current.InnerException)
+        {
+            if (current is OperationCanceledException cancellation)
+            {
+                ExceptionDispatchInfo.Capture(cancellation).Throw();
+            }
+        }
+    }
+
+    /// <summary>
+    ///     Formats structured warning facts for the temporary one-Plugin Processing Run compatibility transport.
+    /// </summary>
+    /// <param name="pluginName">The selected Plugin name used only by legacy presentation.</param>
+    /// <param name="warning">The structured warning facts, or <see langword="null" />.</param>
+    /// <returns>Zero or one legacy warning string.</returns>
+    private static IReadOnlyList<string> FormatLegacyWarnings(string pluginName, ProcessingWarning? warning)
+    {
+        if (warning is null)
+        {
+            return [];
+        }
+
+        var message = $"{pluginName}: {warning.TotalIssueCount} recoverable record issue" +
+                      $"{(warning.TotalIssueCount == 1 ? string.Empty : "s")}.";
+        if (!warning.DiagnosticDetails.IsEmpty)
+        {
+            message += $" {string.Join("; ", warning.DiagnosticDetails)}";
+        }
+
+        if (warning.OmittedDetailCount > 0)
+        {
+            message += $"; and {warning.OmittedDetailCount} more.";
+        }
+
+        return [message];
+    }
+
+    private sealed class RecordWarningCollector
     {
         private readonly List<string> _details = [];
         private int _count;
 
+        /// <summary>
+        ///     Retains the total issue count and at most the first five ordered diagnostic details.
+        /// </summary>
+        /// <param name="detail">The raw recoverable diagnostic message.</param>
         public void Add(string detail)
         {
             _count++;
-            if (_details.Count < detailLimit)
+            if (_details.Count < ProcessingWarning.MaximumDiagnosticDetailCount)
             {
                 _details.Add(detail);
             }
         }
 
-        public IReadOnlyList<string> CreateWarnings()
+        /// <summary>
+        ///     Creates immutable warning facts when at least one recoverable issue was observed.
+        /// </summary>
+        /// <returns>The warning facts, or <see langword="null" /> when no issue was observed.</returns>
+        public ProcessingWarning? CreateWarning()
         {
             if (_count == 0)
             {
-                return [];
+                return null;
             }
 
-            var message = $"{pluginName}: {_count} recoverable record issue{(_count == 1 ? string.Empty : "s")}.";
-            if (_details.Count > 0)
-            {
-                message += $" {string.Join("; ", _details)}";
-            }
-
-            var remaining = _count - _details.Count;
-            if (remaining > 0)
-            {
-                message += $"; and {remaining} more.";
-            }
-
-            return [message];
+            return new ProcessingWarning(_count, _details);
         }
     }
 
-    private sealed class PluginRecordExtractionException(string message, Exception? innerException = null)
-        : Exception(message, innerException);
+    /// <summary>
+    ///     Carries application-owned Plugin-read phase and message facts across lazy Store enumeration.
+    /// </summary>
+    /// <param name="phase">The internal read phase that failed.</param>
+    /// <param name="diagnosticMessage">The underlying Plugin-read message.</param>
+    /// <param name="innerException">The adapter or Mutagen exception retained for diagnostics.</param>
+    private sealed class PluginReadException(
+        PluginReadPhase phase,
+        string diagnosticMessage,
+        Exception? innerException = null)
+        : Exception(diagnosticMessage, innerException)
+    {
+        public PluginReadPhase Phase { get; } = phase;
+
+        public string DiagnosticMessage { get; } = diagnosticMessage;
+    }
 }
