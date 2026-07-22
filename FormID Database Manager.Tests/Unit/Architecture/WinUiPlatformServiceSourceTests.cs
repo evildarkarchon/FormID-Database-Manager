@@ -61,9 +61,17 @@ public class WinUiPlatformServiceSourceTests
         Assert.Contains("WinUiFileDialogService", source, StringComparison.Ordinal);
         Assert.Contains("UserWorkflow", source, StringComparison.Ordinal);
         Assert.Contains("new UserWorkflow(", source, StringComparison.Ordinal);
-        Assert.Contains("PluginListManager", source, StringComparison.Ordinal);
+        Assert.Contains("PluginListDiscovery", source, StringComparison.Ordinal);
+        Assert.Contains("new PluginList(", source, StringComparison.Ordinal);
+        Assert.Contains("PluginListPresentationAdapter", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("PluginListManager", source, StringComparison.Ordinal);
         Assert.Contains("ProcessingRunExecutor", source, StringComparison.Ordinal);
         Assert.Contains("DirectoryComboBox_SelectionChanged", source, StringComparison.Ordinal);
+        Assert.Contains("_pluginListPresentationAdapter.Dispose();", source, StringComparison.Ordinal);
+        Assert.True(
+            source.IndexOf("_pluginListPresentationAdapter.Dispose();", StringComparison.Ordinal) <
+            source.IndexOf("_userWorkflow.Dispose();", StringComparison.Ordinal),
+            "The projection adapter must detach before User Workflow disposal retires the Plugin List.");
 
         var xaml = File.ReadAllText(mainWindowXamlPath);
         Assert.Contains("AutomationProperties.AutomationId=\"DirectoryComboBox\"", xaml, StringComparison.Ordinal);
@@ -131,11 +139,13 @@ public class WinUiPlatformServiceSourceTests
 
         Assert.Contains("Click=\"SelectAll_Click\"", xaml, StringComparison.Ordinal);
         Assert.Contains("Click=\"SelectNone_Click\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("Click=\"PluginCheckBox_Click\"", xaml, StringComparison.Ordinal);
         Assert.Contains("Click=\"ProcessFormIds_Click\"", xaml, StringComparison.Ordinal);
         Assert.DoesNotContain("AdvancedMode_CheckedChanged", source + xaml, StringComparison.Ordinal);
 
         Assert.Contains("_userWorkflow.SelectAllPlugins();", source, StringComparison.Ordinal);
         Assert.Contains("_userWorkflow.SelectNoPlugins();", source, StringComparison.Ordinal);
+        Assert.Contains("_userWorkflow.SetPluginSelection(", source, StringComparison.Ordinal);
         Assert.Contains("ViewModel.PropertyChanged += ViewModel_PropertyChanged;", source, StringComparison.Ordinal);
         Assert.Contains("await _userWorkflow.ApplyGameContextTransitionAsync(", source, StringComparison.Ordinal);
         Assert.Contains("GameContextTransition.AdvancedModeChanged()", source, StringComparison.Ordinal);
@@ -198,7 +208,9 @@ public class WinUiPlatformServiceSourceTests
 
         Assert.Contains("ItemsSource=\"{Binding FilteredPlugins}\"", xaml, StringComparison.Ordinal);
         Assert.Contains("Content=\"{Binding Name}\"", xaml, StringComparison.Ordinal);
-        Assert.Contains("IsChecked=\"{Binding IsSelected, Mode=TwoWay}\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("IsChecked=\"{Binding IsSelected, Mode=OneWay}\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("Click=\"PluginCheckBox_Click\"", xaml, StringComparison.Ordinal);
+        Assert.DoesNotContain("IsChecked=\"{Binding IsSelected, Mode=TwoWay}\"", xaml, StringComparison.Ordinal);
 
         Assert.Contains("IsOpen=\"{Binding HasErrorMessages, Mode=OneWay}\"", xaml, StringComparison.Ordinal);
         Assert.Contains("ItemsSource=\"{Binding ErrorMessages}\"", xaml, StringComparison.Ordinal);
@@ -386,7 +398,9 @@ public class WinUiPlatformServiceSourceTests
         Assert.Contains("SelectionMode=\"None\"", xaml, StringComparison.Ordinal);
         Assert.Contains("Grid.Row=\"2\"", xaml, StringComparison.Ordinal);
         Assert.Contains("MinHeight=\"{StaticResource PluginListMinHeight}\"", xaml, StringComparison.Ordinal);
-        Assert.Contains("IsChecked=\"{Binding IsSelected, Mode=TwoWay}\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("IsChecked=\"{Binding IsSelected, Mode=OneWay}\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("Click=\"PluginCheckBox_Click\"", xaml, StringComparison.Ordinal);
+        Assert.DoesNotContain("IsChecked=\"{Binding IsSelected, Mode=TwoWay}\"", xaml, StringComparison.Ordinal);
     }
 
     /// <summary>

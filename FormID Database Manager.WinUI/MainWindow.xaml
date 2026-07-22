@@ -215,10 +215,11 @@
                             <DataTemplate>
                                 <CheckBox
                                     AutomationProperties.Name="{Binding Name}"
+                                    Click="PluginCheckBox_Click"
                                     Content="{Binding Name}"
                                     HorizontalAlignment="Stretch"
                                     HorizontalContentAlignment="Stretch"
-                                    IsChecked="{Binding IsSelected, Mode=TwoWay}"
+                                    IsChecked="{Binding IsSelected, Mode=OneWay}"
                                     Margin="4,2">
                                     <CheckBox.ContentTemplate>
                                         <DataTemplate>

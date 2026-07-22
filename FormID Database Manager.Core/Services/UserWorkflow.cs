@@ -1,19 +1,18 @@
 using System.Diagnostics.CodeAnalysis;
-using FormID_Database_Manager.Models;
 using FormID_Database_Manager.ViewModels;
 using Mutagen.Bethesda;
 
 namespace FormID_Database_Manager.Services;
 
 /// <summary>
-/// Owns the UI-neutral user workflow for selecting game inputs, refreshing plugins, and starting processing.
+/// Owns the UI-neutral user workflow, authoritative Plugin List lifetime, and Processing Run coordination.
 /// </summary>
 public sealed class UserWorkflow : IDisposable
 {
     private readonly IFileDialogService _fileDialogService;
     private readonly GameDetectionService _gameDetectionService;
     private readonly IGameLocationService _gameLocationService;
-    private readonly PluginListManager _pluginListManager;
+    private readonly PluginList _pluginList;
     private readonly IProcessingRunExecutor _processingRunExecutor;
     private readonly MainWindowViewModel _viewModel;
     private bool _disposed;
@@ -28,21 +27,21 @@ public sealed class UserWorkflow : IDisposable
     /// <param name="fileDialogService">The platform picker adapter.</param>
     /// <param name="gameDetectionService">The game detection module.</param>
     /// <param name="gameLocationService">The installed-location lookup adapter.</param>
-    /// <param name="pluginListManager">The plugin list module.</param>
+    /// <param name="pluginList">The authoritative Plugin List whose lifetime transfers to this workflow.</param>
     /// <param name="processingRunExecutor">The owned Processing Run executor.</param>
     internal UserWorkflow(
         MainWindowViewModel viewModel,
         IFileDialogService fileDialogService,
         GameDetectionService gameDetectionService,
         IGameLocationService gameLocationService,
-        PluginListManager pluginListManager,
+        PluginList pluginList,
         IProcessingRunExecutor processingRunExecutor)
     {
         _viewModel = viewModel ?? throw new ArgumentNullException(nameof(viewModel));
         _fileDialogService = fileDialogService ?? throw new ArgumentNullException(nameof(fileDialogService));
         _gameDetectionService = gameDetectionService ?? throw new ArgumentNullException(nameof(gameDetectionService));
         _gameLocationService = gameLocationService ?? throw new ArgumentNullException(nameof(gameLocationService));
-        _pluginListManager = pluginListManager ?? throw new ArgumentNullException(nameof(pluginListManager));
+        _pluginList = pluginList ?? throw new ArgumentNullException(nameof(pluginList));
         _processingRunExecutor = processingRunExecutor ??
                                  throw new ArgumentNullException(nameof(processingRunExecutor));
     }
@@ -113,17 +112,33 @@ public sealed class UserWorkflow : IDisposable
     /// <summary>
     /// Selects every currently loaded plugin.
     /// </summary>
+    /// <exception cref="ObjectDisposedException">The workflow-owned Plugin List has been disposed.</exception>
     public void SelectAllPlugins()
     {
-        _pluginListManager.SelectAll(_viewModel.Plugins);
+        ApplyWholeListSelection(true);
     }
 
     /// <summary>
     /// Clears selection for every currently loaded plugin.
     /// </summary>
+    /// <exception cref="ObjectDisposedException">The workflow-owned Plugin List has been disposed.</exception>
     public void SelectNoPlugins()
     {
-        _pluginListManager.SelectNone(_viewModel.Plugins);
+        ApplyWholeListSelection(false);
+    }
+
+    /// <summary>
+    /// Submits one user-activated, versioned Plugin selection change to the authoritative Plugin List.
+    /// </summary>
+    /// <param name="membershipVersion">The confirmed membership version displayed when the user acted.</param>
+    /// <param name="pluginName">The projected Plugin name the user activated.</param>
+    /// <param name="isSelected">The desired selection state reported by the checkbox.</param>
+    /// <exception cref="ArgumentException"><paramref name="pluginName" /> is empty or whitespace.</exception>
+    /// <exception cref="ObjectDisposedException">The workflow-owned Plugin List has been disposed.</exception>
+    internal void SetPluginSelection(long membershipVersion, string pluginName, bool isSelected)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(pluginName);
+        _pluginList.Apply(new PluginSelectionByNameIntent(membershipVersion, pluginName, isSelected));
     }
 
     /// <summary>
@@ -155,14 +170,18 @@ public sealed class UserWorkflow : IDisposable
                 return;
             }
 
+            var confirmedPluginList = string.IsNullOrWhiteSpace(_viewModel.FormIdListPath)
+                ? _pluginList.Current.Confirmed
+                : null;
+            var requestGameRelease = confirmedPluginList?.Source.GameRelease ?? gameRelease;
             var databasePath = _viewModel.DatabasePath;
             if (string.IsNullOrEmpty(databasePath))
             {
-                databasePath = DefaultDatabasePathProvider.CreateDefaultDatabasePath(gameRelease);
+                databasePath = DefaultDatabasePathProvider.CreateDefaultDatabasePath(requestGameRelease);
                 _viewModel.DatabasePath = databasePath;
             }
 
-            var request = CreateProcessingRunRequest(gameRelease, databasePath);
+            var request = CreateProcessingRunRequest(gameRelease, databasePath, confirmedPluginList);
             var progress = new ProcessingRunProgressAdapter(ApplyProcessingRunEvent);
 
             await _processingRunExecutor.ExecuteAsync(request, progress);
@@ -200,6 +219,7 @@ public sealed class UserWorkflow : IDisposable
         _disposed = true;
         _processingRunExecutor.Cancel();
         _processingRunExecutor.Dispose();
+        _pluginList.Dispose();
     }
 
     private async Task ApplySelectedGameReleaseChangedAsync()
@@ -213,14 +233,13 @@ public sealed class UserWorkflow : IDisposable
 
         _programmaticGameSelectionToIgnore = null;
 
+        var gameContextVersion = BeginGameContextDirectoryTransition();
+        ResetGameSelectionState();
+
         if (_viewModel.SelectedGame is not { } selectedGame)
         {
             return;
         }
-
-        var gameContextVersion = BeginGameContextDirectoryTransition();
-
-        ResetGameSelectionState();
 
         // Mutagen game-location lookup touches registry and file system state, so keep it off the UI thread.
         var folders = await Task.Run(() => _gameLocationService.GetGameFolders(selectedGame));
@@ -272,6 +291,7 @@ public sealed class UserWorkflow : IDisposable
             }
             else
             {
+                _pluginList.Invalidate();
                 _viewModel.AddErrorMessage(
                     "Could not detect game from directory. Please select a game from the dropdown.");
                 return;
@@ -281,6 +301,11 @@ public sealed class UserWorkflow : IDisposable
         await RefreshPluginsForCurrentGameContextAsync(gameContextVersion);
     }
 
+    /// <summary>
+    /// Refreshes the exact complete Game Context or explicitly invalidates the authoritative Plugin List.
+    /// </summary>
+    /// <param name="expectedGameContextVersion">An optional directory-transition generation that must still be current.</param>
+    /// <returns>A task that completes when applicable Plugin discovery finishes.</returns>
     private async Task RefreshPluginsForCurrentGameContextAsync(int? expectedGameContextVersion = null)
     {
         if (expectedGameContextVersion.HasValue &&
@@ -291,14 +316,14 @@ public sealed class UserWorkflow : IDisposable
 
         if (_viewModel.SelectedGame is not { } game || string.IsNullOrEmpty(_viewModel.GameDirectory))
         {
+            _pluginList.Invalidate();
             return;
         }
 
-        await _pluginListManager.RefreshPluginList(
-            _viewModel.GameDirectory,
+        await _pluginList.RefreshAsync(
             game,
-            _viewModel.Plugins,
-            _viewModel.AdvancedMode);
+            _viewModel.GameDirectory,
+            _viewModel.AdvancedMode ? AdvancedMode.On : AdvancedMode.Off);
     }
 
     private static bool IsFailure(FileDialogResult result)
@@ -342,7 +367,7 @@ public sealed class UserWorkflow : IDisposable
         // cannot retire the installed-folder lookup that initiated this reset.
         SetGameDirectoryFromWorkflow(string.Empty);
         _viewModel.DetectedDirectories.Clear();
-        _viewModel.Plugins.Clear();
+        _pluginList.Invalidate();
     }
 
     private void ApplyDetectedFolders(IReadOnlyList<string> folders)
@@ -366,7 +391,32 @@ public sealed class UserWorkflow : IDisposable
         _viewModel.GameDirectory = path;
     }
 
-    private ProcessingRunRequest CreateProcessingRunRequest(GameRelease gameRelease, string databasePath)
+    /// <summary>
+    /// Submits a versioned whole-list selection intent against one captured confirmed membership.
+    /// </summary>
+    /// <param name="isSelected">Whether every confirmed Plugin should be selected.</param>
+    private void ApplyWholeListSelection(bool isSelected)
+    {
+        var confirmed = _pluginList.Current.Confirmed;
+        if (confirmed is null)
+        {
+            return;
+        }
+
+        _pluginList.Apply(new PluginSelectionForAllIntent(confirmed.MembershipVersion, isSelected));
+    }
+
+    /// <summary>
+    /// Creates one immutable Processing Run request, using a single confirmed Plugin List snapshot for Plugin runs.
+    /// </summary>
+    /// <param name="selectedGameRelease">The current selected GameRelease used by FormID text-file validation.</param>
+    /// <param name="databasePath">The resolved Store path for the run.</param>
+    /// <param name="confirmedPluginList">The one captured confirmation for a Plugin run, when available.</param>
+    /// <returns>A validated immutable Processing Run request.</returns>
+    private ProcessingRunRequest CreateProcessingRunRequest(
+        GameRelease selectedGameRelease,
+        string databasePath,
+        ConfirmedPluginList? confirmedPluginList)
     {
         var updateMode = _viewModel.UpdateMode ? UpdateMode.ReplacePluginRecords : UpdateMode.Append;
 
@@ -375,15 +425,26 @@ public sealed class UserWorkflow : IDisposable
             return new FormIdTextProcessingRunRequest(
                 _viewModel.FormIdListPath,
                 databasePath,
-                gameRelease,
+                selectedGameRelease,
+                updateMode);
+        }
+
+        if (confirmedPluginList is null)
+        {
+            // Preserve legacy validation order without allowing an unconfirmed Plugin request to reach execution.
+            return new PluginProcessingRunRequest(
+                _viewModel.GameDirectory,
+                databasePath,
+                selectedGameRelease,
+                [],
                 updateMode);
         }
 
         return new PluginProcessingRunRequest(
-            _viewModel.GameDirectory,
+            confirmedPluginList.Source.DataDirectory,
             databasePath,
-            gameRelease,
-            _viewModel.GetSelectedPlugins().Select(plugin => plugin.Name),
+            confirmedPluginList.Source.GameRelease,
+            confirmedPluginList.SelectedPluginNames,
             updateMode);
     }
 

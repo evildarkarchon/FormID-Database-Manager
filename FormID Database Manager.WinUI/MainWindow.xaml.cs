@@ -1,5 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 using System.ComponentModel;
+using FormID_Database_Manager.Models;
 using FormID_Database_Manager.Services;
 using FormID_Database_Manager.ViewModels;
 using FormID_Database_Manager.WinUI.Services;
@@ -8,6 +9,7 @@ namespace FormID_Database_Manager.WinUI;
 
 public sealed partial class MainWindow : Window, IDisposable
 {
+    private readonly PluginListPresentationAdapter _pluginListPresentationAdapter;
     private readonly UserWorkflow _userWorkflow;
     private bool _disposed;
 
@@ -20,16 +22,18 @@ public sealed partial class MainWindow : Window, IDisposable
         ViewModel = new MainWindowViewModel(dispatcher);
         var gameDetectionService = new GameDetectionService();
         var gameLocationService = new GameLocationService();
-        var pluginListManager = new PluginListManager(gameDetectionService, ViewModel, dispatcher);
+        var pluginListDiscovery = new PluginListDiscovery();
+        var pluginList = new PluginList(gameDetectionService, pluginListDiscovery);
         var processingRunExecutor = new ProcessingRunExecutor();
 
         InitializeWindow();
+        _pluginListPresentationAdapter = new PluginListPresentationAdapter(pluginList, ViewModel, dispatcher);
         _userWorkflow = new UserWorkflow(
             ViewModel,
             new WinUiFileDialogService(AppWindow),
             gameDetectionService,
             gameLocationService,
-            pluginListManager,
+            pluginList,
             processingRunExecutor);
     }
 
@@ -40,31 +44,32 @@ public sealed partial class MainWindow : Window, IDisposable
     /// <param name="fileDialogService">The picker service used by browse and file-selection handlers.</param>
     /// <param name="gameDetectionService">The service used to detect a game from a browsed directory.</param>
     /// <param name="gameLocationService">The service used to find installed game folders.</param>
-    /// <param name="pluginListManager">The service used to load and select plugins.</param>
+    /// <param name="pluginListDiscovery">The deterministic or production adapter used to discover Plugins.</param>
     /// <param name="processingRunExecutor">The owned Processing Run executor canceled during window close.</param>
     internal MainWindow(
         MainWindowViewModel viewModel,
         IFileDialogService? fileDialogService,
         GameDetectionService? gameDetectionService,
         IGameLocationService? gameLocationService,
-        PluginListManager? pluginListManager,
+        IPluginListDiscovery? pluginListDiscovery,
         ProcessingRunExecutor? processingRunExecutor)
     {
         ViewModel = viewModel ?? throw new ArgumentNullException(nameof(viewModel));
         var dispatcher = new WinUiThreadDispatcher(DispatcherQueue);
         var effectiveGameDetectionService = gameDetectionService ?? new GameDetectionService();
         var effectiveGameLocationService = gameLocationService ?? new GameLocationService();
-        var effectivePluginListManager = pluginListManager ??
-                                          new PluginListManager(effectiveGameDetectionService, ViewModel, dispatcher);
+        var effectivePluginListDiscovery = pluginListDiscovery ?? new PluginListDiscovery();
+        var pluginList = new PluginList(effectiveGameDetectionService, effectivePluginListDiscovery);
         var effectiveProcessingRun = processingRunExecutor ?? new ProcessingRunExecutor();
 
         InitializeWindow();
+        _pluginListPresentationAdapter = new PluginListPresentationAdapter(pluginList, ViewModel, dispatcher);
         _userWorkflow = new UserWorkflow(
             ViewModel,
             fileDialogService ?? new WinUiFileDialogService(AppWindow),
             effectiveGameDetectionService,
             effectiveGameLocationService,
-            effectivePluginListManager,
+            pluginList,
             effectiveProcessingRun);
     }
 
@@ -94,6 +99,8 @@ public sealed partial class MainWindow : Window, IDisposable
         _disposed = true;
         Closed -= MainWindow_Closed;
         ViewModel.PropertyChanged -= ViewModel_PropertyChanged;
+        // Detach presentation before the workflow retires its authoritative Plugin List.
+        _pluginListPresentationAdapter.Dispose();
         _userWorkflow.Dispose();
         ViewModel.Dispose();
     }
@@ -212,6 +219,22 @@ public sealed partial class MainWindow : Window, IDisposable
     private void SelectNone_Click(object sender, RoutedEventArgs e)
     {
         _userWorkflow.SelectNoPlugins();
+    }
+
+    /// <summary>
+    /// Sends checkbox intent only for user activation, using the membership identity projected with the item.
+    /// </summary>
+    private void PluginCheckBox_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not CheckBox { DataContext: PluginListItem plugin } checkBox)
+        {
+            return;
+        }
+
+        _userWorkflow.SetPluginSelection(
+            plugin.MembershipVersion,
+            plugin.Name,
+            checkBox.IsChecked == true);
     }
 
     /// <summary>

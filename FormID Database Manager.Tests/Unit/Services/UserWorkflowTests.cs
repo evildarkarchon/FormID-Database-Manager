@@ -2,9 +2,9 @@
 
 using System;
 using System.Collections.Generic;
-using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using FormID_Database_Manager.Models;
 using FormID_Database_Manager.Services;
@@ -26,21 +26,21 @@ public class UserWorkflowTests
     private readonly Mock<IFileDialogService> _fileDialogService = new();
     private readonly Mock<GameDetectionService> _gameDetectionService;
     private readonly Mock<IGameLocationService> _gameLocationService = new();
-    private readonly RecordingPluginListManager _pluginListManager;
+    private readonly PluginList _pluginList;
+    private readonly RecordingPluginListDiscovery _pluginListDiscovery;
+    private readonly PluginListPresentationAdapter _pluginListPresentationAdapter;
     private readonly RecordingProcessingRunExecutor _processingRunExecutor;
     private readonly List<ProcessingRunRequest> _processingRuns = [];
-    private readonly List<(string Directory, GameRelease Game, bool Advanced)> _refreshes = [];
+    private readonly List<PluginListSource> _refreshes = [];
     private readonly MainWindowViewModel _viewModel;
 
     public UserWorkflowTests()
     {
         _viewModel = new MainWindowViewModel(_dispatcher);
         _gameDetectionService = FormID_Database_Manager.TestUtilities.Mocks.MockFactory.CreateGameDetectionServiceMock();
-        _pluginListManager = new RecordingPluginListManager(
-            _gameDetectionService.Object,
-            _viewModel,
-            _dispatcher,
-            _refreshes);
+        _pluginListDiscovery = new RecordingPluginListDiscovery(_refreshes);
+        _pluginList = new PluginList(_gameDetectionService.Object, _pluginListDiscovery);
+        _pluginListPresentationAdapter = new PluginListPresentationAdapter(_pluginList, _viewModel, _dispatcher);
         _processingRunExecutor = new RecordingProcessingRunExecutor(_processingRuns);
     }
 
@@ -61,7 +61,7 @@ public class UserWorkflowTests
         Assert.Equal(GameDirectory, _viewModel.GameDirectory);
         Assert.Equal([GameDirectory, @"D:\Games\Skyrim"], _viewModel.DetectedDirectories.ToArray());
         Assert.Empty(_viewModel.Plugins);
-        Assert.Equal((GameDirectory, GameRelease.SkyrimSE, false), Assert.Single(_refreshes));
+        AssertSingleRefresh(GameDirectory, GameRelease.SkyrimSE, false);
     }
 
     /// <summary>
@@ -95,7 +95,7 @@ public class UserWorkflowTests
         await gameSelection;
 
         Assert.Equal(@"C:\NewFallout", _viewModel.GameDirectory);
-        Assert.Equal((@"C:\NewFallout", GameRelease.Fallout4, false), Assert.Single(_refreshes));
+        AssertSingleRefresh(@"C:\NewFallout", GameRelease.Fallout4, false);
     }
 
     [Fact]
@@ -127,7 +127,7 @@ public class UserWorkflowTests
         await sut.ApplyGameContextTransitionAsync(GameContextTransition.SelectedGameReleaseChanged());
         await sut.ApplyGameContextTransitionAsync(GameContextTransition.SelectedDetectedDirectoryChanged());
 
-        Assert.Equal((GameDirectory, GameRelease.SkyrimSE, false), Assert.Single(_refreshes));
+        AssertSingleRefresh(GameDirectory, GameRelease.SkyrimSE, false);
     }
 
     [Fact]
@@ -140,7 +140,7 @@ public class UserWorkflowTests
 
         await sut.ApplyGameContextTransitionAsync(GameContextTransition.SelectedDetectedDirectoryChanged());
 
-        Assert.Equal((@"D:\Games\Skyrim", GameRelease.SkyrimSE, false), Assert.Single(_refreshes));
+        AssertSingleRefresh(@"D:\Games\Skyrim", GameRelease.SkyrimSE, false);
     }
 
     [Fact]
@@ -172,7 +172,7 @@ public class UserWorkflowTests
         await Task.WhenAll(olderSelection, newerSelection);
 
         Assert.Equal(@"C:\NewFallout", _viewModel.GameDirectory);
-        Assert.Equal((@"C:\NewFallout", GameRelease.Fallout4, false), Assert.Single(_refreshes));
+        AssertSingleRefresh(@"C:\NewFallout", GameRelease.Fallout4, false);
     }
 
     [Fact]
@@ -188,7 +188,7 @@ public class UserWorkflowTests
 
         Assert.Equal(GameDirectory, _viewModel.GameDirectory);
         Assert.Equal(GameRelease.SkyrimSE, _viewModel.SelectedGame);
-        Assert.Equal((GameDirectory, GameRelease.SkyrimSE, false), Assert.Single(_refreshes));
+        AssertSingleRefresh(GameDirectory, GameRelease.SkyrimSE, false);
     }
 
     [Fact]
@@ -281,6 +281,21 @@ public class UserWorkflowTests
         Assert.Empty(_processingRuns);
     }
 
+    /// <summary>
+    /// Verifies that an empty confirmed selection retains the existing user-facing validation message.
+    /// </summary>
+    [Fact]
+    public async Task ProcessFormIdsAsync_ConfirmedListWithoutSelection_RecordsExistingValidationMessage()
+    {
+        var sut = CreateSut();
+        await ConfirmPluginListAsync(sut, ["User.esp"]);
+
+        await sut.ProcessFormIdsAsync();
+
+        Assert.Contains("No plugins selected", _viewModel.ErrorMessages);
+        Assert.Empty(_processingRuns);
+    }
+
     [Fact]
     public async Task ProcessFormIdsAsync_FormIdTextFile_SkipsPluginSelectionValidation()
     {
@@ -298,11 +313,11 @@ public class UserWorkflowTests
     [Fact]
     public async Task ProcessFormIdsAsync_EmptyDatabasePath_CreatesDefaultPathForSelectedGame()
     {
-        _viewModel.SelectedGame = GameRelease.SkyrimSE;
-        _viewModel.GameDirectory = GameDirectory;
-        _viewModel.Plugins.Add(new PluginListItem { Name = "User.esp", IsSelected = true });
-
         var sut = CreateSut();
+        var confirmed = await ConfirmPluginListAsync(sut, ["User.esp"]);
+        sut.SetPluginSelection(confirmed.MembershipVersion, "User.esp", true);
+        _viewModel.DatabasePath = string.Empty;
+
         await sut.ProcessFormIdsAsync();
 
         var run = Assert.IsType<PluginProcessingRunRequest>(Assert.Single(_processingRuns));
@@ -312,16 +327,91 @@ public class UserWorkflowTests
         Assert.Equal(["User.esp"], run.PluginNames);
     }
 
+    /// <summary>
+    /// Verifies that a Plugin Processing Run captures one confirmed source and ordered selection snapshot.
+    /// </summary>
+    [Fact]
+    public async Task ProcessFormIdsAsync_PluginRun_CapturesCanonicalConfirmedPluginListFactsInOrder()
+    {
+        var sut = CreateSut();
+        var confirmed = await ConfirmPluginListAsync(sut, ["First.esp", "Second.esp", "Third.esp"]);
+        sut.SetPluginSelection(confirmed.MembershipVersion, "Third.esp", true);
+        sut.SetPluginSelection(confirmed.MembershipVersion, "First.esp", true);
+
+        await sut.ProcessFormIdsAsync();
+
+        var run = Assert.IsType<PluginProcessingRunRequest>(Assert.Single(_processingRuns));
+        Assert.Equal(GameRelease.SkyrimSE, run.GameRelease);
+        Assert.Equal(confirmed.Source.DataDirectory, run.GameDirectory);
+        Assert.Equal(["First.esp", "Third.esp"], run.PluginNames);
+    }
+
+    /// <summary>
+    /// Verifies that later same-source refresh and selection publication cannot mutate an already captured run request.
+    /// </summary>
+    [Fact]
+    public async Task ProcessFormIdsAsync_DuringSameSourceRefresh_CapturedRequestRemainsImmutable()
+    {
+        var sut = CreateSut();
+        var confirmed = await ConfirmPluginListAsync(sut, ["First.esp", "Second.esp", "Third.esp"]);
+        sut.SetPluginSelection(confirmed.MembershipVersion, "First.esp", true);
+        sut.SetPluginSelection(confirmed.MembershipVersion, "Third.esp", true);
+
+        var refreshCompletion = new TaskCompletionSource<PluginListDiscoveryResult>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        _pluginListDiscovery.Handler = (_, _) => refreshCompletion.Task;
+        var refresh = sut.ApplyGameContextTransitionAsync(GameContextTransition.AdvancedModeChanged());
+
+        await sut.ProcessFormIdsAsync();
+        var run = Assert.IsType<PluginProcessingRunRequest>(Assert.Single(_processingRuns));
+
+        refreshCompletion.SetResult(PluginListDiscoveryResult.Completed(
+            ["Third.esp", "Second.esp", "First.esp", "New.esp"]));
+        await refresh;
+        var refreshed = Assert.IsType<ConfirmedPluginList>(_pluginList.Current.Confirmed);
+        sut.SetPluginSelection(refreshed.MembershipVersion, "Second.esp", true);
+
+        Assert.Equal(confirmed.Source.GameRelease, run.GameRelease);
+        Assert.Equal(confirmed.Source.DataDirectory, run.GameDirectory);
+        Assert.Equal(["First.esp", "Third.esp"], run.PluginNames);
+    }
+
+    /// <summary>
+    /// Verifies that a different-source transition invalidates old selection before a run request can be created.
+    /// </summary>
+    [Fact]
+    public async Task ProcessFormIdsAsync_DuringSourceTransition_DoesNotMixOldSelectionWithNewGameContext()
+    {
+        var sut = CreateSut();
+        var confirmed = await ConfirmPluginListAsync(sut, ["Old.esp"]);
+        sut.SetPluginSelection(confirmed.MembershipVersion, "Old.esp", true);
+
+        var refreshCompletion = new TaskCompletionSource<PluginListDiscoveryResult>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        _pluginListDiscovery.Handler = (_, _) => refreshCompletion.Task;
+        _viewModel.SelectedGame = GameRelease.Fallout4;
+        _viewModel.GameDirectory = @"D:\Games\Fallout4";
+
+        var transition = sut.ApplyGameContextTransitionAsync(
+            GameContextTransition.SelectedDetectedDirectoryChanged());
+        Assert.Null(_pluginList.Current.Confirmed);
+
+        await sut.ProcessFormIdsAsync();
+
+        Assert.Empty(_processingRuns);
+        Assert.Contains("No plugins selected", _viewModel.ErrorMessages);
+
+        refreshCompletion.SetResult(PluginListDiscoveryResult.Completed(["New.esp"]));
+        await transition;
+    }
+
     [Fact]
     public async Task ProcessFormIdsAsync_UpdateModeOn_CreatesReplaceModeRunRequest()
     {
-        _viewModel.SelectedGame = GameRelease.SkyrimSE;
-        _viewModel.GameDirectory = GameDirectory;
-        _viewModel.DatabasePath = DatabasePath;
-        _viewModel.UpdateMode = true;
-        _viewModel.Plugins.Add(new PluginListItem { Name = "User.esp", IsSelected = true });
-
         var sut = CreateSut();
+        await ConfigureValidPluginProcessingRunAsync(sut);
+        _viewModel.UpdateMode = true;
+
         await sut.ProcessFormIdsAsync();
 
         var run = Assert.IsType<PluginProcessingRunRequest>(Assert.Single(_processingRuns));
@@ -331,13 +421,10 @@ public class UserWorkflowTests
     [Fact]
     public async Task ProcessFormIdsAsync_StartsNewRun_ClearsStaleWarnings()
     {
-        _viewModel.SelectedGame = GameRelease.SkyrimSE;
-        _viewModel.GameDirectory = GameDirectory;
-        _viewModel.DatabasePath = DatabasePath;
-        _viewModel.WarningMessages.Add("Stale warning");
-        _viewModel.Plugins.Add(new PluginListItem { Name = "User.esp", IsSelected = true });
-
         var sut = CreateSut();
+        await ConfigureValidPluginProcessingRunAsync(sut);
+        _viewModel.WarningMessages.Add("Stale warning");
+
         await sut.ProcessFormIdsAsync();
 
         Assert.Empty(_viewModel.WarningMessages);
@@ -346,10 +433,10 @@ public class UserWorkflowTests
     [Fact]
     public async Task ProcessFormIdsAsync_ProcessingRunWarningEvent_AddsWarningMessage()
     {
-        ConfigureValidPluginProcessingRun();
+        var sut = CreateSut();
+        await ConfigureValidPluginProcessingRunAsync(sut);
         _processingRunExecutor.EventsToReport.Add(ProcessingRunEvent.Warning("Skipped User.esp"));
 
-        var sut = CreateSut();
         await sut.ProcessFormIdsAsync();
 
         Assert.Contains("Skipped User.esp", _viewModel.WarningMessages);
@@ -359,10 +446,10 @@ public class UserWorkflowTests
     [Fact]
     public async Task ProcessFormIdsAsync_ProcessingRunErrorEvent_AddsErrorMessage()
     {
-        ConfigureValidPluginProcessingRun();
+        var sut = CreateSut();
+        await ConfigureValidPluginProcessingRunAsync(sut);
         _processingRunExecutor.EventsToReport.Add(ProcessingRunEvent.Error("Failed User.esp"));
 
-        var sut = CreateSut();
         await sut.ProcessFormIdsAsync();
 
         Assert.Contains("Failed User.esp", _viewModel.ErrorMessages);
@@ -387,11 +474,13 @@ public class UserWorkflowTests
     {
         var sut = CreateSut();
 
+        _pluginListPresentationAdapter.Dispose();
         sut.Dispose();
         sut.Dispose();
 
         Assert.Equal(1, _processingRunExecutor.CancelCallCount);
         Assert.Equal(1, _processingRunExecutor.DisposeCallCount);
+        Assert.Throws<ObjectDisposedException>(() => _pluginList.Invalidate());
     }
 
     [Fact]
@@ -405,7 +494,46 @@ public class UserWorkflowTests
 
         await sut.ApplyGameContextTransitionAsync(GameContextTransition.AdvancedModeChanged());
 
-        Assert.Equal((GameDirectory, GameRelease.SkyrimSE, true), Assert.Single(_refreshes));
+        AssertSingleRefresh(GameDirectory, GameRelease.SkyrimSE, true);
+    }
+
+    /// <summary>
+    /// Verifies that incomplete Game Context explicitly invalidates confirmation and its presentation projection.
+    /// </summary>
+    [Fact]
+    public async Task ApplyGameContextTransitionAsync_IncompleteContext_InvalidatesConfirmedPluginList()
+    {
+        var sut = CreateSut();
+        await ConfirmPluginListAsync(sut, ["Old.esp"]);
+        Assert.Single(_viewModel.Plugins);
+
+        _viewModel.GameDirectory = string.Empty;
+        await sut.ApplyGameContextTransitionAsync(GameContextTransition.SelectedDetectedDirectoryChanged());
+
+        Assert.Null(_pluginList.Current.Confirmed);
+        Assert.IsType<PluginListNoSourceActivity>(_pluginList.Current.Activity);
+        Assert.Empty(_viewModel.Plugins);
+    }
+
+    /// <summary>
+    /// Verifies that bulk commands target complete confirmed membership rather than the filtered projection.
+    /// </summary>
+    [Fact]
+    public async Task SelectAllAndNonePlugins_ActiveFilter_ApplyToCompleteConfirmedMembership()
+    {
+        var sut = CreateSut();
+        await ConfirmPluginListAsync(sut, ["Visible.esp", "Hidden.esp", "AlsoHidden.esp"]);
+        _viewModel.PluginFilter = "Visible";
+        Assert.Equal("Visible.esp", Assert.Single(_viewModel.FilteredPlugins).Name);
+
+        sut.SelectAllPlugins();
+
+        var selected = Assert.IsType<ConfirmedPluginList>(_pluginList.Current.Confirmed);
+        Assert.Equal(["Visible.esp", "Hidden.esp", "AlsoHidden.esp"], selected.SelectedPluginNames);
+
+        sut.SelectNoPlugins();
+
+        Assert.Empty(Assert.IsType<ConfirmedPluginList>(_pluginList.Current.Confirmed).SelectedPluginNames);
     }
 
     private UserWorkflow CreateSut()
@@ -415,16 +543,45 @@ public class UserWorkflowTests
             _fileDialogService.Object,
             _gameDetectionService.Object,
             _gameLocationService.Object,
-            _pluginListManager,
+            _pluginList,
             _processingRunExecutor);
     }
 
-    private void ConfigureValidPluginProcessingRun()
+    /// <summary>
+    /// Asserts one canonical discovery source and the confirmed Advanced Mode produced by that refresh.
+    /// </summary>
+    private void AssertSingleRefresh(string gameDirectory, GameRelease gameRelease, bool advancedMode)
     {
+        var source = Assert.Single(_refreshes);
+        Assert.Equal(PluginListSource.Create(gameRelease, gameDirectory), source);
+        var confirmed = Assert.IsType<ConfirmedPluginList>(_pluginList.Current.Confirmed);
+        Assert.Equal(advancedMode ? AdvancedMode.On : AdvancedMode.Off, confirmed.AdvancedMode);
+    }
+
+    /// <summary>
+    /// Loads deterministic membership through the real Plugin List and returns its confirmation.
+    /// </summary>
+    private async Task<ConfirmedPluginList> ConfirmPluginListAsync(
+        UserWorkflow sut,
+        IReadOnlyList<string> pluginNames)
+    {
+        _pluginListDiscovery.PluginNames = pluginNames;
         _viewModel.SelectedGame = GameRelease.SkyrimSE;
         _viewModel.GameDirectory = GameDirectory;
+
+        await sut.ApplyGameContextTransitionAsync(GameContextTransition.SelectedDetectedDirectoryChanged());
+
+        return Assert.IsType<ConfirmedPluginList>(_pluginList.Current.Confirmed);
+    }
+
+    /// <summary>
+    /// Establishes one selected confirmed Plugin through the supported workflow boundary.
+    /// </summary>
+    private async Task ConfigureValidPluginProcessingRunAsync(UserWorkflow sut)
+    {
         _viewModel.DatabasePath = DatabasePath;
-        _viewModel.Plugins.Add(new PluginListItem { Name = "User.esp", IsSelected = true });
+        var confirmed = await ConfirmPluginListAsync(sut, ["User.esp"]);
+        sut.SetPluginSelection(confirmed.MembershipVersion, "User.esp", true);
     }
 
     private sealed class RecordingProcessingRunExecutor(List<ProcessingRunRequest> processingRuns)
@@ -460,21 +617,26 @@ public class UserWorkflowTests
         }
     }
 
-    private sealed class RecordingPluginListManager(
-        GameDetectionService gameDetectionService,
-        MainWindowViewModel viewModel,
-        IThreadDispatcher dispatcher,
-        List<(string Directory, GameRelease Game, bool Advanced)> refreshes)
-        : PluginListManager(gameDetectionService, viewModel, dispatcher)
+    private sealed class RecordingPluginListDiscovery(List<PluginListSource> refreshes) : IPluginListDiscovery
     {
-        public override Task RefreshPluginList(
-            string gameDirectory,
-            GameRelease gameRelease,
-            ObservableCollection<PluginListItem> plugins,
-            bool showAdvanced)
+        public Func<PluginListSource, CancellationToken, Task<PluginListDiscoveryResult>>? Handler { get; set; }
+
+        public IReadOnlyList<string> PluginNames { get; set; } = [];
+
+        /// <inheritdoc />
+        public Task<PluginListDiscoveryResult> DiscoverAsync(
+            PluginListSource source,
+            IProgress<PluginListDiscoveryProgress>? progress = null,
+            CancellationToken cancellationToken = default)
         {
-            refreshes.Add((gameDirectory, gameRelease, showAdvanced));
-            return Task.CompletedTask;
+            cancellationToken.ThrowIfCancellationRequested();
+            refreshes.Add(source);
+            if (Handler is not null)
+            {
+                return Handler(source, cancellationToken);
+            }
+
+            return Task.FromResult(PluginListDiscoveryResult.Completed(PluginNames));
         }
     }
 }
