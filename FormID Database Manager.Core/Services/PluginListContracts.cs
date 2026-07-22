@@ -46,6 +46,8 @@ internal sealed record PluginListFailedActivity(
 
 internal sealed record PluginListCancelledActivity(PluginListSource Source) : PluginListActivity;
 
+internal sealed record PluginListFaultedActivity(PluginListSource Source) : PluginListActivity;
+
 /// <summary>
 ///     Provides one immutable view of Plugin List membership, selection, and current activity.
 /// </summary>

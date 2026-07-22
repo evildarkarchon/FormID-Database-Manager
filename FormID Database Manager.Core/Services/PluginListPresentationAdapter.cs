@@ -177,7 +177,8 @@ internal sealed class PluginListPresentationAdapter : IDisposable
         {
             case PluginListNoSourceActivity:
             case PluginListCancelledActivity:
-                // The legacy presentation treats caller cancellation as a silent terminal state.
+            case PluginListFaultedActivity:
+                // Callers report unexpected exceptions; these message-free terminal facts only clear transient scanning UI.
                 ClearScanningState();
                 return;
 
