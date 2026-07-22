@@ -50,8 +50,7 @@ public class StressTests : IDisposable
         var pluginNames = Enumerable.Range(0, cancellationAttempts)
             .Select(static i => $"Test_{i}.esp")
             .ToArray();
-        using var processingRunExecutor = new ProcessingRunExecutor(
-            new StaticGameLoadOrderProvider(pluginNames));
+        using var processingRunExecutor = PerformanceProcessingRunFactory.Create(pluginNames);
 
         var cancelledCount = 0;
         var completedCount = 0;

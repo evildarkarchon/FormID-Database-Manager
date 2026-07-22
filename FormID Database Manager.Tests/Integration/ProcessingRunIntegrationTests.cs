@@ -10,6 +10,8 @@ using FormID_Database_Manager.Services;
 using FormID_Database_Manager.TestUtilities.Mocks;
 using Microsoft.Data.Sqlite;
 using Mutagen.Bethesda;
+using Mutagen.Bethesda.Plugins;
+using Mutagen.Bethesda.Skyrim;
 using Xunit;
 
 namespace FormID_Database_Manager.Tests.Integration;
@@ -110,6 +112,119 @@ public sealed class ProcessingRunIntegrationTests : IDisposable
         Assert.Equal(ProcessingRunEventKind.Status, terminalEvent.Kind);
         Assert.Contains("Processing completed successfully", terminalEvent.Message, StringComparison.Ordinal);
         Assert.Equal(100, terminalEvent.Value);
+    }
+
+    /// <summary>
+    ///     Executes a real selected-Plugin Processing Run across aggregate Plugin Ingestion and the SQLite Store, proving
+    ///     terminal completion is emitted only after explicit Store optimization has produced observable statistics.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_SelectedPluginRun_IngestsThroughProductionSeamsAndCompletesAfterOptimization()
+    {
+        const string pluginName = "SelectedPlugin.esp";
+        var gameDirectory = Path.Combine(_testDirectory, "Skyrim");
+        var dataPath = GameReleaseHelper.ResolveDataPath(gameDirectory);
+        Directory.CreateDirectory(dataPath);
+        var pluginPath = Path.Combine(dataPath, pluginName);
+        var databasePath = Path.Combine(_testDirectory, "selected-plugin.db");
+        var sourcePlugin = new SkyrimMod(ModKey.FromNameAndExtension(pluginName), SkyrimRelease.SkyrimSE);
+        var sourceRecord = sourcePlugin.Npcs.AddNew("NPC_Selected");
+        sourceRecord.Name = "Selected NPC";
+        sourcePlugin.WriteToBinary(pluginPath);
+
+        var pluginIngestion = new PluginIngestion(new FixedGameLoadOrderProvider([pluginName]));
+        using var executor = new ProcessingRunExecutor(
+            pluginIngestion,
+            new FormIdRecordStoreSessionOpener());
+        var events = new List<ProcessingRunEvent>();
+        var terminalObservedAfterOptimization = false;
+        var progress = new SynchronousProgress<ProcessingRunEvent>(runEvent =>
+        {
+            events.Add(runEvent);
+            if (runEvent is
+                {
+                    Kind: ProcessingRunEventKind.Status,
+                    Value: 100
+                } && runEvent.Message.Contains("Processing completed", StringComparison.Ordinal))
+            {
+                terminalObservedAfterOptimization = HasStoreStatistics(databasePath, GameRelease.SkyrimSE);
+            }
+        });
+
+        await executor.ExecuteAsync(
+            new PluginProcessingRunRequest(
+                gameDirectory,
+                databasePath,
+                GameRelease.SkyrimSE,
+                [pluginName],
+                UpdateMode.Append),
+            progress);
+
+        Assert.True(terminalObservedAfterOptimization);
+
+        await using (var store = await FormIdRecordStore.OpenAsync(
+                         databasePath,
+                         GameRelease.SkyrimSE,
+                         TestContext.Current.CancellationToken))
+        {
+            var storedRecords = await store.ReadRecordsAsync(
+                FormIdRecordQuery.All,
+                TestContext.Current.CancellationToken);
+
+            Assert.Equal(
+                [
+                    new FormIdStoredRecord(
+                        pluginName,
+                        sourceRecord.FormKey.ID.ToString("X6"),
+                        "NPC_Selected")
+                ],
+                storedRecords);
+        }
+
+        var terminalEvent = events[^1];
+        Assert.Equal(ProcessingRunEventKind.Status, terminalEvent.Kind);
+        Assert.Contains("Processing completed successfully", terminalEvent.Message, StringComparison.Ordinal);
+        Assert.Equal(100, terminalEvent.Value);
+    }
+
+    /// <summary>
+    ///     Inspects whether explicit optimization has populated SQLite statistics for the selected GameRelease table.
+    /// </summary>
+    /// <param name="databasePath">The Processing Run database path.</param>
+    /// <param name="gameRelease">The selected GameRelease table.</param>
+    /// <returns><see langword="true" /> when optimization statistics are already observable.</returns>
+    private static bool HasStoreStatistics(string databasePath, GameRelease gameRelease)
+    {
+        var connectionString = new SqliteConnectionStringBuilder
+        {
+            DataSource = databasePath,
+            Mode = SqliteOpenMode.ReadOnly,
+            Pooling = false
+        }.ToString();
+        using var connection = new SqliteConnection(connectionString);
+        connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT COUNT(*) FROM sqlite_stat1 WHERE tbl = @tableName";
+        command.Parameters.AddWithValue("@tableName", gameRelease.ToString());
+        return Convert.ToInt32(command.ExecuteScalar()) > 0;
+    }
+
+    private sealed class FixedGameLoadOrderProvider(IReadOnlyList<string> pluginNames) : IGameLoadOrderProvider
+    {
+        /// <inheritdoc />
+        public GameLoadOrderSnapshot BuildSnapshot(
+            GameRelease gameRelease,
+            string dataPath,
+            bool includeMasterFlagsLookup = false)
+        {
+            return new GameLoadOrderSnapshot(pluginNames);
+        }
+
+        /// <inheritdoc />
+        public IReadOnlyList<string> GetListedPluginNames(GameRelease gameRelease, string dataPath)
+        {
+            return pluginNames;
+        }
     }
 
     /// <summary>

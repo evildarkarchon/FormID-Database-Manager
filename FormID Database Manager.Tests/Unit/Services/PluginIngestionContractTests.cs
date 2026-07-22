@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using FormID_Database_Manager.Services;
@@ -49,6 +50,17 @@ public sealed class PluginIngestionContractTests
                 Assert.Equal(typeof(CancellationToken), parameter.ParameterType);
                 Assert.True(parameter.HasDefaultValue);
             });
+    }
+
+    /// <summary>
+    ///     Verifies production Processing Run construction does not expose Plugin Ingestion's load-order adapter.
+    /// </summary>
+    [Fact]
+    public void ProcessingRunExecutor_PublicConstruction_IsParameterless()
+    {
+        var constructor = Assert.Single(typeof(ProcessingRunExecutor).GetConstructors());
+
+        Assert.Empty(constructor.GetParameters());
     }
 
     [Fact]
@@ -128,7 +140,10 @@ public sealed class PluginIngestionContractTests
         };
         var warning = new ProcessingWarning(7, diagnosticDetails);
         var ingested = new IngestedPlugin("Ingested.esp", 42, warning);
-        var skipped = new SkippedPlugin("Skipped.esp", SkippedPluginReason.PluginFileUnavailable);
+        var skipped = new SkippedPlugin(
+            "Skipped.esp",
+            SkippedPluginReason.PluginFileUnavailable,
+            Path.Combine(Path.GetTempPath(), "Skyrim", "Data", "Skipped.esp"));
         var failed = new FailedPlugin(
             "Failed.esp",
             new PluginReadDiagnostic(PluginReadPhase.ReadingRecords, "Invalid record data."));
@@ -152,6 +167,54 @@ public sealed class PluginIngestionContractTests
                 SkippedPluginReason.ZeroFormIdRecords
             ],
             Enum.GetValues<SkippedPluginReason>());
+    }
+
+    /// <summary>
+    ///     Verifies Plugin Ingestion can retain the resolved unavailable-file fact without making Processing Run resolve
+    ///     the GameRelease-specific Data path itself.
+    /// </summary>
+    [Fact]
+    public void SkippedPlugin_UnavailableFile_PreservesResolvedPluginPath()
+    {
+        var pluginPath = Path.Combine(Path.GetTempPath(), "Skyrim", "Data", "Missing.esp");
+
+        var skipped = new SkippedPlugin(
+            "Missing.esp",
+            SkippedPluginReason.PluginFileUnavailable,
+            pluginPath);
+
+        Assert.Equal(pluginPath, skipped.ResolvedPluginPath);
+    }
+
+    /// <summary>
+    ///     Verifies an unavailable-file outcome cannot omit the resolved path owned by Plugin Ingestion.
+    /// </summary>
+    [Fact]
+    public void SkippedPlugin_UnavailableFileWithoutResolvedPath_ThrowsArgumentNullException()
+    {
+        var exception = Assert.Throws<ArgumentNullException>(() => new SkippedPlugin(
+            "Missing.esp",
+            SkippedPluginReason.PluginFileUnavailable));
+
+        Assert.Equal("resolvedPluginPath", exception.ParamName);
+    }
+
+    /// <summary>
+    ///     Verifies other typed skip reasons cannot carry an unrelated unavailable-file path.
+    /// </summary>
+    [Fact]
+    public void SkippedPlugin_OtherReasonWithResolvedPath_ThrowsArgumentException()
+    {
+        var exception = Assert.Throws<ArgumentException>(() => new SkippedPlugin(
+            "Missing.esp",
+            SkippedPluginReason.NotPresentInLoadOrder,
+            Path.Combine(Path.GetTempPath(), "Skyrim", "Data", "Missing.esp")));
+
+        Assert.Equal("resolvedPluginPath", exception.ParamName);
+        Assert.StartsWith(
+            "A resolved Plugin path is only valid for an unavailable Plugin file.",
+            exception.Message,
+            StringComparison.Ordinal);
     }
 
     [Fact]

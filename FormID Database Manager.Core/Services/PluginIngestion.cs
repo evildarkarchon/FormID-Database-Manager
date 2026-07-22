@@ -17,7 +17,15 @@ internal sealed class PluginIngestion : IPluginIngestion
     private readonly IPluginOverlayReader _overlayReader;
 
     /// <summary>
-    ///     Creates production Plugin Ingestion with a supplied load-order boundary.
+    ///     Creates production Plugin Ingestion with its Mutagen-backed load-order and overlay adapters.
+    /// </summary>
+    internal PluginIngestion()
+        : this(new GameLoadOrderProvider(), new MutagenPluginOverlayReader(), new EntryExtraction())
+    {
+    }
+
+    /// <summary>
+    ///     Creates Plugin Ingestion with a supplied load-order boundary and production overlay behavior.
     /// </summary>
     /// <param name="loadOrderProvider">The provider used once for the complete captured selection.</param>
     /// <exception cref="ArgumentNullException"><paramref name="loadOrderProvider" /> is null.</exception>
@@ -93,10 +101,10 @@ internal sealed class PluginIngestion : IPluginIngestion
             // A synchronous reporter can cancel after the selection gate but before this Plugin attempt begins.
             cancellationToken.ThrowIfCancellationRequested();
 
-            var skipReason = GetSkipReason(pluginName, dataPath, loadOrderSnapshot);
-            if (skipReason is { } reason)
+            var skippedPlugin = GetSkippedPlugin(pluginName, dataPath, loadOrderSnapshot);
+            if (skippedPlugin is not null)
             {
-                outcomes.Add(new SkippedPlugin(pluginName, reason));
+                outcomes.Add(skippedPlugin);
                 continue;
             }
 
@@ -230,20 +238,21 @@ internal sealed class PluginIngestion : IPluginIngestion
     /// <param name="pluginName">The selected Plugin name.</param>
     /// <param name="dataPath">The resolved Data directory.</param>
     /// <param name="loadOrderSnapshot">The one snapshot prepared for the complete selection.</param>
-    /// <returns>The typed skip reason, or <see langword="null" /> when the Plugin can be read.</returns>
-    private static SkippedPluginReason? GetSkipReason(
+    /// <returns>The complete typed skip fact, or <see langword="null" /> when the Plugin can be read.</returns>
+    private static SkippedPlugin? GetSkippedPlugin(
         string pluginName,
         string dataPath,
         GameLoadOrderSnapshot loadOrderSnapshot)
     {
         if (!loadOrderSnapshot.ContainsPlugin(pluginName))
         {
-            return SkippedPluginReason.NotPresentInLoadOrder;
+            return new SkippedPlugin(pluginName, SkippedPluginReason.NotPresentInLoadOrder);
         }
 
-        return File.Exists(Path.Combine(dataPath, pluginName))
+        var pluginPath = Path.Combine(dataPath, pluginName);
+        return File.Exists(pluginPath)
             ? null
-            : SkippedPluginReason.PluginFileUnavailable;
+            : new SkippedPlugin(pluginName, SkippedPluginReason.PluginFileUnavailable, pluginPath);
     }
 
     /// <summary>

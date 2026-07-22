@@ -337,13 +337,22 @@ internal enum SkippedPluginReason
 internal sealed record SkippedPlugin : PluginIngestionOutcome
 {
     /// <summary>
-    ///     Creates a Skipped Plugin fact.
+    ///     Creates a Skipped Plugin fact, retaining the resolved path when the Plugin file was unavailable.
     /// </summary>
     /// <param name="pluginName">The selected Plugin name.</param>
     /// <param name="reason">The stable reason no records were stored.</param>
-    /// <exception cref="ArgumentException"><paramref name="pluginName" /> is blank.</exception>
+    /// <param name="resolvedPluginPath">
+    ///     The resolved unavailable Plugin path, or <see langword="null" /> for every other skip reason.
+    /// </param>
+    /// <exception cref="ArgumentException">
+    ///     <paramref name="pluginName" /> is blank, the unavailable-file reason lacks a resolved path, or another reason
+    ///     supplies one.
+    /// </exception>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="reason" /> is not defined.</exception>
-    public SkippedPlugin(string pluginName, SkippedPluginReason reason)
+    public SkippedPlugin(
+        string pluginName,
+        SkippedPluginReason reason,
+        string? resolvedPluginPath = null)
         : base(pluginName)
     {
         if (!Enum.IsDefined(reason))
@@ -351,13 +360,30 @@ internal sealed record SkippedPlugin : PluginIngestionOutcome
             throw new ArgumentOutOfRangeException(nameof(reason));
         }
 
+        if (reason == SkippedPluginReason.PluginFileUnavailable)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(resolvedPluginPath);
+        }
+        else if (resolvedPluginPath is not null)
+        {
+            throw new ArgumentException(
+                "A resolved Plugin path is only valid for an unavailable Plugin file.",
+                nameof(resolvedPluginPath));
+        }
+
         Reason = reason;
+        ResolvedPluginPath = resolvedPluginPath;
     }
 
     /// <summary>
     ///     The stable reason no records were stored.
     /// </summary>
     public SkippedPluginReason Reason { get; }
+
+    /// <summary>
+    ///     The Plugin Ingestion-resolved unavailable file path, or <see langword="null" /> for other skip reasons.
+    /// </summary>
+    public string? ResolvedPluginPath { get; }
 }
 
 /// <summary>

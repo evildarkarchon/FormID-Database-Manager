@@ -476,10 +476,16 @@ public sealed class ProcessingRunExecutorTests : IDisposable
     {
         var gameDirectory = CreateTempDirectory();
         var databasePath = Path.Combine(gameDirectory, "plugins.db");
+        var resolvedPluginPath = Path.Combine(gameDirectory, "PreparedData", "Missing.esp");
         var ingestion = new RecordingReportPluginIngestion((request, _, _, _) =>
             Task.FromResult(new PluginIngestionReport(
                 request,
-                [new SkippedPlugin("Missing.esp", SkippedPluginReason.PluginFileUnavailable)])));
+                [
+                    new SkippedPlugin(
+                        "Missing.esp",
+                        SkippedPluginReason.PluginFileUnavailable,
+                        resolvedPluginPath)
+                ])));
         var recordStore = new RecordingRecordStoreSession();
         using var sut = new ProcessingRunExecutor(
             ingestion,
@@ -501,7 +507,7 @@ public sealed class ProcessingRunExecutorTests : IDisposable
         Assert.Contains(events, runEvent =>
             runEvent.Kind == ProcessingRunEventKind.Warning &&
             runEvent.Message.Contains(
-                $"Missing.esp: Could not find plugin file: {Path.Combine(GameReleaseHelper.ResolveDataPath(gameDirectory), "Missing.esp")}",
+                $"Missing.esp: Could not find plugin file: {resolvedPluginPath}",
                 StringComparison.Ordinal));
         Assert.Contains(events, runEvent =>
             runEvent.Kind == ProcessingRunEventKind.Status &&

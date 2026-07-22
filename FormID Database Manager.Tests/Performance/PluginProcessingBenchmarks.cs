@@ -193,7 +193,7 @@ public class PluginProcessingBenchmarks : IDisposable
 
     private ProcessingRunExecutor CreateProcessingRun()
     {
-        return new ProcessingRunExecutor(new StaticGameLoadOrderProvider(_testPlugins));
+        return PerformanceProcessingRunFactory.Create(_testPlugins);
     }
 
     private async Task ExecuteBenchmarkRunAsync(PluginProcessingRunRequest request)

@@ -248,12 +248,11 @@ public sealed class ProcessingRunExecutor : IProcessingRunExecutor
     private bool _disposed;
 
     /// <summary>
-    ///     Creates the Processing Run module.
+    ///     Creates the production Processing Run module with aggregate Plugin Ingestion and Store session ownership.
     /// </summary>
-    /// <param name="loadOrderProvider">Optional Plugin load-order provider; production uses Mutagen-backed lookup.</param>
-    public ProcessingRunExecutor(IGameLoadOrderProvider? loadOrderProvider = null)
+    public ProcessingRunExecutor()
         : this(
-            new PluginIngestion(loadOrderProvider ?? new GameLoadOrderProvider()),
+            new PluginIngestion(),
             new FormIdRecordStoreSessionOpener())
     {
     }
@@ -542,7 +541,7 @@ public sealed class ProcessingRunExecutor : IProcessingRunExecutor
             .SelectMany(outcome => outcome switch
             {
                 IngestedPlugin { Warning: not null } ingested => [FormatProcessingWarning(ingested)],
-                SkippedPlugin skipped => [FormatSkippedPluginDetail(skipped, request.GameDirectory)],
+                SkippedPlugin skipped => [FormatSkippedPluginDetail(skipped)],
                 _ => Array.Empty<string>()
             })
             .ToList();
@@ -630,18 +629,17 @@ public sealed class ProcessingRunExecutor : IProcessingRunExecutor
     ///     Formats one typed Skipped Plugin reason without exposing presentation wording through Plugin Ingestion.
     /// </summary>
     /// <param name="skippedPlugin">The Skipped Plugin facts.</param>
-    /// <param name="gameDirectory">The selected game root or Data directory used to preserve file-warning wording.</param>
     /// <returns>User-facing detail for the stable skip reason.</returns>
     /// <exception cref="ArgumentOutOfRangeException">The skip reason is unsupported.</exception>
-    private static string FormatSkippedPluginDetail(SkippedPlugin skippedPlugin, string gameDirectory)
+    private static string FormatSkippedPluginDetail(SkippedPlugin skippedPlugin)
     {
-        // The report carries stable facts only; reconstruct the prior display path here to preserve presentation wording.
+        // Plugin Ingestion owns path resolution; Processing Run only turns its stable facts into presentation wording.
         var detail = skippedPlugin.Reason switch
         {
             SkippedPluginReason.NotPresentInLoadOrder =>
                 $"Could not find plugin in load order: {skippedPlugin.PluginName}",
             SkippedPluginReason.PluginFileUnavailable =>
-                $"Could not find plugin file: {Path.Combine(GameReleaseHelper.ResolveDataPath(gameDirectory), skippedPlugin.PluginName)}",
+                $"Could not find plugin file: {skippedPlugin.ResolvedPluginPath}",
             SkippedPluginReason.ZeroFormIdRecords =>
                 $"{skippedPlugin.PluginName} produced zero FormID records.",
             _ => throw new ArgumentOutOfRangeException(

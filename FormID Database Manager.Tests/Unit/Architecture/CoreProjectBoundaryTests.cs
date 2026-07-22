@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Xml.Linq;
+using FormID_Database_Manager.Services;
 using Xunit;
 
 namespace FormID_Database_Manager.Tests.Unit.Architecture;
@@ -132,6 +133,63 @@ public class CoreProjectBoundaryTests
         Assert.Equal(
             new[] { Path.Combine("FormID Database Manager.Core", "Services", "FormIdRecordStore.cs") },
             productionSqliteOwners);
+    }
+
+    /// <summary>
+    ///     Verifies the final selected-Plugin dependency direction: Processing Run owns the Store lifecycle, while the
+    ///     sealed aggregate Plugin Ingestion owns load-order, Data-path, and overlay adapters behind its interface.
+    /// </summary>
+    [Fact]
+    public void CoreServices_SelectedPluginOwnership_KeepsAdaptersAndStoreLifecycleOnTheirOwningSides()
+    {
+        var servicesDirectory = Path.Combine(GetCoreProjectDirectory(), "Services");
+        var processingRunSource = File.ReadAllText(Path.Combine(servicesDirectory, "ProcessingRun.cs"));
+        var pluginIngestionSource = File.ReadAllText(Path.Combine(servicesDirectory, "PluginIngestion.cs"));
+
+        Assert.Contains("IPluginIngestion", processingRunSource, StringComparison.Ordinal);
+        Assert.Contains("_recordStoreOpener.OpenAsync", processingRunSource, StringComparison.Ordinal);
+        Assert.Contains("recordStore.OptimizeAsync", processingRunSource, StringComparison.Ordinal);
+        Assert.Contains("recordStore.DisposeAsync", processingRunSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("IGameLoadOrderProvider", processingRunSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("GameLoadOrderProvider", processingRunSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("IPluginOverlayReader", processingRunSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("MutagenPluginOverlayReader", processingRunSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("GameReleaseHelper.ResolveDataPath", processingRunSource, StringComparison.Ordinal);
+
+        Assert.Contains("IGameLoadOrderProvider", pluginIngestionSource, StringComparison.Ordinal);
+        Assert.Contains("IPluginOverlayReader", pluginIngestionSource, StringComparison.Ordinal);
+        Assert.Contains("GameReleaseHelper.ResolveDataPath", pluginIngestionSource, StringComparison.Ordinal);
+        Assert.Contains("IFormIdRecordStoreSession recordStore", pluginIngestionSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("FormIdRecordStore.OpenAsync", pluginIngestionSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("recordStore.OptimizeAsync", pluginIngestionSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("recordStore.DisposeAsync", pluginIngestionSource, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    ///     Verifies the Core assembly exposes only the aggregate implementation and no retired one-Plugin transport.
+    /// </summary>
+    [Fact]
+    public void CoreAssembly_PluginIngestionContract_HasOneProductionImplementationAndNoRetiredProtocol()
+    {
+        var coreAssembly = typeof(PluginIngestion).Assembly;
+        var contractType = typeof(IPluginIngestion);
+        var implementations = coreAssembly
+            .GetTypes()
+            .Where(type => !type.IsAbstract && contractType.IsAssignableFrom(type))
+            .ToArray();
+
+        Assert.Equal([typeof(PluginIngestion)], implementations);
+
+        var serviceNamespace = typeof(PluginIngestion).Namespace;
+        var retiredTypeNames = new[]
+        {
+            string.Concat("PluginIngestion", "Request"),
+            string.Concat("PluginIngestion", "Result"),
+            string.Concat("PluginIngestion", "ResultKind")
+        };
+
+        Assert.All(retiredTypeNames, typeName =>
+            Assert.Null(coreAssembly.GetType($"{serviceNamespace}.{typeName}")));
     }
 
     private static bool IsBuildOutput(string path)

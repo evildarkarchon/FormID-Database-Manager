@@ -52,8 +52,8 @@ The solution has four projects in `FormID Database Manager.slnx`:
 ### Core (`FormID Database Manager.Core/`)
 - `ViewModels/MainWindowViewModel.cs` — CommunityToolkit.Mvvm ObservableObject ViewModel with plugin filtering, progress tracking, and thread-safe UI updates via `IThreadDispatcher`
 - `Services/` — All business logic:
-  - `ProcessingRunExecutor` — Reusable Processing Run seam for Plugin Ingestion and Processing Runs that read FormID text files; owns the active-run cancellation lifecycle and emits structured status, warning, and error events
-  - `PluginIngestion` — Internal one-Plugin ingestion module; reads Mutagen overlays via `IPluginOverlayReader`, extracts Entries via `EntryExtraction`, and writes through `FormIdRecordStore`
+  - `ProcessingRunExecutor` — Reusable Processing Run seam for selected-Plugin and FormID text-file runs; owns active-run cancellation, run-scoped Store opening, explicit successful-run optimization, best-effort cleanup, and terminal event formatting, and delegates the complete immutable Plugin selection once through internal `IPluginIngestion`
+  - `PluginIngestion` — Internal sealed aggregate selected-Plugin implementation; owns Data-path resolution, load-order preparation, `IPluginOverlayReader`, and `EntryExtraction`, attempts Plugins sequentially with best-effort outcomes, and writes only through the supplied `IFormIdRecordStoreSession`
   - `FormIdRecordStore` — Implements the FormID Record Store and solely owns production Store connection configuration, selected-GameRelease schema preparation, SQLite writes, explicit optimization, and pipe-delimited FormID text imports (`plugin|formid|entry`) with 10000-row staging batches
   - `PluginListManager` — Loads plugin lists from game directories on background thread
   - `GameDetectionService` — Detects game type from directory structure (master file presence)
