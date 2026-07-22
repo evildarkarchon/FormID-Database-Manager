@@ -13,12 +13,13 @@ public partial class MainWindowViewModel : ObservableObject, IDisposable
     private readonly IThreadDispatcher _dispatcher;
     private readonly Lock _messagesLock = new();
     private CancellationTokenSource? _debounceCts;
+    private bool _isApplyingGameContextProjection;
 
-    [ObservableProperty] private bool _advancedMode;
+    private bool _advancedMode;
 
     [ObservableProperty] private string _databasePath = string.Empty;
 
-    [ObservableProperty] private ObservableCollection<string> _detectedDirectories = [];
+    private readonly ObservableCollection<string> _detectedDirectories = [];
 
     [ObservableProperty] [NotifyPropertyChangedFor(nameof(HasErrorMessages))]
     private ObservableCollection<string> _errorMessages = [];
@@ -27,7 +28,7 @@ public partial class MainWindowViewModel : ObservableObject, IDisposable
 
     [ObservableProperty] private string _formIdListPath = string.Empty;
 
-    [ObservableProperty] private string _gameDirectory = string.Empty;
+    private string _gameDirectory = string.Empty;
 
     [ObservableProperty] [NotifyPropertyChangedFor(nameof(HasInformationMessages))]
     private ObservableCollection<string> _informationMessages = [];
@@ -52,7 +53,6 @@ public partial class MainWindowViewModel : ObservableObject, IDisposable
 
     [ObservableProperty] private string _progressStatus = string.Empty;
 
-    [ObservableProperty] [NotifyPropertyChangedFor(nameof(IsGameSelected))]
     private GameRelease? _selectedGame;
 
     [ObservableProperty] private double _progressValue;
@@ -67,6 +67,7 @@ public partial class MainWindowViewModel : ObservableObject, IDisposable
     {
         _dispatcher = dispatcher ?? new ImmediateThreadDispatcher();
         _debounceMs = debounceMs;
+        DetectedDirectories = new ReadOnlyObservableCollection<string>(_detectedDirectories);
         Plugins = new ReadOnlyObservableCollection<PluginListItem>(_plugins);
         FilteredPlugins = new ReadOnlyObservableCollection<PluginListItem>(_filteredPlugins);
         _plugins.CollectionChanged += OnPluginsCollectionChanged;
@@ -85,7 +86,13 @@ public partial class MainWindowViewModel : ObservableObject, IDisposable
             GameRelease.Starfield
         }.AsReadOnly();
 
-        _detectedDirectories.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasMultipleDirectories));
+        _detectedDirectories.CollectionChanged += (_, _) =>
+        {
+            if (!_isApplyingGameContextProjection)
+            {
+                OnPropertyChanged(nameof(HasMultipleDirectories));
+            }
+        };
         _errorMessages.CollectionChanged += OnErrorMessagesCollectionChanged;
         _informationMessages.CollectionChanged += OnInformationMessagesCollectionChanged;
         _warningMessages.CollectionChanged += OnWarningMessagesCollectionChanged;
@@ -98,6 +105,45 @@ public partial class MainWindowViewModel : ObservableObject, IDisposable
 
     public IReadOnlyList<GameRelease> AvailableGames { get; }
 
+    /// <summary>
+    /// Gets the read-only ordered projection of directories available for the current Game Context.
+    /// </summary>
+    /// <remarks>The observable collection identity is stable for the lifetime of this ViewModel.</remarks>
+    public ReadOnlyObservableCollection<string> DetectedDirectories { get; }
+
+    /// <summary>
+    /// Gets or sets the projected Advanced Mode value through the temporary compatibility surface.
+    /// </summary>
+    public bool AdvancedMode
+    {
+        get => _advancedMode;
+        set => SetProperty(ref _advancedMode, value);
+    }
+
+    /// <summary>
+    /// Gets or sets the projected game-directory presentation value through the temporary compatibility surface.
+    /// </summary>
+    public string GameDirectory
+    {
+        get => _gameDirectory;
+        set => SetProperty(ref _gameDirectory, value);
+    }
+
+    /// <summary>
+    /// Gets or sets the projected GameRelease through the temporary compatibility surface.
+    /// </summary>
+    public GameRelease? SelectedGame
+    {
+        get => _selectedGame;
+        set
+        {
+            if (SetProperty(ref _selectedGame, value))
+            {
+                OnPropertyChanged(nameof(IsGameSelected));
+            }
+        }
+    }
+
     public bool IsGameSelected => SelectedGame.HasValue;
 
     public bool HasMultipleDirectories => DetectedDirectories.Count > 1;
@@ -109,6 +155,98 @@ public partial class MainWindowViewModel : ObservableObject, IDisposable
     public bool HasWarningMessages => WarningMessages.Count > 0;
 
     public bool IsProgressVisible => IsProcessing || IsScanning;
+
+    /// <summary>
+    /// Projects one complete Game Context through the dispatcher that owns this ViewModel.
+    /// </summary>
+    /// <param name="selectedGame">The selected GameRelease, or null when no release is selected.</param>
+    /// <param name="gameDirectory">The selected domain directory, or null when the context is incomplete.</param>
+    /// <param name="availableDirectories">The complete ordered available-directory snapshot.</param>
+    /// <param name="advancedMode">The authoritative Advanced Mode value.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="availableDirectories" /> is null.</exception>
+    internal void ApplyGameContextProjection(
+        GameRelease? selectedGame,
+        string? gameDirectory,
+        IReadOnlyList<string> availableDirectories,
+        AdvancedMode advancedMode)
+    {
+        ArgumentNullException.ThrowIfNull(availableDirectories);
+        var directorySnapshot = availableDirectories.ToArray();
+
+        if (!_dispatcher.CheckAccess())
+        {
+            // A single posted action prevents observers from seeing fields from different Game Context snapshots.
+            _dispatcher.Post(() => ApplyGameContextProjectionCore(
+                selectedGame,
+                gameDirectory,
+                directorySnapshot,
+                advancedMode));
+            return;
+        }
+
+        ApplyGameContextProjectionCore(selectedGame, gameDirectory, directorySnapshot, advancedMode);
+    }
+
+    /// <summary>
+    /// Applies a materialized Game Context snapshot and raises notifications only after every field is current.
+    /// </summary>
+    /// <param name="selectedGame">The selected GameRelease, or null when no release is selected.</param>
+    /// <param name="gameDirectory">The selected domain directory, or null when the context is incomplete.</param>
+    /// <param name="availableDirectories">The complete ordered available-directory snapshot.</param>
+    /// <param name="advancedMode">The authoritative Advanced Mode value.</param>
+    private void ApplyGameContextProjectionCore(
+        GameRelease? selectedGame,
+        string? gameDirectory,
+        IReadOnlyList<string> availableDirectories,
+        AdvancedMode advancedMode)
+    {
+        var presentationDirectory = gameDirectory ?? string.Empty;
+        var presentationAdvancedMode = advancedMode == FormID_Database_Manager.Services.AdvancedMode.On;
+        var selectedGameChanged = _selectedGame != selectedGame;
+        var gameDirectoryChanged = !string.Equals(_gameDirectory, presentationDirectory, StringComparison.Ordinal);
+        var availableDirectoriesChanged = !_detectedDirectories.SequenceEqual(availableDirectories);
+        var advancedModeChanged = _advancedMode != presentationAdvancedMode;
+
+        // Update every backing value before notifications so observers always read one complete snapshot.
+        _selectedGame = selectedGame;
+        _gameDirectory = presentationDirectory;
+        _advancedMode = presentationAdvancedMode;
+
+        if (availableDirectoriesChanged)
+        {
+            _isApplyingGameContextProjection = true;
+            try
+            {
+                _detectedDirectories.Clear();
+                foreach (var availableDirectory in availableDirectories)
+                {
+                    _detectedDirectories.Add(availableDirectory);
+                }
+            }
+            finally
+            {
+                _isApplyingGameContextProjection = false;
+            }
+
+            OnPropertyChanged(nameof(HasMultipleDirectories));
+        }
+
+        if (selectedGameChanged)
+        {
+            OnPropertyChanged(nameof(SelectedGame));
+            OnPropertyChanged(nameof(IsGameSelected));
+        }
+
+        if (gameDirectoryChanged)
+        {
+            OnPropertyChanged(nameof(GameDirectory));
+        }
+
+        if (advancedModeChanged)
+        {
+            OnPropertyChanged(nameof(AdvancedMode));
+        }
+    }
 
     /// <summary>
     ///     Gets the read-only Main Window projection published by the Plugin List presentation adapter.

@@ -115,6 +115,64 @@ public class MainWindowViewModelTests
         Assert.True(_viewModel.IsGameSelected);
     }
 
+    /// <summary>
+    /// Verifies that a complete Game Context projection is queued as one dispatcher action and observed coherently.
+    /// </summary>
+    [Fact]
+    public void ApplyGameContextProjection_OffDispatcher_QueuesOneCoherentUpdate()
+    {
+        var dispatcher = new RecordingThreadDispatcher(hasAccess: true);
+        var viewModel = new MainWindowViewModel(dispatcher);
+        viewModel.ApplyGameContextProjection(
+            GameRelease.Fallout4,
+            @"C:\OldFallout",
+            [@"C:\OldFallout"],
+            AdvancedMode.Off);
+        var observedSnapshots = new List<(GameRelease? Game, string Directory, string Directories, bool Mode)>();
+        viewModel.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName is nameof(MainWindowViewModel.SelectedGame)
+                or nameof(MainWindowViewModel.GameDirectory)
+                or nameof(MainWindowViewModel.DetectedDirectories)
+                or nameof(MainWindowViewModel.AdvancedMode)
+                or nameof(MainWindowViewModel.IsGameSelected)
+                or nameof(MainWindowViewModel.HasMultipleDirectories))
+            {
+                observedSnapshots.Add((
+                    viewModel.SelectedGame,
+                    viewModel.GameDirectory,
+                    string.Join('|', viewModel.DetectedDirectories),
+                    viewModel.AdvancedMode));
+            }
+        };
+        dispatcher.HasAccess = false;
+
+        viewModel.ApplyGameContextProjection(
+            GameRelease.SkyrimSE,
+            null,
+            [@"D:\Skyrim", @"C:\Skyrim"],
+            AdvancedMode.On);
+
+        Assert.Equal(1, dispatcher.PostCount);
+        Assert.Equal(GameRelease.Fallout4, viewModel.SelectedGame);
+        Assert.Equal(@"C:\OldFallout", viewModel.GameDirectory);
+        Assert.Equal([@"C:\OldFallout"], viewModel.DetectedDirectories);
+        Assert.False(viewModel.AdvancedMode);
+
+        dispatcher.DrainPostedActions(hasAccessDuringDrain: true);
+
+        Assert.Equal(GameRelease.SkyrimSE, viewModel.SelectedGame);
+        Assert.Equal(string.Empty, viewModel.GameDirectory);
+        Assert.Equal([@"D:\Skyrim", @"C:\Skyrim"], viewModel.DetectedDirectories);
+        Assert.True(viewModel.AdvancedMode);
+        Assert.True(viewModel.IsGameSelected);
+        Assert.True(viewModel.HasMultipleDirectories);
+        Assert.NotEmpty(observedSnapshots);
+        Assert.All(observedSnapshots, snapshot => Assert.Equal(
+            (GameRelease.SkyrimSE, string.Empty, @"D:\Skyrim|C:\Skyrim", true),
+            snapshot));
+    }
+
     [Fact]
     public void AvailableGames_ContainsAll10SupportedReleases()
     {
@@ -147,6 +205,40 @@ public class MainWindowViewModelTests
         Assert.Empty(_viewModel.DetectedDirectories);
     }
 
+    /// <summary>
+    /// Verifies that available directories retain one ordered, read-only presentation collection across projections.
+    /// </summary>
+    [Fact]
+    public void DetectedDirectories_CompleteProjections_PreserveStableReadOnlyOrderedMembership()
+    {
+        var property = typeof(MainWindowViewModel).GetProperty(nameof(MainWindowViewModel.DetectedDirectories));
+        var originalProjection = _viewModel.DetectedDirectories;
+
+        _viewModel.ApplyGameContextProjection(
+            GameRelease.SkyrimSE,
+            @"D:\Skyrim",
+            [@"D:\Skyrim", @"C:\Skyrim"],
+            AdvancedMode.Off);
+
+        Assert.NotNull(property);
+        Assert.Equal(typeof(ReadOnlyObservableCollection<string>), property.PropertyType);
+        Assert.Null(property.SetMethod);
+        Assert.Same(originalProjection, _viewModel.DetectedDirectories);
+        Assert.Equal([@"D:\Skyrim", @"C:\Skyrim"], _viewModel.DetectedDirectories);
+
+        _viewModel.ApplyGameContextProjection(
+            GameRelease.Fallout4,
+            @"E:\Fallout4",
+            [@"E:\Fallout4", @"B:\Fallout4"],
+            AdvancedMode.On);
+
+        Assert.Same(originalProjection, _viewModel.DetectedDirectories);
+        Assert.Equal([@"E:\Fallout4", @"B:\Fallout4"], _viewModel.DetectedDirectories);
+        var collection = Assert.IsAssignableFrom<ICollection<string>>(_viewModel.DetectedDirectories);
+        Assert.True(collection.IsReadOnly);
+        Assert.Throws<NotSupportedException>(() => collection.Add(@"Z:\Injected"));
+    }
+
     [Fact]
     public void HasMultipleDirectories_ReturnsFalse_WhenEmpty()
     {
@@ -158,7 +250,7 @@ public class MainWindowViewModelTests
     public void HasMultipleDirectories_ReturnsFalse_WhenSingleEntry()
     {
         // Arrange
-        _viewModel.DetectedDirectories.Add(@"C:\Games\Fallout4");
+        ProjectGameContext(@"C:\Games\Fallout4");
 
         // Assert
         Assert.False(_viewModel.HasMultipleDirectories);
@@ -168,8 +260,7 @@ public class MainWindowViewModelTests
     public void HasMultipleDirectories_ReturnsTrue_WhenMultipleEntries()
     {
         // Arrange
-        _viewModel.DetectedDirectories.Add(@"C:\Games\Fallout4");
-        _viewModel.DetectedDirectories.Add(@"D:\Games\Fallout4");
+        ProjectGameContext(@"C:\Games\Fallout4", @"D:\Games\Fallout4");
 
         // Assert
         Assert.True(_viewModel.HasMultipleDirectories);
@@ -189,8 +280,7 @@ public class MainWindowViewModelTests
         };
 
         // Act
-        _viewModel.DetectedDirectories.Add(@"C:\Games\Fallout4");
-        _viewModel.DetectedDirectories.Add(@"D:\Games\Fallout4");
+        ProjectGameContext(@"C:\Games\Fallout4", @"D:\Games\Fallout4");
 
         // Assert
         Assert.Contains(nameof(MainWindowViewModel.HasMultipleDirectories), notifiedProperties);
@@ -1372,6 +1462,18 @@ public class MainWindowViewModelTests
         params PluginListItem[] projectedItems)
     {
         viewModel.ReplacePluginProjection(projectedItems);
+    }
+
+    /// <summary>
+    /// Publishes one available-directory membership through the complete Game Context projection seam.
+    /// </summary>
+    private void ProjectGameContext(params string[] availableDirectories)
+    {
+        _viewModel.ApplyGameContextProjection(
+            _viewModel.SelectedGame,
+            string.IsNullOrEmpty(_viewModel.GameDirectory) ? null : _viewModel.GameDirectory,
+            availableDirectories,
+            _viewModel.AdvancedMode ? AdvancedMode.On : AdvancedMode.Off);
     }
 
     private sealed class RecordingThreadDispatcher(bool hasAccess) : IThreadDispatcher

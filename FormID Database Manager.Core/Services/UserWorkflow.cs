@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using System.Diagnostics.CodeAnalysis;
 using FormID_Database_Manager.ViewModels;
 using Mutagen.Bethesda;
@@ -5,7 +6,7 @@ using Mutagen.Bethesda;
 namespace FormID_Database_Manager.Services;
 
 /// <summary>
-/// Owns the UI-neutral user workflow, authoritative Plugin List lifetime, and Processing Run coordination.
+/// Owns authoritative Game Context, the UI-neutral user workflow, Plugin List lifetime, and Processing Run coordination.
 /// </summary>
 public sealed class UserWorkflow : IDisposable
 {
@@ -15,6 +16,7 @@ public sealed class UserWorkflow : IDisposable
     private readonly PluginList _pluginList;
     private readonly IProcessingRunExecutor _processingRunExecutor;
     private readonly MainWindowViewModel _viewModel;
+    private GameContextSnapshot _gameContext;
     private bool _disposed;
     private int _gameContextVersion;
     private string? _programmaticDirectorySelectionToIgnore;
@@ -44,6 +46,7 @@ public sealed class UserWorkflow : IDisposable
         _pluginList = pluginList ?? throw new ArgumentNullException(nameof(pluginList));
         _processingRunExecutor = processingRunExecutor ??
                                  throw new ArgumentNullException(nameof(processingRunExecutor));
+        _gameContext = CaptureGameContextFromCompatibilityProjection();
     }
 
     /// <summary>
@@ -53,6 +56,8 @@ public sealed class UserWorkflow : IDisposable
     /// <returns>A task that completes after the applicable workflow transition and refresh finish.</returns>
     internal Task ApplyGameContextTransitionAsync(GameContextTransition transition)
     {
+        _gameContext = CaptureGameContextFromCompatibilityProjection();
+
         return transition.Source switch
         {
             GameContextTransitionSource.SelectedGameReleaseChanged => ApplySelectedGameReleaseChangedAsync(),
@@ -225,7 +230,7 @@ public sealed class UserWorkflow : IDisposable
     private async Task ApplySelectedGameReleaseChangedAsync()
     {
         if (_programmaticGameSelectionToIgnore.HasValue &&
-            _programmaticGameSelectionToIgnore == _viewModel.SelectedGame)
+            _programmaticGameSelectionToIgnore == _gameContext.SelectedGameRelease)
         {
             _programmaticGameSelectionToIgnore = null;
             return;
@@ -236,7 +241,7 @@ public sealed class UserWorkflow : IDisposable
         var gameContextVersion = BeginGameContextDirectoryTransition();
         ResetGameSelectionState();
 
-        if (_viewModel.SelectedGame is not { } selectedGame)
+        if (_gameContext.SelectedGameRelease is not { } selectedGame)
         {
             return;
         }
@@ -266,7 +271,10 @@ public sealed class UserWorkflow : IDisposable
         {
             _programmaticDirectorySelectionToIgnore = null;
 
-            if (string.Equals(ignoredDirectory, _viewModel.GameDirectory, StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(
+                    ignoredDirectory,
+                    _gameContext.SelectedGameDirectory ?? string.Empty,
+                    StringComparison.OrdinalIgnoreCase))
             {
                 return Task.CompletedTask;
             }
@@ -281,13 +289,14 @@ public sealed class UserWorkflow : IDisposable
         var gameContextVersion = BeginGameContextDirectoryTransition();
         SetGameDirectoryFromWorkflow(path);
 
-        if (_viewModel.SelectedGame is null)
+        if (_gameContext.SelectedGameRelease is null)
         {
             var detectedGame = _gameDetectionService.DetectGame(path);
             if (detectedGame.HasValue)
             {
                 _programmaticGameSelectionToIgnore = detectedGame.Value;
-                _viewModel.SelectedGame = detectedGame.Value;
+                _gameContext = _gameContext with { SelectedGameRelease = detectedGame.Value };
+                ProjectGameContext();
             }
             else
             {
@@ -314,7 +323,8 @@ public sealed class UserWorkflow : IDisposable
             return;
         }
 
-        if (_viewModel.SelectedGame is not { } game || string.IsNullOrEmpty(_viewModel.GameDirectory))
+        if (_gameContext.SelectedGameRelease is not { } game ||
+            _gameContext.SelectedGameDirectory is not { } gameDirectory)
         {
             _pluginList.Invalidate();
             return;
@@ -322,8 +332,8 @@ public sealed class UserWorkflow : IDisposable
 
         await _pluginList.RefreshAsync(
             game,
-            _viewModel.GameDirectory,
-            _viewModel.AdvancedMode ? AdvancedMode.On : AdvancedMode.Off);
+            gameDirectory,
+            _gameContext.AdvancedMode);
     }
 
     private static bool IsFailure(FileDialogResult result)
@@ -361,34 +371,84 @@ public sealed class UserWorkflow : IDisposable
         return gameContextVersion == Volatile.Read(ref _gameContextVersion);
     }
 
+    /// <summary>
+    /// Clears directory state for a changed GameRelease and invalidates the previous Plugin List source.
+    /// </summary>
     private void ResetGameSelectionState()
     {
         // Clearing the bound directory raises SelectionChanged; ignore that programmatic event so it
         // cannot retire the installed-folder lookup that initiated this reset.
-        SetGameDirectoryFromWorkflow(string.Empty);
-        _viewModel.DetectedDirectories.Clear();
+        _programmaticDirectorySelectionToIgnore = string.Empty;
+        _gameContext = _gameContext with
+        {
+            SelectedGameDirectory = null,
+            AvailableDirectories = ImmutableArray<string>.Empty
+        };
+        ProjectGameContext();
         _pluginList.Invalidate();
     }
 
+    /// <summary>
+    /// Publishes a non-empty installed-location result as the complete ordered available-directory snapshot.
+    /// </summary>
+    /// <param name="folders">The installed locations in discovery order.</param>
     private void ApplyDetectedFolders(IReadOnlyList<string> folders)
     {
-        _viewModel.DetectedDirectories.Clear();
-
-        if (folders.Count > 1)
+        var availableDirectories = folders.ToImmutableArray();
+        var selectedDirectory = folders[0];
+        _programmaticDirectorySelectionToIgnore = selectedDirectory;
+        _gameContext = _gameContext with
         {
-            foreach (var folder in folders)
-            {
-                _viewModel.DetectedDirectories.Add(folder);
-            }
-        }
-
-        SetGameDirectoryFromWorkflow(folders[0]);
+            SelectedGameDirectory = selectedDirectory,
+            AvailableDirectories = availableDirectories
+        };
+        ProjectGameContext();
     }
 
+    /// <summary>
+    /// Updates the authoritative directory and projects it through the temporary feedback-loop adapter.
+    /// </summary>
+    /// <param name="path">The selected game directory presentation value.</param>
     private void SetGameDirectoryFromWorkflow(string path)
     {
         _programmaticDirectorySelectionToIgnore = path;
-        _viewModel.GameDirectory = path;
+        _gameContext = _gameContext with { SelectedGameDirectory = ToDomainDirectory(path) };
+        ProjectGameContext();
+    }
+
+    /// <summary>
+    /// Captures the complete mutable presentation state at the temporary transition-adapter boundary.
+    /// </summary>
+    /// <returns>An immutable Game Context snapshot using null for an absent domain directory.</returns>
+    private GameContextSnapshot CaptureGameContextFromCompatibilityProjection()
+    {
+        return new GameContextSnapshot(
+            _viewModel.SelectedGame,
+            ToDomainDirectory(_viewModel.GameDirectory),
+            _viewModel.DetectedDirectories.ToImmutableArray(),
+            _viewModel.AdvancedMode ? AdvancedMode.On : AdvancedMode.Off);
+    }
+
+    /// <summary>
+    /// Publishes the complete authoritative Game Context through the ViewModel's one restricted projection seam.
+    /// </summary>
+    private void ProjectGameContext()
+    {
+        _viewModel.ApplyGameContextProjection(
+            _gameContext.SelectedGameRelease,
+            _gameContext.SelectedGameDirectory,
+            _gameContext.AvailableDirectories,
+            _gameContext.AdvancedMode);
+    }
+
+    /// <summary>
+    /// Converts the compatibility presentation value to the nullable directory used by the domain snapshot.
+    /// </summary>
+    /// <param name="directory">The existing presentation directory value.</param>
+    /// <returns>The domain directory, or null when the presentation value represents absence.</returns>
+    private static string? ToDomainDirectory(string directory)
+    {
+        return string.IsNullOrEmpty(directory) ? null : directory;
     }
 
     /// <summary>
@@ -464,6 +524,19 @@ public sealed class UserWorkflow : IDisposable
 
         _viewModel.UpdateProgress(runEvent.Message, runEvent.Value);
     }
+
+    /// <summary>
+    /// Retains the complete User Workflow-owned Game Context as one immutable value.
+    /// </summary>
+    /// <param name="SelectedGameRelease">The selected GameRelease, when one has been accepted.</param>
+    /// <param name="SelectedGameDirectory">The selected domain directory, or null while the context is incomplete.</param>
+    /// <param name="AvailableDirectories">The complete ordered available-directory set.</param>
+    /// <param name="AdvancedMode">The current Advanced Mode value.</param>
+    private sealed record GameContextSnapshot(
+        GameRelease? SelectedGameRelease,
+        string? SelectedGameDirectory,
+        ImmutableArray<string> AvailableDirectories,
+        AdvancedMode AdvancedMode);
 
     private sealed class ProcessingRunProgressAdapter(Action<ProcessingRunEvent> handler) : IProgress<ProcessingRunEvent>
     {
