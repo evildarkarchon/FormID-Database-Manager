@@ -1,0 +1,582 @@
+{
+  ".codex/hooks.json": {
+    "mtime": 1785220554.781748,
+    "ast_hash": "611d48e08353296f515ceb648a64bc8a",
+    "semantic_hash": "611d48e08353296f515ceb648a64bc8a"
+  },
+  ".vscode/launch.json": {
+    "mtime": 1783311031.1085582,
+    "ast_hash": "602168746f2ed7a5ff9b161bd06b15bd",
+    "semantic_hash": "602168746f2ed7a5ff9b161bd06b15bd"
+  },
+  ".vscode/settings.json": {
+    "mtime": 1769602380.664506,
+    "ast_hash": "99914b932bd37a50b983c5e7c90ae93b",
+    "semantic_hash": "99914b932bd37a50b983c5e7c90ae93b"
+  },
+  ".vscode/tasks.json": {
+    "mtime": 1783311031.1090586,
+    "ast_hash": "bb6b459ba96cc037d687b2d06b9a770c",
+    "semantic_hash": "bb6b459ba96cc037d687b2d06b9a770c"
+  },
+  "FormID Database Manager.Core/FormID Database Manager.Core.csproj": {
+    "mtime": 1783311031.1105585,
+    "ast_hash": "c57a2644755a001978e745850611d923",
+    "semantic_hash": "c57a2644755a001978e745850611d923"
+  },
+  "FormID Database Manager.Core/Models/PluginListItem.cs": {
+    "mtime": 1784704921.755823,
+    "ast_hash": "2b6b988d8a83f3a9e8e70f2e3e1980d0",
+    "semantic_hash": "2b6b988d8a83f3a9e8e70f2e3e1980d0"
+  },
+  "FormID Database Manager.Core/Services/DefaultDatabasePathProvider.cs": {
+    "mtime": 1783311031.112558,
+    "ast_hash": "c10e05093c535f1e6a6f6ff23ab74b58",
+    "semantic_hash": "c10e05093c535f1e6a6f6ff23ab74b58"
+  },
+  "FormID Database Manager.Core/Services/EntryExtraction.cs": {
+    "mtime": 1784685130.3344235,
+    "ast_hash": "e7f5a133824529a972ac203c8c7784c1",
+    "semantic_hash": "e7f5a133824529a972ac203c8c7784c1"
+  },
+  "FormID Database Manager.Core/Services/FileDialogResult.cs": {
+    "mtime": 1783311066.6365545,
+    "ast_hash": "8715f8558a80b1d8310608fbdbca9dc7",
+    "semantic_hash": "8715f8558a80b1d8310608fbdbca9dc7"
+  },
+  "FormID Database Manager.Core/Services/FormIdRecordStore.cs": {
+    "mtime": 1784718432.084839,
+    "ast_hash": "ae9b64fd0207f686e3b91622f8a99265",
+    "semantic_hash": "ae9b64fd0207f686e3b91622f8a99265"
+  },
+  "FormID Database Manager.Core/Services/FormIdRecordStoreSession.cs": {
+    "mtime": 1783312747.91258,
+    "ast_hash": "1da51ac9fb6decc2913c4bed54288e4c",
+    "semantic_hash": "1da51ac9fb6decc2913c4bed54288e4c"
+  },
+  "FormID Database Manager.Core/Services/GameDetectionService.cs": {
+    "mtime": 1783311031.113564,
+    "ast_hash": "e9a20f0a8e0585c6c822297bdb5e0b6a",
+    "semantic_hash": "e9a20f0a8e0585c6c822297bdb5e0b6a"
+  },
+  "FormID Database Manager.Core/Services/GameLoadOrderProvider.cs": {
+    "mtime": 1783311031.113564,
+    "ast_hash": "ca14ac177c0728ebbbb988c4dc74db3b",
+    "semantic_hash": "ca14ac177c0728ebbbb988c4dc74db3b"
+  },
+  "FormID Database Manager.Core/Services/GameLoadOrderSnapshot.cs": {
+    "mtime": 1783311031.1145692,
+    "ast_hash": "34494957839fc80d68839423568f1cd0",
+    "semantic_hash": "34494957839fc80d68839423568f1cd0"
+  },
+  "FormID Database Manager.Core/Services/GameLocationService.cs": {
+    "mtime": 1783311031.115069,
+    "ast_hash": "d07202bbb4916dba937f5b119aaa9a89",
+    "semantic_hash": "d07202bbb4916dba937f5b119aaa9a89"
+  },
+  "FormID Database Manager.Core/Services/GameReleaseHelper.cs": {
+    "mtime": 1783311066.6380534,
+    "ast_hash": "5c1dc38aaf50e340606e7466532946d6",
+    "semantic_hash": "5c1dc38aaf50e340606e7466532946d6"
+  },
+  "FormID Database Manager.Core/Services/IFileDialogService.cs": {
+    "mtime": 1783311066.6385565,
+    "ast_hash": "cb0ddf7da347b8e1c9f626885fdbf711",
+    "semantic_hash": "cb0ddf7da347b8e1c9f626885fdbf711"
+  },
+  "FormID Database Manager.Core/Services/IGameLoadOrderProvider.cs": {
+    "mtime": 1783311031.1165721,
+    "ast_hash": "b7859868fbfefbf93fb72f72a0c5b77d",
+    "semantic_hash": "b7859868fbfefbf93fb72f72a0c5b77d"
+  },
+  "FormID Database Manager.Core/Services/IGameLocationService.cs": {
+    "mtime": 1783311031.1170733,
+    "ast_hash": "b52d1a779c8e9ad4652879b347c6093d",
+    "semantic_hash": "b52d1a779c8e9ad4652879b347c6093d"
+  },
+  "FormID Database Manager.Core/Services/IPluginOverlayReader.cs": {
+    "mtime": 1784685169.9687326,
+    "ast_hash": "8ea42e26e4e5a8e258d72163e79bcdbc",
+    "semantic_hash": "8ea42e26e4e5a8e258d72163e79bcdbc"
+  },
+  "FormID Database Manager.Core/Services/IThreadDispatcher.cs": {
+    "mtime": 1783311031.1175735,
+    "ast_hash": "e55275feee84eea50f7899fc9da870cb",
+    "semantic_hash": "e55275feee84eea50f7899fc9da870cb"
+  },
+  "FormID Database Manager.Core/Services/PluginIngestion.cs": {
+    "mtime": 1784692805.947891,
+    "ast_hash": "72b51be359fae2703b59bae99766c22a",
+    "semantic_hash": "72b51be359fae2703b59bae99766c22a"
+  },
+  "FormID Database Manager.Core/Services/PluginIngestionContracts.cs": {
+    "mtime": 1784692700.631634,
+    "ast_hash": "9badb2f9fb45995e40d4544f9a2dfa11",
+    "semantic_hash": "9badb2f9fb45995e40d4544f9a2dfa11"
+  },
+  "FormID Database Manager.Core/Services/PluginList.cs": {
+    "mtime": 1784718447.742247,
+    "ast_hash": "c6e6212060454b31f4254d9787cee043",
+    "semantic_hash": "c6e6212060454b31f4254d9787cee043"
+  },
+  "FormID Database Manager.Core/Services/PluginListContracts.cs": {
+    "mtime": 1784718447.742247,
+    "ast_hash": "69a5fd66d376c93eccf26ebac250674c",
+    "semantic_hash": "69a5fd66d376c93eccf26ebac250674c"
+  },
+  "FormID Database Manager.Core/Services/PluginListDiscovery.cs": {
+    "mtime": 1784700156.3646505,
+    "ast_hash": "fa9fe604957ddd325411243071e62eee",
+    "semantic_hash": "fa9fe604957ddd325411243071e62eee"
+  },
+  "FormID Database Manager.Core/Services/PluginListPresentationAdapter.cs": {
+    "mtime": 1784718447.7427468,
+    "ast_hash": "10de93e5c685e49da7dd680b2a01a698",
+    "semantic_hash": "10de93e5c685e49da7dd680b2a01a698"
+  },
+  "FormID Database Manager.Core/Services/PluginListSource.cs": {
+    "mtime": 1784700195.734033,
+    "ast_hash": "0e62c88b52979723c226b8955ce1c000",
+    "semantic_hash": "0e62c88b52979723c226b8955ce1c000"
+  },
+  "FormID Database Manager.Core/Services/ProcessingRun.cs": {
+    "mtime": 1784692322.7725253,
+    "ast_hash": "42406b37d07bdd4649a1fda203d4ed00",
+    "semantic_hash": "42406b37d07bdd4649a1fda203d4ed00"
+  },
+  "FormID Database Manager.Core/Services/QueuedThreadDispatcher.cs": {
+    "mtime": 1783311031.119074,
+    "ast_hash": "2e5040c7ce3c235349661721c9d20ed9",
+    "semantic_hash": "2e5040c7ce3c235349661721c9d20ed9"
+  },
+  "FormID Database Manager.Core/Services/UserWorkflow.cs": {
+    "mtime": 1784722108.7139623,
+    "ast_hash": "a4d1d8fda5d0dd55b9539d7ccdf80369",
+    "semantic_hash": "a4d1d8fda5d0dd55b9539d7ccdf80369"
+  },
+  "FormID Database Manager.Core/ViewModels/MainWindowViewModel.cs": {
+    "mtime": 1784721368.6636114,
+    "ast_hash": "8261fcf6b631a2bf88e772411690623a",
+    "semantic_hash": "8261fcf6b631a2bf88e772411690623a"
+  },
+  "FormID Database Manager.TestUtilities/Builders/GameDetectionBuilder.cs": {
+    "mtime": 1783311031.1205726,
+    "ast_hash": "9e73b4df2f9029daf9465df11057f6b8",
+    "semantic_hash": "9e73b4df2f9029daf9465df11057f6b8"
+  },
+  "FormID Database Manager.TestUtilities/Builders/GameLoadOrderSnapshotFactory.cs": {
+    "mtime": 1783320678.1978548,
+    "ast_hash": "af78b6a082f8da8ab76ae16acb457ee6",
+    "semantic_hash": "af78b6a082f8da8ab76ae16acb457ee6"
+  },
+  "FormID Database Manager.TestUtilities/ExpectsGameEnvironmentFailureAttribute.cs": {
+    "mtime": 1783311031.1210728,
+    "ast_hash": "8e89c0017561928173e16c785a81ca5f",
+    "semantic_hash": "8e89c0017561928173e16c785a81ca5f"
+  },
+  "FormID Database Manager.TestUtilities/FormID Database Manager.TestUtilities.csproj": {
+    "mtime": 1784673482.0397084,
+    "ast_hash": "78951a06bd236b8255764f35fc512276",
+    "semantic_hash": "78951a06bd236b8255764f35fc512276"
+  },
+  "FormID Database Manager.TestUtilities/GameInstallationHelper.cs": {
+    "mtime": 1783311031.122573,
+    "ast_hash": "582b61e810a4fd29c695232e16382c6e",
+    "semantic_hash": "582b61e810a4fd29c695232e16382c6e"
+  },
+  "FormID Database Manager.TestUtilities/ManualPerformanceFactAttribute.cs": {
+    "mtime": 1783311031.122573,
+    "ast_hash": "22eb79a584a4d2a8fe758b461d3bd75d",
+    "semantic_hash": "22eb79a584a4d2a8fe758b461d3bd75d"
+  },
+  "FormID Database Manager.TestUtilities/Mocks/MockFactory.cs": {
+    "mtime": 1784708839.7378914,
+    "ast_hash": "04aa7e4e8394c0ca82f1a19946bdcc3c",
+    "semantic_hash": "04aa7e4e8394c0ca82f1a19946bdcc3c"
+  },
+  "FormID Database Manager.TestUtilities/Mocks/SynchronousProgress.cs": {
+    "mtime": 1769599114.2660136,
+    "ast_hash": "d7c97be4243cfc36012e7ca6ca679bf0",
+    "semantic_hash": "d7c97be4243cfc36012e7ca6ca679bf0"
+  },
+  "FormID Database Manager.TestUtilities/Mocks/SynchronousThreadDispatcher.cs": {
+    "mtime": 1783311031.1245816,
+    "ast_hash": "601dfb202a8680b59b7455ac8ef693fc",
+    "semantic_hash": "601dfb202a8680b59b7455ac8ef693fc"
+  },
+  "FormID Database Manager.TestUtilities/RequiresGameInstallationAttribute.cs": {
+    "mtime": 1783311031.1250806,
+    "ast_hash": "8256f4c86e3a0bfdacc87c2d8ff78ea4",
+    "semantic_hash": "8256f4c86e3a0bfdacc87c2d8ff78ea4"
+  },
+  "FormID Database Manager.TestUtilities/TestCleanupHelper.cs": {
+    "mtime": 1783311031.1255808,
+    "ast_hash": "0eada12a7ccf204d66b746fed112ea83",
+    "semantic_hash": "0eada12a7ccf204d66b746fed112ea83"
+  },
+  "FormID Database Manager.Tests/FormID Database Manager.Tests.csproj": {
+    "mtime": 1783311031.1255808,
+    "ast_hash": "78cc96f2a9167dc5172dc9090a1a80aa",
+    "semantic_hash": "78cc96f2a9167dc5172dc9090a1a80aa"
+  },
+  "FormID Database Manager.Tests/Integration/DatabaseIntegrationTests.cs": {
+    "mtime": 1784635511.4746835,
+    "ast_hash": "dd663c18431d9ef0afb7440a7222c16d",
+    "semantic_hash": "dd663c18431d9ef0afb7440a7222c16d"
+  },
+  "FormID Database Manager.Tests/Integration/GameDetectionIntegrationTests.cs": {
+    "mtime": 1783311031.1270823,
+    "ast_hash": "a7b23eec370a82811c4fc526ac341f5d",
+    "semantic_hash": "a7b23eec370a82811c4fc526ac341f5d"
+  },
+  "FormID Database Manager.Tests/Integration/ProcessingRunIntegrationTests.cs": {
+    "mtime": 1784692465.2273118,
+    "ast_hash": "152fda8214a080f1b58d1190ae19cb96",
+    "semantic_hash": "152fda8214a080f1b58d1190ae19cb96"
+  },
+  "FormID Database Manager.Tests/Performance/DatabaseBenchmarks.cs": {
+    "mtime": 1784672293.7289827,
+    "ast_hash": "77f8241c0cfe913e8721ea77332e5e5d",
+    "semantic_hash": "77f8241c0cfe913e8721ea77332e5e5d"
+  },
+  "FormID Database Manager.Tests/Performance/LoadTests.cs": {
+    "mtime": 1784709554.140922,
+    "ast_hash": "2010638ff048df316963014256dec9cf",
+    "semantic_hash": "2010638ff048df316963014256dec9cf"
+  },
+  "FormID Database Manager.Tests/Performance/MemoryBenchmarks.cs": {
+    "mtime": 1784709555.4265184,
+    "ast_hash": "1c62a4893f644119f87504587bf04bda",
+    "semantic_hash": "1c62a4893f644119f87504587bf04bda"
+  },
+  "FormID Database Manager.Tests/Performance/PluginProcessingBenchmarks.cs": {
+    "mtime": 1784692328.594637,
+    "ast_hash": "a9ac4cf9221e46f0fdc473207aa934c3",
+    "semantic_hash": "a9ac4cf9221e46f0fdc473207aa934c3"
+  },
+  "FormID Database Manager.Tests/Performance/RegressionTests.cs": {
+    "mtime": 1784672904.7002845,
+    "ast_hash": "2f8a9e7e3100aa2d0d38af63c520508d",
+    "semantic_hash": "2f8a9e7e3100aa2d0d38af63c520508d"
+  },
+  "FormID Database Manager.Tests/Performance/StaticGameLoadOrderProvider.cs": {
+    "mtime": 1784692324.23695,
+    "ast_hash": "578586668e66a1b6754f35a9e0b22c07",
+    "semantic_hash": "578586668e66a1b6754f35a9e0b22c07"
+  },
+  "FormID Database Manager.Tests/Performance/StressTests.cs": {
+    "mtime": 1784709127.2120697,
+    "ast_hash": "5c2e1a3cc86d332f4c508195e0395c60",
+    "semantic_hash": "5c2e1a3cc86d332f4c508195e0395c60"
+  },
+  "FormID Database Manager.Tests/TestCollections.cs": {
+    "mtime": 1783311031.1320815,
+    "ast_hash": "359864f487b9d158dcd7803bb6529155",
+    "semantic_hash": "359864f487b9d158dcd7803bb6529155"
+  },
+  "FormID Database Manager.Tests/UI/DataBindingTests.cs": {
+    "mtime": 1784722110.0048158,
+    "ast_hash": "a75bb9f654c92f26148e3e607c2b28f5",
+    "semantic_hash": "a75bb9f654c92f26148e3e607c2b28f5"
+  },
+  "FormID Database Manager.Tests/Unit/Architecture/CoreProjectBoundaryTests.cs": {
+    "mtime": 1784722111.597459,
+    "ast_hash": "1d056a858fa66da248b1593a0a32366d",
+    "semantic_hash": "1d056a858fa66da248b1593a0a32366d"
+  },
+  "FormID Database Manager.Tests/Unit/Architecture/TestCollectionDefinitionTests.cs": {
+    "mtime": 1783311031.1325798,
+    "ast_hash": "75a03875a9f043ccf0c9c9a7df2fed4a",
+    "semantic_hash": "75a03875a9f043ccf0c9c9a7df2fed4a"
+  },
+  "FormID Database Manager.Tests/Unit/Architecture/WinUiPlatformServiceSourceTests.cs": {
+    "mtime": 1784721585.0305247,
+    "ast_hash": "d8725dc708e05da5f03e2cf98f134dd7",
+    "semantic_hash": "d8725dc708e05da5f03e2cf98f134dd7"
+  },
+  "FormID Database Manager.Tests/Unit/Services/DefaultDatabasePathProviderTests.cs": {
+    "mtime": 1783311031.1345859,
+    "ast_hash": "4553087c03df91ad3b366ce581ae7aeb",
+    "semantic_hash": "4553087c03df91ad3b366ce581ae7aeb"
+  },
+  "FormID Database Manager.Tests/Unit/Services/FormIdRecordStoreTests.cs": {
+    "mtime": 1784718432.0853395,
+    "ast_hash": "76c93df645fa6ae26d824be16665018f",
+    "semantic_hash": "76c93df645fa6ae26d824be16665018f"
+  },
+  "FormID Database Manager.Tests/Unit/Services/GameDetectionServiceTests.cs": {
+    "mtime": 1783311031.1355963,
+    "ast_hash": "8f990cbb11f42b1d3ffce33fa8d6d3c9",
+    "semantic_hash": "8f990cbb11f42b1d3ffce33fa8d6d3c9"
+  },
+  "FormID Database Manager.Tests/Unit/Services/GameLoadOrderProviderTests.cs": {
+    "mtime": 1783311031.1360946,
+    "ast_hash": "7582c3fff875b18ea6391f07caf54b64",
+    "semantic_hash": "7582c3fff875b18ea6391f07caf54b64"
+  },
+  "FormID Database Manager.Tests/Unit/Services/GameReleaseHelperTests.cs": {
+    "mtime": 1783311031.136595,
+    "ast_hash": "12350456642965cef316c8d00c7c57cd",
+    "semantic_hash": "12350456642965cef316c8d00c7c57cd"
+  },
+  "FormID Database Manager.Tests/Unit/Services/ImmediateThreadDispatcherTests.cs": {
+    "mtime": 1783311031.1370938,
+    "ast_hash": "3d9a55ef2100ed5f6f5f084472b0c4c0",
+    "semantic_hash": "3d9a55ef2100ed5f6f5f084472b0c4c0"
+  },
+  "FormID Database Manager.Tests/Unit/Services/PluginIngestionContractTests.cs": {
+    "mtime": 1784693060.8809018,
+    "ast_hash": "8c8594ffd1f59ecc1192093fe4651f78",
+    "semantic_hash": "8c8594ffd1f59ecc1192093fe4651f78"
+  },
+  "FormID Database Manager.Tests/Unit/Services/PluginIngestionTests.cs": {
+    "mtime": 1784690927.8768003,
+    "ast_hash": "d989a3be9652108c0de80f7d7495d449",
+    "semantic_hash": "d989a3be9652108c0de80f7d7495d449"
+  },
+  "FormID Database Manager.Tests/Unit/Services/PluginListDiscoveryTests.cs": {
+    "mtime": 1784708981.483065,
+    "ast_hash": "9ef792012cc8aeaccf521fe24f7789ec",
+    "semantic_hash": "9ef792012cc8aeaccf521fe24f7789ec"
+  },
+  "FormID Database Manager.Tests/Unit/Services/PluginListPresentationAdapterTests.cs": {
+    "mtime": 1784718447.743747,
+    "ast_hash": "818a1ce49824e8ec78362fe17731063a",
+    "semantic_hash": "818a1ce49824e8ec78362fe17731063a"
+  },
+  "FormID Database Manager.Tests/Unit/Services/PluginListSourceTests.cs": {
+    "mtime": 1784700173.209395,
+    "ast_hash": "ca32670e19495c54a003273d69dd14d7",
+    "semantic_hash": "ca32670e19495c54a003273d69dd14d7"
+  },
+  "FormID Database Manager.Tests/Unit/Services/PluginListTests.cs": {
+    "mtime": 1784718447.7442477,
+    "ast_hash": "a0942b61a8b585a9ae0a6b359ded209e",
+    "semantic_hash": "a0942b61a8b585a9ae0a6b359ded209e"
+  },
+  "FormID Database Manager.Tests/Unit/Services/ProcessingRunExecutorTests.cs": {
+    "mtime": 1784692212.6434324,
+    "ast_hash": "23ed0a9b491f305b8f456ef7939648ab",
+    "semantic_hash": "23ed0a9b491f305b8f456ef7939648ab"
+  },
+  "FormID Database Manager.Tests/Unit/Services/QueuedThreadDispatcherTests.cs": {
+    "mtime": 1783311031.1390944,
+    "ast_hash": "98bd3a1b0f960b2df71176ce009e2531",
+    "semantic_hash": "98bd3a1b0f960b2df71176ce009e2531"
+  },
+  "FormID Database Manager.Tests/Unit/Services/UserWorkflowTests.cs": {
+    "mtime": 1784721694.3223703,
+    "ast_hash": "a9fc422f751d0b483d2dce2ef0ab2528",
+    "semantic_hash": "a9fc422f751d0b483d2dce2ef0ab2528"
+  },
+  "FormID Database Manager.Tests/Unit/TestUtilities/GameInstallationAttributeTests.cs": {
+    "mtime": 1783311031.139596,
+    "ast_hash": "ddcc888a724d0626ab6c95210b07479a",
+    "semantic_hash": "ddcc888a724d0626ab6c95210b07479a"
+  },
+  "FormID Database Manager.Tests/Unit/ViewModels/MainWindowViewModelTests.cs": {
+    "mtime": 1784721931.8262322,
+    "ast_hash": "7112b66d22c87439eb3211a34a9eb595",
+    "semantic_hash": "7112b66d22c87439eb3211a34a9eb595"
+  },
+  "FormID Database Manager.Tests/xunit.runner.json": {
+    "mtime": 1763107245.932913,
+    "ast_hash": "6d3c0a0becbf5671c5c715e437e4d277",
+    "semantic_hash": "6d3c0a0becbf5671c5c715e437e4d277"
+  },
+  "FormID Database Manager.WinUI/App.xaml": {
+    "mtime": 1783311031.1405945,
+    "ast_hash": "d4447436fc29c3badaea4e1d65219f8e",
+    "semantic_hash": "d4447436fc29c3badaea4e1d65219f8e"
+  },
+  "FormID Database Manager.WinUI/App.xaml.cs": {
+    "mtime": 1783311031.1405945,
+    "ast_hash": "6b8e8703e627827ec649ca617a3f7292",
+    "semantic_hash": "6b8e8703e627827ec649ca617a3f7292"
+  },
+  "FormID Database Manager.WinUI/FormID Database Manager.WinUI.csproj": {
+    "mtime": 1783311031.141096,
+    "ast_hash": "112a5a7a76f641b4a86293f594dcd120",
+    "semantic_hash": "112a5a7a76f641b4a86293f594dcd120"
+  },
+  "FormID Database Manager.WinUI/Imports.cs": {
+    "mtime": 1783311031.141096,
+    "ast_hash": "0152ce94d8d6f3077e066d10465a9e52",
+    "semantic_hash": "0152ce94d8d6f3077e066d10465a9e52"
+  },
+  "FormID Database Manager.WinUI/MainWindow.xaml": {
+    "mtime": 1784720179.6103497,
+    "ast_hash": "ad2c557fc370342a40fea95a7a1f57b6",
+    "semantic_hash": "ad2c557fc370342a40fea95a7a1f57b6"
+  },
+  "FormID Database Manager.WinUI/MainWindow.xaml.cs": {
+    "mtime": 1784721370.330548,
+    "ast_hash": "2a9076f1c6a371bb5fd490b3e8e04e44",
+    "semantic_hash": "2a9076f1c6a371bb5fd490b3e8e04e44"
+  },
+  "FormID Database Manager.WinUI/Properties/launchSettings.json": {
+    "mtime": 1783311031.1426058,
+    "ast_hash": "ccf5ac3386011587fe9d6ca5b88a9bad",
+    "semantic_hash": "ccf5ac3386011587fe9d6ca5b88a9bad"
+  },
+  "FormID Database Manager.WinUI/Services/WinUiFileDialogService.cs": {
+    "mtime": 1783311066.652565,
+    "ast_hash": "a31c32aaac4f4188da3adab3eb953c53",
+    "semantic_hash": "a31c32aaac4f4188da3adab3eb953c53"
+  },
+  "FormID Database Manager.WinUI/Services/WinUiThreadDispatcher.cs": {
+    "mtime": 1783311031.1436102,
+    "ast_hash": "9de98296fe38191c1c874e8935fb27b9",
+    "semantic_hash": "9de98296fe38191c1c874e8935fb27b9"
+  },
+  "FormID Database Manager.slnx": {
+    "mtime": 1783311031.1446164,
+    "ast_hash": "29946685c6ce8745cb121e7cc8b5c12f",
+    "semantic_hash": "29946685c6ce8745cb121e7cc8b5c12f"
+  },
+  "dotnet-tools.json": {
+    "mtime": 1772191528.171172,
+    "ast_hash": "09644a2553cc0abe890255d04be81eb8",
+    "semantic_hash": "09644a2553cc0abe890255d04be81eb8"
+  },
+  "scripts/publish-portable.ps1": {
+    "mtime": 1783311031.1686616,
+    "ast_hash": "1a3df4abd79e466bc292e25f549e12c9",
+    "semantic_hash": "1a3df4abd79e466bc292e25f549e12c9"
+  },
+  "scripts/run-coverage.ps1": {
+    "mtime": 1772279290.0239317,
+    "ast_hash": "acd8a3732597ba129fa12e7a80862352",
+    "semantic_hash": "acd8a3732597ba129fa12e7a80862352"
+  },
+  ".codex/skills/graphify/SKILL.md": {
+    "mtime": 1785220554.7717414,
+    "ast_hash": "9127de0dec724028abc460ddb4db1bb3",
+    "semantic_hash": "9127de0dec724028abc460ddb4db1bb3"
+  },
+  ".codex/skills/graphify/references/add-watch.md": {
+    "mtime": 1785205259.3752203,
+    "ast_hash": "d59d027fe449f06aa03905a01184e779",
+    "semantic_hash": "d59d027fe449f06aa03905a01184e779"
+  },
+  ".codex/skills/graphify/references/exports.md": {
+    "mtime": 1785205259.37572,
+    "ast_hash": "9da2a2152e60a22f07f05fed5158f287",
+    "semantic_hash": "9da2a2152e60a22f07f05fed5158f287"
+  },
+  ".codex/skills/graphify/references/extraction-spec.md": {
+    "mtime": 1785205259.3767188,
+    "ast_hash": "bf895ec4d4e40f5f66f7d31c2a9bd4a7",
+    "semantic_hash": "bf895ec4d4e40f5f66f7d31c2a9bd4a7"
+  },
+  ".codex/skills/graphify/references/github-and-merge.md": {
+    "mtime": 1785205259.3772187,
+    "ast_hash": "cde13df085e4c492aeb7ba298a996d0d",
+    "semantic_hash": "cde13df085e4c492aeb7ba298a996d0d"
+  },
+  ".codex/skills/graphify/references/hooks.md": {
+    "mtime": 1785205259.3782187,
+    "ast_hash": "3f545db6ce646650bb9de588f5512a27",
+    "semantic_hash": "3f545db6ce646650bb9de588f5512a27"
+  },
+  ".codex/skills/graphify/references/query.md": {
+    "mtime": 1785205259.379718,
+    "ast_hash": "3c46f8ad006874260614ed8657d02307",
+    "semantic_hash": "3c46f8ad006874260614ed8657d02307"
+  },
+  ".codex/skills/graphify/references/transcribe.md": {
+    "mtime": 1785205259.38422,
+    "ast_hash": "67b6a5fa6c0974e18f60db9f8932fbd8",
+    "semantic_hash": "67b6a5fa6c0974e18f60db9f8932fbd8"
+  },
+  ".codex/skills/graphify/references/update.md": {
+    "mtime": 1785205259.3867195,
+    "ast_hash": "9378bd03d56baaf78bd738ab3848f142",
+    "semantic_hash": "9378bd03d56baaf78bd738ab3848f142"
+  },
+  ".github/workflows/windows-ci.yml": {
+    "mtime": 1783311031.1075587,
+    "ast_hash": "f811df238870a79a6e490dac68fe1e68",
+    "semantic_hash": "f811df238870a79a6e490dac68fe1e68"
+  },
+  "AGENTS.md": {
+    "mtime": 1785220554.7727418,
+    "ast_hash": "804ecca2a7b6c8caf8cf4f3f824cc0a7",
+    "semantic_hash": "804ecca2a7b6c8caf8cf4f3f824cc0a7"
+  },
+  "Architecture review 20260722 1.html": {
+    "mtime": 1784712073.735001,
+    "ast_hash": "4e02f60bacf2b9b9d9adadd7176bebbf",
+    "semantic_hash": "4e02f60bacf2b9b9d9adadd7176bebbf"
+  },
+  "CLAUDE.md": {
+    "mtime": 1783311066.6350493,
+    "ast_hash": "5e9fcb49d7d3e0479b5841054c1eed49",
+    "semantic_hash": "5e9fcb49d7d3e0479b5841054c1eed49"
+  },
+  "CONTEXT.md": {
+    "mtime": 1784697327.489333,
+    "ast_hash": "f17d9e5ac85f3f296d1d1b705e7195b8",
+    "semantic_hash": "f17d9e5ac85f3f296d1d1b705e7195b8"
+  },
+  "FormID Database Manager.Tests/TestData/README.md": {
+    "mtime": 1763104331.0391555,
+    "ast_hash": "9729b43249a55f5f39e6efcc48965a65",
+    "semantic_hash": "9729b43249a55f5f39e6efcc48965a65"
+  },
+  "GEMINI.md": {
+    "mtime": 1784709575.3809967,
+    "ast_hash": "d9b02115458a5fbd88844ba57b7638d0",
+    "semantic_hash": "d9b02115458a5fbd88844ba57b7638d0"
+  },
+  "LICENSE.md": {
+    "mtime": 1763104331.050164,
+    "ast_hash": "1865c4fa942d7c595f7c9909eab6fc3c",
+    "semantic_hash": "1865c4fa942d7c595f7c9909eab6fc3c"
+  },
+  "README.md": {
+    "mtime": 1783311031.1456158,
+    "ast_hash": "5cd3d7108fa6f0e90d828bd20a809204",
+    "semantic_hash": "5cd3d7108fa6f0e90d828bd20a809204"
+  },
+  "docs/Test-Maintenance-Guidelines.md": {
+    "mtime": 1763104331.0506635,
+    "ast_hash": "4916683081b93d0b2ccf7e7187031408",
+    "semantic_hash": "4916683081b93d0b2ccf7e7187031408"
+  },
+  "docs/Testing-Best-Practices.md": {
+    "mtime": 1784673574.7832227,
+    "ast_hash": "9b72a6e7b6b4dfed3ae04a38073ef2a3",
+    "semantic_hash": "9b72a6e7b6b4dfed3ae04a38073ef2a3"
+  },
+  "docs/adr/0001-formid-record-store-owns-sqlite.md": {
+    "mtime": 1784673489.7339988,
+    "ast_hash": "0430b01685cecff7bc194c3b2747c74c",
+    "semantic_hash": "0430b01685cecff7bc194c3b2747c74c"
+  },
+  "docs/agents/domain.md": {
+    "mtime": 1783311066.6535664,
+    "ast_hash": "569988331f7b68795fa23c3c3d160a94",
+    "semantic_hash": "569988331f7b68795fa23c3c3d160a94"
+  },
+  "docs/agents/issue-tracker.md": {
+    "mtime": 1784074961.955321,
+    "ast_hash": "c810a6d85b1ceedef5fb3d56a84bf105",
+    "semantic_hash": "c810a6d85b1ceedef5fb3d56a84bf105"
+  },
+  "docs/agents/triage-labels.md": {
+    "mtime": 1783311066.6550744,
+    "ast_hash": "85409347dbf487c8a25c9dac59708b83",
+    "semantic_hash": "85409347dbf487c8a25c9dac59708b83"
+  },
+  "Architecture review 20260721 1.pdf": {
+    "mtime": 1784675329.385876,
+    "ast_hash": "1fae007b8f1d36624c3158ae73141ce4",
+    "semantic_hash": "1fae007b8f1d36624c3158ae73141ce4"
+  },
+  "Architecture review 20260721 2.pdf": {
+    "mtime": 1784696744.2224054,
+    "ast_hash": "7166d860c44c0318b9aa30740d298e16",
+    "semantic_hash": "7166d860c44c0318b9aa30740d298e16"
+  }
+}
