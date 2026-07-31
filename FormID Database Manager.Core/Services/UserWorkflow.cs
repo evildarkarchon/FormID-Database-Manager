@@ -12,7 +12,6 @@ public sealed class UserWorkflow : IDisposable
 {
     private readonly IFileDialogService _fileDialogService;
     private readonly GameInstallations _gameInstallations;
-    private readonly IGameLocationService _gameLocationService;
     private readonly PluginList _pluginList;
     private readonly IProcessingRunExecutor _processingRunExecutor;
     private readonly MainWindowViewModel _viewModel;
@@ -25,22 +24,19 @@ public sealed class UserWorkflow : IDisposable
     /// </summary>
     /// <param name="viewModel">The binding-state projection updated by workflow transitions.</param>
     /// <param name="fileDialogService">The platform picker adapter.</param>
-    /// <param name="gameInstallations">The Game Installation resolution module.</param>
-    /// <param name="gameLocationService">The installed-location lookup adapter.</param>
+    /// <param name="gameInstallations">The Game Installation resolution module, used for detection and location.</param>
     /// <param name="pluginList">The authoritative Plugin List whose lifetime transfers to this workflow.</param>
     /// <param name="processingRunExecutor">The owned Processing Run executor.</param>
     internal UserWorkflow(
         MainWindowViewModel viewModel,
         IFileDialogService fileDialogService,
         GameInstallations gameInstallations,
-        IGameLocationService gameLocationService,
         PluginList pluginList,
         IProcessingRunExecutor processingRunExecutor)
     {
         _viewModel = viewModel ?? throw new ArgumentNullException(nameof(viewModel));
         _fileDialogService = fileDialogService ?? throw new ArgumentNullException(nameof(fileDialogService));
         _gameInstallations = gameInstallations ?? throw new ArgumentNullException(nameof(gameInstallations));
-        _gameLocationService = gameLocationService ?? throw new ArgumentNullException(nameof(gameLocationService));
         _pluginList = pluginList ?? throw new ArgumentNullException(nameof(pluginList));
         _processingRunExecutor = processingRunExecutor ??
                                  throw new ArgumentNullException(nameof(processingRunExecutor));
@@ -329,11 +325,12 @@ public sealed class UserWorkflow : IDisposable
     /// <remarks>Current lookup and fatal discovery failures propagate unchanged; failures from retired lookups are ignored.</remarks>
     private async Task ResolveInstalledLocationsAsync(GameRelease selectedGame, int gameContextVersion)
     {
-        List<string> folders;
+        ImmutableArray<string> folders;
         try
         {
-            // Mutagen game-location lookup touches registry and file system state, so keep it off the UI thread.
-            folders = await Task.Run(() => _gameLocationService.GetGameFolders(selectedGame));
+            // Install-record lookup touches registry and file system state, and the module is synchronous by design,
+            // so placing it off the UI thread is this caller's job.
+            folders = await Task.Run(() => _gameInstallations.GetInstalledDirectories(selectedGame));
         }
         catch (Exception) when (!IsLatestGameContextDirectoryTransition(gameContextVersion))
         {
@@ -346,7 +343,7 @@ public sealed class UserWorkflow : IDisposable
             return;
         }
 
-        if (folders.Count == 0)
+        if (folders.IsEmpty)
         {
             _viewModel.AddInformationMessage(
                 $"No installed locations found for {selectedGame}. Use Browse to select a directory.");
@@ -392,7 +389,10 @@ public sealed class UserWorkflow : IDisposable
             GameRelease? detectedGame;
             try
             {
-                detectedGame = _gameInstallations.Detect(path);
+                // Detection probes the file system roughly a dozen times, which a slow or network directory can turn
+                // into a visible hang, and the module is synchronous by design — so this caller places it off the
+                // UI thread, exactly as it does for installed-location lookup (ADR-0002).
+                detectedGame = await Task.Run(() => _gameInstallations.Detect(path));
             }
             catch (Exception) when (!IsLatestGameContextDirectoryTransition(gameContextVersion))
             {
@@ -493,15 +493,13 @@ public sealed class UserWorkflow : IDisposable
     /// <summary>
     /// Publishes a non-empty installed-location result as the complete ordered available-directory snapshot.
     /// </summary>
-    /// <param name="folders">The installed locations in discovery order.</param>
-    private void ApplyDetectedFolders(IReadOnlyList<string> folders)
+    /// <param name="folders">The installed locations in record order.</param>
+    private void ApplyDetectedFolders(ImmutableArray<string> folders)
     {
-        var availableDirectories = folders.ToImmutableArray();
-        var selectedDirectory = folders[0];
         _gameContext = _gameContext with
         {
-            SelectedGameDirectory = selectedDirectory,
-            AvailableDirectories = availableDirectories
+            SelectedGameDirectory = folders[0],
+            AvailableDirectories = folders
         };
         ProjectGameContext();
     }

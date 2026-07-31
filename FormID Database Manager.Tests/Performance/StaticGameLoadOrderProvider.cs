@@ -20,12 +20,6 @@ internal sealed class StaticGameLoadOrderProvider(IEnumerable<string> pluginName
     {
         return new GameLoadOrderSnapshot(_pluginNames);
     }
-
-    /// <inheritdoc />
-    public IReadOnlyList<string> GetListedPluginNames(GameRelease gameRelease, string dataPath)
-    {
-        return _pluginNames;
-    }
 }
 
 /// <summary>

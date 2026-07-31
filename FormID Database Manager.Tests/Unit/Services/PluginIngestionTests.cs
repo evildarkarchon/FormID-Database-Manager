@@ -1158,11 +1158,6 @@ public sealed class PluginIngestionTests : IDisposable
             events.Add("load-order");
             return snapshot;
         }
-
-        public IReadOnlyList<string> GetListedPluginNames(GameRelease gameRelease, string dataPath)
-        {
-            throw new InvalidOperationException("Aggregate Plugin Ingestion should build one complete snapshot.");
-        }
     }
 
     private sealed class ThrowingLoadOrderProvider(Exception failure) : IGameLoadOrderProvider
@@ -1179,11 +1174,6 @@ public sealed class PluginIngestionTests : IDisposable
         {
             BuildSnapshotCallCount++;
             throw failure;
-        }
-
-        public IReadOnlyList<string> GetListedPluginNames(GameRelease gameRelease, string dataPath)
-        {
-            throw new InvalidOperationException("Aggregate Plugin Ingestion should build one complete snapshot.");
         }
     }
 

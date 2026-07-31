@@ -21,7 +21,6 @@ public sealed partial class MainWindow : Window, IDisposable
         var dispatcher = new WinUiThreadDispatcher(DispatcherQueue);
         ViewModel = new MainWindowViewModel(dispatcher);
         var gameInstallations = new GameInstallations(new GameInstallationProbe());
-        var gameLocationService = new GameLocationService();
         var pluginListDiscovery = new PluginListDiscovery();
         var pluginList = new PluginList(pluginListDiscovery);
         var processingRunExecutor = new ProcessingRunExecutor();
@@ -32,7 +31,6 @@ public sealed partial class MainWindow : Window, IDisposable
             ViewModel,
             new WinUiFileDialogService(AppWindow),
             gameInstallations,
-            gameLocationService,
             pluginList,
             processingRunExecutor);
     }
@@ -42,22 +40,21 @@ public sealed partial class MainWindow : Window, IDisposable
     /// </summary>
     /// <param name="viewModel">The UI-neutral state object shared with the migration core.</param>
     /// <param name="fileDialogService">The picker service used by browse and file-selection handlers.</param>
-    /// <param name="gameInstallations">The module used to detect a game from a browsed directory.</param>
-    /// <param name="gameLocationService">The service used to find installed game folders.</param>
+    /// <param name="gameInstallations">
+    /// The module used to detect a game from a browsed directory and to locate its installs.
+    /// </param>
     /// <param name="pluginListDiscovery">The deterministic or production adapter used to discover Plugins.</param>
     /// <param name="processingRunExecutor">The owned Processing Run executor canceled during window close.</param>
     internal MainWindow(
         MainWindowViewModel viewModel,
         IFileDialogService? fileDialogService,
         GameInstallations? gameInstallations,
-        IGameLocationService? gameLocationService,
         IPluginListDiscovery? pluginListDiscovery,
         ProcessingRunExecutor? processingRunExecutor)
     {
         ViewModel = viewModel ?? throw new ArgumentNullException(nameof(viewModel));
         var dispatcher = new WinUiThreadDispatcher(DispatcherQueue);
         var effectiveGameInstallations = gameInstallations ?? new GameInstallations(new GameInstallationProbe());
-        var effectiveGameLocationService = gameLocationService ?? new GameLocationService();
         var effectivePluginListDiscovery = pluginListDiscovery ?? new PluginListDiscovery();
         var pluginList = new PluginList(effectivePluginListDiscovery);
         var effectiveProcessingRun = processingRunExecutor ?? new ProcessingRunExecutor();
@@ -68,7 +65,6 @@ public sealed partial class MainWindow : Window, IDisposable
             ViewModel,
             fileDialogService ?? new WinUiFileDialogService(AppWindow),
             effectiveGameInstallations,
-            effectiveGameLocationService,
             pluginList,
             effectiveProcessingRun);
     }

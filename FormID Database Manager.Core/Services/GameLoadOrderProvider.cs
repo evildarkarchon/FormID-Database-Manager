@@ -65,9 +65,4 @@ public class GameLoadOrderProvider : IGameLoadOrderProvider
 
         return new GameLoadOrderSnapshot(listedPluginNames, masterStyles);
     }
-
-    public IReadOnlyList<string> GetListedPluginNames(GameRelease gameRelease, string dataPath)
-    {
-        return BuildSnapshot(gameRelease, dataPath, includeMasterFlagsLookup: false).ListedPluginNames;
-    }
 }

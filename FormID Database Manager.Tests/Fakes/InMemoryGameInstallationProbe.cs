@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using FormID_Database_Manager.Services;
 using FormID_Database_Manager.TestUtilities.Builders;
 using Mutagen.Bethesda;
@@ -27,7 +28,12 @@ internal sealed class InMemoryGameInstallationProbe : IGameInstallationProbe
     private readonly HashSet<string> _directories = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _files = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<GameRelease, IReadOnlyList<string>> _installedDirectories = [];
+    private readonly List<GameRelease> _installedDirectoryLookups = [];
     private readonly List<string> _probedPaths = [];
+
+    // Workflow tests deliberately gate one lookup or probe while a newer one runs, so two threads can reach the
+    // recording lists at once. The declared layout itself is only written during arrangement, before any call.
+    private readonly Lock _recordLock = new();
 
     /// <summary>
     ///     Runs before each file or directory probe, so a test can observe or gate detection as it happens.
@@ -35,9 +41,37 @@ internal sealed class InMemoryGameInstallationProbe : IGameInstallationProbe
     public Action<string>? BeforeProbe { get; set; }
 
     /// <summary>
+    ///     Runs before each install-record lookup, so a test can observe, gate, or fail location as it happens.
+    /// </summary>
+    public Action<GameRelease>? BeforeInstalledDirectoriesLookup { get; set; }
+
+    /// <summary>
     ///     The paths detection probed, in probe order.
     /// </summary>
-    public IReadOnlyList<string> ProbedPaths => _probedPaths;
+    public IReadOnlyList<string> ProbedPaths
+    {
+        get
+        {
+            lock (_recordLock)
+            {
+                return _probedPaths.ToArray();
+            }
+        }
+    }
+
+    /// <summary>
+    ///     The GameReleases whose install records were looked up, in lookup order.
+    /// </summary>
+    public IReadOnlyList<GameRelease> InstalledDirectoryLookups
+    {
+        get
+        {
+            lock (_recordLock)
+            {
+                return _installedDirectoryLookups.ToArray();
+            }
+        }
+    }
 
     /// <inheritdoc />
     public bool FileExists(string path)
@@ -56,6 +90,7 @@ internal sealed class InMemoryGameInstallationProbe : IGameInstallationProbe
     /// <inheritdoc />
     public IReadOnlyList<string> GetInstalledDirectories(GameRelease release)
     {
+        RecordThenNotify(_installedDirectoryLookups, release, BeforeInstalledDirectoriesLookup);
         return _installedDirectories.TryGetValue(release, out var directories) ? directories : [];
     }
 
@@ -126,7 +161,7 @@ internal sealed class InMemoryGameInstallationProbe : IGameInstallationProbe
     {
         // The separator matters: "C:\Games\Skyrim" must not match a probe of "C:\Games\SkyrimVR".
         var subtreePrefix = Normalize(directory) + Path.DirectorySeparatorChar;
-        return _probedPaths.Any(path =>
+        return ProbedPaths.Any(path =>
         {
             var normalized = Normalize(path);
             return normalized.Equals(Normalize(directory), StringComparison.OrdinalIgnoreCase) ||
@@ -136,8 +171,24 @@ internal sealed class InMemoryGameInstallationProbe : IGameInstallationProbe
 
     private void RecordProbe(string path)
     {
-        _probedPaths.Add(path);
-        BeforeProbe?.Invoke(path);
+        RecordThenNotify(_probedPaths, path, BeforeProbe);
+    }
+
+    /// <summary>
+    ///     Records one call, then hands it to the test's hook.
+    /// </summary>
+    /// <param name="log">The list this kind of call is recorded in.</param>
+    /// <param name="value">The call being recorded.</param>
+    /// <param name="handler">The test's hook for this kind of call, which may block or throw.</param>
+    private void RecordThenNotify<T>(List<T> log, T value, Action<T>? handler)
+    {
+        lock (_recordLock)
+        {
+            log.Add(value);
+        }
+
+        // Invoked outside the lock so a gated call cannot block a concurrent one from recording itself.
+        handler?.Invoke(value);
     }
 
     private void AddAncestorDirectories(string normalizedPath)

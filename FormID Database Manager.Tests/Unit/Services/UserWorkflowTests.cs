@@ -26,7 +26,6 @@ public class UserWorkflowTests
     private readonly Mock<IFileDialogService> _fileDialogService = new();
     private readonly GameInstallations _gameInstallations;
     private readonly InMemoryGameInstallationProbe _gameInstallationProbe = new();
-    private readonly Mock<IGameLocationService> _gameLocationService = new();
     private readonly PluginList _pluginList;
     private readonly RecordingPluginListDiscovery _pluginListDiscovery;
     private readonly PluginListPresentationAdapter _pluginListPresentationAdapter;
@@ -38,7 +37,8 @@ public class UserWorkflowTests
     public UserWorkflowTests()
     {
         _viewModel = new MainWindowViewModel(_dispatcher);
-        // Detection has no interface to mock: the real rules run against whatever layout a test declares on the probe.
+        // Game Installation resolution has no interface to mock: the real detection and location members run against
+        // whatever layout and install records a test declares on the probe.
         _gameInstallations = new GameInstallations(_gameInstallationProbe);
         _pluginListDiscovery = new RecordingPluginListDiscovery(_refreshes);
         _pluginList = new PluginList(_pluginListDiscovery);
@@ -54,19 +54,15 @@ public class UserWorkflowTests
     {
         var lookupStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var allowLookupToFinish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        _gameLocationService.Setup(x => x.GetGameFolders(GameRelease.SkyrimSE)).Returns([@"C:\Old"]);
+        _gameInstallationProbe
+            .WithInstalledDirectories(GameRelease.SkyrimSE, @"C:\Old")
+            .WithInstalledDirectories(GameRelease.Fallout4, @"C:\Games\Fallout4", @"D:\Games\Fallout4");
         _pluginListDiscovery.PluginNames = ["Old.esp"];
         var sut = CreateSut();
         await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
         _pluginListDiscovery.PluginNames = [];
         _refreshes.Clear();
-        _gameLocationService.Setup(x => x.GetGameFolders(GameRelease.Fallout4))
-            .Returns(() =>
-            {
-                lookupStarted.SetResult();
-                allowLookupToFinish.Task.GetAwaiter().GetResult();
-                return [@"C:\Games\Fallout4", @"D:\Games\Fallout4"];
-            });
+        GateInstalledLocationLookup(GameRelease.Fallout4, lookupStarted, allowLookupToFinish);
 
         var selection = sut.SelectGameReleaseAsync(GameRelease.Fallout4);
         await lookupStarted.Task;
@@ -87,6 +83,66 @@ public class UserWorkflowTests
     }
 
     /// <summary>
+    /// Verifies that a slow installed-location lookup is placed off the calling thread. The workflow hands control
+    /// back while the lookup is still running; a lookup left on the calling thread could not return until it finished,
+    /// which is the frozen window this offload exists to prevent.
+    /// </summary>
+    [Fact]
+    public async Task SelectGameReleaseAsync_SlowInstalledLocationLookup_DoesNotBlockTheCallingThread()
+    {
+        var lookupStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var allowLookupToFinish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _gameInstallationProbe.WithInstalledDirectories(GameRelease.SkyrimSE, GameDirectory);
+        GateInstalledLocationLookup(GameRelease.SkyrimSE, lookupStarted, allowLookupToFinish);
+        var sut = CreateSut();
+
+        var selection = sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
+        await lookupStarted.Task;
+
+        Assert.False(selection.IsCompleted);
+
+        allowLookupToFinish.SetResult();
+        await selection;
+
+        Assert.Equal(GameDirectory, _viewModel.GameDirectory);
+    }
+
+    /// <summary>
+    /// Verifies that slow detection is placed off the calling thread. The picker result is already available, so
+    /// Browse runs straight into detection, yet it still hands control back while probing continues — browsing to a
+    /// slow or network directory cannot hang the window.
+    /// </summary>
+    [Fact]
+    public async Task BrowseGameDirectoryAsync_SlowDetection_DoesNotBlockTheCallingThread()
+    {
+        var detectionStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var allowDetectionToFinish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _fileDialogService.Setup(x => x.SelectGameDirectory())
+            .ReturnsAsync(FileDialogResult.Success(GameDirectory));
+        _gameInstallationProbe
+            .WithFile(Path.Combine(GameDirectory, "Data", "Skyrim.esm"))
+            .WithFile(Path.Combine(GameDirectory, "SkyrimSE.exe"));
+        // Detection probes several paths; the gate opens on the first and is transparent from then on.
+        _gameInstallationProbe.BeforeProbe = _ =>
+        {
+            detectionStarted.TrySetResult();
+            allowDetectionToFinish.Task.GetAwaiter().GetResult();
+        };
+        var sut = CreateSut();
+
+        var browse = sut.BrowseGameDirectoryAsync();
+        await detectionStarted.Task;
+
+        Assert.False(browse.IsCompleted);
+
+        allowDetectionToFinish.SetResult();
+        await browse;
+
+        Assert.Equal(GameRelease.SkyrimSE, _viewModel.SelectedGame);
+        AssertSingleRefresh(GameDirectory, GameRelease.SkyrimSE, false);
+    }
+
+    /// <summary>
     /// Verifies that Advanced Mode becomes authoritative without retiring a current installed-location lookup.
     /// </summary>
     [Fact]
@@ -94,13 +150,8 @@ public class UserWorkflowTests
     {
         var lookupStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var allowLookupToFinish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        _gameLocationService.Setup(x => x.GetGameFolders(GameRelease.Fallout4))
-            .Returns(() =>
-            {
-                lookupStarted.SetResult();
-                allowLookupToFinish.Task.GetAwaiter().GetResult();
-                return [@"C:\Games\Fallout4"];
-            });
+        _gameInstallationProbe.WithInstalledDirectories(GameRelease.Fallout4, @"C:\Games\Fallout4");
+        GateInstalledLocationLookup(GameRelease.Fallout4, lookupStarted, allowLookupToFinish);
         var sut = CreateSut();
 
         var releaseSelection = sut.SelectGameReleaseAsync(GameRelease.Fallout4);
@@ -146,13 +197,8 @@ public class UserWorkflowTests
         var allowLookupToFinish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var discoveryCompletion = new TaskCompletionSource<PluginListDiscoveryResult>(
             TaskCreationOptions.RunContinuationsAsynchronously);
-        _gameLocationService.Setup(x => x.GetGameFolders(GameRelease.SkyrimSE))
-            .Returns(() =>
-            {
-                lookupStarted.SetResult();
-                allowLookupToFinish.Task.GetAwaiter().GetResult();
-                return [@"C:\Automatic\Skyrim"];
-            });
+        _gameInstallationProbe.WithInstalledDirectories(GameRelease.SkyrimSE, @"C:\Automatic\Skyrim");
+        GateInstalledLocationLookup(GameRelease.SkyrimSE, lookupStarted, allowLookupToFinish);
         _pluginListDiscovery.Handler = (_, _) => discoveryCompletion.Task;
         var sut = CreateSut();
 
@@ -189,9 +235,7 @@ public class UserWorkflowTests
     [Fact]
     public async Task SelectGameReleaseAsync_WithoutInstalledFolders_RetainsIncompleteContextAndRecordsGuidance()
     {
-        _gameLocationService.Setup(x => x.GetGameFolders(GameRelease.Fallout4))
-            .Returns([]);
-
+        // No install records are declared for Fallout4, so the lookup answers with nothing recorded.
         var sut = CreateSut();
 
         await sut.SelectGameReleaseAsync(GameRelease.Fallout4);
@@ -211,17 +255,15 @@ public class UserWorkflowTests
     [Fact]
     public async Task SelectGameReleaseAsync_EqualRelease_IsNoOp()
     {
-        _gameLocationService.Setup(x => x.GetGameFolders(GameRelease.SkyrimSE)).Returns([GameDirectory]);
+        _gameInstallationProbe.WithInstalledDirectories(GameRelease.SkyrimSE, GameDirectory);
         var sut = CreateSut();
         await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
-        _gameLocationService.Invocations.Clear();
         _refreshes.Clear();
 
         await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
 
-        _gameLocationService.Verify(
-            x => x.GetGameFolders(It.IsAny<GameRelease>()),
-            Times.Never);
+        // One lookup across both calls: the repeat did not start a second one.
+        Assert.Equal([GameRelease.SkyrimSE], _gameInstallationProbe.InstalledDirectoryLookups);
         Assert.Empty(_refreshes);
         Assert.Equal(GameDirectory, _viewModel.GameDirectory);
         Assert.Equal([GameDirectory], _viewModel.DetectedDirectories);
@@ -233,8 +275,7 @@ public class UserWorkflowTests
     [Fact]
     public async Task SelectGameReleaseAsync_SingleInstalledDirectory_ProjectsCompleteAvailableSet()
     {
-        _gameLocationService.Setup(x => x.GetGameFolders(GameRelease.SkyrimSE))
-            .Returns([GameDirectory]);
+        _gameInstallationProbe.WithInstalledDirectories(GameRelease.SkyrimSE, GameDirectory);
         var sut = CreateSut();
 
         await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
@@ -250,8 +291,7 @@ public class UserWorkflowTests
     [Fact]
     public async Task SelectDetectedDirectoryAsync_EqualDetectedDirectory_DoesNotDuplicateRefresh()
     {
-        _gameLocationService.Setup(x => x.GetGameFolders(GameRelease.SkyrimSE))
-            .Returns([GameDirectory, @"D:\Games\Skyrim"]);
+        _gameInstallationProbe.WithInstalledDirectories(GameRelease.SkyrimSE, GameDirectory, @"D:\Games\Skyrim");
 
         var sut = CreateSut();
 
@@ -267,8 +307,7 @@ public class UserWorkflowTests
     [Fact]
     public async Task SelectDetectedDirectoryAsync_ChangedDirectory_RefreshesPluginListForExplicitValue()
     {
-        _gameLocationService.Setup(x => x.GetGameFolders(GameRelease.SkyrimSE))
-            .Returns([GameDirectory, @"D:\Games\Skyrim"]);
+        _gameInstallationProbe.WithInstalledDirectories(GameRelease.SkyrimSE, GameDirectory, @"D:\Games\Skyrim");
         var sut = CreateSut();
         await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
         _refreshes.Clear();
@@ -289,15 +328,9 @@ public class UserWorkflowTests
         var olderStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var allowOlderToFinish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        _gameLocationService.Setup(x => x.GetGameFolders(GameRelease.SkyrimSE))
-            .Returns(() =>
-            {
-                olderStarted.SetResult();
-                allowOlderToFinish.Task.GetAwaiter().GetResult();
-                return [];
-            });
-        _gameLocationService.Setup(x => x.GetGameFolders(GameRelease.Fallout4))
-            .Returns([@"C:\NewFallout"]);
+        // SkyrimSE has no declared install records, so the gated older lookup answers with nothing recorded.
+        _gameInstallationProbe.WithInstalledDirectories(GameRelease.Fallout4, @"C:\NewFallout");
+        GateInstalledLocationLookup(GameRelease.SkyrimSE, olderStarted, allowOlderToFinish);
 
         var sut = CreateSut();
 
@@ -324,15 +357,14 @@ public class UserWorkflowTests
     {
         var olderStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var allowOlderToFail = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        _gameLocationService.Setup(x => x.GetGameFolders(GameRelease.SkyrimSE))
-            .Returns(() =>
-            {
-                olderStarted.SetResult();
-                allowOlderToFail.Task.GetAwaiter().GetResult();
-                throw new InvalidOperationException("obsolete lookup failure");
-            });
-        _gameLocationService.Setup(x => x.GetGameFolders(GameRelease.Fallout4))
-            .Returns([@"C:\NewFallout"]);
+        _gameInstallationProbe.WithInstalledDirectories(GameRelease.Fallout4, @"C:\NewFallout");
+        // The module does not swallow a failing lookup, so this reaches the workflow's guard rather than the probe's.
+        OnInstalledLocationLookup(GameRelease.SkyrimSE, () =>
+        {
+            olderStarted.SetResult();
+            allowOlderToFail.Task.GetAwaiter().GetResult();
+            throw new InvalidOperationException("obsolete lookup failure");
+        });
         var sut = CreateSut();
 
         var olderSelection = sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
@@ -360,13 +392,8 @@ public class UserWorkflowTests
         var pickerStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var pickerCompletion = new TaskCompletionSource<FileDialogResult>(
             TaskCreationOptions.RunContinuationsAsynchronously);
-        _gameLocationService.Setup(x => x.GetGameFolders(GameRelease.SkyrimSE))
-            .Returns(() =>
-            {
-                lookupStarted.SetResult();
-                allowLookupToFinish.Task.GetAwaiter().GetResult();
-                return [GameDirectory];
-            });
+        _gameInstallationProbe.WithInstalledDirectories(GameRelease.SkyrimSE, GameDirectory);
+        GateInstalledLocationLookup(GameRelease.SkyrimSE, lookupStarted, allowLookupToFinish);
         _fileDialogService.Setup(x => x.SelectGameDirectory())
             .Returns(() =>
             {
@@ -405,8 +432,7 @@ public class UserWorkflowTests
     [Fact]
     public async Task BrowseGameDirectoryAsync_NewerPickerCancellation_RetiresOlderPickerResult()
     {
-        _gameLocationService.Setup(x => x.GetGameFolders(GameRelease.Fallout4))
-            .Returns([@"C:\Existing", @"D:\Suggested"]);
+        _gameInstallationProbe.WithInstalledDirectories(GameRelease.Fallout4, @"C:\Existing", @"D:\Suggested");
         var olderPicker = new TaskCompletionSource<FileDialogResult>(
             TaskCreationOptions.RunContinuationsAsynchronously);
         var newerPicker = new TaskCompletionSource<FileDialogResult>(
@@ -476,7 +502,7 @@ public class UserWorkflowTests
         var pickerCompletion = new TaskCompletionSource<FileDialogResult>(
             TaskCreationOptions.RunContinuationsAsynchronously);
         _fileDialogService.Setup(x => x.SelectGameDirectory()).Returns(pickerCompletion.Task);
-        _gameLocationService.Setup(x => x.GetGameFolders(GameRelease.Fallout4)).Returns([latestDirectory]);
+        _gameInstallationProbe.WithInstalledDirectories(GameRelease.Fallout4, latestDirectory);
         var sut = CreateSut();
 
         var browse = sut.BrowseGameDirectoryAsync();
@@ -499,8 +525,7 @@ public class UserWorkflowTests
     public async Task BrowseGameDirectoryAsync_PickerFailureSupersededByDirectorySelection_IsSilent()
     {
         const string latestDirectory = @"D:\Games\Skyrim";
-        _gameLocationService.Setup(x => x.GetGameFolders(GameRelease.SkyrimSE))
-            .Returns([GameDirectory, latestDirectory]);
+        _gameInstallationProbe.WithInstalledDirectories(GameRelease.SkyrimSE, GameDirectory, latestDirectory);
         var pickerCompletion = new TaskCompletionSource<FileDialogResult>(
             TaskCreationOptions.RunContinuationsAsynchronously);
         _fileDialogService.Setup(x => x.SelectGameDirectory()).Returns(pickerCompletion.Task);
@@ -542,9 +567,7 @@ public class UserWorkflowTests
         Assert.Equal(GameDirectory, _viewModel.GameDirectory);
         Assert.Equal(GameRelease.SkyrimSE, _viewModel.SelectedGame);
         Assert.Empty(_viewModel.DetectedDirectories);
-        _gameLocationService.Verify(
-            x => x.GetGameFolders(It.IsAny<GameRelease>()),
-            Times.Never);
+        Assert.Empty(_gameInstallationProbe.InstalledDirectoryLookups);
         AssertSingleRefresh(GameDirectory, GameRelease.SkyrimSE, false);
     }
 
@@ -570,8 +593,7 @@ public class UserWorkflowTests
             detectionStarted.TrySetResult();
             allowDetectionToFinish.Task.GetAwaiter().GetResult();
         };
-        _gameLocationService.Setup(x => x.GetGameFolders(GameRelease.Fallout4))
-            .Returns([@"C:\Games\Fallout4"]);
+        _gameInstallationProbe.WithInstalledDirectories(GameRelease.Fallout4, @"C:\Games\Fallout4");
         var sut = CreateSut();
 
         var browse = sut.BrowseGameDirectoryAsync();
@@ -595,8 +617,7 @@ public class UserWorkflowTests
     [Fact]
     public async Task BrowseGameDirectoryAsync_SamePathDiscoveryFailure_RetriesAndClearsConfirmation()
     {
-        _gameLocationService.Setup(x => x.GetGameFolders(GameRelease.SkyrimSE))
-            .Returns([GameDirectory, @"D:\Games\Skyrim"]);
+        _gameInstallationProbe.WithInstalledDirectories(GameRelease.SkyrimSE, GameDirectory, @"D:\Games\Skyrim");
         _pluginListDiscovery.PluginNames = ["PreviouslyConfirmed.esp"];
         var sut = CreateSut();
         await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
@@ -616,7 +637,7 @@ public class UserWorkflowTests
         Assert.Equal(PluginListSource.Create(GameRelease.SkyrimSE, GameDirectory), Assert.Single(_refreshes));
         Assert.Contains("Failed to load plugins: directory mismatch", _viewModel.ErrorMessages);
         Assert.Empty(_gameInstallationProbe.ProbedPaths);
-        _gameLocationService.Verify(x => x.GetGameFolders(GameRelease.SkyrimSE), Times.Once);
+        Assert.Equal([GameRelease.SkyrimSE], _gameInstallationProbe.InstalledDirectoryLookups);
     }
 
     /// <summary>
@@ -687,8 +708,7 @@ public class UserWorkflowTests
     [Fact]
     public async Task BrowseGameDirectoryAsync_CurrentPickerFailure_LeavesSnapshotUnchangedAndRecordsError()
     {
-        _gameLocationService.Setup(x => x.GetGameFolders(GameRelease.Fallout4))
-            .Returns([@"C:\Existing", @"D:\Suggested"]);
+        _gameInstallationProbe.WithInstalledDirectories(GameRelease.Fallout4, @"C:\Existing", @"D:\Suggested");
         _fileDialogService.Setup(x => x.SelectGameDirectory())
             .ReturnsAsync(FileDialogResult.Failure("picker unavailable"));
         var sut = CreateSut();
@@ -711,7 +731,7 @@ public class UserWorkflowTests
     [Fact]
     public async Task BrowseGameDirectoryAsync_PickerCancel_LeavesStateUnchangedAndAddsNoError()
     {
-        _gameLocationService.Setup(x => x.GetGameFolders(GameRelease.Fallout4)).Returns([@"C:\Existing"]);
+        _gameInstallationProbe.WithInstalledDirectories(GameRelease.Fallout4, @"C:\Existing");
         _fileDialogService.Setup(x => x.SelectGameDirectory())
             .ReturnsAsync(FileDialogResult.Cancelled());
 
@@ -758,7 +778,7 @@ public class UserWorkflowTests
     [Fact]
     public async Task ProcessFormIdsAsync_PluginIngestionWithoutGameDirectory_RecordsValidationMessage()
     {
-        _gameLocationService.Setup(x => x.GetGameFolders(GameRelease.SkyrimSE)).Returns([]);
+        // Nothing is declared for SkyrimSE, so the release stays selected without a directory.
         var sut = CreateSut();
         await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
 
@@ -771,7 +791,7 @@ public class UserWorkflowTests
     [Fact]
     public async Task ProcessFormIdsAsync_PluginIngestionWithoutSelectedPlugins_RecordsValidationMessage()
     {
-        _gameLocationService.Setup(x => x.GetGameFolders(GameRelease.SkyrimSE)).Returns([GameDirectory]);
+        _gameInstallationProbe.WithInstalledDirectories(GameRelease.SkyrimSE, GameDirectory);
         var sut = CreateSut();
         await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
         await sut.ProcessFormIdsAsync();
@@ -799,7 +819,6 @@ public class UserWorkflowTests
     {
         _viewModel.DatabasePath = DatabasePath;
         _viewModel.FormIdListPath = FormIdListPath;
-        _gameLocationService.Setup(x => x.GetGameFolders(GameRelease.SkyrimSE)).Returns([]);
         var sut = CreateSut();
         await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
         await sut.ProcessFormIdsAsync();
@@ -830,12 +849,10 @@ public class UserWorkflowTests
         var pluginList = new PluginList(_pluginListDiscovery);
         var processingRuns = new List<ProcessingRunRequest>();
         var executor = new RecordingProcessingRunExecutor(processingRuns);
-        _gameLocationService.Setup(x => x.GetGameFolders(GameRelease.Fallout4)).Returns([]);
         using var sut = new UserWorkflow(
             viewModel,
             _fileDialogService.Object,
             _gameInstallations,
-            _gameLocationService.Object,
             pluginList,
             executor);
 
@@ -954,7 +971,6 @@ public class UserWorkflowTests
         var confirmed = await ConfirmPluginListAsync(sut, ["Old.esp"]);
         sut.SetPluginSelection(confirmed.MembershipVersion, "Old.esp", true);
         _viewModel.DatabasePath = string.Empty;
-        _gameLocationService.Setup(x => x.GetGameFolders(GameRelease.Fallout4)).Returns([]);
         Task? reentrantRun = null;
         _viewModel.PropertyChanged += (_, args) =>
         {
@@ -1123,13 +1139,8 @@ public class UserWorkflowTests
     {
         var lookupStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var allowLookupToFinish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        _gameLocationService.Setup(x => x.GetGameFolders(GameRelease.Fallout4))
-            .Returns(() =>
-            {
-                lookupStarted.SetResult();
-                allowLookupToFinish.Task.GetAwaiter().GetResult();
-                return [@"C:\Games\Fallout4"];
-            });
+        _gameInstallationProbe.WithInstalledDirectories(GameRelease.Fallout4, @"C:\Games\Fallout4");
+        GateInstalledLocationLookup(GameRelease.Fallout4, lookupStarted, allowLookupToFinish);
         var sut = CreateSut();
         var selection = sut.SelectGameReleaseAsync(GameRelease.Fallout4);
         await lookupStarted.Task;
@@ -1179,7 +1190,7 @@ public class UserWorkflowTests
     [Fact]
     public async Task SetAdvancedModeAsync_ChangedCompleteContext_ProjectsAndRefreshesCurrentSource()
     {
-        _gameLocationService.Setup(x => x.GetGameFolders(GameRelease.SkyrimSE)).Returns([GameDirectory]);
+        _gameInstallationProbe.WithInstalledDirectories(GameRelease.SkyrimSE, GameDirectory);
         var sut = CreateSut();
         await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
         _refreshes.Clear();
@@ -1244,9 +1255,42 @@ public class UserWorkflowTests
             _viewModel,
             _fileDialogService.Object,
             _gameInstallations,
-            _gameLocationService.Object,
             _pluginList,
             _processingRunExecutor);
+    }
+
+    /// <summary>
+    /// Holds one GameRelease's installed-location lookup open, so a test can act while it is still in flight.
+    /// </summary>
+    /// <param name="release">The GameRelease whose lookup is gated; every other release answers immediately.</param>
+    /// <param name="started">Signalled once the gated lookup has begun.</param>
+    /// <param name="allowToFinish">Completed by the test to let the gated lookup return.</param>
+    private void GateInstalledLocationLookup(
+        GameRelease release,
+        TaskCompletionSource started,
+        TaskCompletionSource allowToFinish)
+    {
+        OnInstalledLocationLookup(release, () =>
+        {
+            started.SetResult();
+            allowToFinish.Task.GetAwaiter().GetResult();
+        });
+    }
+
+    /// <summary>
+    /// Runs a handler when one GameRelease's installed-location lookup begins.
+    /// </summary>
+    /// <param name="release">The GameRelease whose lookup the handler responds to.</param>
+    /// <param name="handler">The work to run inside that lookup, which may block or throw.</param>
+    private void OnInstalledLocationLookup(GameRelease release, Action handler)
+    {
+        _gameInstallationProbe.BeforeInstalledDirectoriesLookup = lookedUpRelease =>
+        {
+            if (lookedUpRelease == release)
+            {
+                handler();
+            }
+        };
     }
 
     /// <summary>
@@ -1268,8 +1312,7 @@ public class UserWorkflowTests
         IReadOnlyList<string> pluginNames)
     {
         _pluginListDiscovery.PluginNames = pluginNames;
-        _gameLocationService.Setup(x => x.GetGameFolders(GameRelease.SkyrimSE))
-            .Returns([GameDirectory]);
+        _gameInstallationProbe.WithInstalledDirectories(GameRelease.SkyrimSE, GameDirectory);
 
         await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
 

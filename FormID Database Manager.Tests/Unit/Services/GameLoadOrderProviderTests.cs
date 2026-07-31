@@ -73,24 +73,4 @@ public class GameLoadOrderProviderTests
         Assert.Single(snapshot.MasterStyles!);
         Assert.Equal("Starfield.esm", snapshot.MasterStyles![0].ModKey.FileName.ToString());
     }
-
-    [Fact]
-    public void GetListedPluginNames_ReturnsSnapshotNames()
-    {
-        var listings = new List<ILoadOrderListingGetter>
-        {
-            LoadOrderListing.CreateEnabled(ModKey.FromNameAndExtension("A.esm")),
-            LoadOrderListing.CreateEnabled(ModKey.FromNameAndExtension("B.esp"))
-        };
-
-        var sut = new GameLoadOrderProvider(
-            (_, _) => listings,
-            _ => false,
-            _ => true,
-            (_, _) => throw new InvalidOperationException("Should not read master style"));
-
-        var names = sut.GetListedPluginNames(GameRelease.SkyrimSE, @"C:\Games\Skyrim\Data");
-
-        Assert.Equal(["A.esm", "B.esp"], names);
-    }
 }

@@ -219,12 +219,6 @@ public sealed class ProcessingRunIntegrationTests : IDisposable
         {
             return new GameLoadOrderSnapshot(pluginNames);
         }
-
-        /// <inheritdoc />
-        public IReadOnlyList<string> GetListedPluginNames(GameRelease gameRelease, string dataPath)
-        {
-            return pluginNames;
-        }
     }
 
     /// <summary>

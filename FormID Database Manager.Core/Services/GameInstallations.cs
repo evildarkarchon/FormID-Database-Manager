@@ -1,17 +1,18 @@
+using System.Collections.Immutable;
 using Mutagen.Bethesda;
 
 namespace FormID_Database_Manager.Services;
 
 /// <summary>
-///     Resolves Game Installation facts: the canonical Data directory a selected directory means, and which
-///     GameRelease is installed at a directory.
+///     Resolves Game Installation facts: the canonical Data directory a selected directory means, which GameRelease is
+///     installed at a directory, and where a GameRelease is installed.
 /// </summary>
 /// <remarks>
 ///     Canonicalization is the single implementation of the Data-path rule — Plugin List Source, Plugin Ingestion and
-///     detection all call it, so a fix applies everywhere rather than at one of three call sites. Install location
-///     joins this module later (ADR-0002); the type is a concrete sealed class with no interface and no
-///     <c>virtual</c> members because nothing about it varies in production — tests get their control from
-///     <see cref="IGameInstallationProbe" />. It is synchronous: thread placement is the caller's decision.
+///     detection all call it, so a fix applies everywhere rather than at one of three call sites. The type is a
+///     concrete sealed class with no interface and no <c>virtual</c> members because nothing about it varies in
+///     production — tests get their control from <see cref="IGameInstallationProbe" />. It is synchronous: thread
+///     placement is the caller's decision, and User Workflow offloads both detection and location (ADR-0002).
 ///     <para>
 ///     Base game Plugins are not here: they are a constant table in <c>BaseGamePlugins</c>, read directly by the
 ///     Plugin List, so a change to detection cannot affect Plugin List membership (ADR-0002).
@@ -105,6 +106,26 @@ internal sealed class GameInstallations
         }
 
         return null;
+    }
+
+    /// <summary>
+    ///     Locates the directories a GameRelease is installed in, as recorded outside this process.
+    /// </summary>
+    /// <param name="release">The GameRelease whose installed locations are requested.</param>
+    /// <returns>
+    ///     The recorded install directories in record order, or an empty collection when none are recorded. Empty is
+    ///     an ordinary answer, not a failure: it is what a caller turns into "use Browse instead".
+    /// </returns>
+    /// <remarks>
+    ///     Install records live outside the process, so this reads through the probe like every other such fact. The
+    ///     module does not swallow a failing lookup — the production adapter turns missing or malformed install-record
+    ///     state into "nothing recorded", and that is adapter behaviour rather than module behaviour (ADR-0002).
+    ///     Like the rest of the module it is synchronous, and the lookup can be slow enough to matter, so callers that
+    ///     have a UI thread to protect must place it themselves.
+    /// </remarks>
+    internal ImmutableArray<string> GetInstalledDirectories(GameRelease release)
+    {
+        return [.. _probe.GetInstalledDirectories(release)];
     }
 
     /// <summary>

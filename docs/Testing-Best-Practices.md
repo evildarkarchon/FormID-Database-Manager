@@ -80,13 +80,18 @@ public async Task MyMethod_CancelsCleanly_WhenTokenSignaled()
 }
 ```
 
-### 4. Mock Configuration
+### 4. Substituting collaborators
 
-Use the MockFactory for consistent mock setups:
+`GameInstallations` has no interface to mock — tests substitute its probe instead and let the real detection and
+location rules run against a declared layout (ADR-0002). `InMemoryGameInstallationProbe` lives in the Tests project
+rather than in TestUtilities, because `IGameInstallationProbe` is `internal` to Core and TestUtilities is not named in
+`InternalsVisibleTo`.
 
 ```csharp
-var mockGameLocation = MockFactory.CreateGameLocationServiceMock();
-var cancellationSource = MockFactory.CreateCancellationTokenSource();
+var probe = new InMemoryGameInstallationProbe()
+    .WithFile(Path.Combine(gameDirectory, "Data", "Skyrim.esm"))
+    .WithInstalledDirectories(GameRelease.SkyrimSE, gameDirectory);
+var gameInstallations = new GameInstallations(probe);
 ```
 
 ### 5. Test Data Management

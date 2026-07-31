@@ -57,7 +57,7 @@ The solution has four projects in `FormID Database Manager.slnx`:
   - `FormIdRecordStore` — Implements the FormID Record Store and solely owns production Store connection configuration, selected-GameRelease schema preparation, SQLite writes, explicit optimization, and pipe-delimited FormID text imports (`plugin|formid|entry`) with 10000-row staging batches
   - `PluginList` / `PluginListDiscovery` — Own authoritative Plugin List membership, selection, refresh generations, and ordered discovery; `UserWorkflow` owns their lifetime and `PluginListPresentationAdapter` projects immutable facts to the ViewModel
   - `BaseGamePlugins` — Constant table of the base game Plugins each GameRelease ships, exposed as immutable case-insensitive sets; `PluginList` reads it directly, so detection cannot affect Plugin List membership (ADR-0002)
-  - `GameInstallations` — Owns Game Installation resolution: Data-directory canonicalization and detection of a GameRelease from a directory (master file and release-marker presence). Concrete sealed class with no interface and no `virtual` members; synchronous, so thread placement is the caller's decision. Detection returns null for exactly one reason — no known game master file — and throws on a path it cannot use (ADR-0002)
+  - `GameInstallations` — Owns Game Installation resolution: Data-directory canonicalization, detection of a GameRelease from a directory (master file and release-marker presence), and location of the directories a GameRelease is installed in. Concrete sealed class with no interface and no `virtual` members; synchronous, so thread placement is the caller's decision — `UserWorkflow` offloads both detection and location off the UI thread. Detection returns null for exactly one reason — no known game master file — and throws on a path it cannot use; location returns an immutable collection and does not swallow a failing lookup (ADR-0002)
   - `IGameInstallationProbe` / `GameInstallationProbe` — The module's one substitution seam, covering file existence, directory existence, and install-record lookup, with a production adapter over the real file system and Mutagen's `GameLocations`. The adapter's catch-all around install-record lookup is adapter behaviour, not module behaviour. Tests supply an in-memory adapter
   - `IFileDialogService` — UI-neutral file/folder picker abstraction
   - `IThreadDispatcher` / `ImmediateThreadDispatcher` / `QueuedThreadDispatcher` — Abstractions for UI thread marshalling (testable)
@@ -70,7 +70,6 @@ The solution has four projects in `FormID Database Manager.slnx`:
 - `Services/WinUiThreadDispatcher.cs` — WinUI dispatcher implementation
 
 ### Test Utilities (`FormID Database Manager.TestUtilities/`)
-- `Mocks/MockFactory` — Consistent mock creation for services
 - `Mocks/SynchronousThreadDispatcher` — Test-friendly IThreadDispatcher (executes immediately)
 - `Mocks/SynchronousProgress` — Synchronous IProgress for testing
 - `Builders/` — Test data builders (GameDetectionBuilder, PluginBuilder)
