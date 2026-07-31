@@ -56,6 +56,7 @@ The solution has four projects in `FormID Database Manager.slnx`:
   - `PluginIngestion` — Internal sealed aggregate selected-Plugin implementation; owns Data-path resolution, load-order preparation, `IPluginOverlayReader`, and `EntryExtraction`, attempts Plugins sequentially with best-effort outcomes, and writes only through the supplied `IFormIdRecordStoreSession`
   - `FormIdRecordStore` — Implements the FormID Record Store and solely owns production Store connection configuration, selected-GameRelease schema preparation, SQLite writes, explicit optimization, and pipe-delimited FormID text imports (`plugin|formid|entry`) with 10000-row staging batches
   - `PluginList` / `PluginListDiscovery` — Own authoritative Plugin List membership, selection, refresh generations, and ordered discovery; `UserWorkflow` owns their lifetime and `PluginListPresentationAdapter` projects immutable facts to the ViewModel
+  - `BaseGamePlugins` — Constant table of the base game Plugins each GameRelease ships, exposed as immutable case-insensitive sets; `PluginList` reads it directly, so detection cannot affect Plugin List membership (ADR-0002)
   - `GameDetectionService` — Detects game type from directory structure (master file presence)
   - `IFileDialogService` — UI-neutral file/folder picker abstraction
   - `IThreadDispatcher` / `ImmediateThreadDispatcher` / `QueuedThreadDispatcher` — Abstractions for UI thread marshalling (testable)

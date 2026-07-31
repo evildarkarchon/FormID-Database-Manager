@@ -43,6 +43,10 @@ _Avoid_: Mod processing, plugin processing.
 A Plugin List display mode that includes base game Plugins that are normally hidden from Plugin selection.
 _Avoid_: Show all, expert mode.
 
+**Base Game Plugin**:
+A Plugin that ships with a GameRelease — its master files and official add-ons — rather than one a user installed. Which Plugins these are is fixed per GameRelease and matched case-insensitively, so it is a constant table rather than anything detected on disk. The Plugin List hides Base Game Plugins unless Advanced Mode is on.
+_Avoid_: Vanilla plugin, official plugin, stock master.
+
 **GameRelease**:
 The target Bethesda game or edition that determines plugin layout, base plugins, and database table selection.
 _Avoid_: Game type, release enum.

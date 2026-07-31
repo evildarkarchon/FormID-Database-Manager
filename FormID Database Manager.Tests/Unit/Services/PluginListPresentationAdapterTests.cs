@@ -9,7 +9,6 @@ using System.Threading.Tasks;
 using FormID_Database_Manager.Services;
 using FormID_Database_Manager.TestUtilities.Mocks;
 using FormID_Database_Manager.ViewModels;
-using Moq;
 using Mutagen.Bethesda;
 using Xunit;
 
@@ -37,13 +36,10 @@ public sealed class PluginListPresentationAdapterTests
     [Fact]
     public async Task Projection_FailedDifferentSource_ClearsItemsAndReportsErrors()
     {
-        var gameDetectionService = new Mock<GameDetectionService>();
-        gameDetectionService.Setup(service => service.GetBaseGamePlugins(GameRelease.SkyrimSE))
-            .Returns([]);
         var discovery = new SequencedPluginListDiscovery(
             PluginListDiscoveryResult.Completed(["Old.esp"]),
             PluginListDiscoveryResult.Failed("new source unavailable"));
-        using var pluginList = new PluginList(gameDetectionService.Object, discovery);
+        using var pluginList = new PluginList(discovery);
         var dispatcher = new SynchronousThreadDispatcher();
         using var viewModel = new MainWindowViewModel(dispatcher);
         using var sut = new PluginListPresentationAdapter(pluginList, viewModel, dispatcher);
@@ -72,11 +68,8 @@ public sealed class PluginListPresentationAdapterTests
     [Fact]
     public async Task Projection_QueuedOlderProgressAfterNewerReady_UsesLatestStateOnly()
     {
-        var gameDetectionService = new Mock<GameDetectionService>();
-        gameDetectionService.Setup(service => service.GetBaseGamePlugins(GameRelease.SkyrimSE))
-            .Returns([]);
         var discovery = new OvertakingPluginListDiscovery();
-        using var pluginList = new PluginList(gameDetectionService.Object, discovery);
+        using var pluginList = new PluginList(discovery);
         var dispatcher = new RecordingThreadDispatcher();
         using var viewModel = new MainWindowViewModel(dispatcher);
         using var sut = new PluginListPresentationAdapter(pluginList, viewModel, dispatcher);
@@ -116,12 +109,9 @@ public sealed class PluginListPresentationAdapterTests
     [Fact]
     public async Task Dispose_QueuedAndSubsequentSignals_PreventsViewModelMutation()
     {
-        var gameDetectionService = new Mock<GameDetectionService>();
-        gameDetectionService.Setup(service => service.GetBaseGamePlugins(GameRelease.SkyrimSE))
-            .Returns([]);
         var discovery = new SequencedPluginListDiscovery(
             PluginListDiscoveryResult.Completed(["Ignored.esp"]));
-        using var pluginList = new PluginList(gameDetectionService.Object, discovery);
+        using var pluginList = new PluginList(discovery);
         var dispatcher = new RecordingThreadDispatcher();
         using var viewModel = new MainWindowViewModel(dispatcher)
         {
@@ -157,11 +147,8 @@ public sealed class PluginListPresentationAdapterTests
     [Fact]
     public async Task Projection_CurrentCallerCancellation_ClearsScanningWithoutTerminalMessage()
     {
-        var gameDetectionService = new Mock<GameDetectionService>();
-        gameDetectionService.Setup(service => service.GetBaseGamePlugins(GameRelease.SkyrimSE))
-            .Returns([]);
         var discovery = new ControlledPluginListDiscovery();
-        using var pluginList = new PluginList(gameDetectionService.Object, discovery);
+        using var pluginList = new PluginList(discovery);
         var dispatcher = new SynchronousThreadDispatcher();
         using var viewModel = new MainWindowViewModel(dispatcher);
         using var sut = new PluginListPresentationAdapter(pluginList, viewModel, dispatcher);
@@ -191,9 +178,8 @@ public sealed class PluginListPresentationAdapterTests
     [Fact]
     public async Task Projection_CurrentDiscoveryFault_ClearsScanningWithoutTerminalMessage()
     {
-        var gameDetectionService = new Mock<GameDetectionService>();
         var discovery = new ControlledPluginListDiscovery();
-        using var pluginList = new PluginList(gameDetectionService.Object, discovery);
+        using var pluginList = new PluginList(discovery);
         var dispatcher = new SynchronousThreadDispatcher();
         using var viewModel = new MainWindowViewModel(dispatcher);
         using var sut = new PluginListPresentationAdapter(pluginList, viewModel, dispatcher);
@@ -224,13 +210,10 @@ public sealed class PluginListPresentationAdapterTests
     [Fact]
     public async Task Projection_FailedSameSource_RetainsItemsAndReportsErrorsOnce()
     {
-        var gameDetectionService = new Mock<GameDetectionService>();
-        gameDetectionService.Setup(service => service.GetBaseGamePlugins(GameRelease.SkyrimSE))
-            .Returns([]);
         var discovery = new SequencedPluginListDiscovery(
             PluginListDiscoveryResult.Completed(["Selected.esp"]),
             PluginListDiscoveryResult.Failed("load order failure"));
-        using var pluginList = new PluginList(gameDetectionService.Object, discovery);
+        using var pluginList = new PluginList(discovery);
         var dispatcher = new SynchronousThreadDispatcher();
         using var viewModel = new MainWindowViewModel(dispatcher);
         using var sut = new PluginListPresentationAdapter(pluginList, viewModel, dispatcher);
@@ -267,12 +250,9 @@ public sealed class PluginListPresentationAdapterTests
     [Fact]
     public async Task Projection_SelectionOnlyRevision_UpdatesItemsWithoutDuplicatingReadyMessage()
     {
-        var gameDetectionService = new Mock<GameDetectionService>();
-        gameDetectionService.Setup(service => service.GetBaseGamePlugins(GameRelease.SkyrimSE))
-            .Returns([]);
         var discovery = new SequencedPluginListDiscovery(
             PluginListDiscoveryResult.Completed(["First.esp", "Second.esp"]));
-        using var pluginList = new PluginList(gameDetectionService.Object, discovery);
+        using var pluginList = new PluginList(discovery);
         var dispatcher = new SynchronousThreadDispatcher();
         using var viewModel = new MainWindowViewModel(dispatcher);
         using var sut = new PluginListPresentationAdapter(pluginList, viewModel, dispatcher);
@@ -299,11 +279,8 @@ public sealed class PluginListPresentationAdapterTests
     [Fact]
     public async Task Projection_RefreshingActivity_MapsCountsAndReadyClearsProgress()
     {
-        var gameDetectionService = new Mock<GameDetectionService>();
-        gameDetectionService.Setup(service => service.GetBaseGamePlugins(GameRelease.SkyrimSE))
-            .Returns([]);
         var discovery = new ControlledPluginListDiscovery();
-        using var pluginList = new PluginList(gameDetectionService.Object, discovery);
+        using var pluginList = new PluginList(discovery);
         var dispatcher = new SynchronousThreadDispatcher();
         using var viewModel = new MainWindowViewModel(dispatcher);
         using var sut = new PluginListPresentationAdapter(pluginList, viewModel, dispatcher);
@@ -339,13 +316,10 @@ public sealed class PluginListPresentationAdapterTests
     [Fact]
     public async Task Changed_QueuedProjection_ReadsLatestCurrentStateWhenCallbackExecutes()
     {
-        var gameDetectionService = new Mock<GameDetectionService>();
-        gameDetectionService.Setup(service => service.GetBaseGamePlugins(GameRelease.SkyrimSE))
-            .Returns([]);
         var discovery = new SequencedPluginListDiscovery(
             PluginListDiscoveryResult.Completed(["Older.esp"]),
             PluginListDiscoveryResult.Completed(["Newer.esp"]));
-        using var pluginList = new PluginList(gameDetectionService.Object, discovery);
+        using var pluginList = new PluginList(discovery);
         var dispatcher = new RecordingThreadDispatcher();
         using var viewModel = new MainWindowViewModel(dispatcher);
         using var sut = new PluginListPresentationAdapter(pluginList, viewModel, dispatcher);

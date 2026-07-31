@@ -232,9 +232,7 @@ public class LoadTests : IDisposable
             .ToArray();
         var dispatcher = new SynchronousThreadDispatcher();
         using var viewModel = new MainWindowViewModel(dispatcher);
-        using var pluginList = new PluginList(
-            new GameDetectionService(),
-            new SequencedPluginListDiscovery(membershipSnapshots));
+        using var pluginList = new PluginList(new SequencedPluginListDiscovery(membershipSnapshots));
         using var presentationAdapter = new PluginListPresentationAdapter(pluginList, viewModel, dispatcher);
 
         // Act
@@ -300,9 +298,7 @@ public class LoadTests : IDisposable
             .ToArray();
         var dispatcher = new SynchronousThreadDispatcher();
         using var viewModel = new MainWindowViewModel(dispatcher);
-        using var pluginList = new PluginList(
-            new GameDetectionService(),
-            new SequencedPluginListDiscovery([pluginNames]));
+        using var pluginList = new PluginList(new SequencedPluginListDiscovery([pluginNames]));
         using var presentationAdapter = new PluginListPresentationAdapter(pluginList, viewModel, dispatcher);
 
         await pluginList.RefreshAsync(

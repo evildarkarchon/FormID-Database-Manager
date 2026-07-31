@@ -86,9 +86,7 @@ public class MemoryBenchmarks
     {
         var dispatcher = new SynchronousThreadDispatcher();
         using var viewModel = new MainWindowViewModel(dispatcher);
-        using var pluginList = new PluginList(
-            new GameDetectionService(),
-            new DeterministicPluginListDiscovery(_pluginNames));
+        using var pluginList = new PluginList(new DeterministicPluginListDiscovery(_pluginNames));
         using var presentationAdapter = new PluginListPresentationAdapter(pluginList, viewModel, dispatcher);
 
         await pluginList.RefreshAsync(

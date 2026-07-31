@@ -38,7 +38,7 @@ public class UserWorkflowTests
         _viewModel = new MainWindowViewModel(_dispatcher);
         _gameDetectionService = FormID_Database_Manager.TestUtilities.Mocks.MockFactory.CreateGameDetectionServiceMock();
         _pluginListDiscovery = new RecordingPluginListDiscovery(_refreshes);
-        _pluginList = new PluginList(_gameDetectionService.Object, _pluginListDiscovery);
+        _pluginList = new PluginList(_pluginListDiscovery);
         _pluginListPresentationAdapter = new PluginListPresentationAdapter(_pluginList, _viewModel, _dispatcher);
         _processingRunExecutor = new RecordingProcessingRunExecutor(_processingRuns);
     }
@@ -791,7 +791,7 @@ public class UserWorkflowTests
         {
             FormIdListPath = FormIdListPath
         };
-        var pluginList = new PluginList(_gameDetectionService.Object, _pluginListDiscovery);
+        var pluginList = new PluginList(_pluginListDiscovery);
         var processingRuns = new List<ProcessingRunRequest>();
         var executor = new RecordingProcessingRunExecutor(processingRuns);
         _gameLocationService.Setup(x => x.GetGameFolders(GameRelease.Fallout4)).Returns([]);

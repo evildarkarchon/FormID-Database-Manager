@@ -9,7 +9,6 @@ namespace FormID_Database_Manager.Services;
 internal sealed class PluginList : IDisposable
 {
     private readonly IPluginListDiscovery _discovery;
-    private readonly GameDetectionService _gameDetectionService;
     private readonly object _gate = new();
     private RefreshOperation? _activeRefresh;
     private PluginListState _current = PluginListState.Initial;
@@ -21,12 +20,14 @@ internal sealed class PluginList : IDisposable
     /// <summary>
     ///     Creates a workflow-scoped Plugin List over the supplied discovery adapter.
     /// </summary>
-    /// <param name="gameDetectionService">The source of GameRelease-specific base Plugin rules.</param>
     /// <param name="discovery">The adapter that supplies ordered, available Plugin names.</param>
-    /// <exception cref="ArgumentNullException">Either dependency is null.</exception>
-    public PluginList(GameDetectionService gameDetectionService, IPluginListDiscovery discovery)
+    /// <exception cref="ArgumentNullException"><paramref name="discovery" /> is null.</exception>
+    /// <remarks>
+    ///     Base Plugin rules are not a dependency: they come from the <see cref="BaseGamePlugins" /> constant table,
+    ///     so a change to game detection cannot affect Plugin List membership (ADR-0002).
+    /// </remarks>
+    public PluginList(IPluginListDiscovery discovery)
     {
-        _gameDetectionService = gameDetectionService ?? throw new ArgumentNullException(nameof(gameDetectionService));
         _discovery = discovery ?? throw new ArgumentNullException(nameof(discovery));
     }
 
@@ -353,9 +354,8 @@ internal sealed class PluginList : IDisposable
             return;
         }
 
-        var basePlugins = new HashSet<string>(
-            _gameDetectionService.GetBaseGamePlugins(operation.Source.GameRelease),
-            StringComparer.OrdinalIgnoreCase);
+        // The constant table is already immutable and case-insensitive, so it is read directly rather than copied.
+        var basePlugins = BaseGamePlugins.ForRelease(operation.Source.GameRelease);
         var addedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var entries = ImmutableArray.CreateBuilder<PluginListEntry>();
 

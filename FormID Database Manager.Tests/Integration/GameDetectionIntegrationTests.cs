@@ -209,47 +209,9 @@ public class GameDetectionIntegrationTests : IDisposable
 
     #endregion
 
-    #region Base Game Plugin Tests
-
-    [Fact]
-    public void GetBaseGamePlugins_ReturnsCorrectPlugins_ForAllGames()
-    {
-        var testCases = new[]
-        {
-            new
-            {
-                GameRelease = GameRelease.SkyrimSE,
-                ExpectedBase =
-                    new[] { "Skyrim.esm", "Update.esm", "Dawnguard.esm", "HearthFires.esm", "Dragonborn.esm" }
-            },
-            new
-            {
-                GameRelease = GameRelease.Fallout4,
-                ExpectedBase = new[] { "Fallout4.esm", "DLCRobot.esm", "DLCworkshop01.esm" }
-            },
-            new
-            {
-                GameRelease = GameRelease.Starfield,
-                ExpectedBase =
-                    new[] { "Starfield.esm", "Constellation.esm", "OldMars.esm", "BlueprintShips-Starfield.esm" }
-            },
-            new { GameRelease = GameRelease.Oblivion, ExpectedBase = new[] { "Oblivion.esm" } }
-        };
-
-        foreach (var testCase in testCases)
-        {
-            // Act
-            var basePlugins = _gameDetectionService.GetBaseGamePlugins(testCase.GameRelease);
-
-            // Assert
-            foreach (var expectedPlugin in testCase.ExpectedBase)
-            {
-                Assert.Contains(expectedPlugin, basePlugins);
-            }
-        }
-    }
-
-    #endregion
+    // Base game Plugin coverage lives in BaseGamePluginsTests: the sets moved to the BaseGamePlugins constant
+    // table, which detection no longer owns. No filesystem is involved, so it does not belong in an integration
+    // test either.
 
     #region Directory Name Detection Tests
 

@@ -23,7 +23,7 @@ public sealed partial class MainWindow : Window, IDisposable
         var gameDetectionService = new GameDetectionService();
         var gameLocationService = new GameLocationService();
         var pluginListDiscovery = new PluginListDiscovery();
-        var pluginList = new PluginList(gameDetectionService, pluginListDiscovery);
+        var pluginList = new PluginList(pluginListDiscovery);
         var processingRunExecutor = new ProcessingRunExecutor();
 
         InitializeWindow();
@@ -59,7 +59,7 @@ public sealed partial class MainWindow : Window, IDisposable
         var effectiveGameDetectionService = gameDetectionService ?? new GameDetectionService();
         var effectiveGameLocationService = gameLocationService ?? new GameLocationService();
         var effectivePluginListDiscovery = pluginListDiscovery ?? new PluginListDiscovery();
-        var pluginList = new PluginList(effectiveGameDetectionService, effectivePluginListDiscovery);
+        var pluginList = new PluginList(effectivePluginListDiscovery);
         var effectiveProcessingRun = processingRunExecutor ?? new ProcessingRunExecutor();
 
         InitializeWindow();

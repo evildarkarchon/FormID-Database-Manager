@@ -26,9 +26,6 @@ public static class MockFactory
         mock.Setup(x => x.DetectGame(It.IsAny<string>()))
             .Returns(GameRelease.SkyrimSE);
 
-        mock.Setup(x => x.GetBaseGamePlugins(It.IsAny<GameRelease>()))
-            .Returns(["Skyrim.esm", "Update.esm", "Dawnguard.esm"]);
-
         return mock;
     }
 

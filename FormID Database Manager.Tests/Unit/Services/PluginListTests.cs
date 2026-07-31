@@ -6,7 +6,6 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using FormID_Database_Manager.Services;
-using Moq;
 using Mutagen.Bethesda;
 using Xunit;
 
@@ -32,15 +31,12 @@ public sealed class PluginListTests
     [Fact]
     public async Task RefreshAsync_InitialDiscovery_PublishesImmutableConfirmedPluginListInPluginListOrder()
     {
-        var gameDetectionService = new Mock<GameDetectionService>();
-        gameDetectionService.Setup(service => service.GetBaseGamePlugins(GameRelease.SkyrimSE))
-            .Returns(["Skyrim.esm"]);
         var discovery = new DeterministicPluginListDiscovery(
             "skyrim.ESM",
             "UserA.esp",
             "usera.ESP",
             "UserB.esp");
-        using var sut = new PluginList(gameDetectionService.Object, discovery);
+        using var sut = new PluginList(discovery);
         var changedCount = 0;
         EventArgs? lastEventArgs = null;
         var publishedActivities = new List<PluginListActivity>();
@@ -80,11 +76,8 @@ public sealed class PluginListTests
     [Fact]
     public async Task RefreshAsync_AdvancedMode_IncludesBasePlugins()
     {
-        var gameDetectionService = new Mock<GameDetectionService>();
-        gameDetectionService.Setup(service => service.GetBaseGamePlugins(GameRelease.SkyrimSE))
-            .Returns(["Skyrim.esm"]);
-        var discovery = new DeterministicPluginListDiscovery("skyrim.ESM", "User.esp");
-        using var sut = new PluginList(gameDetectionService.Object, discovery);
+        var discovery = new DeterministicPluginListDiscovery("skyrim.ESM", "UPDATE.ESM", "User.esp");
+        using var sut = new PluginList(discovery);
 
         await sut.RefreshAsync(
             GameRelease.SkyrimSE,
@@ -93,7 +86,71 @@ public sealed class PluginListTests
             TestContext.Current.CancellationToken);
 
         var confirmed = Assert.IsType<ConfirmedPluginList>(sut.Current.Confirmed);
-        Assert.Equal(["skyrim.ESM", "User.esp"], confirmed.Entries.Select(entry => entry.Name).ToArray());
+        Assert.Equal(
+            ["skyrim.ESM", "UPDATE.ESM", "User.esp"],
+            confirmed.Entries.Select(entry => entry.Name).ToArray());
+    }
+
+    /// <summary>
+    ///     Verifies Advanced Mode Off hides the real base Plugins of each supported game — not a stub set — in whatever
+    ///     casing discovery reports them, while user Plugins stay visible.
+    /// </summary>
+    /// <param name="gameRelease">The GameRelease whose base Plugin rules apply to this refresh.</param>
+    /// <param name="firstBasePlugin">A base Plugin of that GameRelease, spelled as its set does.</param>
+    /// <param name="secondBasePlugin">A second base Plugin, spelled in a different case.</param>
+    /// <param name="thirdBasePlugin">A third base Plugin, spelled in a different case.</param>
+    [Theory]
+    [InlineData(GameRelease.SkyrimSE, "Skyrim.esm", "UPDATE.ESM", "ccQDRSSE001-SurvivalMode.esm")]
+    [InlineData(GameRelease.SkyrimLE, "Skyrim.esm", "Dawnguard.esm", "hearthfires.esm")]
+    [InlineData(GameRelease.SkyrimVR, "Skyrim.esm", "DRAGONBORN.esm", "ccBGSSSE001-Fish.esm")]
+    [InlineData(GameRelease.SkyrimSEGog, "Skyrim.esm", "Update.esm", "dawnguard.ESM")]
+    [InlineData(GameRelease.EnderalSE, "Skyrim.esm", "Dragonborn.esm", "ccBGSSSE001-Fish.esm")]
+    [InlineData(GameRelease.EnderalLE, "skyrim.esm", "Update.esm", "HearthFires.esm")]
+    [InlineData(GameRelease.Oblivion, "Oblivion.esm", "KNIGHTS.ESP", "DLCShiveringIsles.esp")]
+    [InlineData(GameRelease.Fallout4, "Fallout4.esm", "DLCworkshop01.esm", "dlccoast.esm")]
+    [InlineData(GameRelease.Fallout4VR, "Fallout4.esm", "DLCRobot.esm", "dlcnukaworld.esm")]
+    [InlineData(GameRelease.Starfield, "Starfield.esm", "OldMars.esm", "constellation.esm")]
+    public async Task RefreshAsync_AdvancedModeOff_HidesRealBaseGamePluginsForRelease(
+        GameRelease gameRelease,
+        string firstBasePlugin,
+        string secondBasePlugin,
+        string thirdBasePlugin)
+    {
+        var discovery = new DeterministicPluginListDiscovery(
+            firstBasePlugin,
+            "User.esp",
+            secondBasePlugin,
+            thirdBasePlugin);
+        using var sut = new PluginList(discovery);
+
+        await sut.RefreshAsync(
+            gameRelease,
+            discovery.GameDirectory,
+            AdvancedMode.Off,
+            TestContext.Current.CancellationToken);
+
+        var confirmed = Assert.IsType<ConfirmedPluginList>(sut.Current.Confirmed);
+        Assert.Equal(["User.esp"], confirmed.Entries.Select(entry => entry.Name).ToArray());
+    }
+
+    /// <summary>
+    ///     Verifies a GameRelease the constant table has no entry for hides nothing, so every discovered Plugin is
+    ///     listed even with Advanced Mode off. Oblivion Remastered has no base Plugin set today.
+    /// </summary>
+    [Fact]
+    public async Task RefreshAsync_ReleaseWithoutBasePlugins_HidesNothing()
+    {
+        var discovery = new DeterministicPluginListDiscovery("Oblivion.esm", "User.esp");
+        using var sut = new PluginList(discovery);
+
+        await sut.RefreshAsync(
+            GameRelease.OblivionRE,
+            discovery.GameDirectory,
+            AdvancedMode.Off,
+            TestContext.Current.CancellationToken);
+
+        var confirmed = Assert.IsType<ConfirmedPluginList>(sut.Current.Confirmed);
+        Assert.Equal(["Oblivion.esm", "User.esp"], confirmed.Entries.Select(entry => entry.Name).ToArray());
     }
 
     /// <summary>
@@ -102,11 +159,8 @@ public sealed class PluginListTests
     [Fact]
     public async Task Apply_CurrentIndividualIntent_PublishesCaseInsensitiveSelectionInPluginListOrder()
     {
-        var gameDetectionService = new Mock<GameDetectionService>();
-        gameDetectionService.Setup(service => service.GetBaseGamePlugins(GameRelease.SkyrimSE))
-            .Returns([]);
         var discovery = new DeterministicPluginListDiscovery("First.esp", "Second.esp");
-        using var sut = new PluginList(gameDetectionService.Object, discovery);
+        using var sut = new PluginList(discovery);
         await sut.RefreshAsync(
             GameRelease.SkyrimSE,
             discovery.GameDirectory,
@@ -138,11 +192,8 @@ public sealed class PluginListTests
     [Fact]
     public async Task Apply_CurrentWholeListIntent_SelectsCompleteConfirmedMembershipInOrder()
     {
-        var gameDetectionService = new Mock<GameDetectionService>();
-        gameDetectionService.Setup(service => service.GetBaseGamePlugins(GameRelease.SkyrimSE))
-            .Returns([]);
         var discovery = new DeterministicPluginListDiscovery("First.esp", "Second.esp", "Third.esp");
-        using var sut = new PluginList(gameDetectionService.Object, discovery);
+        using var sut = new PluginList(discovery);
         await sut.RefreshAsync(
             GameRelease.SkyrimSE,
             discovery.GameDirectory,
@@ -163,11 +214,8 @@ public sealed class PluginListTests
     [Fact]
     public async Task Apply_WholeListDeselection_ClearsPartialSelection()
     {
-        var gameDetectionService = new Mock<GameDetectionService>();
-        gameDetectionService.Setup(service => service.GetBaseGamePlugins(GameRelease.SkyrimSE))
-            .Returns([]);
         var discovery = new DeterministicPluginListDiscovery("First.esp", "Second.esp");
-        using var sut = new PluginList(gameDetectionService.Object, discovery);
+        using var sut = new PluginList(discovery);
         await sut.RefreshAsync(
             GameRelease.SkyrimSE,
             discovery.GameDirectory,
@@ -191,11 +239,8 @@ public sealed class PluginListTests
     [InlineData(true)]
     public async Task Apply_WholeListIntent_EmptyMembershipDoesNotPublishRedundantState(bool isSelected)
     {
-        var gameDetectionService = new Mock<GameDetectionService>();
-        gameDetectionService.Setup(service => service.GetBaseGamePlugins(GameRelease.SkyrimSE))
-            .Returns([]);
         var discovery = new DeterministicPluginListDiscovery();
-        using var sut = new PluginList(gameDetectionService.Object, discovery);
+        using var sut = new PluginList(discovery);
         await sut.RefreshAsync(
             GameRelease.SkyrimSE,
             discovery.GameDirectory,
@@ -217,14 +262,11 @@ public sealed class PluginListTests
     [Fact]
     public async Task RefreshAsync_SameSource_ReconcilesSelectionWithNewMembershipOrderAndCasing()
     {
-        var gameDetectionService = new Mock<GameDetectionService>();
-        gameDetectionService.Setup(service => service.GetBaseGamePlugins(GameRelease.SkyrimSE))
-            .Returns([]);
         var discovery = new ControlledPluginListDiscovery();
         var initial = discovery.Enqueue();
         var refreshed = discovery.Enqueue();
         var reappeared = discovery.Enqueue();
-        using var sut = new PluginList(gameDetectionService.Object, discovery);
+        using var sut = new PluginList(discovery);
         var gameDirectory = CreateGameDirectory();
 
         var initialRefresh = sut.RefreshAsync(
@@ -267,11 +309,8 @@ public sealed class PluginListTests
     [Fact]
     public async Task Apply_RejectedAndAlreadySatisfiedIntent_DoesNotPublishRedundantState()
     {
-        var gameDetectionService = new Mock<GameDetectionService>();
-        gameDetectionService.Setup(service => service.GetBaseGamePlugins(GameRelease.SkyrimSE))
-            .Returns([]);
         var discovery = new DeterministicPluginListDiscovery("First.esp", "Second.esp");
-        using var sut = new PluginList(gameDetectionService.Object, discovery);
+        using var sut = new PluginList(discovery);
         await sut.RefreshAsync(
             GameRelease.SkyrimSE,
             discovery.GameDirectory,
@@ -311,11 +350,8 @@ public sealed class PluginListTests
     [Fact]
     public async Task Apply_LaterSelectionMutation_DoesNotChangeCapturedSnapshot()
     {
-        var gameDetectionService = new Mock<GameDetectionService>();
-        gameDetectionService.Setup(service => service.GetBaseGamePlugins(GameRelease.SkyrimSE))
-            .Returns([]);
         var discovery = new DeterministicPluginListDiscovery("First.esp", "Second.esp");
-        using var sut = new PluginList(gameDetectionService.Object, discovery);
+        using var sut = new PluginList(discovery);
         await sut.RefreshAsync(
             GameRelease.SkyrimSE,
             discovery.GameDirectory,
@@ -337,13 +373,10 @@ public sealed class PluginListTests
     [Fact]
     public async Task RefreshAsync_SelectionAppliedDuringSameSourceRefresh_ParticipatesInCommit()
     {
-        var gameDetectionService = new Mock<GameDetectionService>();
-        gameDetectionService.Setup(service => service.GetBaseGamePlugins(GameRelease.SkyrimSE))
-            .Returns([]);
         var discovery = new ControlledPluginListDiscovery();
         var initial = discovery.Enqueue();
         var refreshed = discovery.Enqueue();
-        using var sut = new PluginList(gameDetectionService.Object, discovery);
+        using var sut = new PluginList(discovery);
         var gameDirectory = CreateGameDirectory();
         var initialRefresh = sut.RefreshAsync(
             GameRelease.SkyrimSE,
@@ -374,7 +407,7 @@ public sealed class PluginListTests
     {
         var failure = PluginListDiscoveryResult.Failed("The local Plugin List could not be read.");
         var discovery = new FixedPluginListDiscovery(failure);
-        using var sut = new PluginList(new Mock<GameDetectionService>().Object, discovery);
+        using var sut = new PluginList(discovery);
 
         await sut.RefreshAsync(
             GameRelease.SkyrimSE,
@@ -391,13 +424,10 @@ public sealed class PluginListTests
     [Fact]
     public async Task RefreshAsync_DifferentSource_SynchronouslyInvalidatesConfirmedPluginList()
     {
-        var gameDetectionService = new Mock<GameDetectionService>();
-        gameDetectionService.Setup(service => service.GetBaseGamePlugins(GameRelease.SkyrimSE))
-            .Returns([]);
         var discovery = new ControlledPluginListDiscovery();
         var initial = discovery.Enqueue();
         var replacement = discovery.Enqueue();
-        using var sut = new PluginList(gameDetectionService.Object, discovery);
+        using var sut = new PluginList(discovery);
         var firstDirectory = CreateGameDirectory();
         var secondDirectory = CreateGameDirectory();
 
@@ -433,13 +463,10 @@ public sealed class PluginListTests
     [Fact]
     public async Task RefreshAsync_SameSource_RetainsConfirmedPluginListWhileDiscoveryRuns()
     {
-        var gameDetectionService = new Mock<GameDetectionService>();
-        gameDetectionService.Setup(service => service.GetBaseGamePlugins(GameRelease.SkyrimSE))
-            .Returns([]);
         var discovery = new ControlledPluginListDiscovery();
         var initial = discovery.Enqueue();
         var replacement = discovery.Enqueue();
-        using var sut = new PluginList(gameDetectionService.Object, discovery);
+        using var sut = new PluginList(discovery);
         var gameDirectory = CreateGameDirectory();
 
         var initialRefresh = sut.RefreshAsync(
@@ -469,13 +496,10 @@ public sealed class PluginListTests
     [Fact]
     public async Task RefreshAsync_SameSourceExpectedFailure_RetainsConfirmedPluginList()
     {
-        var gameDetectionService = new Mock<GameDetectionService>();
-        gameDetectionService.Setup(service => service.GetBaseGamePlugins(GameRelease.SkyrimSE))
-            .Returns([]);
         var discovery = new ControlledPluginListDiscovery();
         var initial = discovery.Enqueue();
         var replacement = discovery.Enqueue();
-        using var sut = new PluginList(gameDetectionService.Object, discovery);
+        using var sut = new PluginList(discovery);
         var gameDirectory = CreateGameDirectory();
 
         var initialRefresh = sut.RefreshAsync(
@@ -504,13 +528,10 @@ public sealed class PluginListTests
     [Fact]
     public async Task RefreshAsync_NewerRefreshOvertakesOlder_OnlyNewerResultCanPublish()
     {
-        var gameDetectionService = new Mock<GameDetectionService>();
-        gameDetectionService.Setup(service => service.GetBaseGamePlugins(GameRelease.SkyrimSE))
-            .Returns([]);
         var discovery = new ControlledPluginListDiscovery();
         var older = discovery.Enqueue();
         var newer = discovery.Enqueue();
-        using var sut = new PluginList(gameDetectionService.Object, discovery);
+        using var sut = new PluginList(discovery);
 
         var olderRefresh = sut.RefreshAsync(
             GameRelease.SkyrimSE,
@@ -545,13 +566,10 @@ public sealed class PluginListTests
     [Fact]
     public async Task RefreshAsync_OlderFailureAfterNewerReady_DoesNotOverwriteNewerState()
     {
-        var gameDetectionService = new Mock<GameDetectionService>();
-        gameDetectionService.Setup(service => service.GetBaseGamePlugins(GameRelease.SkyrimSE))
-            .Returns([]);
         var discovery = new ControlledPluginListDiscovery();
         var older = discovery.Enqueue();
         var newer = discovery.Enqueue();
-        using var sut = new PluginList(gameDetectionService.Object, discovery);
+        using var sut = new PluginList(discovery);
 
         var olderRefresh = sut.RefreshAsync(
             GameRelease.SkyrimSE,
@@ -584,7 +602,7 @@ public sealed class PluginListTests
     {
         var discovery = new ControlledPluginListDiscovery();
         var operation = discovery.Enqueue();
-        using var sut = new PluginList(new Mock<GameDetectionService>().Object, discovery);
+        using var sut = new PluginList(discovery);
         using var callerCancellation = new CancellationTokenSource();
         var gameDirectory = CreateGameDirectory();
         var refresh = sut.RefreshAsync(
@@ -605,13 +623,10 @@ public sealed class PluginListTests
     [Fact]
     public async Task RefreshAsync_SupersededThenCallerCancelled_PropagatesWithoutPublishingCancellation()
     {
-        var gameDetectionService = new Mock<GameDetectionService>();
-        gameDetectionService.Setup(service => service.GetBaseGamePlugins(GameRelease.SkyrimSE))
-            .Returns([]);
         var discovery = new ControlledPluginListDiscovery();
         var older = discovery.Enqueue();
         var newer = discovery.Enqueue();
-        using var sut = new PluginList(gameDetectionService.Object, discovery);
+        using var sut = new PluginList(discovery);
         using var callerCancellation = new CancellationTokenSource();
         var olderRefresh = sut.RefreshAsync(
             GameRelease.SkyrimSE,
@@ -641,7 +656,7 @@ public sealed class PluginListTests
     {
         var discovery = new ControlledPluginListDiscovery();
         var operation = discovery.Enqueue();
-        using var sut = new PluginList(new Mock<GameDetectionService>().Object, discovery);
+        using var sut = new PluginList(discovery);
         var refresh = sut.RefreshAsync(
             GameRelease.SkyrimSE,
             CreateGameDirectory(),
@@ -667,7 +682,7 @@ public sealed class PluginListTests
     {
         var discovery = new ControlledPluginListDiscovery();
         var operation = discovery.Enqueue();
-        var sut = new PluginList(new Mock<GameDetectionService>().Object, discovery);
+        var sut = new PluginList(discovery);
         var refresh = sut.RefreshAsync(
             GameRelease.SkyrimSE,
             CreateGameDirectory(),
@@ -699,10 +714,7 @@ public sealed class PluginListTests
     {
         var discovery = new ControlledPluginListDiscovery();
         var operation = discovery.Enqueue();
-        var gameDetectionService = new Mock<GameDetectionService>();
-        gameDetectionService.Setup(service => service.GetBaseGamePlugins(GameRelease.SkyrimSE))
-            .Returns([]);
-        using var sut = new PluginList(gameDetectionService.Object, discovery);
+        using var sut = new PluginList(discovery);
         var validRefresh = sut.RefreshAsync(
             GameRelease.SkyrimSE,
             CreateGameDirectory(),
@@ -728,13 +740,10 @@ public sealed class PluginListTests
     [InlineData(true)]
     public async Task RefreshAsync_CurrentProgrammingAndFatalDiscoveryFailures_PublishFaultedAndPropagate(bool fatal)
     {
-        var gameDetectionService = new Mock<GameDetectionService>();
-        gameDetectionService.Setup(service => service.GetBaseGamePlugins(GameRelease.SkyrimSE))
-            .Returns([]);
         var discovery = new ControlledPluginListDiscovery();
         var initial = discovery.Enqueue();
         var faulting = discovery.Enqueue();
-        using var sut = new PluginList(gameDetectionService.Object, discovery);
+        using var sut = new PluginList(discovery);
         var gameDirectory = CreateGameDirectory();
         var initialRefresh = sut.RefreshAsync(
             GameRelease.SkyrimSE,
@@ -773,10 +782,7 @@ public sealed class PluginListTests
     public async Task Invalidate_ConfirmedPluginList_PublishesNoSourceState()
     {
         var discovery = new DeterministicPluginListDiscovery("User.esp");
-        var gameDetectionService = new Mock<GameDetectionService>();
-        gameDetectionService.Setup(service => service.GetBaseGamePlugins(GameRelease.SkyrimSE))
-            .Returns([]);
-        using var sut = new PluginList(gameDetectionService.Object, discovery);
+        using var sut = new PluginList(discovery);
         await sut.RefreshAsync(
             GameRelease.SkyrimSE,
             discovery.GameDirectory,
