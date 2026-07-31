@@ -160,7 +160,7 @@ public class RegressionTests : IDisposable
     public void GameDetection_SimpleDirectory_StaysWithinBaseline()
     {
         // Arrange
-        var service = new GameDetectionService();
+        var gameInstallations = new GameInstallations(new GameInstallationProbe());
         var testDir = Path.Combine(_testDirectory, "Skyrim Special Edition");
         var dataDir = Path.Combine(testDir, "Data");
         Directory.CreateDirectory(dataDir);
@@ -171,7 +171,7 @@ public class RegressionTests : IDisposable
 
         // Act
         var stopwatch = Stopwatch.StartNew();
-        var result = service.DetectGame(testDir);
+        var result = gameInstallations.Detect(testDir);
         stopwatch.Stop();
 
         // Assert
@@ -188,7 +188,7 @@ public class RegressionTests : IDisposable
     public void GameDetection_ComplexDirectory_StaysWithinBaseline()
     {
         // Arrange
-        var service = new GameDetectionService();
+        var gameInstallations = new GameInstallations(new GameInstallationProbe());
         var testDir = Path.Combine(_testDirectory, "ComplexGame");
         var dataDir = Path.Combine(testDir, "Data");
         Directory.CreateDirectory(dataDir);
@@ -205,7 +205,7 @@ public class RegressionTests : IDisposable
 
         // Act
         var stopwatch = Stopwatch.StartNew();
-        var result = service.DetectGame(testDir);
+        var result = gameInstallations.Detect(testDir);
         stopwatch.Stop();
 
         // Assert
@@ -340,7 +340,7 @@ public class RegressionTests : IDisposable
     public void CpuUsage_IntensiveOperations_StaysReasonable()
     {
         // Arrange
-        var service = new GameDetectionService();
+        var gameInstallations = new GameInstallations(new GameInstallationProbe());
         var testDir = Path.Combine(_testDirectory, "CPU_Test");
         var dataDir = Path.Combine(testDir, "Data");
         Directory.CreateDirectory(dataDir);
@@ -358,7 +358,7 @@ public class RegressionTests : IDisposable
         var stopwatch = Stopwatch.StartNew();
         for (var i = 0; i < 5000; i++)
         {
-            service.DetectGame(testDir);
+            gameInstallations.Detect(testDir);
         }
 
         stopwatch.Stop();

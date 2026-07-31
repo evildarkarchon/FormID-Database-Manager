@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using FormID_Database_Manager.Services;
 using FormID_Database_Manager.TestUtilities.Mocks;
+using FormID_Database_Manager.Tests.Fakes;
 using FormID_Database_Manager.ViewModels;
 using Moq;
 using Mutagen.Bethesda;
@@ -23,7 +24,8 @@ public class UserWorkflowTests
 
     private readonly SynchronousThreadDispatcher _dispatcher = new();
     private readonly Mock<IFileDialogService> _fileDialogService = new();
-    private readonly Mock<GameDetectionService> _gameDetectionService;
+    private readonly GameInstallations _gameInstallations;
+    private readonly InMemoryGameInstallationProbe _gameInstallationProbe = new();
     private readonly Mock<IGameLocationService> _gameLocationService = new();
     private readonly PluginList _pluginList;
     private readonly RecordingPluginListDiscovery _pluginListDiscovery;
@@ -36,7 +38,8 @@ public class UserWorkflowTests
     public UserWorkflowTests()
     {
         _viewModel = new MainWindowViewModel(_dispatcher);
-        _gameDetectionService = FormID_Database_Manager.TestUtilities.Mocks.MockFactory.CreateGameDetectionServiceMock();
+        // Detection has no interface to mock: the real rules run against whatever layout a test declares on the probe.
+        _gameInstallations = new GameInstallations(_gameInstallationProbe);
         _pluginListDiscovery = new RecordingPluginListDiscovery(_refreshes);
         _pluginList = new PluginList(_pluginListDiscovery);
         _pluginListPresentationAdapter = new PluginListPresentationAdapter(_pluginList, _viewModel, _dispatcher);
@@ -427,7 +430,7 @@ public class UserWorkflowTests
         Assert.Equal([@"C:\Existing", @"D:\Suggested"], _viewModel.DetectedDirectories);
         Assert.Empty(_viewModel.ErrorMessages);
         Assert.Empty(_refreshes);
-        _gameDetectionService.Verify(x => x.DetectGame(It.IsAny<string>()), Times.Never);
+        Assert.Empty(_gameInstallationProbe.ProbedPaths);
     }
 
     /// <summary>
@@ -445,7 +448,7 @@ public class UserWorkflowTests
         _fileDialogService.SetupSequence(x => x.SelectGameDirectory())
             .Returns(olderPicker.Task)
             .Returns(newerPicker.Task);
-        _gameDetectionService.Setup(x => x.DetectGame(latestDirectory)).Returns(GameRelease.Fallout4);
+        _gameInstallationProbe.WithFile(Path.Combine(latestDirectory, "Data", "Fallout4.esm"));
         var sut = CreateSut();
 
         var olderBrowse = sut.BrowseGameDirectoryAsync();
@@ -459,7 +462,7 @@ public class UserWorkflowTests
         Assert.Equal(latestDirectory, _viewModel.GameDirectory);
         Assert.Empty(_viewModel.DetectedDirectories);
         AssertSingleRefresh(latestDirectory, GameRelease.Fallout4, false);
-        _gameDetectionService.Verify(x => x.DetectGame(GameDirectory), Times.Never);
+        Assert.False(_gameInstallationProbe.ProbedAnythingUnder(GameDirectory));
     }
 
     /// <summary>
@@ -485,7 +488,7 @@ public class UserWorkflowTests
         Assert.Equal(latestDirectory, _viewModel.GameDirectory);
         Assert.Equal([latestDirectory], _viewModel.DetectedDirectories);
         AssertSingleRefresh(latestDirectory, GameRelease.Fallout4, false);
-        _gameDetectionService.Verify(x => x.DetectGame(It.IsAny<string>()), Times.Never);
+        Assert.Empty(_gameInstallationProbe.ProbedPaths);
     }
 
     /// <summary>
@@ -528,7 +531,9 @@ public class UserWorkflowTests
     {
         _fileDialogService.Setup(x => x.SelectGameDirectory())
             .ReturnsAsync(FileDialogResult.Success(GameDirectory));
-        _gameDetectionService.Setup(x => x.DetectGame(GameDirectory)).Returns(GameRelease.SkyrimSE);
+        _gameInstallationProbe
+            .WithFile(Path.Combine(GameDirectory, "Data", "Skyrim.esm"))
+            .WithFile(Path.Combine(GameDirectory, "SkyrimSE.exe"));
 
         var sut = CreateSut();
 
@@ -556,13 +561,15 @@ public class UserWorkflowTests
         var allowDetectionToFinish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _fileDialogService.Setup(x => x.SelectGameDirectory())
             .Returns(pickerCompletion.Task);
-        _gameDetectionService.Setup(x => x.DetectGame(GameDirectory))
-            .Returns(() =>
-            {
-                detectionStarted.SetResult();
-                allowDetectionToFinish.Task.GetAwaiter().GetResult();
-                return GameRelease.SkyrimSE;
-            });
+        _gameInstallationProbe
+            .WithFile(Path.Combine(GameDirectory, "Data", "Skyrim.esm"))
+            .WithFile(Path.Combine(GameDirectory, "SkyrimSE.exe"));
+        // Detection probes several paths; the gate opens on the first and is transparent from then on.
+        _gameInstallationProbe.BeforeProbe = _ =>
+        {
+            detectionStarted.TrySetResult();
+            allowDetectionToFinish.Task.GetAwaiter().GetResult();
+        };
         _gameLocationService.Setup(x => x.GetGameFolders(GameRelease.Fallout4))
             .Returns([@"C:\Games\Fallout4"]);
         var sut = CreateSut();
@@ -608,7 +615,7 @@ public class UserWorkflowTests
         Assert.Null(_pluginList.Current.Confirmed);
         Assert.Equal(PluginListSource.Create(GameRelease.SkyrimSE, GameDirectory), Assert.Single(_refreshes));
         Assert.Contains("Failed to load plugins: directory mismatch", _viewModel.ErrorMessages);
-        _gameDetectionService.Verify(x => x.DetectGame(It.IsAny<string>()), Times.Never);
+        Assert.Empty(_gameInstallationProbe.ProbedPaths);
         _gameLocationService.Verify(x => x.GetGameFolders(GameRelease.SkyrimSE), Times.Once);
     }
 
@@ -629,7 +636,7 @@ public class UserWorkflowTests
         _refreshes.Clear();
         _fileDialogService.Setup(x => x.SelectGameDirectory())
             .ReturnsAsync(FileDialogResult.Success(GameDirectory));
-        _gameDetectionService.Setup(x => x.DetectGame(GameDirectory)).Returns((GameRelease?)null);
+        // No layout is declared, so detection finds no known game master — its one reason to return null.
 
         var sut = CreateSut();
 
@@ -641,6 +648,35 @@ public class UserWorkflowTests
         Assert.Contains(
             "Could not detect game from directory. Please select a game from the dropdown.",
             _viewModel.ErrorMessages);
+        Assert.Empty(_refreshes);
+    }
+
+    /// <summary>
+    /// Verifies that a path detection cannot use at all is reported as the path problem it is, rather than as a
+    /// missing game the user is asked to supply from the dropdown.
+    /// </summary>
+    /// <returns>A task that completes after the malformed path is presented.</returns>
+    [Fact]
+    public async Task BrowseGameDirectoryAsync_MalformedSelectedDirectory_RecordsPathErrorRatherThanDetectionGuidance()
+    {
+        const string malformedDirectory = "C:\\Games\\Sky\0rim";
+        _fileDialogService.Setup(x => x.SelectGameDirectory())
+            .ReturnsAsync(FileDialogResult.Success(malformedDirectory));
+
+        var sut = CreateSut();
+
+        await sut.BrowseGameDirectoryAsync();
+
+        Assert.Null(_viewModel.SelectedGame);
+        // The chosen path stays on display beside the error, exactly as it does for a game-less directory: the user
+        // is being told what is wrong with the path they picked, so the path has to remain visible.
+        Assert.Equal(malformedDirectory, _viewModel.GameDirectory);
+        Assert.DoesNotContain(
+            "Could not detect game from directory. Please select a game from the dropdown.",
+            _viewModel.ErrorMessages);
+        Assert.Contains(
+            _viewModel.ErrorMessages,
+            message => message.StartsWith("Could not read the selected directory:", StringComparison.Ordinal));
         Assert.Empty(_refreshes);
     }
 
@@ -798,7 +834,7 @@ public class UserWorkflowTests
         using var sut = new UserWorkflow(
             viewModel,
             _fileDialogService.Object,
-            _gameDetectionService.Object,
+            _gameInstallations,
             _gameLocationService.Object,
             pluginList,
             executor);
@@ -1207,7 +1243,7 @@ public class UserWorkflowTests
         return new UserWorkflow(
             _viewModel,
             _fileDialogService.Object,
-            _gameDetectionService.Object,
+            _gameInstallations,
             _gameLocationService.Object,
             _pluginList,
             _processingRunExecutor);

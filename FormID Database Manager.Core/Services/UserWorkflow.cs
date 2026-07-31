@@ -11,7 +11,7 @@ namespace FormID_Database_Manager.Services;
 public sealed class UserWorkflow : IDisposable
 {
     private readonly IFileDialogService _fileDialogService;
-    private readonly GameDetectionService _gameDetectionService;
+    private readonly GameInstallations _gameInstallations;
     private readonly IGameLocationService _gameLocationService;
     private readonly PluginList _pluginList;
     private readonly IProcessingRunExecutor _processingRunExecutor;
@@ -25,21 +25,21 @@ public sealed class UserWorkflow : IDisposable
     /// </summary>
     /// <param name="viewModel">The binding-state projection updated by workflow transitions.</param>
     /// <param name="fileDialogService">The platform picker adapter.</param>
-    /// <param name="gameDetectionService">The game detection module.</param>
+    /// <param name="gameInstallations">The Game Installation resolution module.</param>
     /// <param name="gameLocationService">The installed-location lookup adapter.</param>
     /// <param name="pluginList">The authoritative Plugin List whose lifetime transfers to this workflow.</param>
     /// <param name="processingRunExecutor">The owned Processing Run executor.</param>
     internal UserWorkflow(
         MainWindowViewModel viewModel,
         IFileDialogService fileDialogService,
-        GameDetectionService gameDetectionService,
+        GameInstallations gameInstallations,
         IGameLocationService gameLocationService,
         PluginList pluginList,
         IProcessingRunExecutor processingRunExecutor)
     {
         _viewModel = viewModel ?? throw new ArgumentNullException(nameof(viewModel));
         _fileDialogService = fileDialogService ?? throw new ArgumentNullException(nameof(fileDialogService));
-        _gameDetectionService = gameDetectionService ?? throw new ArgumentNullException(nameof(gameDetectionService));
+        _gameInstallations = gameInstallations ?? throw new ArgumentNullException(nameof(gameInstallations));
         _gameLocationService = gameLocationService ?? throw new ArgumentNullException(nameof(gameLocationService));
         _pluginList = pluginList ?? throw new ArgumentNullException(nameof(pluginList));
         _processingRunExecutor = processingRunExecutor ??
@@ -366,7 +366,10 @@ public sealed class UserWorkflow : IDisposable
     /// <exception cref="ArgumentOutOfRangeException">The detected or selected GameRelease is unsupported.</exception>
     /// <exception cref="ObjectDisposedException">The workflow-owned Plugin List has been disposed.</exception>
     /// <exception cref="AggregateException">A registered Plugin List refresh cancellation callback throws.</exception>
-    /// <remarks>Current unexpected detection and fatal discovery failures propagate unchanged.</remarks>
+    /// <remarks>
+    /// A path detection cannot use at all is presented as an error describing that failure; other current unexpected
+    /// detection and fatal discovery failures propagate unchanged.
+    /// </remarks>
     private async Task ApplyBrowsedDirectorySelectedAsync(string path, int gameContextVersion)
     {
         if (_gameContext.SelectedGameRelease is null)
@@ -389,11 +392,19 @@ public sealed class UserWorkflow : IDisposable
             GameRelease? detectedGame;
             try
             {
-                detectedGame = _gameDetectionService.DetectGame(path);
+                detectedGame = _gameInstallations.Detect(path);
             }
             catch (Exception) when (!IsLatestGameContextDirectoryTransition(gameContextVersion))
             {
                 // A detector overtaken by a newer intent cannot escape into WinUI's current error boundary.
+                return;
+            }
+            catch (Exception ex) when (ex is ArgumentException or NotSupportedException or IOException)
+            {
+                // Detection returns null for exactly one reason — no known game master file — and throws for a path
+                // it cannot use at all. Reporting that as "could not detect game" would tell the user to pick a game
+                // when the path is what is wrong (ADR-0002), so the actual failure is surfaced instead.
+                _viewModel.AddErrorMessage($"Could not read the selected directory: {ex.Message}");
                 return;
             }
 

@@ -18,7 +18,7 @@ namespace FormID_Database_Manager.Tests.Integration;
 [Collection("Integration Tests")]
 public class GameDetectionIntegrationTests : IDisposable
 {
-    private readonly GameDetectionService _gameDetectionService;
+    private readonly GameInstallations _gameInstallations;
     private readonly List<string> _testDirectories;
     private readonly string _testRoot;
 
@@ -26,7 +26,7 @@ public class GameDetectionIntegrationTests : IDisposable
     {
         _testRoot = Path.Combine(Path.GetTempPath(), $"gamedetection_{Guid.NewGuid()}");
         _testDirectories = [];
-        _gameDetectionService = new GameDetectionService();
+        _gameInstallations = new GameInstallations(new GameInstallationProbe());
 
         Directory.CreateDirectory(_testRoot);
     }
@@ -167,7 +167,7 @@ public class GameDetectionIntegrationTests : IDisposable
         }
 
         // Act
-        var detectedGame = _gameDetectionService.DetectGame(symlinkPath);
+        var detectedGame = _gameInstallations.Detect(symlinkPath);
 
         // Assert
         Assert.Equal(GameRelease.SkyrimLE, detectedGame);
@@ -198,7 +198,7 @@ public class GameDetectionIntegrationTests : IDisposable
         var startTime = DateTime.UtcNow;
 
         // Act
-        var detectedGame = _gameDetectionService.DetectGame(largeDataPath);
+        var detectedGame = _gameInstallations.Detect(largeDataPath);
 
         var elapsed = DateTime.UtcNow - startTime;
 
@@ -218,7 +218,7 @@ public class GameDetectionIntegrationTests : IDisposable
     [Fact]
     public void DetectGame_ByDirectoryName_ReturnsNull_WithoutGameFiles()
     {
-        // GameDetectionService only detects games by .esm files, not directory names
+        // Detection only recognizes games by .esm files, not directory names
         var dirNameTests = new[]
         {
             "Skyrim Special Edition", "Skyrim Special Edition GOG", "SkyrimVR", "Fallout 4", "Fallout4",
@@ -234,7 +234,7 @@ public class GameDetectionIntegrationTests : IDisposable
             // Don't create any files - service requires .esm files for detection
 
             // Act
-            var detectedGame = _gameDetectionService.DetectGame(Path.GetDirectoryName(testPath)!);
+            var detectedGame = _gameInstallations.Detect(Path.GetDirectoryName(testPath)!);
 
             // Assert - Should return null without game files
             Assert.Null(detectedGame);
@@ -345,7 +345,7 @@ public class GameDetectionIntegrationTests : IDisposable
             }
 
             // Act
-            var detectedGame = _gameDetectionService.DetectGame(testCase.DataPath);
+            var detectedGame = _gameInstallations.Detect(testCase.DataPath);
 
             // Assert
             Assert.Equal(testCase.GameRelease, detectedGame);
@@ -387,7 +387,7 @@ public class GameDetectionIntegrationTests : IDisposable
             CreatePluginFile(variation.ExpectedData, "Update.esm");
 
             // Act
-            var detectedGame = _gameDetectionService.DetectGame(variation.Path);
+            var detectedGame = _gameInstallations.Detect(variation.Path);
 
             // Assert
             Assert.Equal(GameRelease.SkyrimLE, detectedGame);
@@ -407,7 +407,7 @@ public class GameDetectionIntegrationTests : IDisposable
         Directory.CreateDirectory(emptyPath);
 
         // Act
-        var detectedGame = _gameDetectionService.DetectGame(emptyPath);
+        var detectedGame = _gameInstallations.Detect(emptyPath);
 
         // Assert
         Assert.Null(detectedGame); // Returns null when no game detected
@@ -420,7 +420,7 @@ public class GameDetectionIntegrationTests : IDisposable
         var nonExistentPath = Path.Combine(_testRoot, "DoesNotExist", "Data");
 
         // Act
-        var detectedGame = _gameDetectionService.DetectGame(nonExistentPath);
+        var detectedGame = _gameInstallations.Detect(nonExistentPath);
 
         // Assert
         Assert.Null(detectedGame); // Returns null when no game detected
@@ -440,7 +440,7 @@ public class GameDetectionIntegrationTests : IDisposable
         CreatePluginFile(ambiguousPath, "Update.esm");
 
         // Act
-        var detectedGame = _gameDetectionService.DetectGame(ambiguousPath);
+        var detectedGame = _gameInstallations.Detect(ambiguousPath);
 
         // Assert - Should detect based on priority (Skyrim files present)
         Assert.Equal(GameRelease.SkyrimLE, detectedGame);
@@ -460,7 +460,7 @@ public class GameDetectionIntegrationTests : IDisposable
         dirInfo.Attributes |= FileAttributes.ReadOnly;
 
         // Act
-        var detectedGame = _gameDetectionService.DetectGame(readOnlyPath);
+        var detectedGame = _gameInstallations.Detect(readOnlyPath);
 
         // Assert
         Assert.Equal(GameRelease.Starfield, detectedGame);

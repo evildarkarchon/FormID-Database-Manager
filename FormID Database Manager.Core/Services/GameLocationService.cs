@@ -1,5 +1,4 @@
 using Mutagen.Bethesda;
-using Mutagen.Bethesda.Installs;
 
 namespace FormID_Database_Manager.Services;
 
@@ -7,23 +6,17 @@ namespace FormID_Database_Manager.Services;
 /// Locates game installations using Mutagen's GameLocations API.
 /// Wraps the static API behind an interface for testability.
 /// </summary>
+/// <remarks>
+/// The lookup itself now lives in <see cref="GameInstallationProbe" />, so there is one implementation of it rather
+/// than two identical ones in Core. This type survives only as the interface UserWorkflow still takes; ADR-0002
+/// retires it once install location moves onto the Game Installation module.
+/// </remarks>
 public class GameLocationService : IGameLocationService
 {
+    private readonly GameInstallationProbe _probe = new();
+
     public List<string> GetGameFolders(GameRelease release)
     {
-        try
-        {
-            return GameLocations.GetGameFolders(release)
-                .Select(dp => dp.Path)
-                .Where(Directory.Exists)
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToList();
-        }
-        catch (Exception)
-        {
-            // Mutagen may throw if registry keys are missing, malformed,
-            // or platform-specific store handlers fail.
-            return [];
-        }
+        return [.._probe.GetInstalledDirectories(release)];
     }
 }

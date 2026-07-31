@@ -85,7 +85,7 @@ public async Task MyMethod_CancelsCleanly_WhenTokenSignaled()
 Use the MockFactory for consistent mock setups:
 
 ```csharp
-var mockGameDetection = MockFactory.CreateGameDetectionServiceMock();
+var mockGameLocation = MockFactory.CreateGameLocationServiceMock();
 var cancellationSource = MockFactory.CreateCancellationTokenSource();
 ```
 

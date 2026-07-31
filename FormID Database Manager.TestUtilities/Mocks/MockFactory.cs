@@ -19,16 +19,6 @@ public static class MockFactory
         return new Mock<Action<string, bool>>();
     }
 
-    public static Mock<GameDetectionService> CreateGameDetectionServiceMock()
-    {
-        var mock = new Mock<GameDetectionService>();
-
-        mock.Setup(x => x.DetectGame(It.IsAny<string>()))
-            .Returns(GameRelease.SkyrimSE);
-
-        return mock;
-    }
-
     public static Mock<IGameLocationService> CreateGameLocationServiceMock(
         List<string>? folders = null)
     {
