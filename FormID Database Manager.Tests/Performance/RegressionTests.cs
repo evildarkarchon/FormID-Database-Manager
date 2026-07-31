@@ -37,6 +37,7 @@ public class RegressionTests : IDisposable
             ["BatchInsert_10000Records"] = TimeSpan.FromSeconds(1),
             ["GameDetection_SimpleDirectory"] = TimeSpan.FromMilliseconds(10),
             ["GameDetection_ComplexDirectory"] = TimeSpan.FromMilliseconds(50),
+            ["GameDetection_LargeDirectory"] = TimeSpan.FromMilliseconds(500),
             ["PluginListLoad_Small"] = TimeSpan.FromMilliseconds(20),
             ["PluginListLoad_Large"] = TimeSpan.FromMilliseconds(100),
             ["FormIdProcess_SmallFile"] = TimeSpan.FromMilliseconds(50),
@@ -213,6 +214,49 @@ public class RegressionTests : IDisposable
         _output.WriteLine($"Baseline: {baseline.TotalMilliseconds:F2}ms");
 
         Assert.Equal(GameRelease.Fallout4, result);
+        Assert.True(stopwatch.Elapsed < baseline.Add(TimeSpan.FromMilliseconds(baseline.TotalMilliseconds * 0.3)),
+            $"Performance regression detected! Operation took {stopwatch.Elapsed.TotalMilliseconds:F2}ms, baseline is {baseline.TotalMilliseconds:F2}ms (30% tolerance)");
+    }
+
+    /// <summary>
+    ///     Guards detection against a Data directory holding a realistic mod load: the rules probe named files rather
+    ///     than enumerating the directory, so the cost must not grow with what else is in there.
+    /// </summary>
+    /// <remarks>
+    ///     This is the timing check that used to sit in the detection integration tests. It is a wall-clock assertion
+    ///     over a thousand-file directory, so it belongs behind the manual-performance gate rather than in a suite that
+    ///     runs on every build.
+    /// </remarks>
+    [ManualPerformanceFact]
+    [Trait("Category", "PerformanceRegression")]
+    public void GameDetection_LargeDirectory_StaysWithinBaseline()
+    {
+        // Arrange
+        var gameInstallations = new GameInstallations(new GameInstallationProbe());
+        var gameDirectory = Path.Combine(_testDirectory, "LargeGame");
+        var dataDirectory = Path.Combine(gameDirectory, "Data");
+        Directory.CreateDirectory(dataDirectory);
+
+        File.WriteAllText(Path.Combine(dataDirectory, "Skyrim.esm"), "dummy");
+        File.WriteAllText(Path.Combine(dataDirectory, "Update.esm"), "dummy");
+
+        for (var i = 0; i < 1000; i++)
+        {
+            File.WriteAllText(Path.Combine(dataDirectory, $"Mod{i:D4}.esp"), "dummy");
+        }
+
+        var baseline = _performanceBaselines["GameDetection_LargeDirectory"];
+
+        // Act
+        var stopwatch = Stopwatch.StartNew();
+        var result = gameInstallations.Detect(dataDirectory);
+        stopwatch.Stop();
+
+        // Assert
+        _output.WriteLine($"Game detection (large directory) took: {stopwatch.Elapsed.TotalMilliseconds:F2}ms");
+        _output.WriteLine($"Baseline: {baseline.TotalMilliseconds:F2}ms");
+
+        Assert.Equal(GameRelease.SkyrimLE, result);
         Assert.True(stopwatch.Elapsed < baseline.Add(TimeSpan.FromMilliseconds(baseline.TotalMilliseconds * 0.3)),
             $"Performance regression detected! Operation took {stopwatch.Elapsed.TotalMilliseconds:F2}ms, baseline is {baseline.TotalMilliseconds:F2}ms (30% tolerance)");
     }

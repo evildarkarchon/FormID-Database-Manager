@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using FormID_Database_Manager.Services;
+using FormID_Database_Manager.TestUtilities.Builders;
 using Mutagen.Bethesda;
 
 namespace FormID_Database_Manager.Tests.Fakes;
@@ -81,6 +82,26 @@ internal sealed class InMemoryGameInstallationProbe : IGameInstallationProbe
         var normalized = Normalize(path);
         _directories.Add(normalized);
         AddAncestorDirectories(normalized);
+        return this;
+    }
+
+    /// <summary>
+    ///     Declares every file and directory of a built layout as present.
+    /// </summary>
+    /// <param name="layout">A layout built by <c>GameDetectionBuilder</c>.</param>
+    /// <returns>This probe, for chaining.</returns>
+    public InMemoryGameInstallationProbe WithLayout(GameDetectionLayout layout)
+    {
+        foreach (var directory in layout.Directories)
+        {
+            WithDirectory(directory);
+        }
+
+        foreach (var file in layout.Files)
+        {
+            WithFile(file);
+        }
+
         return this;
     }
 

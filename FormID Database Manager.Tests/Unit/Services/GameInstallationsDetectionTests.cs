@@ -2,288 +2,368 @@
 
 using System;
 using System.IO;
+using System.Linq;
 using FormID_Database_Manager.Services;
 using FormID_Database_Manager.TestUtilities.Builders;
+using FormID_Database_Manager.Tests.Fakes;
 using Mutagen.Bethesda;
 using Xunit;
 
 namespace FormID_Database_Manager.Tests.Unit.Services;
 
 /// <summary>
-///     Detection rules exercised against the production probe adapter. These keep their temp-tree fixtures for now;
-///     replacing them with an in-memory suite is issue #40, which is why the rules move here unchanged rather than
-///     being rewritten in the same step that moves the code.
+///     The detection rules, exercised against a declared in-memory layout rather than a directory tree on disk.
 /// </summary>
-public class GameInstallationsDetectionTests : IDisposable
+/// <remarks>
+///     Detection reads the outside world only through its probe, so a layout is the whole fixture: every case below
+///     names a place that does not exist, which is what proves the rules go through the seam rather than around it.
+///     The production adapter's own behaviour — what a real file system does that the port abstracts away — is covered
+///     by <c>GameInstallationProbeTests</c>, and the canonicalization rule in isolation by <c>GameInstallationsTests</c>.
+/// </remarks>
+public class GameInstallationsDetectionTests
 {
-    private readonly GameInstallations _gameInstallations;
-    private readonly string _testDirectory;
+    /// <summary>
+    ///     A game root that exists nowhere, so a rule consulting the real file system could not answer for it.
+    /// </summary>
+    private const string GameRoot = @"C:\NoSuchPlace\Test Game";
 
-    public GameInstallationsDetectionTests()
+    [Fact]
+    public void Detect_SkyrimMasterWithNoReleaseMarker_ReturnsSkyrimLegendaryEdition()
     {
-        _gameInstallations = new GameInstallations(new GameInstallationProbe());
-        _testDirectory = Path.Combine(Path.GetTempPath(), $"GameInstallationsDetectionTests_{Guid.NewGuid()}");
-        Directory.CreateDirectory(_testDirectory);
-    }
+        var layout = new GameDetectionBuilder()
+            .WithGameRoot(GameRoot)
+            .AddPlugin("Skyrim.esm")
+            .Build();
 
-    public void Dispose()
-    {
-        if (Directory.Exists(_testDirectory))
-        {
-            try
-            {
-                // Remove readonly attributes before deleting
-                RemoveReadOnlyAttributes(_testDirectory);
-                Directory.Delete(_testDirectory, true);
-            }
-            catch
-            {
-                // Best effort cleanup
-            }
-        }
-    }
-
-    private void RemoveReadOnlyAttributes(string path)
-    {
-        try
-        {
-            var dirInfo = new DirectoryInfo(path) { Attributes = FileAttributes.Normal };
-
-            foreach (var file in dirInfo.GetFiles("*", SearchOption.AllDirectories))
-            {
-                file.Attributes = FileAttributes.Normal;
-            }
-
-            foreach (var dir in dirInfo.GetDirectories("*", SearchOption.AllDirectories))
-            {
-                dir.Attributes = FileAttributes.Normal;
-            }
-        }
-        catch
-        {
-            // Best effort
-        }
-    }
-
-    private void CreateGameStructure(string gamePath, string dataPath, params string[] pluginFiles)
-    {
-        Directory.CreateDirectory(gamePath);
-        Directory.CreateDirectory(dataPath);
-
-        foreach (var plugin in pluginFiles)
-        {
-            File.WriteAllText(Path.Combine(dataPath, plugin), "");
-        }
-    }
-
-    private (string gamePath, GameDetectionData detectionData) CreateStructureFromBuilder(
-        string testName,
-        GameDetectionBuilder builder)
-    {
-        var gamePath = Path.Combine(_testDirectory, testName);
-        var detectionData = builder.WithDirectory(gamePath).Build();
-        var dataPath = Path.Combine(detectionData.DirectoryPath, "Data");
-        CreateGameStructure(detectionData.DirectoryPath, dataPath, detectionData.PluginFiles.ToArray());
-        return (gamePath, detectionData);
+        Assert.Equal(GameRelease.SkyrimLE, DetectorFor(layout).Detect(layout.GameRoot));
     }
 
     [Fact]
-    public void Detect_ReturnsNull_WhenDirectoryDoesNotExist()
+    public void Detect_SkyrimMasterWithSkyrimSeExecutable_ReturnsSkyrimSpecialEdition()
     {
-        var result = _gameInstallations.Detect(Path.Combine(_testDirectory, "NonExistent"));
+        var layout = new GameDetectionBuilder()
+            .WithGameRoot(GameRoot)
+            .AddPlugin("Skyrim.esm")
+            .AddRootFile("SkyrimSE.exe")
+            .Build();
 
-        Assert.Null(result);
+        Assert.Equal(GameRelease.SkyrimSE, DetectorFor(layout).Detect(layout.GameRoot));
     }
 
     [Fact]
-    public void Detect_ReturnsNull_WhenNoGameFilesFound()
+    public void Detect_SkyrimMasterWithSkyrimVrExecutable_ReturnsSkyrimVr()
     {
-        var gamePath = Path.Combine(_testDirectory, "EmptyGame");
-        var dataPath = Path.Combine(gamePath, "Data");
-        CreateGameStructure(gamePath, dataPath);
+        var layout = new GameDetectionBuilder()
+            .WithGameRoot(GameRoot)
+            .AddPlugin("Skyrim.esm")
+            .AddRootFile("SkyrimVR.exe")
+            .Build();
 
-        var result = _gameInstallations.Detect(gamePath);
-
-        Assert.Null(result);
-    }
-
-    [Theory]
-    [InlineData("Skyrim.esm", GameRelease.SkyrimLE)]
-    [InlineData("Oblivion.esm", GameRelease.Oblivion)]
-    [InlineData("Fallout4.esm", GameRelease.Fallout4)]
-    [InlineData("Starfield.esm", GameRelease.Starfield)]
-    public void Detect_DetectsGame_FromRootDirectory(string masterFile, GameRelease expectedGame)
-    {
-        var gamePath = Path.Combine(_testDirectory, $"Game_{expectedGame}");
-        var dataPath = Path.Combine(gamePath, "Data");
-        CreateGameStructure(gamePath, dataPath, masterFile);
-
-        var result = _gameInstallations.Detect(gamePath);
-
-        Assert.Equal(expectedGame, result);
-    }
-
-    [Theory]
-    [InlineData("Skyrim.esm", GameRelease.SkyrimLE)]
-    [InlineData("Oblivion.esm", GameRelease.Oblivion)]
-    [InlineData("Fallout4.esm", GameRelease.Fallout4)]
-    [InlineData("Starfield.esm", GameRelease.Starfield)]
-    public void Detect_DetectsGame_FromDataDirectory(string masterFile, GameRelease expectedGame)
-    {
-        var gamePath = Path.Combine(_testDirectory, $"Game_{expectedGame}_Data");
-        var dataPath = Path.Combine(gamePath, "Data");
-        CreateGameStructure(gamePath, dataPath, masterFile);
-
-        var result = _gameInstallations.Detect(dataPath);
-
-        Assert.Equal(expectedGame, result);
+        Assert.Equal(GameRelease.SkyrimVR, DetectorFor(layout).Detect(layout.GameRoot));
     }
 
     /// <summary>
-    ///     Verifies that the spellings canonicalization equalizes reach the same Game Installation.
+    ///     Verifies the GOG release is recognized by its marker directory, which is the only rule reading the probe's
+    ///     directory-existence member.
     /// </summary>
+    [Fact]
+    public void Detect_SkyrimMasterWithGogScriptsDirectory_ReturnsSkyrimGog()
+    {
+        var layout = new GameDetectionBuilder()
+            .WithGameRoot(GameRoot)
+            .AddPlugin("Skyrim.esm")
+            .AddRootDirectory("gogscripts")
+            .Build();
+
+        Assert.Equal(GameRelease.SkyrimSEGog, DetectorFor(layout).Detect(layout.GameRoot));
+    }
+
+    /// <summary>
+    ///     Verifies the second GOG marker: an installation whose scripts directory is absent is still recognized by the
+    ///     store's game-info file.
+    /// </summary>
+    [Fact]
+    public void Detect_SkyrimMasterWithGogGameInfoFile_ReturnsSkyrimGog()
+    {
+        var layout = new GameDetectionBuilder()
+            .WithGameRoot(GameRoot)
+            .AddPlugin("Skyrim.esm")
+            .AddRootFile("goggame-1746476928.info")
+            .Build();
+
+        Assert.Equal(GameRelease.SkyrimSEGog, DetectorFor(layout).Detect(layout.GameRoot));
+    }
+
+    [Fact]
+    public void Detect_EnderalMasterWithSkyrimSeExecutable_ReturnsEnderalSpecialEdition()
+    {
+        var layout = new GameDetectionBuilder()
+            .WithGameRoot(GameRoot)
+            .AddPlugins("Skyrim.esm", "Enderal - Forgotten Stories.esm")
+            .AddRootFile("SkyrimSE.exe")
+            .Build();
+
+        Assert.Equal(GameRelease.EnderalSE, DetectorFor(layout).Detect(layout.GameRoot));
+    }
+
+    [Fact]
+    public void Detect_EnderalMasterWithTesvExecutable_ReturnsEnderalLegendaryEdition()
+    {
+        var layout = new GameDetectionBuilder()
+            .WithGameRoot(GameRoot)
+            .AddPlugins("Skyrim.esm", "Enderal - Forgotten Stories.esm")
+            .AddRootFile("TESV.exe")
+            .Build();
+
+        Assert.Equal(GameRelease.EnderalLE, DetectorFor(layout).Detect(layout.GameRoot));
+    }
+
+    /// <summary>
+    ///     Verifies that the Enderal master alone does not claim the installation: with neither Skyrim executable
+    ///     present the layout falls through to the plain Skyrim rules.
+    /// </summary>
+    [Fact]
+    public void Detect_EnderalMasterWithoutASkyrimExecutable_FallsThroughToSkyrimLegendaryEdition()
+    {
+        var layout = new GameDetectionBuilder()
+            .WithGameRoot(GameRoot)
+            .AddPlugins("Skyrim.esm", "Enderal - Forgotten Stories.esm")
+            .Build();
+
+        Assert.Equal(GameRelease.SkyrimLE, DetectorFor(layout).Detect(layout.GameRoot));
+    }
+
+    [Fact]
+    public void Detect_Fallout4Master_ReturnsFallout4()
+    {
+        var layout = new GameDetectionBuilder()
+            .WithGameRoot(GameRoot)
+            .AddPlugin("Fallout4.esm")
+            .Build();
+
+        Assert.Equal(GameRelease.Fallout4, DetectorFor(layout).Detect(layout.GameRoot));
+    }
+
+    [Fact]
+    public void Detect_Fallout4MasterWithVrExecutable_ReturnsFallout4Vr()
+    {
+        var layout = new GameDetectionBuilder()
+            .WithGameRoot(GameRoot)
+            .AddPlugin("Fallout4.esm")
+            .AddRootFile("Fallout4VR.exe")
+            .Build();
+
+        Assert.Equal(GameRelease.Fallout4VR, DetectorFor(layout).Detect(layout.GameRoot));
+    }
+
+    [Fact]
+    public void Detect_OblivionMaster_ReturnsOblivion()
+    {
+        var layout = new GameDetectionBuilder()
+            .WithGameRoot(GameRoot)
+            .AddPlugin("Oblivion.esm")
+            .Build();
+
+        Assert.Equal(GameRelease.Oblivion, DetectorFor(layout).Detect(layout.GameRoot));
+    }
+
+    [Fact]
+    public void Detect_StarfieldMaster_ReturnsStarfield()
+    {
+        var layout = new GameDetectionBuilder()
+            .WithGameRoot(GameRoot)
+            .AddPlugin("Starfield.esm")
+            .Build();
+
+        Assert.Equal(GameRelease.Starfield, DetectorFor(layout).Detect(layout.GameRoot));
+    }
+
+    /// <summary>
+    ///     Verifies that a Data directory holding Plugins but no known game master reports the absence of a game rather
+    ///     than failing.
+    /// </summary>
+    [Fact]
+    public void Detect_LayoutWithoutAKnownMaster_ReturnsNull()
+    {
+        var layout = new GameDetectionBuilder()
+            .WithGameRoot(GameRoot)
+            .AddPlugin("SomeMod.esp")
+            .Build();
+
+        Assert.Null(DetectorFor(layout).Detect(layout.GameRoot));
+    }
+
+    /// <summary>
+    ///     Verifies that an empty Data directory is a game-less directory, not a failure.
+    /// </summary>
+    [Fact]
+    public void Detect_EmptyDataDirectory_ReturnsNull()
+    {
+        var layout = new GameDetectionBuilder().WithGameRoot(GameRoot).Build();
+
+        Assert.Null(DetectorFor(layout).Detect(layout.GameRoot));
+    }
+
+    /// <summary>
+    ///     Verifies that a directory the probe knows nothing about — the in-memory stand-in for one that does not
+    ///     exist, with not even a Data directory beneath it — reports the absence of a game rather than failing.
+    /// </summary>
+    [Fact]
+    public void Detect_DirectoryTheProbeDoesNotKnow_ReturnsNull()
+    {
+        var gameInstallations = new GameInstallations(new InMemoryGameInstallationProbe());
+
+        Assert.Null(gameInstallations.Detect(Path.Combine(GameRoot, "Absent")));
+    }
+
+    /// <summary>
+    ///     Verifies that nothing is read from the directory's name: a directory named after a game but holding no
+    ///     master file still reports no game.
+    /// </summary>
+    /// <param name="gameLikeDirectoryName">A directory name a user might expect to be recognized on its own.</param>
+    [Theory]
+    [InlineData("Skyrim Special Edition")]
+    [InlineData("SkyrimVR")]
+    [InlineData("Fallout 4")]
+    [InlineData("Starfield")]
+    [InlineData("Oblivion")]
+    public void Detect_GameLikeDirectoryNameWithoutAMaster_ReturnsNull(string gameLikeDirectoryName)
+    {
+        var layout = new GameDetectionBuilder()
+            .WithGameRoot(Path.Combine(@"C:\NoSuchPlace", gameLikeDirectoryName))
+            .Build();
+
+        Assert.Null(DetectorFor(layout).Detect(layout.GameRoot));
+    }
+
+    /// <summary>
+    ///     Verifies the master-file precedence a mixed Data directory falls under: Skyrim is checked first, so a
+    ///     directory holding both masters detects as Skyrim rather than as Fallout 4.
+    /// </summary>
+    [Fact]
+    public void Detect_DataDirectoryWithTwoKnownMasters_ReturnsTheFirstRuleThatMatches()
+    {
+        var layout = new GameDetectionBuilder()
+            .WithGameRoot(GameRoot)
+            .AddPlugins("Skyrim.esm", "Fallout4.esm")
+            .Build();
+
+        Assert.Equal(GameRelease.SkyrimLE, DetectorFor(layout).Detect(layout.GameRoot));
+    }
+
+    /// <summary>
+    ///     Verifies both accepted inputs resolve to one Game Installation, for a release identified by its master file
+    ///     alone and for one identified by a marker beside the Data directory.
+    /// </summary>
+    /// <param name="masterFile">The master file the Data directory holds.</param>
+    /// <param name="rootMarkerFile">A release marker in the game root, or null when the master alone decides.</param>
+    /// <param name="expectedGame">The release both inputs must detect as.</param>
+    [Theory]
+    [InlineData("Skyrim.esm", null, GameRelease.SkyrimLE)]
+    [InlineData("Skyrim.esm", "SkyrimVR.exe", GameRelease.SkyrimVR)]
+    [InlineData("Oblivion.esm", null, GameRelease.Oblivion)]
+    [InlineData("Fallout4.esm", "Fallout4VR.exe", GameRelease.Fallout4VR)]
+    [InlineData("Starfield.esm", null, GameRelease.Starfield)]
+    public void Detect_GameRootOrDataDirectory_ResolveToTheSameInstallation(
+        string masterFile,
+        string? rootMarkerFile,
+        GameRelease expectedGame)
+    {
+        var builder = new GameDetectionBuilder()
+            .WithGameRoot(GameRoot)
+            .AddPlugin(masterFile);
+
+        if (rootMarkerFile is not null)
+        {
+            builder.AddRootFile(rootMarkerFile);
+        }
+
+        var layout = builder.Build();
+        var gameInstallations = DetectorFor(layout);
+
+        Assert.Equal(expectedGame, gameInstallations.Detect(layout.GameRoot));
+        Assert.Equal(expectedGame, gameInstallations.Detect(layout.DataDirectory));
+    }
+
+    /// <summary>
+    ///     Verifies that a pasted path keeping its terminal separator reaches the same Game Installation, from either
+    ///     accepted input.
+    /// </summary>
+    /// <param name="separator">A terminal separator in either of the spellings a user can produce.</param>
     [Theory]
     [InlineData("\\")]
     [InlineData("/")]
-    public void Detect_DataDirectoryWithTrailingSeparator_MatchesThePlainForm(string separator)
+    public void Detect_TrailingSeparator_MatchesThePlainForm(string separator)
     {
-        var gamePath = Path.Combine(_testDirectory, $"TrailingSeparator_{(int)separator[0]}");
-        var dataPath = Path.Combine(gamePath, "Data");
-        CreateGameStructure(gamePath, dataPath, "Starfield.esm");
+        var layout = new GameDetectionBuilder()
+            .WithGameRoot(GameRoot)
+            .AddPlugin("Starfield.esm")
+            .Build();
+        var gameInstallations = DetectorFor(layout);
 
-        Assert.Equal(GameRelease.Starfield, _gameInstallations.Detect(dataPath + separator));
-        Assert.Equal(GameRelease.Starfield, _gameInstallations.Detect(gamePath + separator));
+        Assert.Equal(GameRelease.Starfield, gameInstallations.Detect(layout.GameRoot + separator));
+        Assert.Equal(GameRelease.Starfield, gameInstallations.Detect(layout.DataDirectory + separator));
+    }
+
+    /// <summary>
+    ///     Verifies that a path spelled with the alternate separator throughout reaches the same Game Installation.
+    /// </summary>
+    [Fact]
+    public void Detect_MixedSeparators_MatchesThePlainForm()
+    {
+        var layout = new GameDetectionBuilder()
+            .WithGameRoot(GameRoot)
+            .AddPlugin("Oblivion.esm")
+            .Build();
+        var mixed = layout.GameRoot.Replace(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + "/Data";
+
+        Assert.Equal(GameRelease.Oblivion, DetectorFor(layout).Detect(mixed));
+    }
+
+    /// <summary>
+    ///     Verifies that dot segments resolve before the Data check, so a path routed through a sibling directory and
+    ///     back still names the same Game Installation.
+    /// </summary>
+    [Fact]
+    public void Detect_DotSegments_MatchesThePlainForm()
+    {
+        var layout = new GameDetectionBuilder()
+            .WithGameRoot(GameRoot)
+            .AddPlugin("Fallout4.esm")
+            .Build();
+        var gameInstallations = DetectorFor(layout);
+
+        Assert.Equal(GameRelease.Fallout4, gameInstallations.Detect(Path.Combine(layout.DataDirectory, ".")));
+        Assert.Equal(GameRelease.Fallout4, gameInstallations.Detect(Path.Combine(layout.GameRoot, "unused", "..")));
+        Assert.Equal(
+            GameRelease.Fallout4,
+            gameInstallations.Detect(Path.Combine(layout.DataDirectory, "unused", "..")));
+    }
+
+    /// <summary>
+    ///     Verifies that a Data directory spelled in any casing is recognized as one, rather than having a second Data
+    ///     segment appended to it.
+    /// </summary>
+    /// <param name="dataFolderName">The Data segment as the file system might hand it back.</param>
+    [Theory]
+    [InlineData("Data")]
+    [InlineData("data")]
+    [InlineData("DATA")]
+    public void Detect_DataDirectoryInAnyCasing_MatchesThePlainForm(string dataFolderName)
+    {
+        var layout = new GameDetectionBuilder()
+            .WithGameRoot(GameRoot)
+            .AddPlugin("Starfield.esm")
+            .Build();
+
         Assert.Equal(
             GameRelease.Starfield,
-            _gameInstallations.Detect(Path.Combine(dataPath, "unused", "..")));
-    }
-
-    [Fact]
-    public void Detect_DetectsSkyrimVR_WhenVRExecutableExists()
-    {
-        var gamePath = Path.Combine(_testDirectory, "SkyrimVR");
-        var dataPath = Path.Combine(gamePath, "Data");
-        CreateGameStructure(gamePath, dataPath, "Skyrim.esm");
-        File.WriteAllText(Path.Combine(gamePath, "SkyrimVR.exe"), "");
-
-        var result = _gameInstallations.Detect(gamePath);
-
-        Assert.Equal(GameRelease.SkyrimVR, result);
-    }
-
-    [Fact]
-    public void Detect_DetectsSkyrimVR_FromDataDirectory()
-    {
-        var gamePath = Path.Combine(_testDirectory, "SkyrimVR_Data");
-        var dataPath = Path.Combine(gamePath, "Data");
-        CreateGameStructure(gamePath, dataPath, "Skyrim.esm");
-        File.WriteAllText(Path.Combine(gamePath, "SkyrimVR.exe"), "");
-
-        var result = _gameInstallations.Detect(dataPath);
-
-        Assert.Equal(GameRelease.SkyrimVR, result);
-    }
-
-    [Fact]
-    public void Detect_DetectsSkyrimSE_WhenSkyrimSEExecutableExists()
-    {
-        var gamePath = Path.Combine(_testDirectory, "SkyrimSE");
-        var dataPath = Path.Combine(gamePath, "Data");
-        CreateGameStructure(gamePath, dataPath, "Skyrim.esm");
-        File.WriteAllText(Path.Combine(gamePath, "SkyrimSE.exe"), string.Empty);
-
-        var result = _gameInstallations.Detect(gamePath);
-
-        Assert.Equal(GameRelease.SkyrimSE, result);
-    }
-
-    [Fact]
-    public void Detect_DetectsSkyrimLE_UsingGameDetectionBuilder()
-    {
-        var builder = new GameDetectionBuilder()
-            .WithGame(GameRelease.SkyrimLE)
-            .AddPlugin("Skyrim.esm");
-        var (gamePath, detectionData) = CreateStructureFromBuilder("SkyrimLE_Builder", builder);
-
-        var result = _gameInstallations.Detect(gamePath);
-
-        Assert.Equal(detectionData.ExpectedGame, result);
-    }
-
-    [Fact]
-    public void Detect_DetectsEnderalSE_UsingGameDetectionBuilder()
-    {
-        var builder = new GameDetectionBuilder()
-            .WithGame(GameRelease.EnderalSE)
-            .AddPlugins("Skyrim.esm", "Enderal - Forgotten Stories.esm");
-        var (gamePath, detectionData) = CreateStructureFromBuilder("EnderalSE_Builder", builder);
-        File.WriteAllText(Path.Combine(gamePath, "SkyrimSE.exe"), string.Empty);
-
-        var result = _gameInstallations.Detect(gamePath);
-
-        Assert.Equal(detectionData.ExpectedGame, result);
-    }
-
-    [Fact]
-    public void Detect_DetectsEnderalLE_UsingGameDetectionBuilder()
-    {
-        var builder = new GameDetectionBuilder()
-            .WithGame(GameRelease.EnderalLE)
-            .AddPlugins("Skyrim.esm", "Enderal - Forgotten Stories.esm");
-        var (gamePath, detectionData) = CreateStructureFromBuilder("EnderalLE_Builder", builder);
-        File.WriteAllText(Path.Combine(gamePath, "TESV.exe"), string.Empty);
-
-        var result = _gameInstallations.Detect(gamePath);
-
-        Assert.Equal(detectionData.ExpectedGame, result);
-    }
-
-    [Fact]
-    public void Detect_DetectsSkyrimGOG_WhenGOGFilesExist()
-    {
-        var gamePath = Path.Combine(_testDirectory, "SkyrimGOG");
-        var dataPath = Path.Combine(gamePath, "Data");
-        var gogScriptsPath = Path.Combine(gamePath, "gogscripts");
-
-        CreateGameStructure(gamePath, dataPath, "Skyrim.esm");
-        Directory.CreateDirectory(gogScriptsPath);
-
-        var result = _gameInstallations.Detect(gamePath);
-
-        Assert.Equal(GameRelease.SkyrimSEGog, result);
-    }
-
-    [Fact]
-    public void Detect_DetectsSkyrimGOG_WithGOGGameInfoFile()
-    {
-        var gamePath = Path.Combine(_testDirectory, "SkyrimGOG_Info");
-        var dataPath = Path.Combine(gamePath, "Data");
-
-        CreateGameStructure(gamePath, dataPath, "Skyrim.esm");
-        File.WriteAllText(Path.Combine(gamePath, "goggame-1746476928.info"), "");
-
-        var result = _gameInstallations.Detect(gamePath);
-
-        Assert.Equal(GameRelease.SkyrimSEGog, result);
-    }
-
-    [Fact]
-    public void Detect_DetectsFallout4VR_WhenVRExecutableExists()
-    {
-        var gamePath = Path.Combine(_testDirectory, "Fallout4VR");
-        var dataPath = Path.Combine(gamePath, "Data");
-        CreateGameStructure(gamePath, dataPath, "Fallout4.esm");
-        File.WriteAllText(Path.Combine(gamePath, "Fallout4VR.exe"), "");
-
-        var result = _gameInstallations.Detect(gamePath);
-
-        Assert.Equal(GameRelease.Fallout4VR, result);
+            DetectorFor(layout).Detect(Path.Combine(layout.GameRoot, dataFolderName)));
     }
 
     /// <summary>
     ///     Verifies the narrowed contract: a path detection cannot use at all throws instead of reporting the absence
-    ///     of a game. This replaces the previous test, which asserted the old swallow-everything behaviour by way of a
-    ///     read-only directory — a case the file-existence APIs never failed on anyway.
+    ///     of a game, so the caller can tell the user which of the two actually happened.
     /// </summary>
     /// <param name="malformedDirectory">A directory value detection cannot resolve to a Game Installation.</param>
     [Theory]
@@ -292,7 +372,9 @@ public class GameInstallationsDetectionTests : IDisposable
     [InlineData("C:\\Games\\Sky\0rim")]
     public void Detect_MalformedDirectory_ThrowsRatherThanReturningNull(string malformedDirectory)
     {
-        Assert.Throws<ArgumentException>(() => _gameInstallations.Detect(malformedDirectory));
+        var gameInstallations = new GameInstallations(new InMemoryGameInstallationProbe());
+
+        Assert.Throws<ArgumentException>(() => gameInstallations.Detect(malformedDirectory));
     }
 
     /// <summary>
@@ -302,53 +384,55 @@ public class GameInstallationsDetectionTests : IDisposable
     [Fact]
     public void Detect_NullDirectory_ThrowsRatherThanReturningNull()
     {
-        Assert.Throws<ArgumentNullException>(() => _gameInstallations.Detect(null!));
+        var gameInstallations = new GameInstallations(new InMemoryGameInstallationProbe());
+
+        Assert.Throws<ArgumentNullException>(() => gameInstallations.Detect(null!));
     }
 
     /// <summary>
-    ///     Verifies that a directory the user cannot fully read still reports the absence of a game rather than
-    ///     failing: the file-existence probe reports false, which is a game-less directory, not a malformed path.
+    ///     Verifies that detection reads the outside world only through the probe: every layout in this file exists
+    ///     nowhere on disk, and this case says so explicitly rather than leaving it implied.
     /// </summary>
     [Fact]
-    public void Detect_ReadOnlyDirectoryWithoutGameFiles_ReturnsNull()
+    public void Detect_LayoutThatExistsOnlyInTheProbe_AppliesTheRealRules()
     {
-        var restrictedPath = Path.Combine(_testDirectory, "RestrictedAccess");
-        Directory.CreateDirectory(restrictedPath);
+        var layout = new GameDetectionBuilder()
+            .WithGameRoot(GameRoot)
+            .AddPlugin("Skyrim.esm")
+            .AddRootFile("SkyrimSE.exe")
+            .Build();
 
-        if (OperatingSystem.IsWindows())
-        {
-            File.SetAttributes(restrictedPath, FileAttributes.ReadOnly);
-        }
-
-        var result = _gameInstallations.Detect(restrictedPath);
-
-        Assert.Null(result);
+        Assert.False(Directory.Exists(layout.GameRoot));
+        Assert.Equal(GameRelease.SkyrimSE, DetectorFor(layout).Detect(layout.GameRoot));
     }
 
-    // Base game Plugin coverage lives in BaseGamePluginsTests: the sets moved to the BaseGamePlugins constant
-    // table, which detection no longer owns.
-
-    [Theory]
-    [InlineData("C:\\Steam\\steamapps\\common\\Skyrim Special Edition\\Data")]
-    [InlineData("D:\\Games\\SkyrimSE\\Data")]
-    [InlineData("/home/user/.steam/steam/steamapps/common/Skyrim Special Edition/Data")]
-    public void Detect_HandlesVariousPathFormats(string pathPattern)
+    /// <summary>
+    ///     Verifies that parent-directory resolution is path arithmetic rather than a probe call: every path the module
+    ///     probes is a concrete file or marker directory, never a bare parent lookup.
+    /// </summary>
+    [Fact]
+    public void Detect_DataDirectoryInput_ResolvesTheGameRootWithoutProbingForIt()
     {
-        if (!OperatingSystem.IsWindows() && pathPattern.Contains(":\\"))
-        {
-            return;
-        }
+        var layout = new GameDetectionBuilder()
+            .WithGameRoot(GameRoot)
+            .AddPlugin("Skyrim.esm")
+            .Build();
+        var probe = new InMemoryGameInstallationProbe().WithLayout(layout);
 
-        if (OperatingSystem.IsWindows() && pathPattern.StartsWith("/"))
-        {
-            return;
-        }
+        new GameInstallations(probe).Detect(layout.DataDirectory);
 
-        var testPath = Path.Combine(_testDirectory, "PathTest", "Data");
-        CreateGameStructure(Path.GetDirectoryName(testPath)!, testPath, "Skyrim.esm");
+        var probedPaths = probe.ProbedPaths.Select(Path.TrimEndingDirectorySeparator).ToList();
+        Assert.DoesNotContain(layout.GameRoot, probedPaths);
+        Assert.DoesNotContain(layout.DataDirectory, probedPaths);
+    }
 
-        var result = _gameInstallations.Detect(testPath);
-
-        Assert.Equal(GameRelease.SkyrimLE, result);
+    /// <summary>
+    ///     Builds a detection module over a probe holding nothing but the supplied layout.
+    /// </summary>
+    /// <param name="layout">The declared Game Installation layout.</param>
+    /// <returns>A module whose rules run against that layout and nothing else.</returns>
+    private static GameInstallations DetectorFor(GameDetectionLayout layout)
+    {
+        return new GameInstallations(new InMemoryGameInstallationProbe().WithLayout(layout));
     }
 }
