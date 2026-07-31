@@ -320,15 +320,25 @@ internal sealed class PluginList : IDisposable
             changed = PublishLocked(retainedConfirmed, new PluginListRefreshingActivity(source, 0, 0));
         }
 
-        // The generation changes before cancellation so late callbacks cannot win even when discovery ignores its token.
-        retired?.Retire();
         try
         {
+            // The generation changes before cancellation so late callbacks cannot win even when discovery ignores its token.
+            retired?.Retire();
             changed?.Invoke(this, EventArgs.Empty);
         }
         catch
         {
+            try
+            {
+                PublishTerminal(operation, new PluginListFaultedActivity(operation.Source));
+            }
+            catch
+            {
+                // The begin-refresh failure remains primary; terminal notification is best-effort while unwinding.
+            }
+
             FinishRefresh(operation);
+            // The replacement token has not escaped BeginRefresh, so this retirement cannot run discovery callbacks.
             operation.Retire();
             operation.Dispose();
             throw;

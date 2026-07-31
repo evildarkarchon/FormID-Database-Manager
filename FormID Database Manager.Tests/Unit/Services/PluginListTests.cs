@@ -651,6 +651,67 @@ public sealed class PluginListTests
         await newerRefresh;
     }
 
+    /// <summary>
+    ///     Verifies that a throwing cancellation callback from the retired refresh cannot leave its unstarted replacement
+    ///     active or permanently expose refreshing state.
+    /// </summary>
+    [Fact]
+    public async Task RefreshAsync_RetirementCallbackFailure_CleansUpReplacementAndAllowsRetry()
+    {
+        var discovery = new ControlledPluginListDiscovery();
+        var retired = discovery.Enqueue();
+        var retry = discovery.Enqueue();
+        using var sut = new PluginList(discovery);
+        var retiredRefresh = sut.RefreshAsync(
+            GameRelease.SkyrimSE,
+            CreateGameDirectory(),
+            AdvancedMode.Off,
+            TestContext.Current.CancellationToken);
+        var retirementFailure = new InvalidOperationException("Synthetic retirement callback failure.");
+        var terminalNotificationFailure = new InvalidOperationException("Synthetic terminal notification failure.");
+        using var registration = retired.CancellationToken.Register(
+            () => throw retirementFailure);
+        var terminalNotificationAttempted = false;
+        sut.Changed += (_, _) =>
+        {
+            if (sut.Current.Activity is PluginListFaultedActivity)
+            {
+                terminalNotificationAttempted = true;
+                throw terminalNotificationFailure;
+            }
+        };
+        var replacementDirectory = CreateGameDirectory();
+
+        var propagated = await Assert.ThrowsAsync<AggregateException>(
+            () => sut.RefreshAsync(
+                GameRelease.SkyrimSE,
+                replacementDirectory,
+                AdvancedMode.Off,
+                TestContext.Current.CancellationToken));
+
+        Assert.True(terminalNotificationAttempted);
+        var primaryFailures = propagated.Flatten().InnerExceptions;
+        Assert.Contains(retirementFailure, primaryFailures);
+        Assert.DoesNotContain(terminalNotificationFailure, primaryFailures);
+        Assert.True(retired.CancellationToken.IsCancellationRequested);
+        var faulted = Assert.IsType<PluginListFaultedActivity>(sut.Current.Activity);
+        Assert.Equal(PluginListSource.Create(GameRelease.SkyrimSE, replacementDirectory), faulted.Source);
+
+        retired.Cancel();
+        await retiredRefresh;
+        Assert.Same(faulted, sut.Current.Activity);
+        var retryRefresh = sut.RefreshAsync(
+            GameRelease.SkyrimSE,
+            replacementDirectory,
+            AdvancedMode.Off,
+            TestContext.Current.CancellationToken);
+        retry.Complete("Retry.esp");
+        await retryRefresh;
+
+        var confirmed = Assert.IsType<ConfirmedPluginList>(sut.Current.Confirmed);
+        Assert.Equal(["Retry.esp"], confirmed.Entries.Select(entry => entry.Name).ToArray());
+    }
+
     [Fact]
     public async Task Invalidate_ActiveRefresh_RetiresWorkAndSuppressesLatePublication()
     {
