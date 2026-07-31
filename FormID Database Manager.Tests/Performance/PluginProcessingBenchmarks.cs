@@ -43,7 +43,7 @@ public class PluginProcessingBenchmarks : IDisposable
         // Processing Run owns Store opening so the end-to-end benchmark does not pre-initialize its database.
 
         // Create test plugins
-        var dataPath = GameReleaseHelper.ResolveDataPath(_testDirectory);
+        var dataPath = GameInstallations.CanonicalizeDataDirectory(_testDirectory);
         Directory.CreateDirectory(dataPath);
         _testPlugins = CreateTestPlugins(dataPath, PluginCount);
     }

@@ -123,7 +123,7 @@ public sealed class ProcessingRunIntegrationTests : IDisposable
     {
         const string pluginName = "SelectedPlugin.esp";
         var gameDirectory = Path.Combine(_testDirectory, "Skyrim");
-        var dataPath = GameReleaseHelper.ResolveDataPath(gameDirectory);
+        var dataPath = GameInstallations.CanonicalizeDataDirectory(gameDirectory);
         Directory.CreateDirectory(dataPath);
         var pluginPath = Path.Combine(dataPath, pluginName);
         var databasePath = Path.Combine(_testDirectory, "selected-plugin.db");

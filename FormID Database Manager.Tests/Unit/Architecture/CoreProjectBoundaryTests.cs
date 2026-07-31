@@ -178,11 +178,14 @@ public class CoreProjectBoundaryTests
         Assert.DoesNotContain("GameLoadOrderProvider", processingRunSource, StringComparison.Ordinal);
         Assert.DoesNotContain("IPluginOverlayReader", processingRunSource, StringComparison.Ordinal);
         Assert.DoesNotContain("MutagenPluginOverlayReader", processingRunSource, StringComparison.Ordinal);
-        Assert.DoesNotContain("GameReleaseHelper.ResolveDataPath", processingRunSource, StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "GameInstallations.CanonicalizeDataDirectory",
+            processingRunSource,
+            StringComparison.Ordinal);
 
         Assert.Contains("IGameLoadOrderProvider", pluginIngestionSource, StringComparison.Ordinal);
         Assert.Contains("IPluginOverlayReader", pluginIngestionSource, StringComparison.Ordinal);
-        Assert.Contains("GameReleaseHelper.ResolveDataPath", pluginIngestionSource, StringComparison.Ordinal);
+        Assert.Contains("GameInstallations.CanonicalizeDataDirectory", pluginIngestionSource, StringComparison.Ordinal);
         Assert.Contains("IFormIdRecordStoreSession recordStore", pluginIngestionSource, StringComparison.Ordinal);
         Assert.DoesNotContain("FormIdRecordStore.OpenAsync", pluginIngestionSource, StringComparison.Ordinal);
         Assert.DoesNotContain("recordStore.OptimizeAsync", pluginIngestionSource, StringComparison.Ordinal);

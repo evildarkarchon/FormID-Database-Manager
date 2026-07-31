@@ -413,3 +413,4 @@ coverage/
 .coverage/
 # CocoIndex Code (ccc)
 /.cocoindex_code/
+graphify-out/

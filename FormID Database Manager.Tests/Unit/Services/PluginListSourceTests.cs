@@ -8,24 +8,12 @@ using Xunit;
 
 namespace FormID_Database_Manager.Tests.Unit.Services;
 
-public sealed class PluginListSourceTests : IDisposable
+public sealed class PluginListSourceTests
 {
+    // The type performs no I/O, so these directories never need to exist on disk.
     private readonly string _gameDirectory = Path.Combine(
         Path.GetTempPath(),
         $"plugin-list-source-tests-{Guid.NewGuid():N}");
-
-    public PluginListSourceTests()
-    {
-        Directory.CreateDirectory(Path.Combine(_gameDirectory, "Data"));
-    }
-
-    public void Dispose()
-    {
-        if (Directory.Exists(_gameDirectory))
-        {
-            Directory.Delete(_gameDirectory, recursive: true);
-        }
-    }
 
     [Fact]
     public void Create_EquivalentGameRootAndDataDirectory_ProducesOneCanonicalSource()

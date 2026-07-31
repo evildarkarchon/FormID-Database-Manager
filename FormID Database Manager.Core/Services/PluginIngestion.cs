@@ -81,7 +81,7 @@ internal sealed class PluginIngestion : IPluginIngestion
         cancellationToken.ThrowIfCancellationRequested();
 
         var totalPluginCount = request.PluginNames.Length;
-        var dataPath = GameReleaseHelper.ResolveDataPath(request.GameDirectory);
+        var dataPath = GameInstallations.CanonicalizeDataDirectory(request.GameDirectory);
         progress?.Report(PluginIngestionProgress.PreparingLoadOrder(totalPluginCount));
         // Synchronous progress callbacks can request cancellation before load-order initialization begins.
         cancellationToken.ThrowIfCancellationRequested();

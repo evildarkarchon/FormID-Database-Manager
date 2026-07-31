@@ -70,20 +70,14 @@ public class GameDetectionService
     {
         try
         {
-            var resolvedDataPath = GameReleaseHelper.ResolveDataPath(gameDirectory);
+            // One canonical Data directory covers both accepted inputs, so a game root and its Data directory —
+            // however either is spelled — probe the same place. The game root is then path arithmetic on that result.
+            var dataPath = GameInstallations.CanonicalizeDataDirectory(gameDirectory);
 
-            // If this is already a data directory, use it directly
-            if (string.Equals(resolvedDataPath, gameDirectory, StringComparison.OrdinalIgnoreCase))
+            if (Directory.Exists(dataPath))
             {
-                var gameRoot = Directory.GetParent(gameDirectory)?.FullName ??
-                               Path.GetFullPath(Path.Combine(gameDirectory, ".."));
-                return DetectGameFromDataDirectory(resolvedDataPath, gameRoot);
-            }
-
-            // Check in the Data subdirectory
-            if (Directory.Exists(resolvedDataPath))
-            {
-                return DetectGameFromDataDirectory(resolvedDataPath, gameDirectory);
+                var gameRoot = Path.GetDirectoryName(dataPath) ?? dataPath;
+                return DetectGameFromDataDirectory(dataPath, gameRoot);
             }
         }
         catch (Exception)

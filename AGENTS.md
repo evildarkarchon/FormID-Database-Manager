@@ -84,7 +84,8 @@ The solution has four projects in `FormID Database Manager.slnx`:
 ## Key Patterns
 
 - **Thread safety**: UI updates go through `IThreadDispatcher`. Plugin List presentation membership is dispatcher-confined and exposed read-only; the ViewModel uses `Interlocked` for filter reentrancy.
-- **SQL injection prevention**: `GameReleaseHelper.GetSafeTableName()` uses an explicit whitelist switch on `GameRelease` enum.
+- **SQL injection prevention**: `GameReleaseTableNames.GetSafeTableName()` uses an explicit whitelist switch on `GameRelease` enum.
+- **Data-path canonicalization**: `GameInstallations.CanonicalizeDataDirectory()` is the single implementation of the game-root-or-Data-directory rule; production must not add a second data-path helper (ADR-0002).
 - **Cancellation**: All async processing supports `CancellationToken`. `ProcessingRunExecutor` owns the active Processing Run's `CancellationTokenSource` lifecycle. Note: Mutagen's `CreateFromBinaryOverlay` is synchronous and not cancellable.
 - **Test collections**: Database tests use `[Collection(...)]` for sequential execution. Unit tests run in parallel.
 - **InternalsVisibleTo**: The core project exposes internals to the test and WinUI projects.

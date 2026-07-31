@@ -51,6 +51,10 @@ _Avoid_: Game type, release enum.
 The User Workflow state that determines which Plugin List can be loaded: selected GameRelease, selected game directory, and Advanced Mode.
 _Avoid_: Game selection, current game state.
 
+**Game Installation**:
+A Bethesda game present on disk at a directory: its GameRelease and the canonical Data directory derived from that directory. A Game Installation is detected from a directory, or located from a GameRelease through the platform's install records. A Game Installation is what is on disk; a Game Context is what the user selected.
+_Avoid_: Game folder, install path, game directory.
+
 **Entry**:
 The human-readable label stored for a FormID, usually an EditorID or record name.
 _Avoid_: Name value.

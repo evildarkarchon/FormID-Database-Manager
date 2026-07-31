@@ -43,6 +43,6 @@ internal static class DefaultDatabasePathProvider
         var databaseDirectory = Path.Combine(localApplicationDataRoot, AppDataDirectoryName, DatabaseDirectoryName);
         Directory.CreateDirectory(databaseDirectory);
 
-        return Path.Combine(databaseDirectory, $"{GameReleaseHelper.GetSafeTableName(gameRelease)}.db");
+        return Path.Combine(databaseDirectory, $"{GameReleaseTableNames.GetSafeTableName(gameRelease)}.db");
     }
 }

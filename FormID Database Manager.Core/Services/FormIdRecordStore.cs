@@ -125,7 +125,7 @@ public sealed class FormIdRecordStore : IFormIdRecordStoreSession
         ArgumentException.ThrowIfNullOrWhiteSpace(databasePath);
 
         // Resolve the table name before opening a connection so unsupported releases fail through the whitelist seam.
-        var tableName = GameReleaseHelper.GetSafeTableName(gameRelease);
+        var tableName = GameReleaseTableNames.GetSafeTableName(gameRelease);
         var connection = new SqliteConnection(CreateConnectionString(databasePath));
         FormIdRecordStore? store = null;
 

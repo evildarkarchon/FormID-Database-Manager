@@ -61,7 +61,7 @@ public sealed class PluginIngestionTests : IDisposable
             progress,
             TestContext.Current.CancellationToken);
 
-        Assert.Equal(GameReleaseHelper.ResolveDataPath(gameDirectory), loadOrderProvider.CapturedDataPath);
+        Assert.Equal(Path.Combine(gameDirectory, "Data"), loadOrderProvider.CapturedDataPath);
         Assert.Equal(GameRelease.Starfield, loadOrderProvider.CapturedGameRelease);
         Assert.True(loadOrderProvider.CapturedIncludeMasterFlagsLookup);
         Assert.Equal(1, loadOrderProvider.BuildSnapshotCallCount);
@@ -94,6 +94,42 @@ public sealed class PluginIngestionTests : IDisposable
                 Assert.Equal("Second.esp", ingested.PluginName);
                 Assert.Equal(1, ingested.FormIdCount);
             });
+    }
+
+    /// <summary>
+    ///     Verifies that a selected game directory ending in a separator ingests from the same canonical Data directory
+    ///     as the plain form, so a pasted trailing separator cannot send a Processing Run looking in the wrong place.
+    /// </summary>
+    [Fact]
+    public async Task IngestAsync_GameDirectoryWithTrailingSeparator_UsesTheCanonicalDataDirectory()
+    {
+        var gameDirectory = CreateGameDirectory();
+        await CreatePluginFileAsync(gameDirectory, "First.esp");
+        var events = new List<string>();
+        var loadOrderProvider = new RecordingLoadOrderProvider(
+            new GameLoadOrderSnapshot(
+                ["First.esp"],
+                [new KeyedMasterStyle(ModKey.FromNameAndExtension("First.esp"), MasterStyle.Full)]),
+            events);
+        IPluginIngestion sut = new PluginIngestion(
+            loadOrderProvider,
+            new RecordingOverlayReader(events),
+            new EntryExtraction());
+
+        var report = await sut.IngestAsync(
+            new SelectedPluginIngestionRequest(
+                gameDirectory + Path.DirectorySeparatorChar,
+                GameRelease.SkyrimSE,
+                ["First.esp"],
+                UpdateMode.Append),
+            new RecordingRecordStoreSession(events),
+            progress: null,
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(Path.Combine(gameDirectory, "Data"), loadOrderProvider.CapturedDataPath);
+        // A Plugin found under the canonical Data directory must be ingested, not reported missing.
+        var outcome = Assert.Single(report.Outcomes);
+        Assert.IsType<IngestedPlugin>(outcome);
     }
 
     /// <summary>
@@ -888,14 +924,14 @@ public sealed class PluginIngestionTests : IDisposable
     private string CreateGameDirectory()
     {
         var directory = Path.Combine(Path.GetTempPath(), $"plugin_ingestion_{Guid.NewGuid():N}");
-        Directory.CreateDirectory(GameReleaseHelper.ResolveDataPath(directory));
+        Directory.CreateDirectory(Path.Combine(directory, "Data"));
         _tempDirectories.Add(directory);
         return directory;
     }
 
     private async Task CreatePluginFileAsync(string gameDirectory, string pluginName)
     {
-        var pluginPath = Path.Combine(GameReleaseHelper.ResolveDataPath(gameDirectory), pluginName);
+        var pluginPath = Path.Combine(gameDirectory, "Data", pluginName);
         await File.WriteAllBytesAsync(pluginPath, [0x00], TestContext.Current.CancellationToken);
     }
 

@@ -48,7 +48,7 @@ public class LoadTests : IDisposable
     {
         // Arrange
         const int pluginCount = 100;
-        var dataPath = GameReleaseHelper.ResolveDataPath(_testDirectory);
+        var dataPath = GameInstallations.CanonicalizeDataDirectory(_testDirectory);
         var plugins = await CreateTestPlugins(dataPath, pluginCount, 100);
         var dbPath = Path.Combine(_testDirectory, "loadtest.db");
         _createdFiles.Add(dbPath);
@@ -94,7 +94,7 @@ public class LoadTests : IDisposable
         // Arrange
         const int formIdCount = 100000;
         var pluginName = "MassivePlugin.esp";
-        var dataPath = GameReleaseHelper.ResolveDataPath(_testDirectory);
+        var dataPath = GameInstallations.CanonicalizeDataDirectory(_testDirectory);
         Directory.CreateDirectory(dataPath);
         var pluginPath = Path.Combine(dataPath, pluginName);
         _createdFiles.Add(pluginPath);

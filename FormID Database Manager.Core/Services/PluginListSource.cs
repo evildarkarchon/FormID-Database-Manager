@@ -44,11 +44,8 @@ internal sealed class PluginListSource : IEquatable<PluginListSource>
             throw new ArgumentOutOfRangeException(nameof(gameRelease), gameRelease, "Unsupported GameRelease value.");
         }
 
-        // Normalize dot segments before classifying root versus Data input so equivalent Data spellings stay one source.
-        var normalizedInput = Path.GetFullPath(gameDirectory);
-        var dataDirectory = Path.TrimEndingDirectorySeparator(
-            Path.GetFullPath(GameReleaseHelper.ResolveDataPath(normalizedInput)));
-        return new PluginListSource(gameRelease, dataDirectory);
+        // Canonicalization is the single owner of the Data-path rule, so equivalent spellings stay one source.
+        return new PluginListSource(gameRelease, GameInstallations.CanonicalizeDataDirectory(gameDirectory));
     }
 
     /// <inheritdoc />
