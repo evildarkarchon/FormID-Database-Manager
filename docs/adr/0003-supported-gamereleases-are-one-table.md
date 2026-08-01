@@ -114,12 +114,10 @@ injected dependency, and its placement of Game Installation resolution.
   the full dropdown order rather than deriving them. It is test-side only: "adding a release is one row" still holds
   for production, and the coverage guard is what makes the second list impossible to forget. This is not the drift
   this ADR eliminated; it is a deliberate second opinion, and it runs in the direction that cannot be circular.
-- Reading a Plugin the fixtures generate revealed three defects, each pinned by a characterization assertion rather
-  than fixed, and each filed: the synthesized Entry label leaks Mutagen's overlay class name so it differs from an
-  in-memory read (#50); Entry Extraction's reflection name-lookup tier can never succeed, so every record without an
-  EditorID or a display name falls to that label (#51); and a Starfield Processing Run aborts with an unhandled
-  master-resolution failure when `Starfield.esm` is absent from the resolved Data directory (#52). Pinning rather
-  than fixing follows the same reasoning as the dropdown order above — each changes something user-visible and
-  deserves its own change with its own reasoning.
+- Reading real overlay records for the first time revealed three defects (#50, #51, #52), each pinned by a
+  characterization assertion rather than fixed. Pinning follows the same reasoning as the dropdown order above: each
+  changes something user-visible and deserves its own change with its own reasoning. The defects themselves are the
+  issues' business, not this record's; what belongs here is that the table's coverage is now strong enough to find
+  them.
 - Readable game names in the dropdown become a single-field follow-up rather than another scattered lookup.
 - Whether to support Oblivion Remastered is now an explicit, loudly enforced decision rather than an accident.

@@ -6,6 +6,7 @@ using Mutagen.Bethesda;
 using Mutagen.Bethesda.Fallout4;
 using Mutagen.Bethesda.Oblivion;
 using Mutagen.Bethesda.Plugins;
+using Mutagen.Bethesda.Plugins.Aspects;
 using Mutagen.Bethesda.Plugins.Binary.Parameters;
 using Mutagen.Bethesda.Plugins.Order;
 using Mutagen.Bethesda.Plugins.Records;
@@ -54,10 +55,21 @@ public static class PluginFixture
     public const string NamedRecordDisplayName = "Fixture Named Record";
 
     /// <summary>
-    ///     The number of records <see cref="Write" /> puts in every fixture: one with an EditorID, one with only a
-    ///     display name, and one with neither. Three records reach all four Entry Extraction tiers.
+    ///     The shared fixture recipe: one record with an EditorID, one with only a display name, and one with
+    ///     neither. Three records reach all four Entry Extraction tiers.
     /// </summary>
-    public const int RecordCount = 3;
+    private static readonly (string? EditorId, string? Name)[] SharedRecipe =
+    [
+        (EditorIdRecordEditorId, null),
+        (null, NamedRecordDisplayName),
+        (null, null)
+    ];
+
+    /// <summary>
+    ///     Gets the number of records <see cref="Write" /> puts in every fixture. Derived from the recipe rather than
+    ///     stated separately, so the two cannot drift.
+    /// </summary>
+    public static int RecordCount => SharedRecipe.Length;
 
     private const string SkyrimMainMaster = "Skyrim.esm";
     private const string FalloutMainMaster = "Fallout4.esm";
@@ -71,33 +83,32 @@ public static class PluginFixture
         new Dictionary<GameRelease, FixtureRecipe>
         {
             [GameRelease.Fallout4] = new(
-                modKey => new Fallout4Mod(modKey, Fallout4Release.Fallout4), FalloutMainMaster, AddFallout4Record),
+                modKey => new Fallout4Mod(modKey, Fallout4Release.Fallout4), FalloutMainMaster, AddFallout4Npc),
             [GameRelease.Fallout4VR] = new(
-                modKey => new Fallout4Mod(modKey, Fallout4Release.Fallout4VR), FalloutMainMaster, AddFallout4Record),
+                modKey => new Fallout4Mod(modKey, Fallout4Release.Fallout4VR), FalloutMainMaster, AddFallout4Npc),
             [GameRelease.SkyrimSE] = new(
-                modKey => new SkyrimMod(modKey, SkyrimRelease.SkyrimSE), SkyrimMainMaster, AddSkyrimRecord),
+                modKey => new SkyrimMod(modKey, SkyrimRelease.SkyrimSE), SkyrimMainMaster, AddSkyrimNpc),
             [GameRelease.SkyrimLE] = new(
-                modKey => new SkyrimMod(modKey, SkyrimRelease.SkyrimLE), SkyrimMainMaster, AddSkyrimRecord),
+                modKey => new SkyrimMod(modKey, SkyrimRelease.SkyrimLE), SkyrimMainMaster, AddSkyrimNpc),
             [GameRelease.SkyrimVR] = new(
-                modKey => new SkyrimMod(modKey, SkyrimRelease.SkyrimVR), SkyrimMainMaster, AddSkyrimRecord),
+                modKey => new SkyrimMod(modKey, SkyrimRelease.SkyrimVR), SkyrimMainMaster, AddSkyrimNpc),
             [GameRelease.SkyrimSEGog] = new(
-                modKey => new SkyrimMod(modKey, SkyrimRelease.SkyrimSEGog), SkyrimMainMaster, AddSkyrimRecord),
+                modKey => new SkyrimMod(modKey, SkyrimRelease.SkyrimSEGog), SkyrimMainMaster, AddSkyrimNpc),
             [GameRelease.EnderalSE] = new(
-                modKey => new SkyrimMod(modKey, SkyrimRelease.EnderalSE), SkyrimMainMaster, AddSkyrimRecord),
+                modKey => new SkyrimMod(modKey, SkyrimRelease.EnderalSE), SkyrimMainMaster, AddSkyrimNpc),
             [GameRelease.EnderalLE] = new(
-                modKey => new SkyrimMod(modKey, SkyrimRelease.EnderalLE), SkyrimMainMaster, AddSkyrimRecord),
+                modKey => new SkyrimMod(modKey, SkyrimRelease.EnderalLE), SkyrimMainMaster, AddSkyrimNpc),
             [GameRelease.Oblivion] = new(
-                modKey => new OblivionMod(modKey, OblivionRelease.Oblivion), OblivionMainMaster, AddOblivionRecord),
+                modKey => new OblivionMod(modKey, OblivionRelease.Oblivion), OblivionMainMaster, AddOblivionNpc),
             [GameRelease.Starfield] = new(
-                modKey => new StarfieldMod(modKey, StarfieldRelease.Starfield), StarfieldMainMaster,
-                AddStarfieldRecord)
+                modKey => new StarfieldMod(modKey, StarfieldRelease.Starfield), StarfieldMainMaster, AddStarfieldNpc)
         };
 
     /// <summary>
     ///     Gets the GameReleases this builder can write a fixture for, so a coverage guard can compare them against
     ///     the production Supported GameRelease table.
     /// </summary>
-    public static IReadOnlyCollection<GameRelease> GeneratableReleases => (IReadOnlyCollection<GameRelease>)Recipes.Keys;
+    public static IReadOnlyCollection<GameRelease> GeneratableReleases { get; } = [.. Recipes.Keys];
 
     /// <summary>
     ///     Reports whether this builder has a recipe for a GameRelease.
@@ -151,9 +162,10 @@ public static class PluginFixture
     {
         return Write(release, directoryPath, pluginName, static (recipe, mod) =>
         {
-            recipe.AddRecord(mod, EditorIdRecordEditorId, null);
-            recipe.AddRecord(mod, null, NamedRecordDisplayName);
-            recipe.AddRecord(mod, null, null);
+            foreach (var (editorId, name) in SharedRecipe)
+            {
+                recipe.AddRecord(mod, editorId, name);
+            }
         });
     }
 
@@ -232,43 +244,46 @@ public static class PluginFixture
             "generated at test time.");
     }
 
-    private static void AddSkyrimRecord(IMod mod, string? editorId, string? name)
+    // Each family reaches its own NPC type, but all four share one population rule below. Only the group access is
+    // family-specific, because Mutagen's per-game record types have no common typed accessor.
+
+    private static void AddSkyrimNpc(IMod mod, string? editorId, string? name)
     {
-        var npc = ((SkyrimMod)mod).Npcs.AddNew();
-        npc.EditorID = editorId;
-        if (name is not null)
-        {
-            npc.Name = name;
-        }
+        Populate(((SkyrimMod)mod).Npcs.AddNew(), editorId, name);
     }
 
-    private static void AddFallout4Record(IMod mod, string? editorId, string? name)
+    private static void AddFallout4Npc(IMod mod, string? editorId, string? name)
     {
-        var npc = ((Fallout4Mod)mod).Npcs.AddNew();
-        npc.EditorID = editorId;
-        if (name is not null)
-        {
-            npc.Name = name;
-        }
+        Populate(((Fallout4Mod)mod).Npcs.AddNew(), editorId, name);
     }
 
-    private static void AddOblivionRecord(IMod mod, string? editorId, string? name)
+    private static void AddOblivionNpc(IMod mod, string? editorId, string? name)
     {
-        var npc = ((OblivionMod)mod).Npcs.AddNew();
-        npc.EditorID = editorId;
-        if (name is not null)
-        {
-            npc.Name = name;
-        }
+        Populate(((OblivionMod)mod).Npcs.AddNew(), editorId, name);
     }
 
-    private static void AddStarfieldRecord(IMod mod, string? editorId, string? name)
+    private static void AddStarfieldNpc(IMod mod, string? editorId, string? name)
     {
-        var npc = ((StarfieldMod)mod).Npcs.AddNew();
-        npc.EditorID = editorId;
+        Populate(((StarfieldMod)mod).Npcs.AddNew(), editorId, name);
+    }
+
+    /// <summary>
+    ///     Applies the shared population rule to a freshly added record of any game family.
+    /// </summary>
+    /// <remarks>
+    ///     Written against the <see cref="INamed" /> aspect rather than each family's own record type, which is what
+    ///     lets one rule cover all four: Oblivion stores a plain string name where the newer games store a translated
+    ///     one, but <c>ITranslatedNamed</c> derives from <see cref="INamed" />, so both are settable as a string here.
+    ///     A null name is left unset rather than assigned, so the "neither an EditorID nor a name" record reaches
+    ///     Entry Extraction's fallback the same way a real record missing both would.
+    /// </remarks>
+    private static void Populate<TRecord>(TRecord record, string? editorId, string? name)
+        where TRecord : IMajorRecord, INamed
+    {
+        record.EditorID = editorId;
         if (name is not null)
         {
-            npc.Name = name;
+            record.Name = name;
         }
     }
 

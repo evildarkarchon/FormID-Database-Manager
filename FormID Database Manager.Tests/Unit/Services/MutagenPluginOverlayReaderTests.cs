@@ -38,8 +38,16 @@ namespace FormID_Database_Manager.Tests.Unit.Services;
 ///         exception enrichment at all; the paths that do wrap (<c>FillSubrecordTypes</c> and <c>FillMajorRecords</c>,
 ///         which raise <see cref="RecordException" />) belong to major-record parsing, which an overlay defers. Every
 ///         failure below therefore arrives exactly one level deep, so these tests pin message <em>forwarding</em> and
-///         cannot pin the deepest-cause walk. Covering it needs a Plugin whose records are read, which is the
-///         companion fixture work.
+///         cannot pin the deepest-cause walk.
+///     </para>
+///     <para>
+///         That gap is now known to be permanent, not merely deferred. It was expected to close once generated
+///         fixtures let a Plugin's records actually be read, but reading records does not reach this adapter at all:
+///         <c>PluginIngestion</c> catches <see cref="RecordException" /> itself while enumerating, and the adapter's
+///         only job is to <em>construct</em> the overlay. So the deepest-cause walk and the
+///         <see cref="RecordException" /> and <see cref="OverflowException" /> entries in the classification list are
+///         unreachable from any caller, by either route. Recorded here rather than acted on: deleting them is a
+///         narrowing of a deliberately conservative list and belongs in its own change.
 ///     </para>
 /// </remarks>
 public sealed class MutagenPluginOverlayReaderTests : IDisposable

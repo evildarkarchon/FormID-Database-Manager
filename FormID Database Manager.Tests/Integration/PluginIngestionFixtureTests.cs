@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using FormID_Database_Manager.Services;
 using FormID_Database_Manager.TestUtilities.Builders;
 using Mutagen.Bethesda;
+using Mutagen.Bethesda.Plugins.Exceptions;
 using Xunit;
 
 namespace FormID_Database_Manager.Tests.Integration;
@@ -156,6 +157,52 @@ public sealed class PluginIngestionFixtureTests : IDisposable
         // Built from the row's own FormID rather than a literal, so this pins the label's shape and its overlay-type
         // leak without also pinning which FormID Mutagen's writer happened to allocate to the third record.
         Assert.Equal($"[NpcBinaryOverlay_{synthesized.FormId}]", synthesized.Entry);
+    }
+
+    /// <summary>
+    ///     Pins what a Starfield Processing Run does when the resolved Data directory holds the selected Plugin but
+    ///     not <c>Starfield.esm</c>: the run aborts with an unhandled Mutagen failure instead of reporting one Failed
+    ///     Plugin.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         Filed as issue #52 and deliberately not fixed here — #49 puts changing the adapter's classification
+    ///         list out of scope. This is the stop-and-report, pinned at the layer a user actually meets it.
+    ///     </para>
+    ///     <para>
+    ///         The snapshot is built the way production's <c>GameLoadOrderProvider</c> builds one, not the way the
+    ///         other tests in this file do. That difference is the whole point: production collects master styles only
+    ///         for listings whose file exists on disk, and falls back to default read parameters when none do — so a
+    ///         Data directory with mods but no game master produces exactly the empty-lookup snapshot below.
+    ///         <see cref="GameLoadOrderSnapshotFactory.CreateFixtureSnapshot" /> supplies the lookup unconditionally,
+    ///         which is right for covering the happy path and wrong for covering this, so this case bypasses it.
+    ///     </para>
+    /// </remarks>
+    [Fact]
+    public async Task IngestAsync_StarfieldPluginWhoseMasterIsNotInTheDataDirectory_AbortsRatherThanFailingOnePlugin()
+    {
+        var cancellationToken = TestContext.Current.CancellationToken;
+        const GameRelease release = GameRelease.Starfield;
+        var gameDirectory = Path.Combine(_testDirectory, "StarfieldWithoutItsMaster");
+        var dataPath = GameInstallations.CanonicalizeDataDirectory(gameDirectory);
+        PluginFixture.Write(release, dataPath, PluginName);
+        var databasePath = Path.Combine(_testDirectory, "starfield-missing-master.db");
+
+        // No master styles: Starfield.esm is not on disk, so production's provider would collect none either.
+        var ingestion = new PluginIngestion(
+            new StaticGameLoadOrderProvider(GameLoadOrderSnapshotFactory.CreateSnapshot(PluginName)));
+
+        await using var store = await FormIdRecordStore.OpenAsync(databasePath, release, cancellationToken);
+        var exception = await Record.ExceptionAsync(() => ingestion.IngestAsync(
+            new SelectedPluginIngestionRequest(gameDirectory, release, [PluginName], UpdateMode.Append),
+            store,
+            progress: null,
+            cancellationToken));
+
+        // Asserted as "did not become an outcome" first, because that is the user-visible defect: the run dies rather
+        // than the Plugin failing. The type assertion identifies which Mutagen failure got there.
+        Assert.NotNull(exception);
+        Assert.IsType<MissingModMappingException>(exception);
     }
 
     /// <summary>

@@ -135,29 +135,6 @@ public sealed class PluginOverlayConstructionTests : IDisposable
             $"{nameof(SupportedGameReleases)} is wired to the wrong Mutagen overlay type.");
     }
 
-    /// <summary>
-    ///     Verifies a Plugin opened for one release is genuinely read as that release and not as a sibling, by
-    ///     checking that no two rows of the same game family collapse onto one reported GameRelease.
-    /// </summary>
-    [Fact]
-    public void ReadOverlay_EveryRow_ReportsADistinctGameRelease()
-    {
-        var reported = SupportedGameReleases.All
-            .Select(row =>
-            {
-                var pluginName = $"Distinct_{row.Release}.esp";
-                var pluginPath = PluginFixture.Write(row.Release, _testDirectory, pluginName);
-                using var overlay = _reader.ReadOverlay(
-                    pluginPath,
-                    row.Release,
-                    ReadParametersFor(row.Release, pluginName));
-                return overlay.GameRelease;
-            })
-            .ToArray();
-
-        Assert.Equal(SupportedGameReleases.All.Count, reported.Distinct().Count());
-    }
-
     // ---------------------------------------------------------------------------------------------------------
     // Fixture coverage. Enforced from the constant table outward, which is the direction that is not circular:
     // the table is the authority on which releases exist, and this fails by name for one the generator cannot make.

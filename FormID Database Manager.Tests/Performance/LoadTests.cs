@@ -13,8 +13,6 @@ using FormID_Database_Manager.TestUtilities.Mocks;
 using FormID_Database_Manager.ViewModels;
 using Microsoft.Data.Sqlite;
 using Mutagen.Bethesda;
-using Mutagen.Bethesda.Plugins;
-using Mutagen.Bethesda.Skyrim;
 using Xunit;
 
 namespace FormID_Database_Manager.Tests.Performance;
@@ -378,21 +376,16 @@ public class LoadTests : IDisposable
     {
         await Task.Run(() =>
         {
-            var mod = new SkyrimMod(ModKey.FromNameAndExtension(Path.GetFileName(path)), SkyrimRelease.SkyrimSE);
-
-            // Add various record types
-            var recordsPerType = recordCount / 5;
-
-            for (var i = 0; i < recordsPerType; i++)
-            {
-                mod.Npcs.AddNew($"NPC_{i:D6}").Name = $"Test NPC {i}";
-                mod.Weapons.AddNew($"WEAP_{i:D6}").Name = $"Test Weapon {i}";
-                mod.Armors.AddNew($"ARMO_{i:D6}").Name = $"Test Armor {i}";
-                mod.Spells.AddNew($"SPEL_{i:D6}").Name = $"Test Spell {i}";
-                mod.MiscItems.AddNew($"MISC_{i:D6}").Name = $"Test Misc {i}";
-            }
-
-            mod.WriteToBinary(path);
+            // The third hand-built Plugin writer this suite carried, now on the shared generator like the other two.
+            // It spread its records across five Skyrim types where the generator writes one; nothing here asserted on
+            // the spread, and Plugin Ingestion is record-type agnostic — it enumerates major records and reads an
+            // EditorID or a name — so what this measures is unchanged. The generated Plugin also declares its master,
+            // which the hand-built one did not, so the throughput measured is now that of a Plugin a user could have.
+            PluginFixture.WriteWithNamedRecords(
+                GameRelease.SkyrimSE,
+                Path.GetDirectoryName(path)!,
+                Path.GetFileName(path),
+                recordCount);
         });
     }
 
