@@ -134,23 +134,23 @@ public sealed class PluginListTests
     }
 
     /// <summary>
-    ///     Verifies a GameRelease the constant table has no entry for hides nothing, so every discovered Plugin is
-    ///     listed even with Advanced Mode off. Oblivion Remastered has no base Plugin set today.
+    ///     Verifies a GameRelease that is not in the Supported GameRelease table is rejected rather than refreshed.
+    ///     Oblivion Remastered is defined by Mutagen but unsupported here; it previously produced a Plugin List that
+    ///     hid nothing, because the Base Game Plugin lookup answered with an empty set (ADR-0003).
     /// </summary>
     [Fact]
-    public async Task RefreshAsync_ReleaseWithoutBasePlugins_HidesNothing()
+    public async Task RefreshAsync_UnsupportedRelease_IsRejected()
     {
         var discovery = new DeterministicPluginListDiscovery("Oblivion.esm", "User.esp");
         using var sut = new PluginList(discovery);
 
-        await sut.RefreshAsync(
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => sut.RefreshAsync(
             GameRelease.OblivionRE,
             discovery.GameDirectory,
             AdvancedMode.Off,
-            TestContext.Current.CancellationToken);
+            TestContext.Current.CancellationToken));
 
-        var confirmed = Assert.IsType<ConfirmedPluginList>(sut.Current.Confirmed);
-        Assert.Equal(["Oblivion.esm", "User.esp"], confirmed.Entries.Select(entry => entry.Name).ToArray());
+        Assert.Null(sut.Current.Confirmed);
     }
 
     /// <summary>

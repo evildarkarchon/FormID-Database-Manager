@@ -388,7 +388,7 @@ internal sealed class PluginList : IDisposable
         }
 
         // The constant table is already immutable and case-insensitive, so it is read directly rather than copied.
-        var basePlugins = BaseGamePlugins.ForRelease(operation.Source.GameRelease);
+        var basePlugins = SupportedGameReleases.ForRelease(operation.Source.GameRelease).BasePlugins;
         var addedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var entries = ImmutableArray.CreateBuilder<PluginListEntry>();
 

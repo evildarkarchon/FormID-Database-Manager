@@ -207,16 +207,20 @@ public sealed class FormIdRecordStoreTests : IDisposable
         Assert.Equal(0, statisticsTableCount);
     }
 
+    /// <summary>
+    ///     Verifies an unsupported GameRelease is rejected by the Supported GameRelease table before a connection is
+    ///     opened, so no database file is created for a release that has no whitelisted table name.
+    /// </summary>
     [Fact]
     public async Task OpenAsync_UnsupportedGameRelease_UsesSafeTableNameWhitelist()
     {
-        var exception = await Assert.ThrowsAsync<ArgumentException>(() => FormIdRecordStore.OpenAsync(
+        var exception = await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => FormIdRecordStore.OpenAsync(
             _testDbPath,
             (GameRelease)999,
             TestContext.Current.CancellationToken));
 
         Assert.Equal("release", exception.ParamName);
-        Assert.Contains("Unsupported game release: 999", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("999", exception.Message, StringComparison.Ordinal);
         Assert.False(File.Exists(_testDbPath));
     }
 

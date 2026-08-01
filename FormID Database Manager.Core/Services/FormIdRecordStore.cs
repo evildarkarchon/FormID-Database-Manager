@@ -112,8 +112,9 @@ public sealed class FormIdRecordStore : IFormIdRecordStoreSession
     ///     A FormID Record Store whose owned connection, persisted schema, and temporary staging resources are ready
     ///     for immediate use. The Store must be disposed after the processing run.
     /// </returns>
-    /// <exception cref="ArgumentException">
-    ///     Thrown when <paramref name="databasePath"/> is blank or <paramref name="gameRelease"/> is unsupported.
+    /// <exception cref="ArgumentException">Thrown when <paramref name="databasePath"/> is blank.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">
+    ///     Thrown when <paramref name="gameRelease"/> is not a Supported GameRelease.
     /// </exception>
     /// <exception cref="OperationCanceledException">Thrown when opening or preparation is cancelled.</exception>
     /// <exception cref="SqliteException">Thrown when SQLite cannot configure or prepare the Store.</exception>
@@ -125,7 +126,7 @@ public sealed class FormIdRecordStore : IFormIdRecordStoreSession
         ArgumentException.ThrowIfNullOrWhiteSpace(databasePath);
 
         // Resolve the table name before opening a connection so unsupported releases fail through the whitelist seam.
-        var tableName = GameReleaseTableNames.GetSafeTableName(gameRelease);
+        var tableName = SupportedGameReleases.ForRelease(gameRelease).TableName;
         var connection = new SqliteConnection(CreateConnectionString(databasePath));
         FormIdRecordStore? store = null;
 
