@@ -35,11 +35,17 @@ internal sealed class PluginListSource : IEquatable<PluginListSource>
     /// <returns>A normalized Plugin List Source.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="gameDirectory" /> is null.</exception>
     /// <exception cref="ArgumentException"><paramref name="gameDirectory" /> is empty or whitespace.</exception>
-    /// <exception cref="ArgumentOutOfRangeException"><paramref name="gameRelease" /> is not a defined value.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">
+    ///     <paramref name="gameRelease" /> is not a Supported GameRelease. Rejection happens here, at the boundary
+    ///     where the caller has context, rather than deep inside a table lookup (ADR-0003).
+    /// </exception>
     public static PluginListSource Create(GameRelease gameRelease, string gameDirectory)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(gameDirectory);
-        if (!Enum.IsDefined(gameRelease))
+
+        // Supported-ness, not enum-definedness: Mutagen defines releases this application cannot process, and the
+        // message below has always claimed to be about the former.
+        if (!SupportedGameReleases.IsSupported(gameRelease))
         {
             throw new ArgumentOutOfRangeException(nameof(gameRelease), gameRelease, "Unsupported GameRelease value.");
         }

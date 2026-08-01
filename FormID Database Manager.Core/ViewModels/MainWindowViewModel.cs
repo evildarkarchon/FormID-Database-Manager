@@ -72,19 +72,12 @@ public partial class MainWindowViewModel : ObservableObject, IDisposable
         FilteredPlugins = new ReadOnlyObservableCollection<PluginListItem>(_filteredPlugins);
         _plugins.CollectionChanged += OnPluginsCollectionChanged;
 
-        AvailableGames = new List<GameRelease>
-        {
-            GameRelease.Fallout4,
-            GameRelease.SkyrimSE,
-            GameRelease.SkyrimLE,
-            GameRelease.SkyrimVR,
-            GameRelease.SkyrimSEGog,
-            GameRelease.EnderalSE,
-            GameRelease.EnderalLE,
-            GameRelease.Fallout4VR,
-            GameRelease.Oblivion,
-            GameRelease.Starfield
-        }.AsReadOnly();
+        // Sourced from the Supported GameRelease table, which owns both the content and the display order, so a
+        // release added there appears in the dropdown without a second list to remember (ADR-0003).
+        AvailableGames = SupportedGameReleases.All
+            .Select(static supported => supported.Release)
+            .ToList()
+            .AsReadOnly();
 
         _detectedDirectories.CollectionChanged += (_, _) =>
         {

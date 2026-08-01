@@ -62,5 +62,10 @@ public sealed class PluginListSourceTests
             PluginListSource.Create(GameRelease.SkyrimSE, "   "));
         Assert.Throws<ArgumentOutOfRangeException>(() =>
             PluginListSource.Create((GameRelease)int.MaxValue, _gameDirectory));
+
+        // Mutagen defines OblivionRE, so an enum-definedness check would have admitted it. The guard tests
+        // supported-ness instead, which is what its message has always claimed (ADR-0003).
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            PluginListSource.Create(GameRelease.OblivionRE, _gameDirectory));
     }
 }

@@ -1,12 +1,8 @@
 using System.Runtime.ExceptionServices;
 using Mutagen.Bethesda;
-using Mutagen.Bethesda.Fallout4;
-using Mutagen.Bethesda.Oblivion;
 using Mutagen.Bethesda.Plugins.Binary.Parameters;
 using Mutagen.Bethesda.Plugins.Exceptions;
 using Mutagen.Bethesda.Plugins.Records;
-using Mutagen.Bethesda.Skyrim;
-using Mutagen.Bethesda.Starfield;
 
 namespace FormID_Database_Manager.Services;
 
@@ -39,48 +35,21 @@ internal sealed class MutagenPluginOverlayReader : IPluginOverlayReader
     /// <param name="gameRelease">The target GameRelease.</param>
     /// <param name="readParameters">The shared load-order-aware binary read parameters.</param>
     /// <returns>The disposable Mutagen overlay.</returns>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="gameRelease" /> is not a Supported GameRelease.</exception>
     /// <exception cref="PluginOverlayReadException">Mutagen or the filesystem reports unreadable Plugin data.</exception>
     public IModDisposeGetter ReadOverlay(
         string pluginPath,
         GameRelease gameRelease,
         BinaryReadParameters readParameters)
     {
+        // Resolved outside the try: an unsupported GameRelease is a programming error, and the ArgumentOutOfRangeException
+        // it raises would otherwise be normalized into a Failed Plugin by the expected-failure check below, which
+        // deliberately treats ArgumentException as a malformed-Plugin signal from Mutagen.
+        var createOverlay = SupportedGameReleases.ForRelease(gameRelease).CreateOverlay;
+
         try
         {
-            return gameRelease switch
-            {
-                GameRelease.Oblivion => OblivionMod.CreateFromBinaryOverlay(pluginPath,
-                    OblivionRelease.Oblivion,
-                    readParameters),
-                GameRelease.SkyrimLE => SkyrimMod.CreateFromBinaryOverlay(pluginPath,
-                    SkyrimRelease.SkyrimLE,
-                    readParameters),
-                GameRelease.SkyrimSE => SkyrimMod.CreateFromBinaryOverlay(pluginPath,
-                    SkyrimRelease.SkyrimSE,
-                    readParameters),
-                GameRelease.SkyrimSEGog => SkyrimMod.CreateFromBinaryOverlay(pluginPath,
-                    SkyrimRelease.SkyrimSEGog,
-                    readParameters),
-                GameRelease.SkyrimVR => SkyrimMod.CreateFromBinaryOverlay(pluginPath,
-                    SkyrimRelease.SkyrimVR,
-                    readParameters),
-                GameRelease.EnderalLE => SkyrimMod.CreateFromBinaryOverlay(pluginPath,
-                    SkyrimRelease.EnderalLE,
-                    readParameters),
-                GameRelease.EnderalSE => SkyrimMod.CreateFromBinaryOverlay(pluginPath,
-                    SkyrimRelease.EnderalSE,
-                    readParameters),
-                GameRelease.Fallout4 => Fallout4Mod.CreateFromBinaryOverlay(pluginPath,
-                    Fallout4Release.Fallout4,
-                    readParameters),
-                GameRelease.Fallout4VR => Fallout4Mod.CreateFromBinaryOverlay(pluginPath,
-                    Fallout4Release.Fallout4VR,
-                    readParameters),
-                GameRelease.Starfield => StarfieldMod.CreateFromBinaryOverlay(pluginPath,
-                    StarfieldRelease.Starfield,
-                    readParameters),
-                _ => throw new NotSupportedException($"Unsupported game release: {gameRelease}")
-            };
+            return createOverlay(pluginPath, readParameters);
         }
         catch (Exception ex)
         {

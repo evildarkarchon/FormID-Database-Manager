@@ -191,28 +191,16 @@ public class MainWindowViewModelTests
             snapshot));
     }
 
+    /// <summary>
+    ///     Verifies the game dropdown is exactly the Supported GameRelease table projected in table order. Which
+    ///     releases appear, and in what order, is the table's responsibility now, and its own tests pin both.
+    /// </summary>
     [Fact]
-    public void AvailableGames_ContainsAll10SupportedReleases()
+    public void AvailableGames_ProjectsTheSupportedGameReleaseTable()
     {
-        // Assert
-        Assert.Equal(10, _viewModel.AvailableGames.Count);
-        Assert.Contains(GameRelease.Fallout4, _viewModel.AvailableGames);
-        Assert.Contains(GameRelease.SkyrimSE, _viewModel.AvailableGames);
-        Assert.Contains(GameRelease.SkyrimLE, _viewModel.AvailableGames);
-        Assert.Contains(GameRelease.SkyrimVR, _viewModel.AvailableGames);
-        Assert.Contains(GameRelease.SkyrimSEGog, _viewModel.AvailableGames);
-        Assert.Contains(GameRelease.EnderalSE, _viewModel.AvailableGames);
-        Assert.Contains(GameRelease.EnderalLE, _viewModel.AvailableGames);
-        Assert.Contains(GameRelease.Fallout4VR, _viewModel.AvailableGames);
-        Assert.Contains(GameRelease.Oblivion, _viewModel.AvailableGames);
-        Assert.Contains(GameRelease.Starfield, _viewModel.AvailableGames);
-    }
-
-    [Fact]
-    public void AvailableGames_HasFallout4First()
-    {
-        // Assert
-        Assert.Equal(GameRelease.Fallout4, _viewModel.AvailableGames[0]);
+        Assert.Equal(
+            SupportedGameReleases.All.Select(supported => supported.Release),
+            _viewModel.AvailableGames);
     }
 
     [Fact]
