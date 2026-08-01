@@ -1119,12 +1119,19 @@ public class UserWorkflowTests
         var sut = CreateSut();
         await ConfigureValidPluginProcessingRunAsync(sut);
         var failure = new UnresolvableMasterException("User.esp", "Starfield.esm");
+        // The real executor reports this status for any terminal failure before rethrowing, so it is reproduced here:
+        // what the assertion needs to show is that it stays out of the error list rather than doubling the message.
+        _processingRunExecutor.EventsToReport.Add(
+            ProcessingRunEvent.Status($"Error during processing: {failure.Message}"));
         _processingRunExecutor.ExecuteFailure = failure;
 
         await sut.ProcessFormIdsAsync();
 
         Assert.Equal([failure.Message], _viewModel.ErrorMessages);
+        Assert.Empty(_viewModel.WarningMessages);
         Assert.False(_viewModel.IsProcessing);
+        // Cleared by the workflow's own finally, so the prefixed status is transient and never the lasting report.
+        Assert.Equal(string.Empty, _viewModel.ProgressStatus);
     }
 
     [Fact]

@@ -39,6 +39,11 @@ Three changes carry it.
    as `UnresolvableMasterException`, carrying the selected Plugin name and — where Mutagen names one — the master file
    name. The classification lives in Plugin Ingestion rather than in the overlay adapter, so the adapter's
    expected-failure list does not widen.
+
+   `MissingModException` can in general carry several ModKeys, and only the first is reported. That is not a narrowing
+   here: `SeparatedMasterPackage.Separate` raises it inside the loop over declared masters, from a single ModKey, so
+   the one it carries on this path is the one that failed. `MissingModMappingException` names none, because Mutagen
+   raises it before looking at any individual master.
 2. `GameLoadOrderSnapshot` now distinguishes a null master-style collection from an empty one. Null means the
    GameRelease does not separate master load orders, so no lookup applies and `BinaryReadParameters.Default` is right.
    Empty means it does and the Data directory supplied nothing — and passing the empty lookup through is what makes
@@ -86,9 +91,12 @@ not.
 - A Starfield run against a Data directory missing a declared master now ends as a failed Processing Run whose message
   names the master, instead of an unhandled Mutagen abort. Every other game family is unaffected: only a GameRelease
   with separated master load orders reaches this path.
-- `MissingModMappingException` is no longer reachable from production for a game that needs a lookup, because the
-  provider now always supplies one. It is still handled, and still covered, because `IGameLoadOrderProvider` is a seam
-  another implementation can sit behind.
+- `MissingModMappingException` is no longer reachable through the Processing Run path. `GameLoadOrderProvider` is
+  unchanged and always passed its collected list — possibly empty — for a GameRelease that separates master load
+  orders; what changed is that `GameLoadOrderSnapshot` stopped discarding an empty one. Since `PluginIngestion` is the
+  only caller that asks for the lookup (`includeMasterFlagsLookup: true`), every Processing Run now reaches the named
+  failure instead. It is still handled, and still covered, because `IGameLoadOrderProvider` is a seam another
+  implementation can sit behind.
 - `MutagenPluginOverlayReader` is unchanged. `PluginOverlayConstructionTests`' two negative-boundary tests still assert
   that both Mutagen failures escape the adapter unwrapped — which is now what Plugin Ingestion depends on, rather than
   merely a pin on an unfixed defect.

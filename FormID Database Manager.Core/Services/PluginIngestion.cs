@@ -365,7 +365,9 @@ internal sealed class PluginIngestion : IPluginIngestion
         }
         catch (MissingModException ex)
         {
-            // ModPath is the first of the missing keys and carries no directory here, so only its file name is usable.
+            // ModPath is the first of the exception's keys, which is the only one here: Mutagen's separated-master
+            // path raises this per unresolved master, from a ModKey rather than a path, so it carries exactly one and
+            // that key has no directory to report — only its file name.
             throw new UnresolvableMasterException(pluginName, ex.ModPath.ModKey.FileName.ToString(), ex);
         }
         catch (MissingModMappingException ex)

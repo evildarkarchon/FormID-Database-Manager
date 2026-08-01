@@ -4,6 +4,20 @@ using Mutagen.Bethesda.Plugins.Records;
 
 namespace FormID_Database_Manager.Services;
 
+/// <summary>
+///     One immutable load-order fact set, prepared once and shared by every Plugin of a Processing Run.
+/// </summary>
+/// <param name="listedPluginNames">The listed Plugin names, in load order.</param>
+/// <param name="masterStyles">
+///     The master styles collected for this GameRelease, or <see langword="null" /> when it does not separate master
+///     load orders and therefore needs no master-flags lookup at all.
+///     <para>
+///         Null and empty are different facts, and callers must not collapse them. An empty collection means the
+///         GameRelease does need a lookup and none of its listed files were on disk, and this type still builds the
+///         lookup from it — which is what makes Mutagen name the master it cannot resolve rather than report only that
+///         no lookup was supplied (ADR-0006).
+///     </para>
+/// </param>
 public sealed class GameLoadOrderSnapshot(
     IReadOnlyList<string> listedPluginNames,
     IReadOnlyList<IModMasterStyledGetter>? masterStyles = null)
@@ -14,6 +28,10 @@ public sealed class GameLoadOrderSnapshot(
 
     public IReadOnlyList<string> ListedPluginNames { get; } = listedPluginNames;
 
+    /// <summary>
+    ///     The collected master styles, or <see langword="null" /> when this GameRelease needs no master-flags lookup.
+    ///     Empty means it needs one and nothing was found, which is not the same fact (ADR-0006).
+    /// </summary>
     public IReadOnlyList<IModMasterStyledGetter>? MasterStyles { get; } = masterStyles;
 
     public BinaryReadParameters ReadParameters { get; } = CreateReadParameters(masterStyles);
