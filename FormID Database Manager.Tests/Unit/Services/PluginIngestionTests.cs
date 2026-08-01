@@ -486,7 +486,7 @@ public sealed class PluginIngestionTests : IDisposable
         var overlayReader = new OpeningFailureOverlayReader("Patch.esp", failure);
         IPluginIngestion sut = new PluginIngestion(
             new RecordingLoadOrderProvider(
-                new GameLoadOrderSnapshot(["Patch.esp", "Never.esp"], []),
+                GameLoadOrderSnapshotFactory.CreateSnapshotWithoutAnyMasterOnDisk("Patch.esp", "Never.esp"),
                 []),
             overlayReader,
             new EntryExtraction());

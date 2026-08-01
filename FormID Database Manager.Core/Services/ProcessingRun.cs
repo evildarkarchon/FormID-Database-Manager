@@ -38,10 +38,10 @@ public sealed class UnresolvableMasterException : Exception
     /// <param name="innerException">The underlying master-resolution failure, retained for diagnostics.</param>
     /// <exception cref="ArgumentException"><paramref name="pluginName" /> is blank.</exception>
     public UnresolvableMasterException(string pluginName, string? masterName, Exception? innerException = null)
-        : base(BuildMessage(pluginName, masterName), innerException)
+        // Validated inside the base initializer rather than in the body, so a blank name cannot reach message
+        // construction — a constructor body runs only after base(), which is too late to guard it.
+        : base(BuildMessage(EnsurePluginName(pluginName), masterName), innerException)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(pluginName);
-
         PluginName = pluginName;
         MasterName = masterName;
     }
@@ -55,6 +55,18 @@ public sealed class UnresolvableMasterException : Exception
     ///     The unresolvable master file name, or <see langword="null" /> when the underlying failure named none.
     /// </summary>
     public string? MasterName { get; }
+
+    /// <summary>
+    ///     Validates the Plugin name and returns it, so the guard can run inside the base initializer.
+    /// </summary>
+    /// <param name="pluginName">The selected Plugin name.</param>
+    /// <returns>The same Plugin name.</returns>
+    /// <exception cref="ArgumentException"><paramref name="pluginName" /> is blank.</exception>
+    private static string EnsurePluginName(string pluginName)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(pluginName);
+        return pluginName;
+    }
 
     private static string BuildMessage(string pluginName, string? masterName)
     {

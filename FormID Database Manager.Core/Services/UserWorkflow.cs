@@ -278,14 +278,10 @@ public sealed class UserWorkflow : IDisposable
 
             await _processingRunExecutor.ExecuteAsync(request, progress);
         }
-        catch (ProcessingRunValidationException ex)
+        // The failures whose own message already tells the user what is wrong and what to do about it, shown
+        // unwrapped: the generic "Error processing FormIDs" prefix below would only bury it (ADR-0006).
+        catch (Exception ex) when (ex is ProcessingRunValidationException or UnresolvableMasterException)
         {
-            _viewModel.AddErrorMessage(ex.Message);
-        }
-        catch (UnresolvableMasterException ex)
-        {
-            // Shown unwrapped like a validation failure: the message already names what is missing from the Data
-            // directory and what to do about it, so the generic "Error processing FormIDs" prefix would only bury it.
             _viewModel.AddErrorMessage(ex.Message);
         }
         catch (OperationCanceledException)
