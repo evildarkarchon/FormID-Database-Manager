@@ -1,5 +1,5 @@
 using System.Collections.Immutable;
-using System.Diagnostics.CodeAnalysis;
+using System.Runtime.ExceptionServices;
 using FormID_Database_Manager.ViewModels;
 using Mutagen.Bethesda;
 
@@ -231,7 +231,6 @@ public sealed class UserWorkflow : IDisposable
     /// Starts processing or requests cancellation for the active processing run.
     /// </summary>
     /// <returns>A task that completes after processing starts, finishes, fails, or observes cancellation.</returns>
-    [RequiresUnreferencedCode("Uses reflection-based name extraction for Mutagen records.")]
     public async Task ProcessFormIdsAsync()
     {
         if (_viewModel.IsProcessing)
@@ -302,6 +301,12 @@ public sealed class UserWorkflow : IDisposable
     /// <summary>
     /// Cancels processing and releases processing resources owned by the workflow.
     /// </summary>
+    /// <remarks>
+    /// Every owned collaborator is retired even when an earlier step fails. Cleanup after a failure is best-effort,
+    /// matching Plugin ingestion overlay cleanup: the first failure keeps its identity, and a standalone cleanup
+    /// failure still propagates because no other path reports it.
+    /// </remarks>
+    /// <exception cref="AggregateException">A registered Processing Run cancellation callback throws.</exception>
     public void Dispose()
     {
         if (_disposed)
@@ -312,9 +317,40 @@ public sealed class UserWorkflow : IDisposable
         _disposed = true;
         // Retire resolution before disposing collaborators so late lookup or picker work cannot publish into torn-down state.
         Interlocked.Increment(ref _gameContextVersion);
-        _processingRunExecutor.Cancel();
-        _processingRunExecutor.Dispose();
-        _pluginList.Dispose();
+
+        Exception? primaryException = null;
+        RetireCollaborator(_processingRunExecutor.Cancel, ref primaryException);
+        RetireCollaborator(_processingRunExecutor.Dispose, ref primaryException);
+        RetireCollaborator(_pluginList.Dispose, ref primaryException);
+        if (primaryException is not null)
+        {
+            // Rethrow through the dispatch info so the caller still sees the original throw site.
+            ExceptionDispatchInfo.Throw(primaryException);
+        }
+    }
+
+    /// <summary>
+    /// Runs one disposal step, keeping the first failure as the exception the caller finally observes.
+    /// </summary>
+    /// <param name="step">The cleanup action to run.</param>
+    /// <param name="primaryException">
+    /// The failure already in flight, replaced only when <paramref name="step" /> raises the first one.
+    /// </param>
+    private static void RetireCollaborator(Action step, ref Exception? primaryException)
+    {
+        try
+        {
+            step();
+        }
+        catch (Exception ex) when (primaryException is null)
+        {
+            // The first failure becomes the primary exception, but later steps still run so nothing is left live.
+            primaryException = ex;
+        }
+        catch
+        {
+            // A later cleanup failure cannot replace the primary exception's identity.
+        }
     }
 
     /// <summary>

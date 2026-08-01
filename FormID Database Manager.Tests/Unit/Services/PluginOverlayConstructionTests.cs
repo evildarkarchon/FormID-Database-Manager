@@ -176,6 +176,31 @@ public sealed class PluginOverlayConstructionTests : IDisposable
             $"list: {string.Join(", ", unsupported)}. Remove the recipe, or add the row it was written for.");
     }
 
+    /// <summary>
+    ///     Verifies Oblivion is the only game family with no required-named record recipe, so the Entry Extraction
+    ///     theories that cover three families rather than four are documenting a fact about Mutagen rather than
+    ///     quietly skipping a family.
+    /// </summary>
+    /// <remarks>
+    ///     Mutagen models a display name as either an optional aspect or a required one, and every Oblivion record type
+    ///     that has a name has the optional kind — so there is nothing in that family for the required tier to reach
+    ///     (ADR-0005). This guard is the fixture half of that claim, enforced from the table outward like its
+    ///     neighbours above: it catches a recipe that was never written. The Mutagen half — that Oblivion genuinely has
+    ///     no such record type, and the other three families do — is
+    ///     <c>MutagenNameAspectTests.Oblivion_HasNoRecordTypeReachableOnlyThroughTheRequiredAspect</c>, which reflects
+    ///     over the game assemblies because no read of this suite's own recipes could notice Mutagen gaining one.
+    /// </remarks>
+    [Fact]
+    public void EveryGameFamilyExceptOblivion_HasARequiredNamedRecordRecipe()
+    {
+        var withoutARecipe = SupportedGameReleases.All
+            .Select(row => row.Release)
+            .Where(release => !PluginFixture.CanGenerateRequiredNamedRecord(release))
+            .ToArray();
+
+        Assert.Equal([GameRelease.Oblivion], withoutARecipe);
+    }
+
     // ---------------------------------------------------------------------------------------------------------
     // The negative boundary of the adapter's classification list. The companion coverage pins which inputs *become*
     // an expected Plugin-read failure; these pin which real Mutagen failures deliberately stay off that list and

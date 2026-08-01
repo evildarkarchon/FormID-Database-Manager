@@ -1,4 +1,4 @@
-using System.Diagnostics.CodeAnalysis;
+using System.Runtime.ExceptionServices;
 using FormID_Database_Manager.Models;
 using FormID_Database_Manager.Services;
 using FormID_Database_Manager.ViewModels;
@@ -84,6 +84,10 @@ public sealed partial class MainWindow : Window, IDisposable
     /// <summary>
     /// Cancels in-flight processing and releases services owned by this window.
     /// </summary>
+    /// <remarks>
+    /// Workflow disposal can surface a cancellation callback failure from the run being cancelled, so every
+    /// window-owned service is retired regardless and the first failure keeps its identity.
+    /// </remarks>
     public void Dispose()
     {
         if (_disposed)
@@ -93,10 +97,41 @@ public sealed partial class MainWindow : Window, IDisposable
 
         _disposed = true;
         Closed -= MainWindow_Closed;
+
+        Exception? primaryException = null;
         // Detach presentation before the workflow retires its authoritative Plugin List.
-        _pluginListPresentationAdapter.Dispose();
-        _userWorkflow.Dispose();
-        ViewModel.Dispose();
+        RetireService(_pluginListPresentationAdapter.Dispose, ref primaryException);
+        RetireService(_userWorkflow.Dispose, ref primaryException);
+        RetireService(ViewModel.Dispose, ref primaryException);
+        if (primaryException is not null)
+        {
+            // Rethrow through the dispatch info so the caller still sees the original throw site.
+            ExceptionDispatchInfo.Throw(primaryException);
+        }
+    }
+
+    /// <summary>
+    /// Runs one window-owned disposal step, keeping the first failure as the exception the caller observes.
+    /// </summary>
+    /// <param name="step">The cleanup action to run.</param>
+    /// <param name="primaryException">
+    /// The failure already in flight, replaced only when <paramref name="step" /> raises the first one.
+    /// </param>
+    private static void RetireService(Action step, ref Exception? primaryException)
+    {
+        try
+        {
+            step();
+        }
+        catch (Exception ex) when (primaryException is null)
+        {
+            // The first failure becomes the primary exception, but later steps still run so nothing is left live.
+            primaryException = ex;
+        }
+        catch
+        {
+            // A later cleanup failure cannot replace the primary exception's identity.
+        }
     }
 
     private void MainWindow_Closed(object sender, WindowEventArgs args)
@@ -249,7 +284,6 @@ public sealed partial class MainWindow : Window, IDisposable
     /// <summary>
     /// Handles process button clicks by starting processing or cancelling the active run.
     /// </summary>
-    [RequiresUnreferencedCode("Uses reflection-based name extraction for Mutagen records.")]
     private async void ProcessFormIds_Click(object sender, RoutedEventArgs e)
     {
         try

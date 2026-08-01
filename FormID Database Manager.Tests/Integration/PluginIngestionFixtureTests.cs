@@ -21,8 +21,9 @@ namespace FormID_Database_Manager.Tests.Integration;
 ///     <para>
 ///         Every other Plugin Ingestion test delivers Mutagen records through a substituted overlay, so until this
 ///         file existed Entry Extraction had never seen a record read out of a <em>binary overlay</em>. That matters:
-///         Mutagen's overlay record classes are different types from its in-memory record classes, and Entry
-///         Extraction's third tier discovers names by reflecting over the runtime type.
+///         Mutagen's overlay record classes are different types from its in-memory record classes, reaching their
+///         EditorID and their name through separately generated members, so what an in-memory record does is not
+///         evidence of what a Processing Run reads. Two defects (ADR-0004, ADR-0005) lived in that gap.
 ///     </para>
 ///     <para>
 ///         One release per family rather than all ten. Per-release overlay wiring is covered at the adapter layer by
@@ -31,7 +32,8 @@ namespace FormID_Database_Manager.Tests.Integration;
 ///     </para>
 ///     <para>
 ///         Assertions are on what a caller can observe — the outcome Plugin Ingestion reports and the rows that land
-///         in the FormID Record Store. Nothing here inspects the reflection cache or any private extraction helper.
+///         in the FormID Record Store. Nothing here inspects a private extraction helper or any internal cache, which
+///         is what let the pins below outlive the tier they were written against.
 ///     </para>
 /// </remarks>
 [Collection("Integration Tests")]
@@ -72,6 +74,23 @@ public sealed class PluginIngestionFixtureTests : IDisposable
         GameRelease.SkyrimSE,
         GameRelease.Fallout4,
         GameRelease.Oblivion,
+        GameRelease.Starfield
+    ];
+
+    /// <summary>
+    ///     The game families that have a record type whose display name is a required aspect rather than an optional
+    ///     one. Oblivion is absent because Mutagen's Oblivion definitions have no such type, not because it is skipped.
+    /// </summary>
+    /// <remarks>
+    ///     Listed rather than derived from <see cref="PluginFixture.CanGenerateRequiredNamedRecord" />, for the same
+    ///     reason <see cref="GameFamilyRepresentatives" /> is: a derived list would narrow to nothing, and pass
+    ///     vacuously, if the builder ever stopped reporting a recipe. What keeps the list honest is the guard in
+    ///     <c>PluginOverlayConstructionTests</c>, which fails by name if the set of families with such a type changes.
+    /// </remarks>
+    public static TheoryData<GameRelease> FamiliesWithARequiredNamedRecordType =>
+    [
+        GameRelease.SkyrimSE,
+        GameRelease.Fallout4,
         GameRelease.Starfield
     ];
 
@@ -121,30 +140,29 @@ public sealed class PluginIngestionFixtureTests : IDisposable
 
     /// <summary>
     ///     Verifies a record with neither an EditorID nor a display name still produces a row rather than vanishing,
-    ///     so a user's FormID coverage stays complete, and pins the label it is given.
+    ///     so a user's FormID coverage stays complete, and that the label it is given names the Mutagen record type.
     /// </summary>
     /// <remarks>
     ///     <para>
-    ///         <em>Pinned, not endorsed.</em> The label leaks the name of Mutagen's <em>overlay</em> class rather than
-    ///         its record class — <c>NpcBinaryOverlay</c>, not <c>Npc</c> — so the Entry a user sees in their database
-    ///         differs from the one the same record produces in memory, which is how every other test in this suite
-    ///         reads records. Filed as issue #50. It is recorded here rather than corrected because changing it
-    ///         changes what users see in their databases, which deserves its own change with its own reasoning — the
-    ///         same discipline ADR-0003 applied to the dropdown order.
+    ///         This is the overlay half of the parity issue #50 reported and ADR-0004 resolved. The label used to leak
+    ///         the name of Mutagen's <em>overlay</em> class — <c>NpcBinaryOverlay</c>, not <c>Npc</c> — so the Entry a
+    ///         user saw in their database differed from the one the same record produces in memory, which is how every
+    ///         other test in this suite reads records. The in-memory half is
+    ///         <c>PluginIngestionTests.TryExtract_RecordWithNeitherAnEditorIdNorAName_NamesTheMutagenRecordType</c>,
+    ///         which asserts this same literal; the two together are the parity claim.
     ///     </para>
     ///     <para>
-    ///         Reaching this label at all is the second finding. Entry Extraction has a tier between the display-name
-    ///         cast and this fallback that looks names up reflectively, and it can never succeed: it selects
-    ///         <c>INamedGetter</c>, whose <c>Name</c> is a plain string, then asks that string for a nested
-    ///         <c>String</c> property it does not have. Every record without an EditorID or a name therefore lands
-    ///         here, for all four families. Filed as issue #51. Asserted through the stored Entry rather than by
-    ///         inspecting the reflection cache, so the pin survives that tier being repaired or deleted — it would
-    ///         then fail here, by name, as a deliberate change to a user-visible value.
+    ///         Reaching this label at all was the second finding, filed as issue #51 and resolved by ADR-0005: a tier
+    ///         between the display-name cast and this fallback looked names up reflectively and could never succeed,
+    ///         so every anonymous record landed here for all four families. Deleting it left this assertion standing,
+    ///         because the fixture's third record is an <c>Npc</c> — a type whose name aspect is the optional one, and
+    ///         which therefore still has no name to find. What did move out of this label is covered by
+    ///         <see cref="IngestAsync_RecordWhoseNameAspectIsRequired_StoresThatName" />.
     ///     </para>
     /// </remarks>
     [Theory]
     [MemberData(nameof(GameFamilyRepresentatives))]
-    public async Task IngestAsync_RecordWithNeitherAnEditorIdNorAName_StoresTheSynthesizedOverlayTypeLabel(
+    public async Task IngestAsync_RecordWithNeitherAnEditorIdNorAName_NamesTheMutagenRecordType(
         GameRelease release)
     {
         var result = await IngestFixtureAsync(release);
@@ -154,9 +172,102 @@ public sealed class PluginIngestionFixtureTests : IDisposable
             record => record.Entry != PluginFixture.EditorIdRecordEditorId &&
                       record.Entry != PluginFixture.NamedRecordDisplayName);
 
-        // Built from the row's own FormID rather than a literal, so this pins the label's shape and its overlay-type
-        // leak without also pinning which FormID Mutagen's writer happened to allocate to the third record.
-        Assert.Equal($"[NpcBinaryOverlay_{synthesized.FormId}]", synthesized.Entry);
+        // Built from the row's own FormID rather than a literal, so this pins the label's shape and the record type it
+        // names without also pinning which FormID Mutagen's writer happened to allocate to the third record.
+        Assert.Equal($"[Npc_{synthesized.FormId}]", synthesized.Entry);
+    }
+
+    /// <summary>
+    ///     Verifies a record read out of a binary overlay whose display name is a <em>required</em> aspect stores that
+    ///     name, for every family that has such a record type.
+    /// </summary>
+    /// <remarks>
+    ///     The overlay half of issue #51's fix; the in-memory half is
+    ///     <c>PluginIngestionTests.TryExtract_RecordWhoseNameAspectIsRequired_UsesThatNameAsEntry</c>, which explains
+    ///     the two name aspects and lists the affected record types. Both halves are needed for the same reason
+    ///     ADR-0004 needed both: a Mutagen overlay class reaches a name through its own generated members, so what an
+    ///     in-memory record does is not evidence of what a Processing Run reads.
+    ///     <para>
+    ///         Oblivion is absent from the theory because Mutagen's Oblivion definitions have no required-named record
+    ///         type. <c>PluginOverlayConstructionTests.EveryGameFamilyExceptOblivion_HasARequiredNamedRecordRecipe</c>
+    ///         holds that claim against the Supported GameRelease table, so this theory's narrower coverage cannot
+    ///         quietly become wrong.
+    ///     </para>
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(FamiliesWithARequiredNamedRecordType))]
+    public async Task IngestAsync_RecordWhoseNameAspectIsRequired_StoresThatName(GameRelease release)
+    {
+        var cancellationToken = TestContext.Current.CancellationToken;
+        var gameDirectory = Path.Combine(_testDirectory, $"{release}-required-named");
+        var dataPath = GameInstallations.CanonicalizeDataDirectory(gameDirectory);
+        PluginFixture.WriteWithRequiredNamedRecord(release, dataPath, PluginName);
+        var databasePath = Path.Combine(_testDirectory, $"{release}-required-named.db");
+
+        var ingestion = new PluginIngestion(
+            new StaticGameLoadOrderProvider(
+                GameLoadOrderSnapshotFactory.CreateFixtureSnapshot(release, PluginName)));
+
+        await using (var store = await FormIdRecordStore.OpenAsync(databasePath, release, cancellationToken))
+        {
+            await ingestion.IngestAsync(
+                new SelectedPluginIngestionRequest(gameDirectory, release, [PluginName], UpdateMode.Append),
+                store,
+                progress: null,
+                cancellationToken);
+        }
+
+        await using var reopened = await FormIdRecordStore.OpenAsync(databasePath, release, cancellationToken);
+        var storedRecords = await reopened.ReadRecordsAsync(FormIdRecordQuery.All, cancellationToken);
+
+        var stored = Assert.Single(storedRecords);
+        Assert.Equal(PluginFixture.RequiredNamedRecordDisplayName, stored.Entry);
+    }
+
+    /// <summary>
+    ///     Verifies a required-named record whose name is absent on disk still reaches the Synthesized Entry, rather
+    ///     than storing a blank Entry or raising a Processing Warning.
+    /// </summary>
+    /// <remarks>
+    ///     The one genuinely new failure mode ADR-0005's widened cast opens. A required name has no null state, so the
+    ///     cast always succeeds for these record types and the emptiness check is the only thing standing between a
+    ///     record with no name subrecord and a blank user-visible Entry. Mutagen substitutes an empty value rather than
+    ///     reporting the field missing — <c>TranslatedString.Empty</c> for a translated name, <c>string.Empty</c> for a
+    ///     plain one — which is what makes the check sufficient, and it is asserted here rather than trusted.
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(FamiliesWithARequiredNamedRecordType))]
+    public async Task IngestAsync_RequiredNamedRecordWithNoNameOnDisk_StoresTheSynthesizedEntry(GameRelease release)
+    {
+        var cancellationToken = TestContext.Current.CancellationToken;
+        var gameDirectory = Path.Combine(_testDirectory, $"{release}-required-unnamed");
+        var dataPath = GameInstallations.CanonicalizeDataDirectory(gameDirectory);
+        PluginFixture.WriteWithRequiredNamedRecord(release, dataPath, PluginName, name: null);
+        var databasePath = Path.Combine(_testDirectory, $"{release}-required-unnamed.db");
+
+        var ingestion = new PluginIngestion(
+            new StaticGameLoadOrderProvider(
+                GameLoadOrderSnapshotFactory.CreateFixtureSnapshot(release, PluginName)));
+
+        PluginIngestionReport report;
+        await using (var store = await FormIdRecordStore.OpenAsync(databasePath, release, cancellationToken))
+        {
+            report = await ingestion.IngestAsync(
+                new SelectedPluginIngestionRequest(gameDirectory, release, [PluginName], UpdateMode.Append),
+                store,
+                progress: null,
+                cancellationToken);
+        }
+
+        await using var reopened = await FormIdRecordStore.OpenAsync(databasePath, release, cancellationToken);
+        var storedRecords = await reopened.ReadRecordsAsync(FormIdRecordQuery.All, cancellationToken);
+
+        // Asserted on the label's shape rather than its record type, so this stays one test across three families
+        // whose required-named types differ. The type name itself is ADR-0004's business, pinned above.
+        var stored = Assert.Single(storedRecords);
+        Assert.StartsWith("[", stored.Entry, StringComparison.Ordinal);
+        Assert.EndsWith($"_{stored.FormId}]", stored.Entry, StringComparison.Ordinal);
+        Assert.Null(Assert.IsType<IngestedPlugin>(Assert.Single(report.Outcomes)).Warning);
     }
 
     /// <summary>

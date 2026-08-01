@@ -1,4 +1,3 @@
-using System.Diagnostics.CodeAnalysis;
 using Mutagen.Bethesda;
 
 namespace FormID_Database_Manager.Services;
@@ -222,8 +221,6 @@ internal interface IProcessingRunExecutor : IDisposable
     /// <param name="request">The validated domain request describing the run.</param>
     /// <param name="progress">Optional typed run event reporter.</param>
     /// <returns>A task that completes when the run completes, fails, or observes cancellation.</returns>
-    [RequiresUnreferencedCode(
-        "Uses reflection-based name extraction for Mutagen records via PluginIngestion.")]
     Task ExecuteAsync(
         ProcessingRunRequest request,
         IProgress<ProcessingRunEvent>? progress = null);
@@ -277,8 +274,6 @@ public sealed class ProcessingRunExecutor : IProcessingRunExecutor
     /// <param name="request">The validated domain request describing the run.</param>
     /// <param name="progress">Optional typed run event reporter.</param>
     /// <returns>A task that completes when the run completes, fails, or observes cancellation.</returns>
-    [RequiresUnreferencedCode(
-        "Uses reflection-based name extraction for Mutagen records via PluginIngestion.")]
     public async Task ExecuteAsync(
         ProcessingRunRequest request,
         IProgress<ProcessingRunEvent>? progress = null)
@@ -396,8 +391,6 @@ public sealed class ProcessingRunExecutor : IProcessingRunExecutor
     /// <param name="progress">Optional typed run event reporter.</param>
     /// <param name="cancellationToken">The execution-owned token used by initialization and ingestion.</param>
     /// <returns>A task that completes with the run and propagates cancellation or processing failures unchanged.</returns>
-    [RequiresUnreferencedCode(
-        "Uses reflection-based name extraction for Mutagen records via PluginIngestion.")]
     private async Task ExecuteCoreAsync(
         ProcessingRunRequest request,
         IProgress<ProcessingRunEvent>? progress,
@@ -515,8 +508,6 @@ public sealed class ProcessingRunExecutor : IProcessingRunExecutor
     /// <param name="cancellationToken">The execution-owned token shared with Plugin Ingestion and Store maintenance.</param>
     /// <returns>A task that completes after optimization and terminal reporting.</returns>
     /// <exception cref="OperationCanceledException"><paramref name="cancellationToken" /> requests cancellation.</exception>
-    [RequiresUnreferencedCode(
-        "Uses reflection-based name extraction for Mutagen records via PluginIngestion.")]
     private async Task ExecutePluginRunAsync(
         PluginProcessingRunRequest request,
         IFormIdRecordStoreSession recordStore,

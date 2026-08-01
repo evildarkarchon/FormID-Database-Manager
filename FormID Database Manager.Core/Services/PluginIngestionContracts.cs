@@ -1,5 +1,4 @@
 using System.Collections.Immutable;
-using System.Diagnostics.CodeAnalysis;
 using Mutagen.Bethesda;
 
 namespace FormID_Database_Manager.Services;
@@ -22,8 +21,6 @@ internal interface IPluginIngestion
     ///     without a report; Store optimization and disposal remain the surrounding Processing Run's responsibility.
     /// </remarks>
     /// <exception cref="OperationCanceledException"><paramref name="cancellationToken" /> requests cancellation.</exception>
-    [RequiresUnreferencedCode(
-        "Uses reflection-based name extraction for Mutagen records through EntryExtraction.")]
     Task<PluginIngestionReport> IngestAsync(
         SelectedPluginIngestionRequest request,
         IFormIdRecordStoreSession recordStore,

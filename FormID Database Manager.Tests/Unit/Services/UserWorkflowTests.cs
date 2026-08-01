@@ -1132,6 +1132,46 @@ public class UserWorkflowTests
     }
 
     /// <summary>
+    /// Verifies that a throwing run cancellation still retires every owned collaborator, and that a later cleanup
+    /// failure cannot replace the cancellation failure the caller observes.
+    /// </summary>
+    [Fact]
+    public void Dispose_CancellationCallbackThrows_StillDisposesCollaboratorsAndKeepsPrimaryFailure()
+    {
+        var callbackFailure = new InvalidOperationException("cancellation callback failed");
+        _processingRunExecutor.CancelFailure = new AggregateException(callbackFailure);
+        _processingRunExecutor.DisposeFailure = new InvalidOperationException("executor cleanup failed");
+        var sut = CreateSut();
+
+        _pluginListPresentationAdapter.Dispose();
+        var thrown = Assert.Throws<AggregateException>(() => sut.Dispose());
+
+        Assert.Same(callbackFailure, Assert.Single(thrown.InnerExceptions));
+        Assert.Equal(1, _processingRunExecutor.CancelCallCount);
+        Assert.Equal(1, _processingRunExecutor.DisposeCallCount);
+        Assert.Throws<ObjectDisposedException>(() => _pluginList.Invalidate());
+    }
+
+    /// <summary>
+    /// Verifies that a cleanup failure with no other failure in flight still propagates and does not stop the
+    /// remaining collaborator from being retired.
+    /// </summary>
+    [Fact]
+    public void Dispose_StandaloneCleanupFailure_PropagatesAndStillRetiresPluginList()
+    {
+        var disposalFailure = new InvalidOperationException("executor cleanup failed");
+        _processingRunExecutor.DisposeFailure = disposalFailure;
+        var sut = CreateSut();
+
+        _pluginListPresentationAdapter.Dispose();
+        var thrown = Assert.Throws<InvalidOperationException>(() => sut.Dispose());
+
+        Assert.Same(disposalFailure, thrown);
+        Assert.Equal(1, _processingRunExecutor.CancelCallCount);
+        Assert.Throws<ObjectDisposedException>(() => _pluginList.Invalidate());
+    }
+
+    /// <summary>
     /// Verifies that disposal prevents a late installed-location result from projecting directories or refreshing Plugins.
     /// </summary>
     [Fact]
@@ -1336,6 +1376,17 @@ public class UserWorkflowTests
 
         public int DisposeCallCount { get; private set; }
 
+        /// <summary>
+        ///     The failure raised by <see cref="Cancel" />, standing in for a registered run cancellation callback
+        ///     that throws out of the real executor's cancellation source.
+        /// </summary>
+        public Exception? CancelFailure { get; set; }
+
+        /// <summary>
+        ///     The failure raised by <see cref="Dispose" />, standing in for an executor whose own cleanup fails.
+        /// </summary>
+        public Exception? DisposeFailure { get; set; }
+
         public List<ProcessingRunEvent> EventsToReport { get; } = [];
 
         public Task ExecuteAsync(
@@ -1354,11 +1405,19 @@ public class UserWorkflowTests
         public void Cancel()
         {
             CancelCallCount++;
+            if (CancelFailure is { } failure)
+            {
+                throw failure;
+            }
         }
 
         public void Dispose()
         {
             DisposeCallCount++;
+            if (DisposeFailure is { } failure)
+            {
+                throw failure;
+            }
         }
     }
 

@@ -118,6 +118,8 @@ injected dependency, and its placement of Game Installation resolution.
   characterization assertion rather than fixed. Pinning follows the same reasoning as the dropdown order above: each
   changes something user-visible and deserves its own change with its own reasoning. The defects themselves are the
   issues' business, not this record's; what belongs here is that the table's coverage is now strong enough to find
-  them.
+  them. #50 has since had that change and is resolved by ADR-0004, which turned its characterization assertion into an
+  assertion of intended behaviour; #51 has had its own and is resolved by ADR-0005, which found a live defect behind
+  the dead code the pin described; #52 remains pinned.
 - Readable game names in the dropdown become a single-field follow-up rather than another scattered lookup.
 - Whether to support Oblivion Remastered is now an explicit, loudly enforced decision rather than an accident.

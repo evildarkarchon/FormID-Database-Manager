@@ -1,4 +1,3 @@
-using System.Diagnostics.CodeAnalysis;
 using System.Runtime.ExceptionServices;
 using Mutagen.Bethesda;
 using Mutagen.Bethesda.Plugins.Binary.Parameters;
@@ -66,8 +65,6 @@ internal sealed class PluginIngestion : IPluginIngestion
     /// </remarks>
     /// <exception cref="ArgumentNullException"><paramref name="request" /> or <paramref name="recordStore" /> is null.</exception>
     /// <exception cref="OperationCanceledException"><paramref name="cancellationToken" /> requests cancellation.</exception>
-    [RequiresUnreferencedCode(
-        "Uses reflection-based name extraction for Mutagen records through EntryExtraction.")]
     public async Task<PluginIngestionReport> IngestAsync(
         SelectedPluginIngestionRequest request,
         IFormIdRecordStoreSession recordStore,
@@ -143,8 +140,6 @@ internal sealed class PluginIngestion : IPluginIngestion
     /// </remarks>
     /// <exception cref="OperationCanceledException"><paramref name="cancellationToken" /> requests cancellation.</exception>
     /// <exception cref="Exception">An unexpected infrastructure or standalone overlay-cleanup failure occurs.</exception>
-    [RequiresUnreferencedCode(
-        "Uses reflection to discover INamedGetter interface and Name/String properties on Mutagen record types for name extraction.")]
     private async Task<PluginIngestionOutcome> IngestAvailablePluginAsync(
         string pluginName,
         string pluginPath,
@@ -262,7 +257,6 @@ internal sealed class PluginIngestion : IPluginIngestion
     /// <param name="warningCollector">The bounded recoverable-diagnostic collector.</param>
     /// <param name="cancellationToken">Stops record extraction.</param>
     /// <returns>The lazy sequence consumed inside the Store's atomic Plugin write.</returns>
-    [RequiresUnreferencedCode("Uses reflection-based name extraction for Mutagen records via EntryExtraction.")]
     private IEnumerable<FormIdRecord> EnumeratePluginRecords(
         IModGetter plugin,
         RecordWarningCollector warningCollector,

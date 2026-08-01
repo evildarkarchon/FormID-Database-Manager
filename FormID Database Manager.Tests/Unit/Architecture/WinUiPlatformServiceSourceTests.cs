@@ -77,8 +77,10 @@ public class WinUiPlatformServiceSourceTests
             @"private readonly UserWorkflow\s+(?<field>_\w+);").Groups["field"].Value;
         Assert.NotEmpty(adapterField);
         Assert.NotEmpty(workflowField);
-        var adapterDispose = $"{adapterField}.Dispose();";
-        var workflowDispose = $"{workflowField}.Dispose();";
+        // Window cleanup passes each step to a retire helper as a method group, so match the reference rather than
+        // a direct invocation; the ordering requirement below is what this assertion actually protects.
+        var adapterDispose = $"{adapterField}.Dispose";
+        var workflowDispose = $"{workflowField}.Dispose";
         Assert.Contains(adapterDispose, source, StringComparison.Ordinal);
         Assert.Contains(workflowDispose, source, StringComparison.Ordinal);
         Assert.True(
@@ -195,7 +197,10 @@ public class WinUiPlatformServiceSourceTests
         Assert.DoesNotContain("ProcessingPendingMessage", source, StringComparison.Ordinal);
         Assert.DoesNotContain("AddInformationMessageOnce", source, StringComparison.Ordinal);
         Assert.DoesNotContain("Processing remains disabled", source, StringComparison.Ordinal);
-        Assert.Contains("RequiresUnreferencedCode", source, StringComparison.Ordinal);
+        // Inverted by ADR-0005: the handler used to carry a RequiresUnreferencedCode obligation propagated up from
+        // Entry Extraction's reflective name lookup. That lookup is gone, so an annotation here would now describe
+        // reflection nothing in the processing path performs, and re-adding one should be a deliberate edit.
+        Assert.DoesNotContain("RequiresUnreferencedCode", source, StringComparison.Ordinal);
         Assert.Contains("await _userWorkflow.ProcessFormIdsAsync();", source, StringComparison.Ordinal);
         Assert.DoesNotContain("DefaultDatabasePathProvider.CreateDefaultDatabasePath", source,
             StringComparison.Ordinal);

@@ -68,8 +68,12 @@ The human-readable label stored for a FormID, usually an EditorID or record name
 _Avoid_: Name value.
 
 **Entry Extraction**:
-The part of Plugin Ingestion that chooses the Entry stored for a FormID, preferring EditorID, then Mutagen record names, then a deterministic fallback label.
+The part of Plugin Ingestion that chooses the Entry stored for a FormID, preferring EditorID, then the Mutagen record name, then a Synthesized Entry. The name is read through Mutagen's required name aspect, which every named record type carries — including the ones that carry no optional one (ADR-0005).
 _Avoid_: Name helper, record naming.
+
+**Synthesized Entry**:
+The Entry stored for a record that offers neither an EditorID nor a name, built from the Mutagen record type and the FormID as `[Npc_000802]`. It does not depend on whether the record was read from a binary overlay or in memory (ADR-0004).
+_Avoid_: Fallback name, placeholder entry, type label.
 
 **FormID text file**:
 A pipe-delimited import file whose rows provide Plugin, FormID, and Entry values without reading binary plugins.
