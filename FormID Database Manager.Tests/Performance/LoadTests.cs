@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using FormID_Database_Manager.Services;
 using FormID_Database_Manager.TestUtilities;
+using FormID_Database_Manager.TestUtilities.Builders;
 using FormID_Database_Manager.TestUtilities.Mocks;
 using FormID_Database_Manager.ViewModels;
 using Microsoft.Data.Sqlite;
@@ -356,17 +357,15 @@ public class LoadTests : IDisposable
             for (var i = 0; i < count; i++)
             {
                 var pluginName = $"TestPlugin_{i:D3}.esp";
-                var pluginPath = Path.Combine(dataPath, pluginName);
 
-                var mod = new SkyrimMod(ModKey.FromNameAndExtension(pluginName), SkyrimRelease.SkyrimSE);
+                // Written by the shared fixture generator rather than a local copy of it, so generalising Plugin
+                // generation to a new game family stays a single edit.
+                var pluginPath = PluginFixture.WriteWithNamedRecords(
+                    GameRelease.SkyrimSE,
+                    dataPath,
+                    pluginName,
+                    recordsPerPlugin);
 
-                for (var j = 0; j < recordsPerPlugin; j++)
-                {
-                    var npc = mod.Npcs.AddNew($"NPC_{i:D3}_{j:D3}");
-                    npc.Name = $"Test NPC {i}-{j}";
-                }
-
-                mod.WriteToBinary(pluginPath);
                 _createdFiles.Add(pluginPath);
                 plugins.Add(pluginName);
             }

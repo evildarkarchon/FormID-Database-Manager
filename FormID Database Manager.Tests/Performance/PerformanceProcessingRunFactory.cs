@@ -1,30 +1,18 @@
 using System.Collections.Generic;
-using System.Linq;
 using FormID_Database_Manager.Services;
-using Mutagen.Bethesda;
+using FormID_Database_Manager.TestUtilities.Builders;
 
 namespace FormID_Database_Manager.Tests.Performance;
 
 /// <summary>
-///     Supplies a deterministic Plugin load order for performance scenarios that generate their own Plugin files.
-/// </summary>
-internal sealed class StaticGameLoadOrderProvider(IEnumerable<string> pluginNames) : IGameLoadOrderProvider
-{
-    private readonly IReadOnlyList<string> _pluginNames = pluginNames.ToArray();
-
-    /// <inheritdoc />
-    public GameLoadOrderSnapshot BuildSnapshot(
-        GameRelease gameRelease,
-        string dataPath,
-        bool includeMasterFlagsLookup = false)
-    {
-        return new GameLoadOrderSnapshot(_pluginNames);
-    }
-}
-
-/// <summary>
 ///     Composes deterministic performance load orders behind production aggregate Plugin Ingestion.
 /// </summary>
+/// <remarks>
+///     The deterministic load-order provider this used to declare alongside the factory now lives in the shared test
+///     utilities project as <see cref="StaticGameLoadOrderProvider" />, beside the Plugin fixture generator these
+///     scenarios write their Plugins with. The factory stays here because its name and its choices are
+///     performance-specific.
+/// </remarks>
 internal static class PerformanceProcessingRunFactory
 {
     /// <summary>

@@ -259,6 +259,39 @@ public sealed class ProcessingRunExecutorTests : IDisposable
     }
 
     /// <summary>
+    ///     Verifies that cancellation accepted after successful optimization still ends the text-file run as cancelled
+    ///     rather than reporting success.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_CancelledAfterTextOptimization_ReportsCancellationWithoutCompletion()
+    {
+        ProcessingRunExecutor? sut = null;
+        var recordStore = new RecordingRecordStoreSession
+        {
+            OptimizeAction = () => sut!.Cancel()
+        };
+        sut = new ProcessingRunExecutor(
+            new UnexpectedPluginIngestion(),
+            new RecordingRecordStoreSessionOpener(recordStore));
+        using (sut)
+        {
+            var events = new List<ProcessingRunEvent>();
+            var progress = new SynchronousProgress<ProcessingRunEvent>(events.Add);
+
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+                sut.ExecuteAsync(CreateTextFileRequest("cancel-after-optimize.txt"), progress));
+
+            Assert.Equal(1, recordStore.OptimizeCallCount);
+            Assert.True(recordStore.Disposed);
+            Assert.Contains(events, runEvent =>
+                runEvent.Kind == ProcessingRunEventKind.Status &&
+                runEvent.Message.Contains("Processing cancelled", StringComparison.Ordinal));
+            Assert.DoesNotContain(events, runEvent =>
+                runEvent.Message.Contains("Processing completed", StringComparison.Ordinal));
+        }
+    }
+
+    /// <summary>
     ///     Verifies that Processing Run delegates the complete immutable selection to one Plugin Ingestion operation and
     ///     adapts its structured progress into user-facing run status.
     /// </summary>
@@ -358,6 +391,56 @@ public sealed class ProcessingRunExecutorTests : IDisposable
 
             Assert.Single(ingestion.Calls);
             Assert.Equal(0, recordStore.OptimizeCallCount);
+            Assert.True(recordStore.Disposed);
+            Assert.Contains(events, runEvent =>
+                runEvent.Kind == ProcessingRunEventKind.Status &&
+                runEvent.Message.Contains("Processing cancelled", StringComparison.Ordinal));
+            Assert.DoesNotContain(events, runEvent =>
+                runEvent.Kind is ProcessingRunEventKind.Warning or ProcessingRunEventKind.Error ||
+                runEvent.Message.Contains("Processing completed", StringComparison.Ordinal));
+        }
+    }
+
+    /// <summary>
+    ///     Verifies that cancellation accepted after successful optimization suppresses aggregate report formatting so a
+    ///     cancelled run cannot publish warning, failure, or completion events.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_CancelledAfterPluginOptimization_DoesNotReportOutcomesOrCompletion()
+    {
+        ProcessingRunExecutor? sut = null;
+        var ingestion = new RecordingReportPluginIngestion((request, _, _, _) =>
+            Task.FromResult(new PluginIngestionReport(
+                request,
+                [
+                    new IngestedPlugin("Warned.esp", 1, new ProcessingWarning(1, ["Warned detail"])),
+                    new SkippedPlugin("Skipped.esp", SkippedPluginReason.ZeroFormIdRecords),
+                    new FailedPlugin(
+                        "Failed.esp",
+                        new PluginReadDiagnostic(PluginReadPhase.ReadingRecords, "read failed"))
+                ])));
+        var recordStore = new RecordingRecordStoreSession
+        {
+            OptimizeAction = () => sut!.Cancel()
+        };
+        sut = new ProcessingRunExecutor(
+            ingestion,
+            new RecordingRecordStoreSessionOpener(recordStore));
+        using (sut)
+        {
+            var events = new List<ProcessingRunEvent>();
+            var progress = new SynchronousProgress<ProcessingRunEvent>(events.Add);
+            var request = new PluginProcessingRunRequest(
+                CreateTempDirectory(),
+                @"C:\Databases\formids.db",
+                GameRelease.SkyrimSE,
+                ["Warned.esp", "Skipped.esp", "Failed.esp"],
+                UpdateMode.Append);
+
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sut.ExecuteAsync(request, progress));
+
+            Assert.Single(ingestion.Calls);
+            Assert.Equal(1, recordStore.OptimizeCallCount);
             Assert.True(recordStore.Disposed);
             Assert.Contains(events, runEvent =>
                 runEvent.Kind == ProcessingRunEventKind.Status &&

@@ -499,6 +499,9 @@ public sealed class ProcessingRunExecutor : IProcessingRunExecutor
 
         cancellationToken.ThrowIfCancellationRequested();
         await recordStore.OptimizeAsync(cancellationToken).ConfigureAwait(false);
+
+        // Cancellation accepted during maintenance must surface as cancellation, never as a success terminal event.
+        cancellationToken.ThrowIfCancellationRequested();
         ReportStatus(progress, "Processing completed successfully!", 100);
     }
 
@@ -535,6 +538,9 @@ public sealed class ProcessingRunExecutor : IProcessingRunExecutor
         // A collaborator can return while cancellation is racing; incomplete work must never reach successful-run maintenance.
         cancellationToken.ThrowIfCancellationRequested();
         await recordStore.OptimizeAsync(cancellationToken).ConfigureAwait(false);
+
+        // Cancellation accepted during maintenance must surface as cancellation, so no outcome is formatted or reported.
+        cancellationToken.ThrowIfCancellationRequested();
 
         // Outcome wording is intentionally delayed until maintenance succeeds so a failed optimization has no terminal summary.
         var warningDetails = report.Outcomes

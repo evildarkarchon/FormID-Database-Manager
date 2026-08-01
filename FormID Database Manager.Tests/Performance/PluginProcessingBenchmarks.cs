@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Engines;
 using FormID_Database_Manager.Services;
+using FormID_Database_Manager.TestUtilities.Builders;
 using Mutagen.Bethesda;
 using Mutagen.Bethesda.Plugins;
 using Mutagen.Bethesda.Plugins.Records;
@@ -170,20 +171,11 @@ public class PluginProcessingBenchmarks : IDisposable
         for (var i = 0; i < count; i++)
         {
             var pluginName = $"TestPlugin_{i:D3}.esp";
-            var pluginPath = Path.Combine(dataPath, pluginName);
 
-            // Create a simple plugin file (mock)
-            var mod = new SkyrimMod(ModKey.FromNameAndExtension(pluginName), SkyrimRelease.SkyrimSE);
-
-            // Add some test records
-            for (var j = 0; j < 100; j++)
-            {
-                var npc = mod.Npcs.AddNew($"TEST_NPC_{i:D3}_{j:D3}");
-                npc.Name = $"Test NPC {i}-{j}";
-            }
-
-            // Write the plugin
-            mod.WriteToBinary(pluginPath);
+            // Written by the shared fixture generator so there is one way of making a Plugin in the suite. Its output
+            // is spec-correct where this benchmark's own copy was not — it declares Skyrim.esm as a master — which
+            // makes the throughput measured here closer to what a real load order costs.
+            PluginFixture.WriteWithNamedRecords(GameRelease.SkyrimSE, dataPath, pluginName, 100);
 
             plugins.Add(pluginName);
         }

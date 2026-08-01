@@ -97,8 +97,29 @@ injected dependency, and its placement of Game Installation resolution.
   `OblivionRE` producing a Plugin List which hid nothing, the Store test that pinned the old exception type, the
   Plugin List Source test that gains a Mutagen-defined-but-unsupported case, and the two ViewModel game-list tests
   that collapse into one projection assertion now that content and order are the table's responsibility.
-- `MutagenPluginOverlayReader` is referenced once in the entire test suite, so overlay construction remains
-  effectively untested. This change does not alter that; the drift and completeness tests are its safety net until
-  generated per-family Plugin fixtures make real coverage possible.
+- `MutagenPluginOverlayReader` was referenced once in the entire test suite when this decision was taken, so overlay
+  construction was effectively untested; the drift and completeness tests were its only safety net. That is no longer
+  the case, and this bullet is retired in two parts. `MutagenPluginOverlayReaderTests` drives the real adapter against
+  real paths and pins both the failure-classification behaviour and — directly relevant here — the placement of the
+  `ForRelease` lookup outside the adapter's `try`, so the reclassification hazard described above fails the suite by
+  name. `PluginOverlayConstructionTests` then covers the happy path for every row, using a Plugin generated at test
+  time for that row's release: it asserts the GameRelease the returned overlay reports and its concrete Mutagen
+  family, which together catch both a swap within a game family and a swap across families. A table-driven guard
+  fails by name for a row with no fixture, mirroring the drift test above.
+- The Plugin fixture generator carries its **own** release-to-Mutagen mapping, deliberately duplicating the column
+  this table consolidated. Deriving it from the table would make the wiring assertion circular — a row wired to the
+  wrong release would generate a fixture for that same wrong release and agree with itself. The per-family main master
+  name each fixture declares is duplicated for the same reason, rather than read from the Base Game Plugin sets.
+  This follows the convention the table's own tests already established, which re-list every Base Game Plugin set and
+  the full dropdown order rather than deriving them. It is test-side only: "adding a release is one row" still holds
+  for production, and the coverage guard is what makes the second list impossible to forget. This is not the drift
+  this ADR eliminated; it is a deliberate second opinion, and it runs in the direction that cannot be circular.
+- Reading a Plugin the fixtures generate revealed three defects, each pinned by a characterization assertion rather
+  than fixed, and each filed: the synthesized Entry label leaks Mutagen's overlay class name so it differs from an
+  in-memory read (#50); Entry Extraction's reflection name-lookup tier can never succeed, so every record without an
+  EditorID or a display name falls to that label (#51); and a Starfield Processing Run aborts with an unhandled
+  master-resolution failure when `Starfield.esm` is absent from the resolved Data directory (#52). Pinning rather
+  than fixing follows the same reasoning as the dropdown order above — each changes something user-visible and
+  deserves its own change with its own reasoning.
 - Readable game names in the dropdown become a single-field follow-up rather than another scattered lookup.
 - Whether to support Oblivion Remastered is now an explicit, loudly enforced decision rather than an accident.
