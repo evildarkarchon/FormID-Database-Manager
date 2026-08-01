@@ -212,7 +212,7 @@ public sealed class FormIdRecordStoreTests : IDisposable
     ///     opened, so no database file is created for a release that has no whitelisted table name.
     /// </summary>
     [Fact]
-    public async Task OpenAsync_UnsupportedGameRelease_UsesSafeTableNameWhitelist()
+    public async Task OpenAsync_UnsupportedGameRelease_ThrowsBeforeOpeningConnection()
     {
         var exception = await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => FormIdRecordStore.OpenAsync(
             _testDbPath,

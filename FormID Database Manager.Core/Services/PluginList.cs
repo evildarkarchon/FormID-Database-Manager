@@ -53,8 +53,9 @@ internal sealed class PluginList : IDisposable
     /// <exception cref="ArgumentNullException"><paramref name="gameDirectory" /> is null.</exception>
     /// <exception cref="ArgumentException"><paramref name="gameDirectory" /> is empty or whitespace.</exception>
     /// <exception cref="ArgumentOutOfRangeException">
-    ///     <paramref name="gameRelease" /> or <paramref name="advancedMode" /> is undefined, or discovery returns an
-    ///     unsupported result.
+    ///     <paramref name="gameRelease" /> is not a Supported GameRelease — which includes a release Mutagen defines
+    ///     but this application cannot process — or <paramref name="advancedMode" /> is undefined, or discovery
+    ///     returns an unsupported result.
     /// </exception>
     /// <exception cref="OperationCanceledException">
     ///     <paramref name="cancellationToken" /> is cancelled, or discovery propagates an unexpected cancellation. Caller

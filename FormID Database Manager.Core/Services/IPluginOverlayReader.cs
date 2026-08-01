@@ -11,6 +11,11 @@ internal interface IPluginOverlayReader
     /// <summary>
     ///     Opens one Plugin through the configured binary-overlay implementation.
     /// </summary>
+    /// <exception cref="ArgumentOutOfRangeException">
+    ///     <paramref name="gameRelease" /> is not a Supported GameRelease. Declared here because callers bind to this
+    ///     interface: an unsupported release is a programming error, not a Plugin-read failure, so it deliberately
+    ///     does not arrive as <see cref="PluginOverlayReadException" />.
+    /// </exception>
     /// <exception cref="PluginOverlayReadException">The selected Plugin contains malformed or unreadable data.</exception>
     IModDisposeGetter ReadOverlay(
         string pluginPath,

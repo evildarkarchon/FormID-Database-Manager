@@ -83,9 +83,20 @@ injected dependency, and its placement of Game Installation resolution.
 - Two deliberate behaviour changes, neither reachable in production: the Base Game Plugin lookup throws for an
   unsupported release where it previously returned an empty set, and `OblivionRE` is rejected one layer earlier, at
   the Plugin List Source boundary rather than inside a lookup.
+- Two consequential exception-type changes fall out of the single `ForRelease` contract, both for an unsupported
+  release only. `FormIdRecordStore.OpenAsync` — a public member — now throws `ArgumentOutOfRangeException` where it
+  threw `ArgumentException`; since the former derives from the latter, existing `catch` sites are unaffected and only
+  an exact-type assertion notices. `MutagenPluginOverlayReader.ReadOverlay` now throws `ArgumentOutOfRangeException`
+  where it threw `NotSupportedException`. The overlay row is therefore resolved *outside* that adapter's `try`,
+  because its expected-failure check treats `ArgumentException` as a malformed-Plugin signal and would otherwise
+  normalize a programming error into a Failed Plugin.
 - Existing FormID Record Store databases keep working, because table names are unchanged.
-- The tests at the four consuming seams are untouched by this change, which is what makes them regression evidence
-  that consolidation changed no behaviour.
+- The tests at the consuming seams are preserved as regression evidence wherever the behaviour they pin is
+  unchanged — most importantly the six-release Plugin List hiding theory and the Store's schema coverage, both
+  untouched. Four seam tests did change, each for a reason recorded above: the Plugin List test that pinned
+  `OblivionRE` producing a Plugin List which hid nothing, the Store test that pinned the old exception type, the
+  Plugin List Source test that gains a Mutagen-defined-but-unsupported case, and the two ViewModel game-list tests
+  that collapse into one projection assertion now that content and order are the table's responsibility.
 - `MutagenPluginOverlayReader` is referenced once in the entire test suite, so overlay construction remains
   effectively untested. This change does not alter that; the drift and completeness tests are its safety net until
   generated per-family Plugin fixtures make real coverage possible.
