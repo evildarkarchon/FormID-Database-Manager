@@ -21,6 +21,10 @@ internal interface IPluginIngestion
     ///     without a report; Store optimization and disposal remain the surrounding Processing Run's responsibility.
     /// </remarks>
     /// <exception cref="OperationCanceledException"><paramref name="cancellationToken" /> requests cancellation.</exception>
+    /// <exception cref="UnresolvableMasterException">
+    ///     A selected Plugin declares a master the Data directory cannot supply, which fails the whole run rather than
+    ///     one Plugin (ADR-0006).
+    /// </exception>
     Task<PluginIngestionReport> IngestAsync(
         SelectedPluginIngestionRequest request,
         IFormIdRecordStoreSession recordStore,

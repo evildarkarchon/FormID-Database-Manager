@@ -65,6 +65,10 @@ internal sealed class PluginIngestion : IPluginIngestion
     /// </remarks>
     /// <exception cref="ArgumentNullException"><paramref name="request" /> or <paramref name="recordStore" /> is null.</exception>
     /// <exception cref="OperationCanceledException"><paramref name="cancellationToken" /> requests cancellation.</exception>
+    /// <exception cref="UnresolvableMasterException">
+    ///     A selected Plugin declares a master the prepared load-order snapshot cannot supply a master style for. The
+    ///     selected set stops there because every remaining Plugin would fail the same way (ADR-0006).
+    /// </exception>
     public async Task<PluginIngestionReport> IngestAsync(
         SelectedPluginIngestionRequest request,
         IFormIdRecordStoreSession recordStore,
@@ -139,6 +143,10 @@ internal sealed class PluginIngestion : IPluginIngestion
     ///     cancellation or infrastructure exception is already in flight so the primary exception retains its identity.
     /// </remarks>
     /// <exception cref="OperationCanceledException"><paramref name="cancellationToken" /> requests cancellation.</exception>
+    /// <exception cref="UnresolvableMasterException">
+    ///     The Plugin declares a master the load-order snapshot cannot supply a master style for, which fails the run
+    ///     rather than this Plugin.
+    /// </exception>
     /// <exception cref="Exception">An unexpected infrastructure or standalone overlay-cleanup failure occurs.</exception>
     private async Task<PluginIngestionOutcome> IngestAvailablePluginAsync(
         string pluginName,
@@ -154,7 +162,7 @@ internal sealed class PluginIngestion : IPluginIngestion
         IModDisposeGetter plugin;
         try
         {
-            plugin = TryCreateOverlay(pluginPath, gameRelease, loadOrderSnapshot.ReadParameters);
+            plugin = TryCreateOverlay(pluginName, pluginPath, gameRelease, loadOrderSnapshot.ReadParameters);
         }
         catch (PluginReadException ex)
         {
@@ -322,12 +330,23 @@ internal sealed class PluginIngestion : IPluginIngestion
     /// <summary>
     ///     Opens an overlay and attaches the opening phase to adapter-normalized Plugin-read failures.
     /// </summary>
+    /// <param name="pluginName">The selected Plugin name, used to name the run-level master failure below.</param>
     /// <param name="pluginPath">The available selected Plugin path.</param>
     /// <param name="gameRelease">The target GameRelease.</param>
     /// <param name="readParameters">The shared load-order-aware binary read parameters.</param>
     /// <returns>The disposable Plugin overlay.</returns>
+    /// <remarks>
+    ///     The two master-resolution failures below are classified here rather than in the overlay adapter on purpose.
+    ///     The adapter's expected-failure list stays narrow so an unexpected internal failure still aborts loudly, and
+    ///     these are not Plugin-specific anyway: they are facts about the Data directory that would fail every selected
+    ///     Plugin identically (ADR-0006, issue #52).
+    /// </remarks>
     /// <exception cref="PluginReadException">The overlay adapter reports an expected Plugin-specific failure.</exception>
+    /// <exception cref="UnresolvableMasterException">
+    ///     The Plugin declares a master the prepared load-order snapshot cannot supply a master style for.
+    /// </exception>
     private IModDisposeGetter TryCreateOverlay(
+        string pluginName,
         string pluginPath,
         GameRelease gameRelease,
         BinaryReadParameters readParameters)
@@ -343,6 +362,16 @@ internal sealed class PluginIngestion : IPluginIngestion
                 PluginReadPhase.OpeningPlugin,
                 ex.Message,
                 ex);
+        }
+        catch (MissingModException ex)
+        {
+            // ModPath is the first of the missing keys and carries no directory here, so only its file name is usable.
+            throw new UnresolvableMasterException(pluginName, ex.ModPath.ModKey.FileName.ToString(), ex);
+        }
+        catch (MissingModMappingException ex)
+        {
+            // Mutagen reports only that no lookup was supplied, so there is no individual master to name.
+            throw new UnresolvableMasterException(pluginName, null, ex);
         }
     }
 

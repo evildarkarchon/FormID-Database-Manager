@@ -17,6 +17,59 @@ public sealed class ProcessingRunValidationException : Exception
 }
 
 /// <summary>
+///     The failure raised when a selected Plugin declares a master the resolved Data directory cannot supply, on a
+///     GameRelease whose load order separates master files by type.
+/// </summary>
+/// <remarks>
+///     This fails the whole Processing Run rather than one Plugin, because it is a fact about the Data directory and
+///     not about the Plugin: every spec-correct Plugin declares its game's main master first, so every selected Plugin
+///     would fail identically. Reporting it as a Failed Plugin would name the wrong thing (ADR-0006, issue #52).
+/// </remarks>
+public sealed class UnresolvableMasterException : Exception
+{
+    /// <summary>
+    ///     Creates the run-level failure for one unresolvable master.
+    /// </summary>
+    /// <param name="pluginName">The selected Plugin whose declared master could not be resolved.</param>
+    /// <param name="masterName">
+    ///     The declared master file name, or <see langword="null" /> when no master-flags lookup was supplied at all and
+    ///     the underlying failure therefore names no individual master.
+    /// </param>
+    /// <param name="innerException">The underlying master-resolution failure, retained for diagnostics.</param>
+    /// <exception cref="ArgumentException"><paramref name="pluginName" /> is blank.</exception>
+    public UnresolvableMasterException(string pluginName, string? masterName, Exception? innerException = null)
+        : base(BuildMessage(pluginName, masterName), innerException)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(pluginName);
+
+        PluginName = pluginName;
+        MasterName = masterName;
+    }
+
+    /// <summary>
+    ///     The selected Plugin whose declared master could not be resolved.
+    /// </summary>
+    public string PluginName { get; }
+
+    /// <summary>
+    ///     The unresolvable master file name, or <see langword="null" /> when the underlying failure named none.
+    /// </summary>
+    public string? MasterName { get; }
+
+    private static string BuildMessage(string pluginName, string? masterName)
+    {
+        // The wording stays on the Data directory rather than the Plugin, because pointing the user at the Plugin
+        // would send them to fix something that is not broken.
+        return masterName is null
+            ? $"Could not resolve the master files declared by {pluginName}. This game separates master files by " +
+              "type in the load order, but no master file was found in the Data directory being processed."
+            : $"Could not resolve '{masterName}', a master file declared by {pluginName}. This game separates " +
+              "master files by type in the load order, so that master must be present in the Data directory being " +
+              "processed before any selected plugin can be read.";
+    }
+}
+
+/// <summary>
 ///     Base request for one Processing Run against a FormID Record Store.
 /// </summary>
 public abstract record ProcessingRunRequest

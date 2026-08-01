@@ -271,26 +271,26 @@ public sealed class PluginIngestionFixtureTests : IDisposable
     }
 
     /// <summary>
-    ///     Pins what a Starfield Processing Run does when the resolved Data directory holds the selected Plugin but
-    ///     not <c>Starfield.esm</c>: the run aborts with an unhandled Mutagen failure instead of reporting one Failed
-    ///     Plugin.
+    ///     Verifies what a Starfield Processing Run does when the resolved Data directory holds the selected Plugin but
+    ///     not <c>Starfield.esm</c>: the run stops with a failure naming the missing master, rather than aborting on an
+    ///     unhandled Mutagen exception or reporting one Failed Plugin.
     /// </summary>
     /// <remarks>
     ///     <para>
-    ///         Filed as issue #52 and deliberately not fixed here — #49 puts changing the adapter's classification
-    ///         list out of scope. This is the stop-and-report, pinned at the layer a user actually meets it.
+    ///         Issue #52. Naming the master is the whole value of the fix — a Failed Plugin would point the user at a
+    ///         Plugin that is not broken, and every selected Plugin would fail identically anyway, because the format
+    ///         requires each one to declare its game's main master (ADR-0006).
     ///     </para>
     ///     <para>
     ///         The snapshot is built the way production's <c>GameLoadOrderProvider</c> builds one, not the way the
     ///         other tests in this file do. That difference is the whole point: production collects master styles only
-    ///         for listings whose file exists on disk, and falls back to default read parameters when none do — so a
-    ///         Data directory with mods but no game master produces exactly the empty-lookup snapshot below.
-    ///         <see cref="GameLoadOrderSnapshotFactory.CreateFixtureSnapshot" /> supplies the lookup unconditionally,
-    ///         which is right for covering the happy path and wrong for covering this, so this case bypasses it.
+    ///         for listings whose file exists on disk, so a Data directory without the game master produces exactly the
+    ///         empty-lookup snapshot below. <see cref="GameLoadOrderSnapshotFactory.CreateFixtureSnapshot" /> supplies
+    ///         the lookup populated, which is right for covering the happy path and wrong for covering this.
     ///     </para>
     /// </remarks>
     [Fact]
-    public async Task IngestAsync_StarfieldPluginWhoseMasterIsNotInTheDataDirectory_AbortsRatherThanFailingOnePlugin()
+    public async Task IngestAsync_StarfieldPluginWhoseMasterIsNotInTheDataDirectory_FailsTheRunNamingThatMaster()
     {
         var cancellationToken = TestContext.Current.CancellationToken;
         const GameRelease release = GameRelease.Starfield;
@@ -301,19 +301,19 @@ public sealed class PluginIngestionFixtureTests : IDisposable
 
         // No master styles: Starfield.esm is not on disk, so production's provider would collect none either.
         var ingestion = new PluginIngestion(
-            new StaticGameLoadOrderProvider(GameLoadOrderSnapshotFactory.CreateSnapshot(PluginName)));
+            new StaticGameLoadOrderProvider(
+                GameLoadOrderSnapshotFactory.CreateSnapshotWithoutAnyMasterOnDisk(PluginName)));
 
         await using var store = await FormIdRecordStore.OpenAsync(databasePath, release, cancellationToken);
-        var exception = await Record.ExceptionAsync(() => ingestion.IngestAsync(
+        var exception = await Assert.ThrowsAsync<UnresolvableMasterException>(() => ingestion.IngestAsync(
             new SelectedPluginIngestionRequest(gameDirectory, release, [PluginName], UpdateMode.Append),
             store,
             progress: null,
             cancellationToken));
 
-        // Asserted as "did not become an outcome" first, because that is the user-visible defect: the run dies rather
-        // than the Plugin failing. The type assertion identifies which Mutagen failure got there.
-        Assert.NotNull(exception);
-        Assert.IsType<MissingModMappingException>(exception);
+        Assert.Equal(PluginFixture.MainMasterFor(release), exception.MasterName);
+        Assert.Equal(PluginName, exception.PluginName);
+        Assert.IsType<MissingModException>(exception.InnerException);
     }
 
     /// <summary>

@@ -23,6 +23,10 @@ _Avoid_: Successful plugin, missing file error, ignored plugin.
 A selected Plugin whose ingestion could not complete because of a fatal Plugin-specific error, not because of a FormID Record Store failure. A Failed Plugin counts against the Processing Run summary, but does not by itself mean the whole Processing Run failed.
 _Avoid_: Run failure, warning, skipped plugin.
 
+**Unresolvable Master**:
+A master file a selected Plugin declares that the resolved Data directory cannot supply, on a GameRelease whose load order separates master files by type. It fails the whole Processing Run and names the master, rather than becoming a Failed Plugin, because it is a fact about the Data directory: every selected Plugin declares its game's main master, so all of them would fail identically (ADR-0006).
+_Avoid_: Missing master error, broken plugin, bad load order.
+
 **Plugin List**:
 The loaded set of Plugins available for a selected GameRelease and game directory, including the user's current Plugin selection. Plugin names are unique and compared case-insensitively for membership and selection.
 _Avoid_: Mod list, file list.

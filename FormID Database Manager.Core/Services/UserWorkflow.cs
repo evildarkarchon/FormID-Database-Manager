@@ -282,6 +282,12 @@ public sealed class UserWorkflow : IDisposable
         {
             _viewModel.AddErrorMessage(ex.Message);
         }
+        catch (UnresolvableMasterException ex)
+        {
+            // Shown unwrapped like a validation failure: the message already names what is missing from the Data
+            // directory and what to do about it, so the generic "Error processing FormIDs" prefix would only bury it.
+            _viewModel.AddErrorMessage(ex.Message);
+        }
         catch (OperationCanceledException)
         {
             _viewModel.ProgressStatus = "Processing cancelled by user.";

@@ -463,6 +463,90 @@ public sealed class PluginIngestionTests : IDisposable
     }
 
     /// <summary>
+    ///     Verifies that a master a selected Plugin declares but the load-order snapshot cannot resolve fails the whole
+    ///     Processing Run, naming that master, rather than becoming one Failed Plugin.
+    /// </summary>
+    /// <remarks>
+    ///     Issue #52. This is a fact about the Data directory, not about the Plugin: every selected Plugin declares its
+    ///     game's main master, so on a game with separated master load orders they would all fail identically. Reporting
+    ///     it per Plugin would be both misleading and repetitive, so the run stops at the first one and says what is
+    ///     missing. The later selection is asserted untouched for the same reason the infrastructure-failure tests above
+    ///     assert it.
+    /// </remarks>
+    [Fact]
+    public async Task IngestAsync_DeclaredMasterMissingFromTheLookup_FailsTheRunNamingThatMaster()
+    {
+        var gameDirectory = CreateGameDirectory();
+        await CreatePluginFileAsync(gameDirectory, "Patch.esp");
+        await CreatePluginFileAsync(gameDirectory, "Never.esp");
+        var storeEvents = new List<string>();
+        var failure = new MissingModException(
+            ModKey.FromNameAndExtension("Starfield.esm"),
+            "Mod was missing from load order when constructing the separate mod lists needed for FormID translation.");
+        var overlayReader = new OpeningFailureOverlayReader("Patch.esp", failure);
+        IPluginIngestion sut = new PluginIngestion(
+            new RecordingLoadOrderProvider(
+                new GameLoadOrderSnapshot(["Patch.esp", "Never.esp"], []),
+                []),
+            overlayReader,
+            new EntryExtraction());
+
+        var thrown = await Assert.ThrowsAsync<UnresolvableMasterException>(() => sut.IngestAsync(
+            new SelectedPluginIngestionRequest(
+                gameDirectory,
+                GameRelease.Starfield,
+                ["Patch.esp", "Never.esp"],
+                UpdateMode.Append),
+            new RecordingRecordStoreSession(storeEvents),
+            cancellationToken: TestContext.Current.CancellationToken));
+
+        Assert.Equal("Patch.esp", thrown.PluginName);
+        Assert.Equal("Starfield.esm", thrown.MasterName);
+        Assert.Contains("Starfield.esm", thrown.Message, StringComparison.Ordinal);
+        Assert.Same(failure, thrown.InnerException);
+        Assert.Equal(["Patch.esp"], overlayReader.AttemptedPlugins);
+        Assert.Empty(storeEvents);
+    }
+
+    /// <summary>
+    ///     Verifies the same run-level failure for a load-order snapshot that supplied no master-flags lookup at all,
+    ///     which names no master because Mutagen reports only that the lookup was absent.
+    /// </summary>
+    /// <remarks>
+    ///     Production's <c>GameLoadOrderProvider</c> now always supplies a lookup for a game that needs one, so this
+    ///     arrives only from another <c>IGameLoadOrderProvider</c> implementation. It is covered anyway because the
+    ///     provider is a seam, and an unnamed master is still a stopped run rather than an unhandled abort.
+    /// </remarks>
+    [Fact]
+    public async Task IngestAsync_NoMasterFlagsLookupAtAll_FailsTheRunWithoutNamingAMaster()
+    {
+        var gameDirectory = CreateGameDirectory();
+        await CreatePluginFileAsync(gameDirectory, "Patch.esp");
+        var storeEvents = new List<string>();
+        var failure = new MissingModMappingException("Master flag lookup was not provided.");
+        var overlayReader = new OpeningFailureOverlayReader("Patch.esp", failure);
+        IPluginIngestion sut = new PluginIngestion(
+            new RecordingLoadOrderProvider(new GameLoadOrderSnapshot(["Patch.esp"]), []),
+            overlayReader,
+            new EntryExtraction());
+
+        var thrown = await Assert.ThrowsAsync<UnresolvableMasterException>(() => sut.IngestAsync(
+            new SelectedPluginIngestionRequest(
+                gameDirectory,
+                GameRelease.Starfield,
+                ["Patch.esp"],
+                UpdateMode.Append),
+            new RecordingRecordStoreSession(storeEvents),
+            cancellationToken: TestContext.Current.CancellationToken));
+
+        Assert.Equal("Patch.esp", thrown.PluginName);
+        Assert.Null(thrown.MasterName);
+        Assert.Contains("Patch.esp", thrown.Message, StringComparison.Ordinal);
+        Assert.Same(failure, thrown.InnerException);
+        Assert.Empty(storeEvents);
+    }
+
+    /// <summary>
     ///     Verifies that an unexpected record-enumerator failure remains an infrastructure failure and stops later
     ///     selected Plugins instead of becoming a Failed Plugin outcome.
     /// </summary>

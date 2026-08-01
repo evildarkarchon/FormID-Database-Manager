@@ -12,6 +12,22 @@ public static class GameLoadOrderSnapshotFactory
     }
 
     /// <summary>
+    ///     Creates the snapshot production's <see cref="GameLoadOrderProvider" /> builds for a game that separates
+    ///     master load orders when its resolved Data directory holds none of the listed files.
+    /// </summary>
+    /// <param name="pluginNames">The listed Plugin names, in load order.</param>
+    /// <returns>A snapshot whose master-flags lookup exists but is empty.</returns>
+    /// <remarks>
+    ///     The empty collection is the point, and is not the same as omitting it: the provider collects master styles
+    ///     only for listings whose file exists on disk, and still supplies the resulting lookup, so Mutagen names the
+    ///     master it cannot resolve rather than reporting only that no lookup was given (issue #52).
+    /// </remarks>
+    public static GameLoadOrderSnapshot CreateSnapshotWithoutAnyMasterOnDisk(params string[] pluginNames)
+    {
+        return new GameLoadOrderSnapshot(pluginNames, []);
+    }
+
+    /// <summary>
     ///     Creates the load-order snapshot generated Plugin fixtures are read through.
     /// </summary>
     /// <param name="release">The GameRelease the fixtures were generated for.</param>

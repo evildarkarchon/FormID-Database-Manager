@@ -243,9 +243,11 @@ public sealed class PluginOverlayConstructionTests : IDisposable
     /// <remarks>
     ///     This case is reachable in production, not merely a constructed one: production's load-order provider
     ///     collects master styles only for listings whose file exists on disk, so a Starfield Data directory holding
-    ///     mods but not <c>Starfield.esm</c> builds exactly this lookup, and the run aborts rather than reporting a
-    ///     Failed Plugin. Filed as issue #52 and deliberately not fixed here; the failure it produces is pinned so
-    ///     the adapter's behaviour cannot change by accident in the meantime.
+    ///     mods but not <c>Starfield.esm</c> builds exactly this lookup. Issue #52 fixed what a Processing Run does
+    ///     with it, and fixed it one layer up — Plugin Ingestion turns this exception into an
+    ///     <c>UnresolvableMasterException</c> that stops the run and names the master (ADR-0006). The adapter's list
+    ///     deliberately did not widen, which is what this pins: widening it would report a Data-directory problem as a
+    ///     Failed Plugin, and would have to be a deliberate edit here.
     /// </remarks>
     [Fact]
     public void ReadOverlay_MasterFlagsLookupWithoutTheDeclaredMaster_EscapesWithoutBecomingAPluginReadFailure()

@@ -1104,6 +1104,42 @@ public class UserWorkflowTests
         Assert.Empty(_viewModel.WarningMessages);
     }
 
+    /// <summary>
+    ///     Verifies a run stopped by an unresolvable master reaches the user as the failure's own message, without the
+    ///     generic processing-error prefix that every other terminal failure gets.
+    /// </summary>
+    /// <remarks>
+    ///     Issue #52. The message already names the missing master and what to do about it, so burying it behind
+    ///     "Error processing FormIDs" would waste the one piece of information the fix exists to deliver (ADR-0006).
+    ///     The generic case below is asserted alongside it so this stays a distinction rather than a coincidence.
+    /// </remarks>
+    [Fact]
+    public async Task ProcessFormIdsAsync_UnresolvableMaster_ShowsTheFailureMessageUnwrapped()
+    {
+        var sut = CreateSut();
+        await ConfigureValidPluginProcessingRunAsync(sut);
+        var failure = new UnresolvableMasterException("User.esp", "Starfield.esm");
+        _processingRunExecutor.ExecuteFailure = failure;
+
+        await sut.ProcessFormIdsAsync();
+
+        Assert.Equal([failure.Message], _viewModel.ErrorMessages);
+        Assert.False(_viewModel.IsProcessing);
+    }
+
+    [Fact]
+    public async Task ProcessFormIdsAsync_UnexpectedRunFailure_ShowsTheGenericProcessingErrorMessage()
+    {
+        var sut = CreateSut();
+        await ConfigureValidPluginProcessingRunAsync(sut);
+        _processingRunExecutor.ExecuteFailure = new InvalidOperationException("store unavailable");
+
+        await sut.ProcessFormIdsAsync();
+
+        Assert.Equal(["Error processing FormIDs: store unavailable"], _viewModel.ErrorMessages);
+        Assert.False(_viewModel.IsProcessing);
+    }
+
     [Fact]
     public async Task ProcessFormIdsAsync_AlreadyProcessing_CancelsCurrentRunAndSetsCancellingState()
     {
@@ -1387,6 +1423,12 @@ public class UserWorkflowTests
         /// </summary>
         public Exception? DisposeFailure { get; set; }
 
+        /// <summary>
+        ///     The failure raised by <see cref="ExecuteAsync" /> after any configured events are reported, standing in
+        ///     for a run that ends in a terminal failure rather than a report.
+        /// </summary>
+        public Exception? ExecuteFailure { get; set; }
+
         public List<ProcessingRunEvent> EventsToReport { get; } = [];
 
         public Task ExecuteAsync(
@@ -1399,7 +1441,7 @@ public class UserWorkflowTests
                 progress?.Report(runEvent);
             }
 
-            return Task.CompletedTask;
+            return ExecuteFailure is { } failure ? Task.FromException(failure) : Task.CompletedTask;
         }
 
         public void Cancel()
