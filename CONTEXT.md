@@ -51,6 +51,10 @@ _Avoid_: Vanilla plugin, official plugin, stock master.
 The target Bethesda game or edition that determines plugin layout, base plugins, and database table selection.
 _Avoid_: Game type, release enum.
 
+**Supported GameRelease**:
+A GameRelease this application can process — one with a FormID Record Store table name, a Base Game Plugin set, and Plugin overlay construction. Mutagen defines GameReleases this application does not support; only a Supported GameRelease can reach a Game Context or a Processing Run.
+_Avoid_: Game type, supported game.
+
 **Game Context**:
 The User Workflow state that determines which Plugin List can be loaded: selected GameRelease, selected game directory, and Advanced Mode.
 _Avoid_: Game selection, current game state.
