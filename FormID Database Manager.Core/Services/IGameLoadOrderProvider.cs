@@ -8,6 +8,4 @@ public interface IGameLoadOrderProvider
         GameRelease gameRelease,
         string dataPath,
         bool includeMasterFlagsLookup = false);
-
-    IReadOnlyList<string> GetListedPluginNames(GameRelease gameRelease, string dataPath);
 }

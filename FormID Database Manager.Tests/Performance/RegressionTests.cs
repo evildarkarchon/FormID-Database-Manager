@@ -2,11 +2,10 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Threading.Tasks;
 using FormID_Database_Manager.Services;
 using FormID_Database_Manager.TestUtilities;
-using Microsoft.Data.Sqlite;
-using Moq;
 using Mutagen.Bethesda;
 using Xunit;
 
@@ -32,12 +31,13 @@ public class RegressionTests : IDisposable
         // Performance baselines (adjust based on your hardware)
         _performanceBaselines = new Dictionary<string, TimeSpan>
         {
-            ["DatabaseInit_SingleGame"] = TimeSpan.FromMilliseconds(50),
-            ["DatabaseInit_AllGames"] = TimeSpan.FromMilliseconds(200),
+            ["StoreOpen_SingleGame"] = TimeSpan.FromMilliseconds(50),
+            ["StoreOpen_AllGames"] = TimeSpan.FromMilliseconds(200),
             ["BatchInsert_1000Records"] = TimeSpan.FromMilliseconds(100),
             ["BatchInsert_10000Records"] = TimeSpan.FromSeconds(1),
             ["GameDetection_SimpleDirectory"] = TimeSpan.FromMilliseconds(10),
             ["GameDetection_ComplexDirectory"] = TimeSpan.FromMilliseconds(50),
+            ["GameDetection_LargeDirectory"] = TimeSpan.FromMilliseconds(500),
             ["PluginListLoad_Small"] = TimeSpan.FromMilliseconds(20),
             ["PluginListLoad_Large"] = TimeSpan.FromMilliseconds(100),
             ["FormIdProcess_SmallFile"] = TimeSpan.FromMilliseconds(50),
@@ -60,35 +60,45 @@ public class RegressionTests : IDisposable
         }
     }
 
+    /// <summary>
+    ///     Guards the full ready-on-return Store-opening contract for one GameRelease.
+    /// </summary>
     [ManualPerformanceFact]
     [Trait("Category", "PerformanceRegression")]
-    public async Task DatabaseInitialization_SingleGame_StaysWithinBaseline()
+    public async Task FormIdRecordStoreOpen_SingleGame_StaysWithinBaseline()
     {
         // Arrange
-        var service = new DatabaseService();
         var dbPath = Path.Combine(_testDirectory, "test_single.db");
-        var baseline = _performanceBaselines["DatabaseInit_SingleGame"];
+        var baseline = _performanceBaselines["StoreOpen_SingleGame"];
 
         // Act
         var stopwatch = Stopwatch.StartNew();
-        await service.InitializeDatabase(dbPath, GameRelease.SkyrimSE, TestContext.Current.CancellationToken);
+        await using (var store = await FormIdRecordStore.OpenAsync(
+                         dbPath,
+                         GameRelease.SkyrimSE,
+                         TestContext.Current.CancellationToken))
+        {
+            // Disposal completes inside the timer so the baseline covers the full Store open-and-close lifecycle.
+        }
         stopwatch.Stop();
 
         // Assert
-        _output.WriteLine($"Database initialization (single game) took: {stopwatch.Elapsed.TotalMilliseconds:F2}ms");
+        _output.WriteLine($"Store opening (single game) took: {stopwatch.Elapsed.TotalMilliseconds:F2}ms");
         _output.WriteLine($"Baseline: {baseline.TotalMilliseconds:F2}ms");
 
         Assert.True(stopwatch.Elapsed < baseline.Add(TimeSpan.FromMilliseconds(baseline.TotalMilliseconds * 0.2)),
             $"Performance regression detected! Operation took {stopwatch.Elapsed.TotalMilliseconds:F2}ms, baseline is {baseline.TotalMilliseconds:F2}ms (20% tolerance)");
     }
 
+    /// <summary>
+    ///     Guards the aggregate ready-on-return Store-opening contract across supported GameReleases.
+    /// </summary>
     [ManualPerformanceFact]
     [Trait("Category", "PerformanceRegression")]
-    public async Task DatabaseInitialization_AllGames_StaysWithinBaseline()
+    public async Task FormIdRecordStoreOpen_AllGames_StaysWithinBaseline()
     {
         // Arrange
-        var service = new DatabaseService();
-        var baseline = _performanceBaselines["DatabaseInit_AllGames"];
+        var baseline = _performanceBaselines["StoreOpen_AllGames"];
         var games = new[]
         {
             GameRelease.SkyrimSE, GameRelease.Fallout4, GameRelease.Starfield, GameRelease.SkyrimVR,
@@ -100,13 +110,19 @@ public class RegressionTests : IDisposable
         foreach (var game in games)
         {
             var dbPath = Path.Combine(_testDirectory, $"test_{game}.db");
-            await service.InitializeDatabase(dbPath, game, TestContext.Current.CancellationToken);
+            await using (var store = await FormIdRecordStore.OpenAsync(
+                             dbPath,
+                             game,
+                             TestContext.Current.CancellationToken))
+            {
+                // Each disposal remains inside the timer so every GameRelease measures the same complete lifecycle.
+            }
         }
 
         stopwatch.Stop();
 
         // Assert
-        _output.WriteLine($"Database initialization (all games) took: {stopwatch.Elapsed.TotalMilliseconds:F2}ms");
+        _output.WriteLine($"Store opening (all games) took: {stopwatch.Elapsed.TotalMilliseconds:F2}ms");
         _output.WriteLine($"Baseline: {baseline.TotalMilliseconds:F2}ms");
 
         Assert.True(stopwatch.Elapsed < baseline.Add(TimeSpan.FromMilliseconds(baseline.TotalMilliseconds * 0.2)),
@@ -120,30 +136,14 @@ public class RegressionTests : IDisposable
     public async Task DatabaseBatchInsert_StaysWithinBaseline(int recordCount, string baselineKey)
     {
         // Arrange
-        var service = new DatabaseService();
         var dbPath = Path.Combine(_testDirectory, $"test_batch_{recordCount}.db");
-        await service.InitializeDatabase(dbPath, GameRelease.SkyrimSE, TestContext.Current.CancellationToken);
 
         var baseline = _performanceBaselines[baselineKey];
         var records = GenerateTestRecords(recordCount);
 
         // Act
         var stopwatch = Stopwatch.StartNew();
-        await using (var connection = new SqliteConnection($"Data Source={dbPath}"))
-        {
-            await connection.OpenAsync(TestContext.Current.CancellationToken);
-            // Simulate batch insert by inserting records in a transaction
-            await using (var transaction = connection.BeginTransaction())
-            {
-                foreach (var record in records)
-                {
-                    await service.InsertRecord(connection, GameRelease.SkyrimSE, record.plugin, record.formId,
-                        record.editorId, TestContext.Current.CancellationToken);
-                }
-
-                await transaction.CommitAsync(TestContext.Current.CancellationToken);
-            }
-        }
+        await WriteRecordsWithStoreAsync(dbPath, records);
 
         stopwatch.Stop();
 
@@ -161,7 +161,7 @@ public class RegressionTests : IDisposable
     public void GameDetection_SimpleDirectory_StaysWithinBaseline()
     {
         // Arrange
-        var service = new GameDetectionService();
+        var gameInstallations = new GameInstallations(new GameInstallationProbe());
         var testDir = Path.Combine(_testDirectory, "Skyrim Special Edition");
         var dataDir = Path.Combine(testDir, "Data");
         Directory.CreateDirectory(dataDir);
@@ -172,7 +172,7 @@ public class RegressionTests : IDisposable
 
         // Act
         var stopwatch = Stopwatch.StartNew();
-        var result = service.DetectGame(testDir);
+        var result = gameInstallations.Detect(testDir);
         stopwatch.Stop();
 
         // Assert
@@ -189,7 +189,7 @@ public class RegressionTests : IDisposable
     public void GameDetection_ComplexDirectory_StaysWithinBaseline()
     {
         // Arrange
-        var service = new GameDetectionService();
+        var gameInstallations = new GameInstallations(new GameInstallationProbe());
         var testDir = Path.Combine(_testDirectory, "ComplexGame");
         var dataDir = Path.Combine(testDir, "Data");
         Directory.CreateDirectory(dataDir);
@@ -206,7 +206,7 @@ public class RegressionTests : IDisposable
 
         // Act
         var stopwatch = Stopwatch.StartNew();
-        var result = service.DetectGame(testDir);
+        var result = gameInstallations.Detect(testDir);
         stopwatch.Stop();
 
         // Assert
@@ -214,6 +214,49 @@ public class RegressionTests : IDisposable
         _output.WriteLine($"Baseline: {baseline.TotalMilliseconds:F2}ms");
 
         Assert.Equal(GameRelease.Fallout4, result);
+        Assert.True(stopwatch.Elapsed < baseline.Add(TimeSpan.FromMilliseconds(baseline.TotalMilliseconds * 0.3)),
+            $"Performance regression detected! Operation took {stopwatch.Elapsed.TotalMilliseconds:F2}ms, baseline is {baseline.TotalMilliseconds:F2}ms (30% tolerance)");
+    }
+
+    /// <summary>
+    ///     Guards detection against a Data directory holding a realistic mod load: the rules probe named files rather
+    ///     than enumerating the directory, so the cost must not grow with what else is in there.
+    /// </summary>
+    /// <remarks>
+    ///     This is the timing check that used to sit in the detection integration tests. It is a wall-clock assertion
+    ///     over a thousand-file directory, so it belongs behind the manual-performance gate rather than in a suite that
+    ///     runs on every build.
+    /// </remarks>
+    [ManualPerformanceFact]
+    [Trait("Category", "PerformanceRegression")]
+    public void GameDetection_LargeDirectory_StaysWithinBaseline()
+    {
+        // Arrange
+        var gameInstallations = new GameInstallations(new GameInstallationProbe());
+        var gameDirectory = Path.Combine(_testDirectory, "LargeGame");
+        var dataDirectory = Path.Combine(gameDirectory, "Data");
+        Directory.CreateDirectory(dataDirectory);
+
+        File.WriteAllText(Path.Combine(dataDirectory, "Skyrim.esm"), "dummy");
+        File.WriteAllText(Path.Combine(dataDirectory, "Update.esm"), "dummy");
+
+        for (var i = 0; i < 1000; i++)
+        {
+            File.WriteAllText(Path.Combine(dataDirectory, $"Mod{i:D4}.esp"), "dummy");
+        }
+
+        var baseline = _performanceBaselines["GameDetection_LargeDirectory"];
+
+        // Act
+        var stopwatch = Stopwatch.StartNew();
+        var result = gameInstallations.Detect(dataDirectory);
+        stopwatch.Stop();
+
+        // Assert
+        _output.WriteLine($"Game detection (large directory) took: {stopwatch.Elapsed.TotalMilliseconds:F2}ms");
+        _output.WriteLine($"Baseline: {baseline.TotalMilliseconds:F2}ms");
+
+        Assert.Equal(GameRelease.SkyrimLE, result);
         Assert.True(stopwatch.Elapsed < baseline.Add(TimeSpan.FromMilliseconds(baseline.TotalMilliseconds * 0.3)),
             $"Performance regression detected! Operation took {stopwatch.Elapsed.TotalMilliseconds:F2}ms, baseline is {baseline.TotalMilliseconds:F2}ms (30% tolerance)");
     }
@@ -259,8 +302,6 @@ public class RegressionTests : IDisposable
     public async Task FormIdTextProcessing_StaysWithinBaseline(int lineCount, string baselineKey)
     {
         // Arrange
-        var mockDatabaseService = new Mock<DatabaseService>();
-        var processor = new FormIdTextProcessor(mockDatabaseService.Object);
         var formIdFile = Path.Combine(_testDirectory, "formids.txt");
         var dbPath = Path.Combine(_testDirectory, "test.db");
 
@@ -273,25 +314,27 @@ public class RegressionTests : IDisposable
 
         await File.WriteAllLinesAsync(formIdFile, lines, TestContext.Current.CancellationToken);
 
-        // Setup database
-        var dbService = new DatabaseService();
-        await dbService.InitializeDatabase(dbPath, GameRelease.SkyrimSE, TestContext.Current.CancellationToken);
+        await using (var store = await FormIdRecordStore.OpenAsync(
+                         dbPath,
+                         GameRelease.SkyrimSE,
+                         TestContext.Current.CancellationToken))
+        {
+            // Keep the import baseline prewarmed while preparing it through the production Store seam.
+        }
 
         var baseline = _performanceBaselines[baselineKey];
 
         // Act
         var stopwatch = Stopwatch.StartNew();
-        // Open connection and process the file
-        await using (var connection = new SqliteConnection($"Data Source={dbPath}"))
+        await using (var recordStore = await FormIdRecordStore.OpenAsync(
+                         dbPath,
+                         GameRelease.SkyrimSE,
+                         TestContext.Current.CancellationToken))
         {
-            await connection.OpenAsync(TestContext.Current.CancellationToken);
-            await processor.ProcessFormIdListFile(
+            await recordStore.ImportFormIdTextFileAsync(
                 formIdFile,
-                connection,
-                GameRelease.SkyrimSE,
-                false,
-                TestContext.Current.CancellationToken
-            );
+                UpdateMode.Append,
+                cancellationToken: TestContext.Current.CancellationToken);
         }
 
         stopwatch.Stop();
@@ -310,9 +353,7 @@ public class RegressionTests : IDisposable
     public async Task MemoryUsage_DatabaseOperations_StaysWithinLimits()
     {
         // Arrange
-        var service = new DatabaseService();
         var dbPath = Path.Combine(_testDirectory, "memory_test.db");
-        await service.InitializeDatabase(dbPath, GameRelease.SkyrimSE, TestContext.Current.CancellationToken);
 
         var records = GenerateTestRecords(50000);
 
@@ -324,21 +365,7 @@ public class RegressionTests : IDisposable
         var memoryBefore = GC.GetTotalMemory(false);
 
         // Act
-        await using (var connection = new SqliteConnection($"Data Source={dbPath}"))
-        {
-            await connection.OpenAsync(TestContext.Current.CancellationToken);
-            // Simulate batch insert by inserting records in a transaction
-            await using (var transaction = connection.BeginTransaction())
-            {
-                foreach (var record in records)
-                {
-                    await service.InsertRecord(connection, GameRelease.SkyrimSE, record.plugin, record.formId,
-                        record.editorId, TestContext.Current.CancellationToken);
-                }
-
-                await transaction.CommitAsync(TestContext.Current.CancellationToken);
-            }
-        }
+        await WriteRecordsWithStoreAsync(dbPath, records);
 
         var memoryAfter = GC.GetTotalMemory(false);
         var memoryIncrease = memoryAfter - memoryBefore;
@@ -357,7 +384,7 @@ public class RegressionTests : IDisposable
     public void CpuUsage_IntensiveOperations_StaysReasonable()
     {
         // Arrange
-        var service = new GameDetectionService();
+        var gameInstallations = new GameInstallations(new GameInstallationProbe());
         var testDir = Path.Combine(_testDirectory, "CPU_Test");
         var dataDir = Path.Combine(testDir, "Data");
         Directory.CreateDirectory(dataDir);
@@ -375,7 +402,7 @@ public class RegressionTests : IDisposable
         var stopwatch = Stopwatch.StartNew();
         for (var i = 0; i < 5000; i++)
         {
-            service.DetectGame(testDir);
+            gameInstallations.Detect(testDir);
         }
 
         stopwatch.Stop();
@@ -409,5 +436,25 @@ public class RegressionTests : IDisposable
         }
 
         return records;
+    }
+
+    private static async Task WriteRecordsWithStoreAsync(
+        string dbPath,
+        IReadOnlyList<(string plugin, string formId, string editorId)> records)
+    {
+        await using var store = await FormIdRecordStore.OpenAsync(
+            dbPath,
+            GameRelease.SkyrimSE,
+            TestContext.Current.CancellationToken);
+
+        foreach (var pluginGroup in records.GroupBy(static record => record.plugin))
+        {
+            var pluginRecords = pluginGroup.Select(static record => new FormIdRecord(record.formId, record.editorId));
+            await store.WritePluginAsync(
+                pluginGroup.Key,
+                pluginRecords,
+                UpdateMode.Append,
+                TestContext.Current.CancellationToken);
+        }
     }
 }

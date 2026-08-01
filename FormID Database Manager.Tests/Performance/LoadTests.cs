@@ -1,3 +1,4 @@
+#nullable enable
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -5,16 +6,13 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using FormID_Database_Manager.Models;
 using FormID_Database_Manager.Services;
 using FormID_Database_Manager.TestUtilities;
+using FormID_Database_Manager.TestUtilities.Builders;
+using FormID_Database_Manager.TestUtilities.Mocks;
 using FormID_Database_Manager.ViewModels;
 using Microsoft.Data.Sqlite;
 using Mutagen.Bethesda;
-using Mutagen.Bethesda.Plugins;
-using Mutagen.Bethesda.Plugins.Order;
-using Mutagen.Bethesda.Plugins.Records;
-using Mutagen.Bethesda.Skyrim;
 using Xunit;
 
 namespace FormID_Database_Manager.Tests.Performance;
@@ -23,7 +21,6 @@ namespace FormID_Database_Manager.Tests.Performance;
 public class LoadTests : IDisposable
 {
     private readonly List<string> _createdFiles = [];
-    private readonly DatabaseService _databaseService;
     private readonly ITestOutputHelper _output;
     private readonly string _testDirectory;
 
@@ -32,51 +29,47 @@ public class LoadTests : IDisposable
         _output = output;
         _testDirectory = Path.Combine(Path.GetTempPath(), $"loadtest_{Guid.NewGuid()}");
         Directory.CreateDirectory(_testDirectory);
-        _databaseService = new DatabaseService();
     }
 
     public void Dispose()
     {
-        // Cleanup database service
+        // Cleanup test artifacts
         TestCleanupHelper.DeleteTestFilesAndDirectory(_createdFiles, _testDirectory, _output);
     }
 
+    /// <summary>
+    ///     Measures multi-Plugin ingestion throughput through the production Processing Run executor.
+    /// </summary>
     [ManualPerformanceFact]
     [Trait("Category", "ManualPerformance")]
     [Trait("Category", "LoadTest")]
-    public async Task LoadTest_Process100Plugins_Concurrently()
+    public async Task LoadTest_Process100Plugins_Sequentially()
     {
         // Arrange
         const int pluginCount = 100;
-        var dataPath = GameReleaseHelper.ResolveDataPath(_testDirectory);
+        var dataPath = GameInstallations.CanonicalizeDataDirectory(_testDirectory);
         var plugins = await CreateTestPlugins(dataPath, pluginCount, 100);
         var dbPath = Path.Combine(_testDirectory, "loadtest.db");
         _createdFiles.Add(dbPath);
 
-        await _databaseService.InitializeDatabase(dbPath, GameRelease.SkyrimSE);
-
-        var viewModel = new MainWindowViewModel();
-        var pluginProcessingService = new PluginProcessingService(_databaseService, viewModel);
+        using var processingRunExecutor = PerformanceProcessingRunFactory.Create(plugins);
 
         // Act
         var stopwatch = Stopwatch.StartNew();
-        var parameters = new ProcessingParameters
-        {
-            GameDirectory = _testDirectory,
-            DatabasePath = dbPath,
-            GameRelease = GameRelease.SkyrimSE,
-            SelectedPlugins = plugins.Select(p => new PluginListItem { Name = p }).ToList(),
-            UpdateMode = false
-        };
-
-        var progress = new Progress<(string Message, double? Value)>(update =>
+        var request = new PluginProcessingRunRequest(
+            _testDirectory,
+            dbPath,
+            GameRelease.SkyrimSE,
+            plugins,
+            UpdateMode.Append);
+        var progress = new Progress<ProcessingRunEvent>(update =>
         {
             _output.WriteLine($"{update.Value:F1}% - {update.Message}");
         });
 
         Assert.All(plugins, p => Assert.True(File.Exists(Path.Combine(dataPath, p))));
 
-        await pluginProcessingService.ProcessPlugins(parameters, progress);
+        await processingRunExecutor.ExecuteAsync(request, progress);
         stopwatch.Stop();
 
         // Assert
@@ -89,8 +82,7 @@ public class LoadTests : IDisposable
         await using var cmd = new SqliteCommand($"SELECT COUNT(DISTINCT plugin) FROM {GameRelease.SkyrimSE}", conn);
         var processedCount = Convert.ToInt64(await cmd.ExecuteScalarAsync());
 
-        // Plugins may fail to parse under stress conditions; this test focuses on throughput and stability.
-        Assert.True(processedCount >= 0);
+        Assert.Equal(pluginCount, processedCount);
     }
 
     [ManualPerformanceFact]
@@ -101,7 +93,7 @@ public class LoadTests : IDisposable
         // Arrange
         const int formIdCount = 100000;
         var pluginName = "MassivePlugin.esp";
-        var dataPath = GameReleaseHelper.ResolveDataPath(_testDirectory);
+        var dataPath = GameInstallations.CanonicalizeDataDirectory(_testDirectory);
         Directory.CreateDirectory(dataPath);
         var pluginPath = Path.Combine(dataPath, pluginName);
         _createdFiles.Add(pluginPath);
@@ -111,28 +103,17 @@ public class LoadTests : IDisposable
 
         var dbPath = Path.Combine(_testDirectory, "largetest.db");
         _createdFiles.Add(dbPath);
-        await _databaseService.InitializeDatabase(dbPath, GameRelease.SkyrimSE);
-
         // Act
         var stopwatch = Stopwatch.StartNew();
-        await using var conn = new SqliteConnection($"Data Source={dbPath}");
-        await conn.OpenAsync();
-
-        var modProcessor = new ModProcessor(_databaseService, msg => _output.WriteLine($"Error: {msg}"));
-
         Assert.True(File.Exists(Path.Combine(dataPath, pluginName)));
 
-        await modProcessor.ProcessPlugin(
+        using var processingRunExecutor = PerformanceProcessingRunFactory.Create([pluginName]);
+        await processingRunExecutor.ExecuteAsync(new PluginProcessingRunRequest(
             _testDirectory,
-            conn,
+            dbPath,
             GameRelease.SkyrimSE,
-            new PluginListItem { Name = pluginName },
-            new Dictionary<string, IModListingGetter<IModGetter>>(StringComparer.OrdinalIgnoreCase)
-            {
-                [pluginName] = CreateMockModListing(pluginName)
-            },
-            false,
-            CancellationToken.None);
+            [pluginName],
+            UpdateMode.Append));
 
         stopwatch.Stop();
 
@@ -140,6 +121,8 @@ public class LoadTests : IDisposable
         _output.WriteLine($"Processed {formIdCount} FormIDs in {stopwatch.Elapsed.TotalSeconds:F2} seconds");
         _output.WriteLine($"Processing rate: {formIdCount / stopwatch.Elapsed.TotalSeconds:F0} FormIDs/second");
 
+        await using var conn = new SqliteConnection($"Data Source={dbPath}");
+        await conn.OpenAsync(TestContext.Current.CancellationToken);
         await using var countCmd = new SqliteCommand($"SELECT COUNT(*) FROM {GameRelease.SkyrimSE}", conn);
         var actualCount = Convert.ToInt64(await countCmd.ExecuteScalarAsync());
 
@@ -158,7 +141,13 @@ public class LoadTests : IDisposable
         var dbPath = Path.Combine(_testDirectory, "concurrent.db");
         _createdFiles.Add(dbPath);
 
-        await _databaseService.InitializeDatabase(dbPath, GameRelease.SkyrimSE);
+        await using (var store = await FormIdRecordStore.OpenAsync(
+                         dbPath,
+                         GameRelease.SkyrimSE,
+                         TestContext.Current.CancellationToken))
+        {
+            // The connection storm is the measured workload, so Store readiness is prepared before timing starts.
+        }
 
         // Act
         var stopwatch = Stopwatch.StartNew();
@@ -173,18 +162,11 @@ public class LoadTests : IDisposable
             {
                 try
                 {
-                    await using var conn = new SqliteConnection($"Data Source={dbPath}");
-                    await conn.OpenAsync();
+                    await using var store = await FormIdRecordStore.OpenAsync(dbPath, GameRelease.SkyrimSE);
+                    var records = Enumerable.Range(0, operationsPerThread)
+                        .Select(j => new FormIdRecord($"{threadId:X4}{j:X4}", $"Entry_T{threadId}_#{j}"));
 
-                    for (var j = 0; j < operationsPerThread; j++)
-                    {
-                        await _databaseService.InsertRecord(
-                            conn,
-                            GameRelease.SkyrimSE,
-                            $"Plugin_{threadId}.esp",
-                            $"{threadId:X4}{j:X4}",
-                            $"Entry_T{threadId}_#{j}");
-                    }
+                    await store.WritePluginAsync($"Plugin_{threadId}.esp", records, UpdateMode.Append);
                 }
                 catch (Exception ex)
                 {
@@ -230,6 +212,9 @@ public class LoadTests : IDisposable
             $"Expected at least {expectedRecords * 0.5} records, but got {totalRecords}");
     }
 
+    /// <summary>
+    ///     Measures managed-memory growth across successive authoritative Plugin List confirmations and projection work.
+    /// </summary>
     [ManualPerformanceFact]
     [Trait("Category", "ManualPerformance")]
     [Trait("Category", "LoadTest")]
@@ -238,13 +223,16 @@ public class LoadTests : IDisposable
         // Arrange
         const int iterations = 5;
         const int pluginsPerIteration = 20;
-        var dbPath = Path.Combine(_testDirectory, "memory.db");
-        _createdFiles.Add(dbPath);
-
-        await _databaseService.InitializeDatabase(dbPath, GameRelease.SkyrimSE);
-
         var memoryReadings = new List<long>();
-        var viewModel = new MainWindowViewModel();
+        var membershipSnapshots = Enumerable.Range(1, iterations)
+            .Select(iteration => (IReadOnlyList<string>)Enumerable.Range(0, iteration * pluginsPerIteration)
+                .Select(static pluginIndex => $"Plugin_{pluginIndex:D4}.esp")
+                .ToArray())
+            .ToArray();
+        var dispatcher = new SynchronousThreadDispatcher();
+        using var viewModel = new MainWindowViewModel(dispatcher);
+        using var pluginList = new PluginList(new SequencedPluginListDiscovery(membershipSnapshots));
+        using var presentationAdapter = new PluginListPresentationAdapter(pluginList, viewModel, dispatcher);
 
         // Act
         for (var i = 0; i < iterations; i++)
@@ -258,11 +246,11 @@ public class LoadTests : IDisposable
 
             var beforeMemory = GC.GetTotalMemory(false);
 
-            // Add plugins to viewmodel
-            for (var j = 0; j < pluginsPerIteration; j++)
-            {
-                viewModel.Plugins.Add(new PluginListItem { Name = $"Plugin_{i}_{j}.esp" });
-            }
+            // Refreshing the same source grows confirmed membership through the production projection boundary.
+            await pluginList.RefreshAsync(
+                GameRelease.SkyrimSE,
+                _testDirectory,
+                AdvancedMode.On);
 
             // Process some operations
             viewModel.PluginFilter = "Plugin_";
@@ -281,6 +269,7 @@ public class LoadTests : IDisposable
         }
 
         // Assert
+        Assert.Equal(iterations * pluginsPerIteration, viewModel.Plugins.Count);
         var avgMemory = memoryReadings.Average();
         var maxMemory = memoryReadings.Max();
 
@@ -292,15 +281,30 @@ public class LoadTests : IDisposable
             $"Average memory usage too high: {avgMemory / 1024.0 / 1024.0:F2} MB");
     }
 
+    /// <summary>
+    ///     Measures rapid presentation updates and filtering against a realistically projected large Plugin List.
+    /// </summary>
     [ManualPerformanceFact]
     [Trait("Category", "ManualPerformance")]
     [Trait("Category", "LoadTest")]
-    public Task LoadTest_UIResponsivenessUnderLoad()
+    public async Task LoadTest_UIResponsivenessUnderLoad()
     {
         // Arrange
-        var viewModel = new MainWindowViewModel();
         var uiUpdateTimes = new List<long>();
         const int updateCount = 1000;
+        var pluginNames = Enumerable.Range(0, updateCount)
+            .Select(static pluginIndex => $"Plugin_{pluginIndex:D4}.esp")
+            .ToArray();
+        var dispatcher = new SynchronousThreadDispatcher();
+        using var viewModel = new MainWindowViewModel(dispatcher);
+        using var pluginList = new PluginList(new SequencedPluginListDiscovery([pluginNames]));
+        using var presentationAdapter = new PluginListPresentationAdapter(pluginList, viewModel, dispatcher);
+
+        await pluginList.RefreshAsync(
+            GameRelease.SkyrimSE,
+            _testDirectory,
+            AdvancedMode.On);
+        Assert.Equal(updateCount, viewModel.Plugins.Count);
 
         // Act
         for (var i = 0; i < updateCount; i++)
@@ -310,9 +314,6 @@ public class LoadTests : IDisposable
             // Simulate UI updates
             viewModel.ProgressValue = i * 100.0 / updateCount;
             viewModel.ProgressStatus = $"Processing item {i + 1} of {updateCount}";
-
-            // Add plugin
-            viewModel.Plugins.Add(new PluginListItem { Name = $"Plugin_{i:D4}.esp" });
 
             // Update search filter periodically
             if (i % 100 == 0)
@@ -341,8 +342,6 @@ public class LoadTests : IDisposable
         // UI updates should be fast (< 1ms average, < 10ms max)
         Assert.True(avgMs < 1.0, $"Average UI update time too slow: {avgMs:F3} ms");
         Assert.True(maxMs < 10.0, $"Maximum UI update time too slow: {maxMs:F3} ms");
-
-        return Task.CompletedTask;
     }
 
     private async Task<List<string>> CreateTestPlugins(string dataPath, int count, int recordsPerPlugin)
@@ -356,17 +355,15 @@ public class LoadTests : IDisposable
             for (var i = 0; i < count; i++)
             {
                 var pluginName = $"TestPlugin_{i:D3}.esp";
-                var pluginPath = Path.Combine(dataPath, pluginName);
 
-                var mod = new SkyrimMod(ModKey.FromNameAndExtension(pluginName), SkyrimRelease.SkyrimSE);
+                // Written by the shared fixture generator rather than a local copy of it, so generalising Plugin
+                // generation to a new game family stays a single edit.
+                var pluginPath = PluginFixture.WriteWithNamedRecords(
+                    GameRelease.SkyrimSE,
+                    dataPath,
+                    pluginName,
+                    recordsPerPlugin);
 
-                for (var j = 0; j < recordsPerPlugin; j++)
-                {
-                    var npc = mod.Npcs.AddNew($"NPC_{i:D3}_{j:D3}");
-                    npc.Name = $"Test NPC {i}-{j}";
-                }
-
-                mod.WriteToBinary(pluginPath);
                 _createdFiles.Add(pluginPath);
                 plugins.Add(pluginName);
             }
@@ -379,31 +376,59 @@ public class LoadTests : IDisposable
     {
         await Task.Run(() =>
         {
-            var mod = new SkyrimMod(ModKey.FromNameAndExtension(Path.GetFileName(path)), SkyrimRelease.SkyrimSE);
-
-            // Add various record types
-            var recordsPerType = recordCount / 5;
-
-            for (var i = 0; i < recordsPerType; i++)
-            {
-                mod.Npcs.AddNew($"NPC_{i:D6}").Name = $"Test NPC {i}";
-                mod.Weapons.AddNew($"WEAP_{i:D6}").Name = $"Test Weapon {i}";
-                mod.Armors.AddNew($"ARMO_{i:D6}").Name = $"Test Armor {i}";
-                mod.Spells.AddNew($"SPEL_{i:D6}").Name = $"Test Spell {i}";
-                mod.MiscItems.AddNew($"MISC_{i:D6}").Name = $"Test Misc {i}";
-            }
-
-            mod.WriteToBinary(path);
+            // The third hand-built Plugin writer this suite carried, now on the shared generator like the other two.
+            // It spread its records across five Skyrim types where the generator writes one; nothing here asserted on
+            // the spread, and Plugin Ingestion is record-type agnostic — it enumerates major records and reads an
+            // EditorID or a name — so what this measures is unchanged. The generated Plugin also declares its master,
+            // which the hand-built one did not, so the throughput measured is now that of a Plugin a user could have.
+            PluginFixture.WriteWithNamedRecords(
+                GameRelease.SkyrimSE,
+                Path.GetDirectoryName(path)!,
+                Path.GetFileName(path),
+                recordCount);
         });
     }
 
-    private static IModListingGetter<IModGetter> CreateMockModListing(string pluginName)
+    /// <summary>
+    ///     Supplies a deterministic sequence of immutable discovery results to retained Plugin List load coverage.
+    /// </summary>
+    private sealed class SequencedPluginListDiscovery : IPluginListDiscovery
     {
-        var modKey = ModKey.FromNameAndExtension(pluginName);
-        var mockListing = new Moq.Mock<IModListingGetter<IModGetter>>();
-        mockListing.Setup(x => x.ModKey).Returns(modKey);
-        mockListing.Setup(x => x.Enabled).Returns(true);
-        mockListing.Setup(x => x.ModExists).Returns(true);
-        return mockListing.Object;
+        private readonly IReadOnlyList<IReadOnlyList<string>> _membershipSnapshots;
+        private int _nextSnapshotIndex = -1;
+
+        /// <summary>
+        ///     Creates a discovery adapter that returns each ordered membership snapshot once.
+        /// </summary>
+        /// <param name="membershipSnapshots">The ordered discovery results returned by successive requests.</param>
+        /// <exception cref="ArgumentNullException"><paramref name="membershipSnapshots" /> is null.</exception>
+        public SequencedPluginListDiscovery(IReadOnlyList<IReadOnlyList<string>> membershipSnapshots)
+        {
+            _membershipSnapshots = membershipSnapshots ?? throw new ArgumentNullException(nameof(membershipSnapshots));
+        }
+
+        /// <summary>
+        ///     Returns the next configured Plugin membership after observing caller cancellation.
+        /// </summary>
+        /// <param name="source">The normalized source requested by the Plugin List.</param>
+        /// <param name="progress">The optional discovery progress sink; no incremental progress is reported.</param>
+        /// <param name="cancellationToken">Cancels the discovery request.</param>
+        /// <returns>The next completed immutable discovery result.</returns>
+        /// <exception cref="InvalidOperationException">No configured discovery result remains.</exception>
+        public Task<PluginListDiscoveryResult> DiscoverAsync(
+            PluginListSource source,
+            IProgress<PluginListDiscoveryProgress>? progress = null,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var snapshotIndex = Interlocked.Increment(ref _nextSnapshotIndex);
+            if (snapshotIndex >= _membershipSnapshots.Count)
+            {
+                throw new InvalidOperationException("No configured Plugin List discovery result remains.");
+            }
+
+            return Task.FromResult(PluginListDiscoveryResult.Completed(_membershipSnapshots[snapshotIndex]));
+        }
     }
+
 }

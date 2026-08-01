@@ -33,6 +33,9 @@ internal static class DefaultDatabasePathProvider
     /// <param name="localApplicationDataRoot">The user-writable local application data root to contain generated databases.</param>
     /// <returns>The full path to a generated database file whose containing directory already exists.</returns>
     /// <exception cref="ArgumentException">Thrown when <paramref name="localApplicationDataRoot" /> is blank.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">
+    ///     Thrown when <paramref name="gameRelease" /> is not a Supported GameRelease.
+    /// </exception>
     internal static string CreateDefaultDatabasePath(GameRelease gameRelease, string localApplicationDataRoot)
     {
         if (string.IsNullOrWhiteSpace(localApplicationDataRoot))
@@ -43,6 +46,7 @@ internal static class DefaultDatabasePathProvider
         var databaseDirectory = Path.Combine(localApplicationDataRoot, AppDataDirectoryName, DatabaseDirectoryName);
         Directory.CreateDirectory(databaseDirectory);
 
-        return Path.Combine(databaseDirectory, $"{GameReleaseHelper.GetSafeTableName(gameRelease)}.db");
+        // The Store's own table name is the filename, so a database file and the table inside it cannot disagree.
+        return Path.Combine(databaseDirectory, $"{SupportedGameReleases.ForRelease(gameRelease).TableName}.db");
     }
 }

@@ -5,7 +5,6 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
-using FormID_Database_Manager.Models;
 using FormID_Database_Manager.Services;
 using FormID_Database_Manager.TestUtilities;
 using FormID_Database_Manager.ViewModels;
@@ -34,6 +33,9 @@ public class StressTests : IDisposable
         TestCleanupHelper.DeleteTestFilesAndDirectory(_createdFiles, _testDirectory, _output);
     }
 
+    /// <summary>
+    ///     Repeatedly cancels active executor runs to exercise source replacement and cleanup across runs.
+    /// </summary>
     [ManualPerformanceFact(Timeout = 120000)]
     [Trait("Category", "ManualPerformance")]
     [Trait("Category", "StressTest")]
@@ -43,46 +45,30 @@ public class StressTests : IDisposable
         const int cancellationAttempts = 50;
         var dbPath = Path.Combine(_testDirectory, "cancel_stress.db");
         _createdFiles.Add(dbPath);
-        var testCancellationToken = TestContext.Current.CancellationToken;
 
-        var databaseService = new DatabaseService();
-        await databaseService.InitializeDatabase(dbPath, GameRelease.SkyrimSE, testCancellationToken);
-
-        var viewModel = new MainWindowViewModel();
-        var pluginProcessingService = new PluginProcessingService(databaseService, viewModel);
+        var pluginNames = Enumerable.Range(0, cancellationAttempts)
+            .Select(static i => $"Test_{i}.esp")
+            .ToArray();
+        using var processingRunExecutor = PerformanceProcessingRunFactory.Create(pluginNames);
 
         var cancelledCount = 0;
         var completedCount = 0;
         var errorCount = 0;
-        var cancellationTasks = new List<Task>();
 
         // Act
         for (var i = 0; i < cancellationAttempts; i++)
         {
-            var parameters = new ProcessingParameters
-            {
-                GameDirectory = _testDirectory,
-                DatabasePath = dbPath,
-                GameRelease = GameRelease.SkyrimSE,
-                SelectedPlugins = [new() { Name = $"Test_{i}.esp" }],
-                UpdateMode = false
-            };
-
-            // Start processing
-            var processTask = pluginProcessingService.ProcessPlugins(parameters);
-
-            // Cancel after random delay
-            var cancelDelay = Random.Shared.Next(1, 50);
-            var cancellationTask = Task.Run(async () =>
-            {
-                await Task.Delay(cancelDelay, testCancellationToken);
-                pluginProcessingService.CancelProcessing();
-            }, testCancellationToken);
-            cancellationTasks.Add(cancellationTask);
+            var request = new PluginProcessingRunRequest(
+                _testDirectory,
+                dbPath,
+                GameRelease.SkyrimSE,
+                [pluginNames[i]],
+                UpdateMode.Append);
+            var progress = new CancelOnFirstStatusProgress(processingRunExecutor);
 
             try
             {
-                await processTask;
+                await processingRunExecutor.ExecuteAsync(request, progress);
                 completedCount++;
             }
             catch (OperationCanceledException)
@@ -96,7 +82,14 @@ public class StressTests : IDisposable
             }
         }
 
-        await Task.WhenAll(cancellationTasks);
+        await processingRunExecutor.ExecuteAsync(new PluginProcessingRunRequest(
+            _testDirectory,
+            dbPath,
+            GameRelease.SkyrimSE,
+            [pluginNames[0]],
+            UpdateMode.Append,
+            dryRun: true));
+        completedCount++;
 
         // Assert
         _output.WriteLine("Cancellation stress test results:");
@@ -105,7 +98,8 @@ public class StressTests : IDisposable
         _output.WriteLine($"Errors: {errorCount}");
 
         Assert.Equal(0, errorCount);
-        Assert.True(cancelledCount > 0, "No operations were cancelled");
+        Assert.Equal(1, completedCount);
+        Assert.Equal(cancellationAttempts, cancelledCount);
     }
 
     [ManualPerformanceFact(Timeout = 120000)]
@@ -119,8 +113,13 @@ public class StressTests : IDisposable
         _createdFiles.Add(dbPath);
         var testCancellationToken = TestContext.Current.CancellationToken;
 
-        var databaseService = new DatabaseService();
-        await databaseService.InitializeDatabase(dbPath, GameRelease.SkyrimSE, testCancellationToken);
+        await using (var store = await FormIdRecordStore.OpenAsync(
+                         dbPath,
+                         GameRelease.SkyrimSE,
+                         testCancellationToken))
+        {
+            // Prepare Store-owned schema and configuration before stressing raw concurrent connections.
+        }
 
         var connections = new List<SqliteConnection>();
         var tasks = new List<Task>();
@@ -141,17 +140,20 @@ public class StressTests : IDisposable
                     try
                     {
                         await conn.OpenAsync(testCancellationToken);
+                        await using var command = conn.CreateCommand();
+                        command.CommandText =
+                            $"INSERT INTO {GameRelease.SkyrimSE} (plugin, formid, entry) VALUES (@plugin, @formid, @entry)";
+                        command.Parameters.Add(new SqliteParameter("@plugin", SqliteType.Text));
+                        command.Parameters.Add(new SqliteParameter("@formid", SqliteType.Text));
+                        command.Parameters.Add(new SqliteParameter("@entry", SqliteType.Text));
 
                         // Perform some operations
                         for (var j = 0; j < 10; j++)
                         {
-                            await databaseService.InsertRecord(
-                                conn,
-                                GameRelease.SkyrimSE,
-                                $"Plugin_{connIndex}.esp",
-                                $"{connIndex:X4}{j:X4}",
-                                $"Entry_{connIndex}_{j}",
-                                testCancellationToken);
+                            command.Parameters["@plugin"].Value = $"Plugin_{connIndex}.esp";
+                            command.Parameters["@formid"].Value = $"{connIndex:X4}{j:X4}";
+                            command.Parameters["@entry"].Value = $"Entry_{connIndex}_{j}";
+                            await command.ExecuteNonQueryAsync(testCancellationToken);
                         }
                     }
                     catch (Exception ex)
@@ -190,6 +192,9 @@ public class StressTests : IDisposable
             $"Too many connection failures: {errors.Count}/{maxConnections}");
     }
 
+    /// <summary>
+    ///     Stresses concurrent progress and message presentation updates without bypassing Plugin List ownership.
+    /// </summary>
     [ManualPerformanceFact(Timeout = 60000)]
     [Trait("Category", "ManualPerformance")]
     [Trait("Category", "StressTest")]
@@ -198,7 +203,7 @@ public class StressTests : IDisposable
         // Arrange
         const int updateCount = 10000;
         const int threadCount = 5;
-        var viewModel = new MainWindowViewModel();
+        using var viewModel = new MainWindowViewModel();
         var errors = new List<Exception>();
         var updateTimes = new List<long>();
         var updateLock = new object();
@@ -223,11 +228,6 @@ public class StressTests : IDisposable
                         if (i % 10 == 0)
                         {
                             viewModel.AddErrorMessage($"T{threadId}: Error message {i}");
-                        }
-
-                        if (i % 50 == 0)
-                        {
-                            viewModel.Plugins.Add(new PluginListItem { Name = $"Plugin_T{threadId}_{i}.esp" });
                         }
 
                         stopwatch.Stop();
@@ -265,6 +265,9 @@ public class StressTests : IDisposable
         Assert.Empty(errors);
     }
 
+    /// <summary>
+    ///     Exercises raw million-row generation and lookup, followed by explicit Store-owned optimization.
+    /// </summary>
     [ManualPerformanceFact(Timeout = 300000)]
     [Trait("Category", "ManualPerformance")]
     [Trait("Category", "StressTest")]
@@ -275,8 +278,13 @@ public class StressTests : IDisposable
         _createdFiles.Add(dbPath);
         var testCancellationToken = TestContext.Current.CancellationToken;
 
-        var databaseService = new DatabaseService();
-        await databaseService.InitializeDatabase(dbPath, GameRelease.SkyrimSE, testCancellationToken);
+        await using (var store = await FormIdRecordStore.OpenAsync(
+                         dbPath,
+                         GameRelease.SkyrimSE,
+                         testCancellationToken))
+        {
+            // Prepare Store-owned schema and configuration before generating the measured raw workload.
+        }
 
         const int recordCount = 1_000_000;
         const int batchSize = 10000;
@@ -285,55 +293,63 @@ public class StressTests : IDisposable
 
         // Act
         var stopwatch = Stopwatch.StartNew();
-        await using var conn = new SqliteConnection($"Data Source={dbPath}");
-        await conn.OpenAsync(testCancellationToken);
-
-        var transaction = conn.BeginTransaction();
-        await using var command = conn.CreateCommand();
-        command.CommandText =
-            $"INSERT INTO {GameRelease.SkyrimSE} (plugin, formid, entry) VALUES (@plugin, @formid, @entry)";
-        command.Transaction = transaction;
-
-        var pluginParam = new SqliteParameter("@plugin", SqliteType.Text);
-        var formidParam = new SqliteParameter("@formid", SqliteType.Text);
-        var entryParam = new SqliteParameter("@entry", SqliteType.Text);
-
-        command.Parameters.Add(pluginParam);
-        command.Parameters.Add(formidParam);
-        command.Parameters.Add(entryParam);
-
-        for (var i = 0; i < recordCount; i++)
+        object? searchResult;
+        Stopwatch searchStopwatch;
+        await using (var conn = new SqliteConnection($"Data Source={dbPath}"))
         {
-            pluginParam.Value = $"Plugin_{i % 100}.esp";
-            formidParam.Value = $"{i:X8}";
-            entryParam.Value = $"Entry_{i}";
+            await conn.OpenAsync(testCancellationToken);
 
-            await command.ExecuteNonQueryAsync(testCancellationToken);
+            var transaction = conn.BeginTransaction();
+            await using var command = conn.CreateCommand();
+            command.CommandText =
+                $"INSERT INTO {GameRelease.SkyrimSE} (plugin, formid, entry) VALUES (@plugin, @formid, @entry)";
+            command.Transaction = transaction;
 
-            if (i % batchSize == 0 && i > 0)
+            var pluginParam = new SqliteParameter("@plugin", SqliteType.Text);
+            var formidParam = new SqliteParameter("@formid", SqliteType.Text);
+            var entryParam = new SqliteParameter("@entry", SqliteType.Text);
+
+            command.Parameters.Add(pluginParam);
+            command.Parameters.Add(formidParam);
+            command.Parameters.Add(entryParam);
+
+            for (var i = 0; i < recordCount; i++)
             {
-                await transaction.CommitAsync(testCancellationToken);
-                await transaction.DisposeAsync();
+                pluginParam.Value = $"Plugin_{i % 100}.esp";
+                formidParam.Value = $"{i:X8}";
+                entryParam.Value = $"Entry_{i}";
 
-                transaction = conn.BeginTransaction();
-                command.Transaction = transaction;
+                await command.ExecuteNonQueryAsync(testCancellationToken);
+
+                if (i % batchSize == 0 && i > 0)
+                {
+                    await transaction.CommitAsync(testCancellationToken);
+                    await transaction.DisposeAsync();
+
+                    transaction = conn.BeginTransaction();
+                    command.Transaction = transaction;
+                }
             }
+
+            await transaction.CommitAsync(testCancellationToken);
+            await transaction.DisposeAsync();
+            command.Transaction = null;
+            stopwatch.Stop();
+
+            // Inspect the generated workload on the same raw connection before handing maintenance back to the Store.
+            searchStopwatch = Stopwatch.StartNew();
+            command.CommandText = $"SELECT COUNT(*) FROM {GameRelease.SkyrimSE} WHERE formid LIKE '0000%'";
+            searchResult = await command.ExecuteScalarAsync(testCancellationToken);
+            searchStopwatch.Stop();
         }
 
-        await transaction.CommitAsync(testCancellationToken);
-        await transaction.DisposeAsync();
-        command.Transaction = null;
-        stopwatch.Stop();
-
-        // Test database performance with large file
-        var searchStopwatch = Stopwatch.StartNew();
-        command.CommandText = $"SELECT COUNT(*) FROM {GameRelease.SkyrimSE} WHERE formid LIKE '0000%'";
-        var searchResult = await command.ExecuteScalarAsync(testCancellationToken);
-        searchStopwatch.Stop();
-
         // Optimize and measure
+        await using var optimizationStore = await FormIdRecordStore.OpenAsync(
+            dbPath,
+            GameRelease.SkyrimSE,
+            testCancellationToken);
         var optimizeStopwatch = Stopwatch.StartNew();
-        await databaseService.OptimizeDatabase(conn, testCancellationToken);
+        await optimizationStore.OptimizeAsync(testCancellationToken);
         optimizeStopwatch.Stop();
 
         // Assert
@@ -352,92 +368,18 @@ public class StressTests : IDisposable
             $"Search too slow: {searchStopwatch.ElapsedMilliseconds} ms");
     }
 
-    [ManualPerformanceFact]
-    [Trait("Category", "ManualPerformance")]
-    [Trait("Category", "StressTest")]
-    public void StressTest_OutOfMemoryScenario()
+    private sealed class CancelOnFirstStatusProgress(ProcessingRunExecutor executor)
+        : IProgress<ProcessingRunEvent>
     {
-        // Arrange
-        var viewModel = new MainWindowViewModel();
-        const int pluginCount = 4_096; // Realistic maximum - game plugin limit
+        private bool _cancellationRequested;
 
-        _output.WriteLine($"Testing memory stress with {pluginCount:N0} plugins...");
-
-        // Monitor memory
-        var initialMemory = GC.GetTotalMemory(true);
-        var peakMemory = initialMemory;
-
-        // Act
-        Exception? caughtException = null;
-        try
+        public void Report(ProcessingRunEvent value)
         {
-            for (var i = 0; i < pluginCount; i++)
+            if (!_cancellationRequested && value.Kind == ProcessingRunEventKind.Status)
             {
-                viewModel.Plugins.Add(new PluginListItem
-                {
-                    Name =
-                        $"VeryLongPluginNameToIncreaseMemoryUsage_ThisIsIntentionallyLongToStressTestMemory_{i:D8}.esp"
-                });
-
-                // Also add error messages
-                if (i % 100 == 0)
-                {
-                    viewModel.AddErrorMessage($"This is a very long error message designed to consume memory. " +
-                                              $"Error number {i} with additional details and stack trace information " +
-                                              $"that would typically be included in a real error scenario.");
-                }
-
-                // Monitor memory inline (every 512 plugins)
-                if (i % 512 == 0)
-                {
-                    var currentMemory = GC.GetTotalMemory(false);
-                    if (currentMemory > peakMemory)
-                    {
-                        peakMemory = currentMemory;
-                    }
-                }
+                _cancellationRequested = true;
+                executor.Cancel();
             }
-        }
-        catch (OutOfMemoryException ex)
-        {
-            caughtException = ex;
-        }
-
-        // Final memory check
-        var currentMem = GC.GetTotalMemory(false);
-        if (currentMem > peakMemory)
-        {
-            peakMemory = currentMem;
-        }
-
-        // Force cleanup
-        viewModel.Plugins.Clear();
-        viewModel.ErrorMessages.Clear();
-        GC.Collect();
-        GC.WaitForPendingFinalizers();
-        GC.Collect();
-
-        var finalMemory = GC.GetTotalMemory(true);
-
-        // Assert
-        _output.WriteLine("Memory stress test results:");
-        _output.WriteLine($"Initial memory: {initialMemory / 1024.0 / 1024.0:F2} MB");
-        _output.WriteLine($"Peak memory: {peakMemory / 1024.0 / 1024.0:F2} MB");
-        _output.WriteLine($"Final memory: {finalMemory / 1024.0 / 1024.0:F2} MB");
-        _output.WriteLine($"Memory increase: {(peakMemory - initialMemory) / 1024.0 / 1024.0:F2} MB");
-        _output.WriteLine($"Items successfully added: {viewModel.Plugins.Count}");
-
-        if (caughtException != null)
-        {
-            _output.WriteLine("OutOfMemoryException caught as expected");
-        }
-
-        // Memory should be properly released after cleanup
-        // Due to GC behavior and test environment differences, we'll skip the memory assertion
-        // The important thing is that no OutOfMemoryException was thrown unexpectedly
-        if (caughtException == null)
-        {
-            _output.WriteLine("No OutOfMemoryException was thrown - memory handling is acceptable");
         }
     }
 }

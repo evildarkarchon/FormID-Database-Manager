@@ -47,7 +47,7 @@
                     HorizontalAlignment="Stretch"
                     ItemsSource="{Binding AvailableGames}"
                     PlaceholderText="Select a game"
-                    SelectedItem="{Binding SelectedGame, Mode=TwoWay}"
+                    SelectedItem="{Binding SelectedGame, Mode=OneWay}"
                     SelectionChanged="GameComboBox_SelectionChanged"
                     TabIndex="0" />
 
@@ -70,7 +70,7 @@
                         IsReadOnly="True"
                         Style="{StaticResource PathTextBoxStyle}"
                         TabIndex="1"
-                        Text="{Binding GameDirectory, Mode=TwoWay}" />
+                        Text="{Binding GameDirectory, Mode=OneWay}" />
                     <ComboBox
                         AutomationProperties.AutomationId="DirectoryComboBox"
                         Grid.Column="1"
@@ -80,7 +80,7 @@
                         ItemsSource="{Binding DetectedDirectories}"
                         MinWidth="0"
                         PlaceholderText="Detected directories"
-                        SelectedItem="{Binding GameDirectory, Mode=TwoWay}"
+                        SelectedItem="{Binding GameDirectory, Mode=OneWay}"
                         SelectionChanged="DirectoryComboBox_SelectionChanged"
                         TabIndex="2" />
                     <Button
@@ -215,10 +215,11 @@
                             <DataTemplate>
                                 <CheckBox
                                     AutomationProperties.Name="{Binding Name}"
+                                    Click="PluginCheckBox_Click"
                                     Content="{Binding Name}"
                                     HorizontalAlignment="Stretch"
                                     HorizontalContentAlignment="Stretch"
-                                    IsChecked="{Binding IsSelected, Mode=TwoWay}"
+                                    IsChecked="{Binding IsSelected, Mode=OneWay}"
                                     Margin="4,2">
                                     <CheckBox.ContentTemplate>
                                         <DataTemplate>
@@ -240,17 +241,18 @@
                 Orientation="Horizontal"
                 Spacing="16">
                 <CheckBox
-                    x:Name="UpdateModeCheckBox"
+                    AutomationProperties.AutomationId="UpdateModeCheckBox"
                     AutomationProperties.HelpText="Replace existing database entries for matching FormIDs."
                     Content="Update Mode (replaces existing entries)"
+                    IsChecked="{Binding UpdateMode, Mode=TwoWay}"
                     TabIndex="12" />
                 <CheckBox
-                    x:Name="AdvancedModeCheckBox"
+                    AutomationProperties.AutomationId="AdvancedModeCheckBox"
                     AutomationProperties.HelpText="Include base game and DLC plugins in the plugin list."
-                    Checked="AdvancedMode_CheckedChanged"
+                    Click="AdvancedModeCheckBox_Click"
                     Content="Show Base Game/DLC Files"
-                    TabIndex="13"
-                    Unchecked="AdvancedMode_CheckedChanged" />
+                    IsChecked="{Binding AdvancedMode, Mode=OneWay}"
+                    TabIndex="13" />
             </StackPanel>
 
             <Grid
@@ -282,7 +284,7 @@
                     Grid.Column="1"
                     AccessKey="P"
                     Click="ProcessFormIds_Click"
-                    Content="Process FormIDs"
+                    Content="{Binding ProcessButtonText, Mode=OneWay}"
                     Style="{StaticResource PrimaryWorkflowButtonStyle}"
                     TabIndex="14" />
             </Grid>
@@ -297,6 +299,23 @@
                     Severity="Error"
                     Title="Errors">
                     <ItemsControl ItemsSource="{Binding ErrorMessages}" Margin="0,0,0,8">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding}" TextWrapping="WrapWholeWords" />
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </InfoBar>
+
+                <InfoBar
+                    AutomationProperties.AutomationId="WarningMessagesInfoBar"
+                    AutomationProperties.Name="Warning messages"
+                    CornerRadius="4"
+                    IsClosable="True"
+                    IsOpen="{Binding HasWarningMessages, Mode=OneWay}"
+                    Severity="Warning"
+                    Title="Warnings">
+                    <ItemsControl ItemsSource="{Binding WarningMessages}" Margin="0,0,0,8">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
                                 <TextBlock Text="{Binding}" TextWrapping="WrapWholeWords" />

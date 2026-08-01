@@ -9,6 +9,11 @@ public partial class PluginListItem : ObservableObject, IDataErrorInfo
 
     [ObservableProperty] private bool _isSelected;
 
+    /// <summary>
+    ///     Gets the confirmed Plugin List membership version from which this presentation item was projected.
+    /// </summary>
+    public long MembershipVersion { get; init; }
+
     // IDataErrorInfo implementation to prevent error states
     // Note: IDataErrorInfo predates nullable reference types and expects null/"" for no error.
     // Using string.Empty for modern nullable semantics consistency.

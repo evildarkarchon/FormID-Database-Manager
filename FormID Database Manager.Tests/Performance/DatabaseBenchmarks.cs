@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Threading.Tasks;
 using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Engines;
@@ -15,7 +16,6 @@ namespace FormID_Database_Manager.Tests.Performance;
 public class DatabaseBenchmarks : IDisposable
 {
     private string _databasePath = null!;
-    private DatabaseService _databaseService = null!;
     private List<(string plugin, string formid, string entry)> _testData = null!;
 
     [Params(1000, 10000, 100000)] public int RecordCount { get; set; }
@@ -29,13 +29,12 @@ public class DatabaseBenchmarks : IDisposable
     public void Setup()
     {
         _databasePath = Path.Combine(Path.GetTempPath(), $"benchmark_{Guid.NewGuid()}.db");
-        _databaseService = new DatabaseService();
 
         // Generate test data
         _testData = GenerateTestData(RecordCount);
 
-        // Initialize database
-        _databaseService.InitializeDatabase(_databasePath, GameRelease.SkyrimSE).GetAwaiter().GetResult();
+        // Prepare the full ready-on-return Store contract outside the measured database workloads.
+        PrepareStoreAsync(_databasePath).GetAwaiter().GetResult();
     }
 
     [GlobalCleanup]
@@ -62,10 +61,9 @@ public class DatabaseBenchmarks : IDisposable
         // Clear existing data
         await ClearAllData(conn, GameRelease.SkyrimSE);
 
-        // Insert records one by one
         foreach (var (plugin, formid, entry) in _testData)
         {
-            await _databaseService.InsertRecord(conn, GameRelease.SkyrimSE, plugin, formid, entry);
+            await InsertRawRecord(conn, null, plugin, formid, entry);
         }
     }
 
@@ -78,13 +76,12 @@ public class DatabaseBenchmarks : IDisposable
         // Clear existing data
         await ClearAllData(conn, GameRelease.SkyrimSE);
 
-        // Insert all records in a transaction
         await using var transaction = conn.BeginTransaction();
         try
         {
             foreach (var (plugin, formid, entry) in _testData)
             {
-                await _databaseService.InsertRecord(conn, GameRelease.SkyrimSE, plugin, formid, entry);
+                await InsertRawRecord(conn, transaction, plugin, formid, entry);
             }
 
             transaction.Commit();
@@ -141,7 +138,7 @@ public class DatabaseBenchmarks : IDisposable
     }
 
     [Benchmark]
-    public async Task ClearPluginEntries()
+    public async Task ReplacePluginRecords()
     {
         await using var conn = new SqliteConnection($"Data Source={_databasePath}");
         await conn.OpenAsync();
@@ -149,14 +146,18 @@ public class DatabaseBenchmarks : IDisposable
         // Ensure data exists
         if (await GetRecordCount(conn, GameRelease.SkyrimSE) == 0)
         {
-            await InsertTestData(conn);
+            await InsertTestData();
         }
 
-        // Clear entries for each plugin
+        // Replace entries for each plugin through the caller-facing store seam.
         var plugins = new[] { "Skyrim.esm", "Update.esm", "Dawnguard.esm", "HearthFires.esm", "Dragonborn.esm" };
+        await using var store = await FormIdRecordStore.OpenAsync(_databasePath, GameRelease.SkyrimSE);
         foreach (var plugin in plugins)
         {
-            await _databaseService.ClearPluginEntries(conn, GameRelease.SkyrimSE, plugin);
+            await store.WritePluginAsync(
+                plugin,
+                [new FormIdRecord("00000000", "Replacement")],
+                UpdateMode.ReplacePluginRecords);
         }
     }
 
@@ -169,7 +170,7 @@ public class DatabaseBenchmarks : IDisposable
         // Ensure data exists
         if (await GetRecordCount(conn, GameRelease.SkyrimSE) == 0)
         {
-            await InsertTestData(conn);
+            await InsertTestData();
         }
 
         // Search for random FormIDs
@@ -190,19 +191,27 @@ public class DatabaseBenchmarks : IDisposable
         }
     }
 
+    /// <summary>
+    ///     Measures explicit checkpointing and optimization through the Store-owned maintenance seam.
+    /// </summary>
     [Benchmark]
-    public async Task OptimizeDatabase()
+    public async Task OptimizeFormIdRecordStore()
     {
-        await using var conn = new SqliteConnection($"Data Source={_databasePath}");
-        await conn.OpenAsync();
-
-        // Ensure data exists
-        if (await GetRecordCount(conn, GameRelease.SkyrimSE) == 0)
+        var hasData = false;
+        await using (var conn = new SqliteConnection($"Data Source={_databasePath}"))
         {
-            await InsertTestData(conn);
+            await conn.OpenAsync();
+            hasData = await GetRecordCount(conn, GameRelease.SkyrimSE) > 0;
         }
 
-        await _databaseService.OptimizeDatabase(conn);
+        // Ensure data exists
+        if (!hasData)
+        {
+            await InsertTestData();
+        }
+
+        await using var store = await FormIdRecordStore.OpenAsync(_databasePath, GameRelease.SkyrimSE);
+        await store.OptimizeAsync();
     }
 
     private async Task<long> GetRecordCount(SqliteConnection conn, GameRelease gameRelease)
@@ -217,6 +226,22 @@ public class DatabaseBenchmarks : IDisposable
     {
         await using var command = conn.CreateCommand();
         command.CommandText = $"DELETE FROM {gameRelease}";
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private static async Task InsertRawRecord(
+        SqliteConnection conn,
+        SqliteTransaction transaction,
+        string plugin,
+        string formid,
+        string entry)
+    {
+        await using var command = conn.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = $"INSERT INTO {GameRelease.SkyrimSE} (plugin, formid, entry) VALUES (@plugin, @formid, @entry)";
+        command.Parameters.AddWithValue("@plugin", plugin);
+        command.Parameters.AddWithValue("@formid", formid);
+        command.Parameters.AddWithValue("@entry", entry);
         await command.ExecuteNonQueryAsync();
     }
 
@@ -241,15 +266,22 @@ public class DatabaseBenchmarks : IDisposable
         }
     }
 
-    private async Task InsertTestData(SqliteConnection conn)
+    private async Task InsertTestData()
     {
-        await using var transaction = conn.BeginTransaction();
-        foreach (var (plugin, formid, entry) in _testData)
+        await using var store = await FormIdRecordStore.OpenAsync(_databasePath, GameRelease.SkyrimSE);
+        foreach (var pluginGroup in _testData.GroupBy(static record => record.plugin))
         {
-            await _databaseService.InsertRecord(conn, GameRelease.SkyrimSE, plugin, formid, entry);
+            var records = pluginGroup.Select(static record => new FormIdRecord(record.formid, record.entry));
+            await store.WritePluginAsync(pluginGroup.Key, records, UpdateMode.Append);
         }
+    }
 
-        transaction.Commit();
+    /// <summary>
+    ///     Opens and disposes a Store so benchmark setup includes schema, configuration, and staging readiness.
+    /// </summary>
+    private static async Task PrepareStoreAsync(string databasePath)
+    {
+        await using var store = await FormIdRecordStore.OpenAsync(databasePath, GameRelease.SkyrimSE);
     }
 
     private List<(string plugin, string formid, string entry)> GenerateTestData(int count)

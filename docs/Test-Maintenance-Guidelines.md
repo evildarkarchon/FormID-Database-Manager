@@ -88,7 +88,7 @@ find %TEMP% -name "TestDB_*.db" -mtime +7 -delete
 ```
 
 **Update Test Utilities**:
-- Review MockFactory for new service additions
+- Review the test fakes and builders for new service additions
 - Update test builders for new model properties
 - Ensure fixtures support new features
 
