@@ -14,8 +14,9 @@ namespace FormID_Database_Manager.Services;
 ///     production — tests get their control from <see cref="IGameInstallationProbe" />. It is synchronous: thread
 ///     placement is the caller's decision, and User Workflow offloads both detection and location (ADR-0002).
 ///     <para>
-///     Base game Plugins are not here: they are a constant table in <c>BaseGamePlugins</c>, read directly by the
-///     Plugin List, so a change to detection cannot affect Plugin List membership (ADR-0002).
+///     Base game Plugins are not here: they are a column of the <c>SupportedGameReleases</c> constant table, read
+///     directly by the Plugin List, so a change to detection cannot affect Plugin List membership (ADR-0002,
+///     ADR-0003).
 ///     </para>
 /// </remarks>
 internal sealed class GameInstallations

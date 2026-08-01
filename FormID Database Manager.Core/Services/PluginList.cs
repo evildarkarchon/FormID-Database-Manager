@@ -23,8 +23,8 @@ internal sealed class PluginList : IDisposable
     /// <param name="discovery">The adapter that supplies ordered, available Plugin names.</param>
     /// <exception cref="ArgumentNullException"><paramref name="discovery" /> is null.</exception>
     /// <remarks>
-    ///     Base Plugin rules are not a dependency: they come from the <see cref="BaseGamePlugins" /> constant table,
-    ///     so a change to game detection cannot affect Plugin List membership (ADR-0002).
+    ///     Base Plugin rules are not a dependency: they come from the <see cref="SupportedGameReleases" /> constant
+    ///     table, so a change to game detection cannot affect Plugin List membership (ADR-0002, ADR-0003).
     /// </remarks>
     public PluginList(IPluginListDiscovery discovery)
     {
