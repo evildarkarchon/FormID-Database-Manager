@@ -738,6 +738,39 @@ public sealed class PluginListTests
         Assert.Same(invalidatedState, sut.Current);
     }
 
+    /// <summary>
+    ///     Verifies that a throwing cancellation callback from the retired refresh still signals the already-authoritative
+    ///     no-source state, so presentation cannot keep showing stale membership after a failed transition.
+    /// </summary>
+    [Fact]
+    public async Task Invalidate_RetirementCallbackFailure_StillSignalsNoSourceState()
+    {
+        var discovery = new ControlledPluginListDiscovery();
+        var operation = discovery.Enqueue();
+        using var sut = new PluginList(discovery);
+        var refresh = sut.RefreshAsync(
+            GameRelease.SkyrimSE,
+            CreateGameDirectory(),
+            AdvancedMode.Off,
+            TestContext.Current.CancellationToken);
+        var retirementFailure = new InvalidOperationException("Synthetic retirement callback failure.");
+        using var registration = operation.CancellationToken.Register(() => throw retirementFailure);
+        PluginListState? signalledState = null;
+        sut.Changed += (_, _) => signalledState = sut.Current;
+
+        var propagated = Assert.Throws<AggregateException>(sut.Invalidate);
+
+        Assert.Contains(retirementFailure, propagated.Flatten().InnerExceptions);
+        Assert.NotNull(signalledState);
+        Assert.Same(sut.Current, signalledState);
+        Assert.Null(signalledState.Confirmed);
+        Assert.IsType<PluginListNoSourceActivity>(signalledState.Activity);
+
+        operation.Cancel();
+        await refresh;
+        Assert.Same(signalledState, sut.Current);
+    }
+
     [Fact]
     public async Task Dispose_ActiveRefresh_IsIdempotentAndPreventsLaterPublication()
     {

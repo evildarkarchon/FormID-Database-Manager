@@ -153,6 +153,10 @@ internal sealed class PluginList : IDisposable
     /// </summary>
     /// <exception cref="ObjectDisposedException">The Plugin List has been disposed.</exception>
     /// <exception cref="AggregateException">A registered refresh cancellation callback throws.</exception>
+    /// <remarks>
+    ///     No-source state is published before retirement, and its change signal is raised even when retirement throws, so
+    ///     a failed transition cannot leave stale membership visible.
+    /// </remarks>
     public void Invalidate()
     {
         ThrowIfDisposed();
@@ -167,8 +171,27 @@ internal sealed class PluginList : IDisposable
             changed = PublishLocked(null, new PluginListNoSourceActivity());
         }
 
-        // Removing the active generation before cancellation prevents non-cooperative work from republishing stale facts.
-        retired?.Retire();
+        try
+        {
+            // Removing the active generation before cancellation prevents non-cooperative work from republishing stale facts.
+            retired?.Retire();
+        }
+        catch
+        {
+            try
+            {
+                // No-source state is already authoritative, so presentation must be signalled even while a retirement
+                // callback failure unwinds; otherwise the transition leaves stale membership and scanning state visible.
+                changed?.Invoke(this, EventArgs.Empty);
+            }
+            catch
+            {
+                // The retirement failure remains primary; the invalidation signal is best-effort while unwinding.
+            }
+
+            throw;
+        }
+
         changed?.Invoke(this, EventArgs.Empty);
     }
 
