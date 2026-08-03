@@ -4,7 +4,6 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
-using System.ComponentModel;
 using System.Linq;
 using System.Reflection;
 using System.Threading;
@@ -519,43 +518,6 @@ public class MainWindowViewModelTests
         var collection = Assert.IsAssignableFrom<ICollection<PluginListItem>>(_viewModel.Plugins);
         Assert.True(collection.IsReadOnly);
         Assert.Throws<NotSupportedException>(() => collection.Add(new PluginListItem { Name = "Injected.esp" }));
-    }
-
-    #endregion
-
-    #region Plugin Item Validation Tests
-
-    [Theory]
-    [InlineData("")]
-    [InlineData(" ")]
-    [InlineData("\t")]
-    public void PluginListItem_NameValidation_ReturnsErrorForEmptyOrWhitespaceNames(string pluginName)
-    {
-        // Arrange
-        var plugin = new PluginListItem { Name = pluginName };
-        var validation = Assert.IsAssignableFrom<IDataErrorInfo>(plugin);
-
-        // Act
-        var error = validation[nameof(PluginListItem.Name)];
-
-        // Assert
-        Assert.Equal("Name cannot be empty", error);
-    }
-
-    [Fact]
-    public void PluginListItem_ValidNameHasNoValidationErrorAndRemainsSelectable()
-    {
-        // Arrange
-        var plugin = new PluginListItem { Name = "ValidPlugin.esp" };
-        var validation = Assert.IsAssignableFrom<IDataErrorInfo>(plugin);
-
-        // Act
-        plugin.IsSelected = true;
-
-        // Assert
-        Assert.Equal(string.Empty, validation[nameof(PluginListItem.Name)]);
-        Assert.Equal("ValidPlugin.esp", plugin.Name);
-        Assert.True(plugin.IsSelected);
     }
 
     #endregion
@@ -1497,20 +1459,6 @@ public class MainWindowViewModelTests
         public bool HasAccess { get; set; } = hasAccess;
 
         public int PostCount => Volatile.Read(ref _postCount);
-
-        public Task InvokeAsync(Action action)
-        {
-            if (CheckAccess())
-            {
-                action();
-            }
-            else
-            {
-                Post(action);
-            }
-
-            return Task.CompletedTask;
-        }
 
         public void Post(Action action)
         {

@@ -28,50 +28,6 @@ internal sealed class QueuedThreadDispatcher : IThreadDispatcher
     }
 
     /// <summary>
-    /// Runs the action directly for owner-thread callers or completes after queued execution.
-    /// </summary>
-    /// <param name="action">The work to execute on the UI queue.</param>
-    /// <returns>A task that observes queued callback completion or failure.</returns>
-    public Task InvokeAsync(Action action)
-    {
-        ArgumentNullException.ThrowIfNull(action);
-
-        if (CheckAccess())
-        {
-            try
-            {
-                action();
-                return Task.CompletedTask;
-            }
-            catch (Exception ex)
-            {
-                return Task.FromException(ex);
-            }
-        }
-
-        var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-
-        if (!_tryEnqueue(() =>
-            {
-                try
-                {
-                    action();
-                    completion.TrySetResult();
-                }
-                catch (Exception ex)
-                {
-                    completion.TrySetException(ex);
-                }
-            }))
-        {
-            // DispatcherQueue returns false during shutdown; complete the task so awaiters do not hang.
-            completion.TrySetException(CreateRejectedException());
-        }
-
-        return completion.Task;
-    }
-
-    /// <summary>
     /// Queues fire-and-forget work on the target UI queue.
     /// </summary>
     /// <param name="action">The work to queue.</param>

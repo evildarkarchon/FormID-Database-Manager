@@ -1,5 +1,4 @@
 using System;
-using System.Threading.Tasks;
 using FormID_Database_Manager.Services;
 using Microsoft.UI.Dispatching;
 
@@ -24,12 +23,6 @@ public sealed class WinUiThreadDispatcher : IThreadDispatcher
             () => _dispatcherQueue.HasThreadAccess,
             action => _dispatcherQueue.TryEnqueue(() => action()),
             "The WinUI dispatcher rejected queued work. The window may be closing.");
-    }
-
-    /// <inheritdoc />
-    public Task InvokeAsync(Action action)
-    {
-        return _dispatcher.InvokeAsync(action);
     }
 
     /// <inheritdoc />

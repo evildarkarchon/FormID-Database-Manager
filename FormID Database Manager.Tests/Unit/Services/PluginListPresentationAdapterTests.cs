@@ -459,12 +459,6 @@ public sealed class PluginListPresentationAdapterTests
 
         public int PostCount => Volatile.Read(ref _postCount);
 
-        public Task InvokeAsync(Action action)
-        {
-            Post(action);
-            return Task.CompletedTask;
-        }
-
         public void Post(Action action)
         {
             Interlocked.Increment(ref _postCount);
