@@ -1,0 +1,17 @@
+<Project>
+
+  <!--
+    Shared language defaults for the four first-party projects. These were previously set
+    per-csproj and had drifted: the Tests project set neither, and TestUtilities set only
+    Nullable, so the same code compiled under different rules depending on which project
+    it lived in.
+
+    This does not leak into the Mutagen/ submodule — MSBuild stops walking up at the first
+    Directory.Build.props it finds, and Mutagen/ ships its own.
+  -->
+  <PropertyGroup>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+</Project>

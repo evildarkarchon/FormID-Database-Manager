@@ -69,12 +69,15 @@ public class StressTests : IDisposable
 
             try
             {
-                await processingRunExecutor.ExecuteAsync(request, progress);
-                completedCount++;
-            }
-            catch (OperationCanceledException)
-            {
-                cancelledCount++;
+                var outcome = await processingRunExecutor.ExecuteAsync(request, progress);
+                if (outcome is CancelledRunOutcome)
+                {
+                    cancelledCount++;
+                }
+                else
+                {
+                    completedCount++;
+                }
             }
             catch (Exception ex)
             {

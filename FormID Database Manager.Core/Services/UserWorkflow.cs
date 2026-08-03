@@ -298,18 +298,14 @@ public sealed class UserWorkflow : IDisposable
                 confirmedPluginList);
             var progress = new ProcessingRunProgressAdapter(ApplyProcessingRunEvent);
 
-            await _processingRunExecutor.ExecuteAsync(request, progress);
+            var outcome = await _processingRunExecutor.ExecuteAsync(request, progress);
+            ApplyProcessingRunOutcome(outcome);
         }
         // The failures whose own message already tells the user what is wrong and what to do about it, shown
         // unwrapped: the generic "Error processing FormIDs" prefix below would only bury it (ADR-0006).
         catch (Exception ex) when (ex is ProcessingRunValidationException or UnresolvableMasterException)
         {
             _viewModel.AddErrorMessage(ex.Message);
-        }
-        // A terminal fact, so it goes to the message lists with the run's other terminal facts (issue #60).
-        catch (OperationCanceledException)
-        {
-            _viewModel.AddInformationMessage("Processing cancelled by user.");
         }
         catch (Exception ex)
         {
@@ -742,6 +738,51 @@ public sealed class UserWorkflow : IDisposable
             updateMode);
     }
 
+    /// <summary>
+    /// Renders how the run ended and performs every ViewModel write that outcome implies.
+    /// </summary>
+    /// <param name="outcome">The outcome returned by the Processing Run this workflow started.</param>
+    /// <remarks>
+    /// <see cref="ProcessingRunPresentation" /> is a pure renderer, so the order the run's terminal facts reach the
+    /// user is decided here: the message lists first and the transient status last, matching the order the executor
+    /// reported them in before it stopped doing its own wording. An inactive projection means the outcome has nothing
+    /// to say on that channel — a cancelled run's acknowledgement is a terminal fact, and writing it here would only
+    /// have it erased by this method's caller as it hands the channel back (#60).
+    /// </remarks>
+    private void ApplyProcessingRunOutcome(ProcessingRunOutcome outcome)
+    {
+        var rendered = ProcessingRunPresentation.Render(outcome);
+
+        foreach (var message in rendered.WarningMessages)
+        {
+            _viewModel.AddWarningMessage(message);
+        }
+
+        foreach (var message in rendered.ErrorMessages)
+        {
+            _viewModel.AddErrorMessage(message);
+        }
+
+        foreach (var message in rendered.InformationMessages)
+        {
+            _viewModel.AddInformationMessage(message);
+        }
+
+        if (rendered.Activity.IsActive)
+        {
+            ReportRunActivity(rendered.Activity.Status, rendered.Activity.Value);
+        }
+    }
+
+    /// <summary>
+    /// Routes one report from the run's progress channel.
+    /// </summary>
+    /// <param name="runEvent">The event the run reported.</param>
+    /// <remarks>
+    /// Only the status branch is reachable now: a run reports transient progress here and nothing else, because its
+    /// warning and failure wording is rendered from the outcome it returns. The other two branches survive only
+    /// because <see cref="ProcessingRunEventKind" /> still admits them; they go when the event type is retyped.
+    /// </remarks>
     private void ApplyProcessingRunEvent(ProcessingRunEvent runEvent)
     {
         if (runEvent.Kind == ProcessingRunEventKind.Error)

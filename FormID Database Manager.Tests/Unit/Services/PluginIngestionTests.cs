@@ -1314,7 +1314,7 @@ public sealed class PluginIngestionTests : IDisposable
     ///     record can break the <c>ILoquiObject</c> contract that <see cref="IMajorRecordGetter" /> inherits.
     /// </param>
     /// <returns>The record, carrying FormID <c>000001</c>.</returns>
-    private static IMajorRecordGetter CreateRecordWithUnusableRegistration(Exception registrationFailure = null)
+    private static IMajorRecordGetter CreateRecordWithUnusableRegistration(Exception? registrationFailure = null)
     {
         var record = new Mock<IMajorRecordGetter>();
         record
@@ -1422,7 +1422,7 @@ public sealed class PluginIngestionTests : IDisposable
 
     private sealed class RecordingOverlayReader(
         List<string> events,
-        string emptyPluginName = null) : IPluginOverlayReader
+        string? emptyPluginName = null) : IPluginOverlayReader
     {
         public List<BinaryReadParameters> CapturedReadParameters { get; } = [];
 
@@ -1469,7 +1469,7 @@ public sealed class PluginIngestionTests : IDisposable
         public Task<FormIdTextFileImportResult> ImportFormIdTextFileAsync(
             string formIdTextFilePath,
             UpdateMode updateMode,
-            IProgress<FormIdStoreProgress> progress = null,
+            IProgress<FormIdStoreProgress>? progress = null,
             CancellationToken cancellationToken = default)
         {
             throw new InvalidOperationException("Plugin Ingestion should not import a FormID text file.");
@@ -1502,7 +1502,7 @@ public sealed class PluginIngestionTests : IDisposable
         public Task<FormIdTextFileImportResult> ImportFormIdTextFileAsync(
             string formIdTextFilePath,
             UpdateMode updateMode,
-            IProgress<FormIdStoreProgress> progress = null,
+            IProgress<FormIdStoreProgress>? progress = null,
             CancellationToken cancellationToken = default)
         {
             throw new InvalidOperationException("This test should not import a FormID text file.");
@@ -1540,7 +1540,7 @@ public sealed class PluginIngestionTests : IDisposable
         public Task<FormIdTextFileImportResult> ImportFormIdTextFileAsync(
             string formIdTextFilePath,
             UpdateMode updateMode,
-            IProgress<FormIdStoreProgress> progress = null,
+            IProgress<FormIdStoreProgress>? progress = null,
             CancellationToken cancellationToken = default)
         {
             throw new InvalidOperationException("Plugin Ingestion should not import a FormID text file.");
@@ -1583,7 +1583,7 @@ public sealed class PluginIngestionTests : IDisposable
         public Task<FormIdTextFileImportResult> ImportFormIdTextFileAsync(
             string formIdTextFilePath,
             UpdateMode updateMode,
-            IProgress<FormIdStoreProgress> progress = null,
+            IProgress<FormIdStoreProgress>? progress = null,
             CancellationToken cancellationToken = default)
         {
             throw new InvalidOperationException("Plugin Ingestion should not import a FormID text file.");

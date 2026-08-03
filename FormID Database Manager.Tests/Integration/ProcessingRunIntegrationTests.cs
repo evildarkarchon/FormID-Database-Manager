@@ -59,7 +59,7 @@ public sealed class ProcessingRunIntegrationTests : IDisposable
             GameRelease.SkyrimSE,
             UpdateMode.Append);
 
-        await executor.ExecuteAsync(request, progress);
+        var outcome = await executor.ExecuteAsync(request, progress);
 
         Assert.True(File.Exists(databasePath));
 
@@ -107,16 +107,16 @@ public sealed class ProcessingRunIntegrationTests : IDisposable
             runEvent.Message.Contains("Completed processing 2 plugins", StringComparison.Ordinal) &&
             runEvent.Value == 100);
 
-        // The executor emits terminal success only after the real store's optimization completes.
-        var terminalEvent = events[^1];
-        Assert.Equal(ProcessingRunEventKind.Status, terminalEvent.Kind);
-        Assert.Contains("Processing completed successfully", terminalEvent.Message, StringComparison.Ordinal);
-        Assert.Equal(100, terminalEvent.Value);
+        // The run's own terminal fact is the returned outcome, carrying the real Store's confirmed counts.
+        Assert.Equal(
+            new FormIdTextFileImportResult(2, 3),
+            Assert.IsType<FormIdTextRunOutcome>(outcome).ImportResult);
     }
 
     /// <summary>
-    ///     Executes a real selected-Plugin Processing Run across aggregate Plugin Ingestion and the SQLite Store, proving
-    ///     terminal completion is emitted only after explicit Store optimization has produced observable statistics.
+    ///     Executes a real selected-Plugin Processing Run across aggregate Plugin Ingestion and the SQLite Store,
+    ///     proving the run's outcome is returned only after explicit Store optimization has produced observable
+    ///     statistics.
     /// </summary>
     [Fact]
     public async Task ExecuteAsync_SelectedPluginRun_IngestsThroughProductionSeamsAndCompletesAfterOptimization()
@@ -137,21 +137,9 @@ public sealed class ProcessingRunIntegrationTests : IDisposable
             pluginIngestion,
             new FormIdRecordStoreSessionOpener());
         var events = new List<ProcessingRunEvent>();
-        var terminalObservedAfterOptimization = false;
-        var progress = new SynchronousProgress<ProcessingRunEvent>(runEvent =>
-        {
-            events.Add(runEvent);
-            if (runEvent is
-                {
-                    Kind: ProcessingRunEventKind.Status,
-                    Value: 100
-                } && runEvent.Message.Contains("Processing completed", StringComparison.Ordinal))
-            {
-                terminalObservedAfterOptimization = HasStoreStatistics(databasePath, GameRelease.SkyrimSE);
-            }
-        });
+        var progress = new SynchronousProgress<ProcessingRunEvent>(events.Add);
 
-        await executor.ExecuteAsync(
+        var outcome = await executor.ExecuteAsync(
             new PluginProcessingRunRequest(
                 gameDirectory,
                 databasePath,
@@ -160,7 +148,9 @@ public sealed class ProcessingRunIntegrationTests : IDisposable
                 UpdateMode.Append),
             progress);
 
-        Assert.True(terminalObservedAfterOptimization);
+        // The run withholds its outcome until explicit optimization has succeeded, so statistics are already
+        // observable by the time the caller has anything to report.
+        Assert.True(HasStoreStatistics(databasePath, GameRelease.SkyrimSE));
 
         await using (var store = await FormIdRecordStore.OpenAsync(
                          databasePath,
@@ -181,10 +171,12 @@ public sealed class ProcessingRunIntegrationTests : IDisposable
                 storedRecords);
         }
 
-        var terminalEvent = events[^1];
-        Assert.Equal(ProcessingRunEventKind.Status, terminalEvent.Kind);
-        Assert.Contains("Processing completed successfully", terminalEvent.Message, StringComparison.Ordinal);
-        Assert.Equal(100, terminalEvent.Value);
+        var ingested = Assert.IsType<IngestedPlugin>(
+            Assert.Single(Assert.IsType<PluginRunOutcome>(outcome).Report.Outcomes));
+        Assert.Equal(pluginName, ingested.PluginName);
+        Assert.Equal(1, ingested.FormIdCount);
+        Assert.Null(ingested.Warning);
+        Assert.All(events, runEvent => Assert.Equal(ProcessingRunEventKind.Status, runEvent.Kind));
     }
 
     /// <summary>

@@ -188,6 +188,25 @@ public class CoreProjectBoundaryTests
     }
 
     /// <summary>
+    ///     Verifies that the wording the FormID Record Store used to write onto its progress path has not come back,
+    ///     leaving both the words and the decision to name a Plugin to whoever renders the counters it reports.
+    /// </summary>
+    /// <remarks>
+    ///     This pins the three retired sentences by name rather than proving the absence of prose in general, which no
+    ///     source-text guard can do. New wording is caught by the characterization tests, not here.
+    /// </remarks>
+    [Fact]
+    public void FormIdRecordStore_TextImportProgress_DoesNotContainTheRetiredProgressWording()
+    {
+        var storeSource = File.ReadAllText(
+            Path.Combine(GetCoreProjectDirectory(), "Services", "FormIdRecordStore.cs"));
+
+        Assert.DoesNotContain("Starting processing", storeSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("Processing plugin", storeSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("Completed processing", storeSource, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     ///     Verifies the final selected-Plugin dependency direction: Processing Run owns the Store lifecycle, while the
     ///     sealed aggregate Plugin Ingestion owns load-order, Data-path, and overlay adapters behind its interface.
     /// </summary>

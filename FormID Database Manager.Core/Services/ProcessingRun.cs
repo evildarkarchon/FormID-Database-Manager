@@ -1,12 +1,15 @@
 namespace FormID_Database_Manager.Services;
 
 /// <summary>
-///     Executes one Processing Run from a domain request and emits typed run events.
+///     Executes one Processing Run from a domain request, reports its transient progress, and returns how it ended.
 /// </summary>
+/// <remarks>
+///     The run says nothing about its own terminal state: every string describing how a run ended is rendered from the
+///     returned outcome by <see cref="ProcessingRunPresentation" />. The one exception is the transient status a
+///     failure reports before rethrowing, because a failure produces no outcome to render.
+/// </remarks>
 public sealed class ProcessingRunExecutor : IProcessingRunExecutor
 {
-    private const int OutcomeDetailLimit = 5;
-
     private readonly Lock _cancellationLock = new();
     private readonly IPluginIngestion _pluginIngestion;
     private readonly IFormIdRecordStoreSessionOpener _recordStoreOpener;
@@ -41,9 +44,14 @@ public sealed class ProcessingRunExecutor : IProcessingRunExecutor
     ///     Executes the supplied Processing Run request.
     /// </summary>
     /// <param name="request">The validated domain request describing the run.</param>
-    /// <param name="progress">Optional typed run event reporter.</param>
-    /// <returns>A task that completes when the run completes, fails, or observes cancellation.</returns>
-    public async Task ExecuteAsync(
+    /// <param name="progress">Optional typed run event reporter for transient status.</param>
+    /// <returns>How the run ended, including cancellation this executor was asked for.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="request" /> is <see langword="null" />.</exception>
+    /// <exception cref="ObjectDisposedException">The executor has already been disposed.</exception>
+    /// <exception cref="UnresolvableMasterException">
+    ///     A selected Plugin declares a master the Data directory cannot supply, which fails the whole run (ADR-0006).
+    /// </exception>
+    public async Task<ProcessingRunOutcome> ExecuteAsync(
         ProcessingRunRequest request,
         IProgress<ProcessingRunEvent>? progress = null)
     {
@@ -53,8 +61,8 @@ public sealed class ProcessingRunExecutor : IProcessingRunExecutor
         try
         {
             // Do not pass the token to Task.Run scheduling: even a pre-cancelled run must enter the worker
-            // so it can report cancellation and release the source owned by this execution.
-            await Task.Run(() => ExecuteCoreAsync(request, progress, cancellationSource.Token))
+            // so it can return the cancelled outcome and release the source owned by this execution.
+            return await Task.Run(() => ExecuteCoreAsync(request, progress, cancellationSource.Token))
                 .ConfigureAwait(false);
         }
         finally
@@ -106,16 +114,6 @@ public sealed class ProcessingRunExecutor : IProcessingRunExecutor
         progress?.Report(ProcessingRunEvent.Status(message, value));
     }
 
-    private static void ReportError(IProgress<ProcessingRunEvent>? progress, string message)
-    {
-        progress?.Report(ProcessingRunEvent.Error(message));
-    }
-
-    private static void ReportWarning(IProgress<ProcessingRunEvent>? progress, string message)
-    {
-        progress?.Report(ProcessingRunEvent.Warning(message));
-    }
-
     /// <summary>
     ///     Creates and publishes the cancellation source for a new active Processing Run.
     /// </summary>
@@ -157,10 +155,10 @@ public sealed class ProcessingRunExecutor : IProcessingRunExecutor
     ///     Executes one Processing Run on the background worker with the token owned by that execution.
     /// </summary>
     /// <param name="request">The validated domain request describing the run.</param>
-    /// <param name="progress">Optional typed run event reporter.</param>
+    /// <param name="progress">Optional typed run event reporter for transient status.</param>
     /// <param name="cancellationToken">The execution-owned token used by initialization and ingestion.</param>
-    /// <returns>A task that completes with the run and propagates cancellation or processing failures unchanged.</returns>
-    private async Task ExecuteCoreAsync(
+    /// <returns>How the run ended; processing failures propagate unchanged.</returns>
+    private async Task<ProcessingRunOutcome> ExecuteCoreAsync(
         ProcessingRunRequest request,
         IProgress<ProcessingRunEvent>? progress,
         CancellationToken cancellationToken)
@@ -171,8 +169,7 @@ public sealed class ProcessingRunExecutor : IProcessingRunExecutor
 
             if (request.DryRun)
             {
-                ReportDryRun(request, progress);
-                return;
+                return new PlannedRunOutcome(CreatePlan(request));
             }
 
             var recordStore = await _recordStoreOpener.OpenAsync(
@@ -185,14 +182,12 @@ public sealed class ProcessingRunExecutor : IProcessingRunExecutor
                 switch (request)
                 {
                     case FormIdTextProcessingRunRequest textRequest:
-                        await ExecuteTextFileRunAsync(textRequest, recordStore, progress, cancellationToken)
+                        return await ExecuteTextFileRunAsync(textRequest, recordStore, progress, cancellationToken)
                             .ConfigureAwait(false);
-                        break;
 
                     case PluginProcessingRunRequest pluginRequest:
-                        await ExecutePluginRunAsync(pluginRequest, recordStore, progress, cancellationToken)
+                        return await ExecutePluginRunAsync(pluginRequest, recordStore, progress, cancellationToken)
                             .ConfigureAwait(false);
-                        break;
 
                     default:
                         throw new ArgumentOutOfRangeException(
@@ -213,9 +208,16 @@ public sealed class ProcessingRunExecutor : IProcessingRunExecutor
                 }
             }
         }
-        // Cancellation reports nothing of its own and is excluded from failure formatting: the acknowledgement is a
-        // terminal fact that belongs in the message lists, while this channel is transient and is cleared as soon as
-        // the run ends, so anything written here about a cancelled run is erased before the user can read it (#60).
+        // The token is owned by this execution, so cancellation observed while it is cancelled can only be the
+        // cancellation this run was asked for, and is therefore matched precisely and returned as a value. A
+        // cancellation nobody asked this executor for is not this run's to reinterpret and still propagates.
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return new CancelledRunOutcome();
+        }
+        // Cancellation is excluded from failure formatting: the acknowledgement is a terminal fact rendered from the
+        // outcome into the message lists, while this channel is transient and is cleared as soon as the run ends, so
+        // anything written here about a cancelled run is erased before the user can read it (#60).
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             ReportStatus(progress, $"Error during processing: {ex.Message}");
@@ -223,59 +225,70 @@ public sealed class ProcessingRunExecutor : IProcessingRunExecutor
         }
     }
 
-    private static void ReportDryRun(ProcessingRunRequest request, IProgress<ProcessingRunEvent>? progress)
+    /// <summary>
+    ///     Builds the shallow plan a dry run reports instead of doing the work.
+    /// </summary>
+    /// <param name="request">The validated domain request describing the run.</param>
+    /// <returns>The planned work for the request kind.</returns>
+    /// <exception cref="ArgumentOutOfRangeException">The request kind is unsupported.</exception>
+    private static ProcessingRunPlan CreatePlan(ProcessingRunRequest request)
     {
-        switch (request)
+        return request switch
         {
-            case FormIdTextProcessingRunRequest textRequest:
-                ReportStatus(progress, $"Would process FormID list file: {textRequest.FormIdListPath}");
-                break;
-
-            case PluginProcessingRunRequest pluginRequest:
-                foreach (var pluginName in pluginRequest.PluginNames)
-                {
-                    ReportStatus(progress, $"Would process {pluginName}");
-                }
-
-                break;
-
-            default:
-                throw new ArgumentOutOfRangeException(nameof(request), request, "Unsupported Processing Run request.");
-        }
+            FormIdTextProcessingRunRequest textRequest => new FormIdTextRunPlan(textRequest.FormIdListPath),
+            PluginProcessingRunRequest pluginRequest => new PluginRunPlan([.. pluginRequest.PluginNames]),
+            _ => throw new ArgumentOutOfRangeException(nameof(request), request, "Unsupported Processing Run request.")
+        };
     }
 
-    private static async Task ExecuteTextFileRunAsync(
+    /// <summary>
+    ///     Imports one FormID text file, performs explicit successful-run maintenance, and returns the Store's counts.
+    /// </summary>
+    /// <remarks>
+    ///     The import's completion is reported before maintenance and before the cancellation check, which is where the
+    ///     Store used to report it from: the counts describe the import, not the run, and a cancellation accepted after
+    ///     the commit has never erased the fact that the import finished.
+    /// </remarks>
+    /// <param name="request">The validated FormID text-file request.</param>
+    /// <param name="recordStore">The already-open Store session owned by the surrounding Processing Run.</param>
+    /// <param name="progress">Optional transient Processing Run event reporter.</param>
+    /// <param name="cancellationToken">The execution-owned token shared with the import and Store maintenance.</param>
+    /// <returns>The completed text-run outcome carrying the import counts.</returns>
+    /// <exception cref="OperationCanceledException"><paramref name="cancellationToken" /> requests cancellation.</exception>
+    private static async Task<FormIdTextRunOutcome> ExecuteTextFileRunAsync(
         FormIdTextProcessingRunRequest request,
         IFormIdRecordStoreSession recordStore,
         IProgress<ProcessingRunEvent>? progress,
         CancellationToken cancellationToken)
     {
-        await recordStore.ImportFormIdTextFileAsync(
+        var importResult = await recordStore.ImportFormIdTextFileAsync(
                 request.FormIdListPath,
                 request.UpdateMode,
-                CreateStoreProgressAdapter(progress),
+                CreateStoreProgressAdapter(progress, request.UpdateMode),
                 cancellationToken)
             .ConfigureAwait(false);
+
+        ReportTextImportCompletion(progress, importResult);
 
         cancellationToken.ThrowIfCancellationRequested();
         await recordStore.OptimizeAsync(cancellationToken).ConfigureAwait(false);
 
-        // Cancellation accepted during maintenance must surface as cancellation, never as a success terminal event.
+        // Cancellation accepted during maintenance must surface as cancellation, never as a completed outcome.
         cancellationToken.ThrowIfCancellationRequested();
-        ReportStatus(progress, "Processing completed successfully!", 100);
+        return new FormIdTextRunOutcome(importResult);
     }
 
     /// <summary>
-    ///     Runs one complete selected-Plugin operation, performs explicit successful-run maintenance, then formats the
-    ///     authoritative ordered report into Processing Run events.
+    ///     Runs one complete selected-Plugin operation, performs explicit successful-run maintenance, then returns the
+    ///     authoritative ordered report.
     /// </summary>
     /// <param name="request">The validated immutable selected-Plugin request.</param>
     /// <param name="recordStore">The already-open Store session owned by the surrounding Processing Run.</param>
-    /// <param name="progress">Optional user-facing Processing Run event reporter.</param>
+    /// <param name="progress">Optional transient Processing Run event reporter.</param>
     /// <param name="cancellationToken">The execution-owned token shared with Plugin Ingestion and Store maintenance.</param>
-    /// <returns>A task that completes after optimization and terminal reporting.</returns>
+    /// <returns>The completed selected-Plugin outcome carrying the authoritative ordered report.</returns>
     /// <exception cref="OperationCanceledException"><paramref name="cancellationToken" /> requests cancellation.</exception>
-    private async Task ExecutePluginRunAsync(
+    private async Task<PluginRunOutcome> ExecutePluginRunAsync(
         PluginProcessingRunRequest request,
         IFormIdRecordStoreSession recordStore,
         IProgress<ProcessingRunEvent>? progress,
@@ -297,174 +310,43 @@ public sealed class ProcessingRunExecutor : IProcessingRunExecutor
         cancellationToken.ThrowIfCancellationRequested();
         await recordStore.OptimizeAsync(cancellationToken).ConfigureAwait(false);
 
-        // Cancellation accepted during maintenance must surface as cancellation, so no outcome is formatted or reported.
+        // Cancellation accepted during maintenance must surface as cancellation, so no completed outcome is returned.
+        // Returning the report is likewise delayed until maintenance succeeds, so a failed optimization has no summary.
         cancellationToken.ThrowIfCancellationRequested();
-
-        // Outcome wording is intentionally delayed until maintenance succeeds so a failed optimization has no terminal summary.
-        var warningDetails = report.Outcomes
-            .SelectMany(outcome => outcome switch
-            {
-                IngestedPlugin { Warning: not null } ingested => [FormatProcessingWarning(ingested)],
-                SkippedPlugin skipped => [FormatSkippedPluginDetail(skipped)],
-                _ => Array.Empty<string>()
-            })
-            .ToList();
-        var failedDetails = report.Outcomes
-            .OfType<FailedPlugin>()
-            .Select(FormatFailedPluginDetail)
-            .ToList();
-        var ingestedPlugins = report.Outcomes.OfType<IngestedPlugin>().Count();
-        var skippedPlugins = report.Outcomes.OfType<SkippedPlugin>().Count();
-        var failedPlugins = report.Outcomes.OfType<FailedPlugin>().Count();
-
-        if (warningDetails.Count > 0)
-        {
-            ReportWarning(
-                progress,
-                FormatOutcomeDetails(
-                    $"{warningDetails.Count} processing warning{(warningDetails.Count == 1 ? string.Empty : "s")}.",
-                    warningDetails));
-        }
-
-        if (failedDetails.Count > 0)
-        {
-            ReportError(
-                progress,
-                FormatOutcomeDetails(
-                    $"{failedPlugins} failed plugin{(failedPlugins == 1 ? string.Empty : "s")}.",
-                    failedDetails));
-        }
-
-        if (failedPlugins > 0)
-        {
-            ReportStatus(
-                progress,
-                FormatCompletionStatus(
-                    "Processing completed with failures",
-                    ingestedPlugins,
-                    skippedPlugins,
-                    failedPlugins),
-                100);
-        }
-        else if (warningDetails.Count > 0)
-        {
-            ReportStatus(
-                progress,
-                FormatCompletionStatus(
-                    "Processing completed with warnings",
-                    ingestedPlugins,
-                    skippedPlugins,
-                    failedPlugins),
-                100);
-        }
-        else
-        {
-            ReportStatus(progress, "Processing completed successfully!", 100);
-        }
+        return new PluginRunOutcome(report);
     }
 
     /// <summary>
-    ///     Formats one warned Ingested Plugin from structured warning facts retained by Plugin Ingestion.
+    ///     Creates the adapter that renders the Store's import counters into this run's transient status events.
     /// </summary>
-    /// <param name="ingestedPlugin">The Ingested Plugin carrying a Processing Warning.</param>
-    /// <returns>User-facing warning detail with bounded diagnostics and an omitted-detail count.</returns>
-    /// <exception cref="ArgumentException"><paramref name="ingestedPlugin" /> has no warning facts.</exception>
-    private static string FormatProcessingWarning(IngestedPlugin ingestedPlugin)
-    {
-        var warning = ingestedPlugin.Warning ?? throw new ArgumentException(
-            "An Ingested Plugin must carry warning facts before warning formatting.",
-            nameof(ingestedPlugin));
-        var message = $"{ingestedPlugin.PluginName}: {warning.TotalIssueCount} recoverable record issue" +
-                      $"{(warning.TotalIssueCount == 1 ? string.Empty : "s")}.";
-        if (!warning.DiagnosticDetails.IsEmpty)
-        {
-            message += $" {string.Join("; ", warning.DiagnosticDetails)}";
-        }
-
-        if (warning.OmittedDetailCount > 0)
-        {
-            message += $"; and {warning.OmittedDetailCount} more.";
-        }
-
-        return message;
-    }
-
-    /// <summary>
-    ///     Formats one typed Skipped Plugin reason without exposing presentation wording through Plugin Ingestion.
-    /// </summary>
-    /// <param name="skippedPlugin">The Skipped Plugin facts.</param>
-    /// <returns>User-facing detail for the stable skip reason.</returns>
-    /// <exception cref="ArgumentOutOfRangeException">The skip reason is unsupported.</exception>
-    private static string FormatSkippedPluginDetail(SkippedPlugin skippedPlugin)
-    {
-        // Plugin Ingestion owns path resolution; Processing Run only turns its stable facts into presentation wording.
-        var detail = skippedPlugin.Reason switch
-        {
-            SkippedPluginReason.NotPresentInLoadOrder =>
-                $"Could not find plugin in load order: {skippedPlugin.PluginName}",
-            SkippedPluginReason.PluginFileUnavailable =>
-                $"Could not find plugin file: {skippedPlugin.ResolvedPluginPath}",
-            SkippedPluginReason.ZeroFormIdRecords =>
-                $"{skippedPlugin.PluginName} produced zero FormID records.",
-            _ => throw new ArgumentOutOfRangeException(
-                nameof(skippedPlugin),
-                skippedPlugin.Reason,
-                "Unsupported skipped Plugin reason.")
-        };
-
-        return $"{skippedPlugin.PluginName}: {detail}";
-    }
-
-    /// <summary>
-    ///     Formats one Failed Plugin from its stable reason and internal diagnostic phase.
-    /// </summary>
-    /// <param name="failedPlugin">The Failed Plugin facts.</param>
-    /// <returns>User-facing failure detail.</returns>
-    /// <exception cref="ArgumentOutOfRangeException">The Plugin-read phase is unsupported.</exception>
-    private static string FormatFailedPluginDetail(FailedPlugin failedPlugin)
-    {
-        var detail = failedPlugin.Diagnostic.Phase switch
-        {
-            PluginReadPhase.OpeningPlugin =>
-                $"Error opening {failedPlugin.PluginName}: {failedPlugin.Diagnostic.Message}",
-            PluginReadPhase.ReadingRecords =>
-                $"Error enumerating records in {failedPlugin.PluginName}: {failedPlugin.Diagnostic.Message}",
-            _ => throw new ArgumentOutOfRangeException(
-                nameof(failedPlugin),
-                failedPlugin.Diagnostic.Phase,
-                "Unsupported Plugin-read phase.")
-        };
-
-        return $"{failedPlugin.PluginName}: {detail}";
-    }
-
-    private static string FormatOutcomeDetails(string summary, IReadOnlyList<string> details)
-    {
-        var lines = new List<string> { summary };
-        lines.AddRange(details.Take(OutcomeDetailLimit));
-
-        var remaining = details.Count - OutcomeDetailLimit;
-        if (remaining > 0)
-        {
-            lines.Add($"and {remaining} more.");
-        }
-
-        return string.Join(Environment.NewLine, lines);
-    }
-
-    private static string FormatCompletionStatus(
-        string prefix,
-        int ingestedPlugins,
-        int skippedPlugins,
-        int failedPlugins)
-    {
-        return $"{prefix}: {ingestedPlugins} ingested, {skippedPlugins} skipped, and {failedPlugins} failed Plugins.";
-    }
-
+    /// <param name="progress">The run's event reporter, or <see langword="null" /> when nobody is listening.</param>
+    /// <param name="updateMode">The run's update mode, which decides whether a newly seen Plugin is named.</param>
+    /// <returns>The adapter, or <see langword="null" /> so the Store can skip reporting entirely.</returns>
     private static IProgress<FormIdStoreProgress>? CreateStoreProgressAdapter(
-        IProgress<ProcessingRunEvent>? progress)
+        IProgress<ProcessingRunEvent>? progress,
+        UpdateMode updateMode)
     {
-        return progress is null ? null : new StoreProgressAdapter(progress);
+        return progress is null ? null : new StoreProgressAdapter(progress, updateMode);
+    }
+
+    /// <summary>
+    ///     Reports the finished text import as the last transient status of the import.
+    /// </summary>
+    /// <param name="progress">The run's event reporter, or <see langword="null" /> when nobody is listening.</param>
+    /// <param name="importResult">The distinct Plugin and valid record counts the Store confirmed.</param>
+    /// <remarks>
+    ///     This sits beside <see cref="StoreProgressAdapter" /> because it completes the same small vocabulary: between
+    ///     them they render every string a text import shows, from counts the Store reports rather than sentences it
+    ///     writes. Both are a temporary home until the run owns a typed progress vocabulary of its own.
+    /// </remarks>
+    private static void ReportTextImportCompletion(
+        IProgress<ProcessingRunEvent>? progress,
+        FormIdTextFileImportResult importResult)
+    {
+        ReportStatus(
+            progress,
+            $"Completed processing {importResult.PluginCount} plugins ({importResult.RecordCount:N0} total records)",
+            100);
     }
 
     private static IProgress<PluginIngestionProgress>? CreatePluginIngestionProgressAdapter(
@@ -507,12 +389,55 @@ public sealed class ProcessingRunExecutor : IProcessingRunExecutor
         }
     }
 
-    private sealed class StoreProgressAdapter(IProgress<ProcessingRunEvent> inner)
+    /// <summary>
+    ///     Renders the FormID Record Store's import counters into this run's transient status events.
+    /// </summary>
+    /// <remarks>
+    ///     Naming a Plugin is the run's decision, not the Store's. The Store reports every Plugin the first time it
+    ///     sees one regardless of update mode, and this adapter shows those reports only when the run replaces Plugin
+    ///     records — the mode that has always shown them — so an appending run gains no status updates it never had.
+    /// </remarks>
+    /// <remarks>
+    ///     Not thread-safe, and deliberately so: one adapter serves one import, whose single reading loop is the only
+    ///     caller of <see cref="Report" />. The remembered Plugin needs no synchronization under that contract, and a
+    ///     caller that fans reports out across threads would break the ordering this adapter reads meaning from anyway.
+    /// </remarks>
+    private sealed class StoreProgressAdapter(IProgress<ProcessingRunEvent> inner, UpdateMode updateMode)
         : IProgress<FormIdStoreProgress>
     {
+        private string? _mostRecentPlugin;
+
+        /// <inheritdoc />
         public void Report(FormIdStoreProgress value)
         {
-            inner.Report(ProcessingRunEvent.Status(value.Message, value.Value));
+            // Nothing counted and no Plugin seen can only be the report that opens an import.
+            if (value is { RecordCount: 0, MostRecentPlugin: null })
+            {
+                inner.Report(ProcessingRunEvent.Status("Starting processing...", 0));
+                return;
+            }
+
+            // The Store advances the most recently seen Plugin only on a Plugin's first row, so a changed name is
+            // exactly a newly seen Plugin and never a record-count report that happens to carry the same name. The
+            // comparison matches the Store's own case-insensitive Plugin identity, because this reconstructs the
+            // decision the Store already made: the two must not disagree about what counts as the same Plugin.
+            if (value.MostRecentPlugin is { } pluginName &&
+                !string.Equals(pluginName, _mostRecentPlugin, StringComparison.OrdinalIgnoreCase))
+            {
+                _mostRecentPlugin = pluginName;
+                if (updateMode == UpdateMode.ReplacePluginRecords)
+                {
+                    inner.Report(ProcessingRunEvent.Status($"Processing plugin: {pluginName}"));
+                }
+
+                return;
+            }
+
+            // A file the Store measured as empty leaves nothing to divide by, so it reads as no progress at all.
+            var progressPercent = value.TotalBytes > 0 ? (double)value.BytesRead / value.TotalBytes * 100 : 0;
+            inner.Report(ProcessingRunEvent.Status(
+                $"Processing: {progressPercent:F1}% ({value.RecordCount:N0} records)",
+                progressPercent));
         }
     }
 

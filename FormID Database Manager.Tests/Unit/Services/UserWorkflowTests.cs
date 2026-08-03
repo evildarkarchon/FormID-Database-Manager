@@ -1078,29 +1078,53 @@ public class UserWorkflowTests
         Assert.Empty(_viewModel.WarningMessages);
     }
 
+    /// <summary>
+    ///     Verifies the workflow performs the writes a warned run's rendered report implies, and no others.
+    /// </summary>
+    /// <remarks>
+    ///     A run no longer says a word about how it ended: the executor returns the outcome and the workflow renders
+    ///     it, so this asserts the writes rather than the routing of a warning event that no longer exists.
+    /// </remarks>
     [Fact]
-    public async Task ProcessFormIdsAsync_ProcessingRunWarningEvent_AddsWarningMessage()
+    public async Task ProcessFormIdsAsync_RunOutcomeWithASkippedPlugin_AddsTheRenderedWarningMessage()
     {
         var sut = CreateSut();
         await ConfigureValidPluginProcessingRunAsync(sut);
-        _processingRunExecutor.EventsToReport.Add(ProcessingRunEvent.Warning("Skipped User.esp"));
+        _processingRunExecutor.Outcome = CreatePluginRunOutcome(
+            new SkippedPlugin("User.esp", SkippedPluginReason.ZeroFormIdRecords));
 
         await sut.ProcessFormIdsAsync();
 
-        Assert.Contains("Skipped User.esp", _viewModel.WarningMessages);
+        Assert.Equal(
+            [
+                "1 processing warning." + Environment.NewLine +
+                "User.esp: User.esp produced zero FormID records."
+            ],
+            _viewModel.WarningMessages);
         Assert.Empty(_viewModel.ErrorMessages);
     }
 
+    /// <summary>
+    ///     Verifies the workflow performs the writes a failed run's rendered report implies, and no others.
+    /// </summary>
     [Fact]
-    public async Task ProcessFormIdsAsync_ProcessingRunErrorEvent_AddsErrorMessage()
+    public async Task ProcessFormIdsAsync_RunOutcomeWithAFailedPlugin_AddsTheRenderedErrorMessage()
     {
         var sut = CreateSut();
         await ConfigureValidPluginProcessingRunAsync(sut);
-        _processingRunExecutor.EventsToReport.Add(ProcessingRunEvent.Error("Failed User.esp"));
+        _processingRunExecutor.Outcome = CreatePluginRunOutcome(
+            new FailedPlugin(
+                "User.esp",
+                new PluginReadDiagnostic(PluginReadPhase.OpeningPlugin, "Invalid plugin header.")));
 
         await sut.ProcessFormIdsAsync();
 
-        Assert.Contains("Failed User.esp", _viewModel.ErrorMessages);
+        Assert.Equal(
+            [
+                "1 failed plugin." + Environment.NewLine +
+                "User.esp: Error opening User.esp: Invalid plugin header."
+            ],
+            _viewModel.ErrorMessages);
         Assert.Empty(_viewModel.WarningMessages);
     }
 
@@ -1207,8 +1231,9 @@ public class UserWorkflowTests
         {
             sut.ProcessFormIdsAsync().GetAwaiter().GetResult();
             // Armed only once the press has reached the executor, so the run ends as cancelled because it was
-            // cancelled: the real executor propagates the cancellation it accepted, and never one it was not asked for.
-            _processingRunExecutor.ExecuteFailure = new OperationCanceledException();
+            // cancelled: the real executor returns this outcome for the cancellation it accepted, and never for one
+            // it was not asked for.
+            _processingRunExecutor.Outcome = new CancelledRunOutcome();
         });
 
         await sut.ProcessFormIdsAsync();
@@ -1605,6 +1630,26 @@ public class UserWorkflowTests
     }
 
     /// <summary>
+    ///     Builds a selected-Plugin outcome whose report agrees with the outcomes it is given.
+    /// </summary>
+    /// <param name="outcomes">One outcome per selected Plugin, in selection order.</param>
+    /// <returns>A completed selected-Plugin outcome carrying that report.</returns>
+    /// <remarks>
+    ///     The ingestion request is rebuilt here rather than taken from the run, because a report validates its
+    ///     outcomes against the selection they came from and the recording executor never builds one of its own.
+    /// </remarks>
+    private static PluginRunOutcome CreatePluginRunOutcome(params PluginIngestionOutcome[] outcomes)
+    {
+        var request = new SelectedPluginIngestionRequest(
+            GameDirectory,
+            GameRelease.SkyrimSE,
+            outcomes.Select(static outcome => outcome.PluginName),
+            UpdateMode.Append);
+
+        return new PluginRunOutcome(new PluginIngestionReport(request, outcomes));
+    }
+
+    /// <summary>
     /// Establishes one selected confirmed Plugin through the supported workflow boundary.
     /// </summary>
     private async Task ConfigureValidPluginProcessingRunAsync(UserWorkflow sut)
@@ -1634,13 +1679,22 @@ public class UserWorkflowTests
 
         /// <summary>
         ///     The failure raised by <see cref="ExecuteAsync" /> after any configured events are reported, standing in
-        ///     for a run that ends in a terminal failure rather than a report.
+        ///     for a run that ends in a terminal failure rather than an outcome.
         /// </summary>
         public Exception? ExecuteFailure { get; set; }
 
+        /// <summary>
+        ///     How the run ends when it does not fail.
+        /// </summary>
+        /// <remarks>
+        ///     The default is a dry run of nothing, which renders no message and no status at all, so a test that is
+        ///     not about how a run ended sees only the reports it scripted for itself.
+        /// </remarks>
+        public ProcessingRunOutcome Outcome { get; set; } = new PlannedRunOutcome(new PluginRunPlan([]));
+
         public List<ProcessingRunEvent> EventsToReport { get; } = [];
 
-        public Task ExecuteAsync(
+        public Task<ProcessingRunOutcome> ExecuteAsync(
             ProcessingRunRequest request,
             IProgress<ProcessingRunEvent>? progress = null)
         {
@@ -1650,7 +1704,9 @@ public class UserWorkflowTests
                 progress?.Report(runEvent);
             }
 
-            return ExecuteFailure is { } failure ? Task.FromException(failure) : Task.CompletedTask;
+            return ExecuteFailure is { } failure
+                ? Task.FromException<ProcessingRunOutcome>(failure)
+                : Task.FromResult(Outcome);
         }
 
         public void Cancel()

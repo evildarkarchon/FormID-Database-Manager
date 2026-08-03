@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using Mutagen.Bethesda;
 
 namespace FormID_Database_Manager.Services;
@@ -218,6 +219,80 @@ public sealed record FormIdTextProcessingRunRequest : ProcessingRunRequest
 }
 
 /// <summary>
+///     How one Processing Run ended, as a value the caller can inspect instead of prose it has to reconstruct from
+///     status strings and exception types.
+/// </summary>
+/// <remarks>
+///     <para>
+///         The cases mirror the request union and carry the native reports the run already produced, so between them
+///         they cover every terminal state a run can reach: a <see cref="PluginRunOutcome" />'s report distinguishes a
+///         run that completed cleanly from one that completed with Processing Warnings and one that completed with
+///         Failed Plugins, and <see cref="CancelledRunOutcome" /> is the fourth state.
+///     </para>
+///     <para>
+///         Cancellation is an outcome rather than an exception because the token is executor-owned: the only
+///         <see cref="OperationCanceledException" /> that can surface from a run is the one that executor requested,
+///         so it can be matched precisely. Failure is deliberately not an outcome, because building one would need a
+///         broad <c>catch (Exception)</c>, which ADR-0006 and the Plugin overlay reader avoid so that unexpected
+///         internal failures abort loudly instead of being reported as a tidy result.
+///     </para>
+///     <para>
+///         The base is public because the executor that returns it is; every case is internal because the reports the
+///         cases carry are. Derivation is closed to this assembly, exactly as it is for the request union.
+///     </para>
+/// </remarks>
+public abstract record ProcessingRunOutcome
+{
+    private protected ProcessingRunOutcome()
+    {
+    }
+}
+
+/// <summary>
+///     A selected-Plugin Processing Run that reached its terminal state, carrying the authoritative ordered report.
+/// </summary>
+/// <param name="Report">The complete Plugin Ingestion report, in selected-Plugin order.</param>
+internal sealed record PluginRunOutcome(PluginIngestionReport Report) : ProcessingRunOutcome;
+
+/// <summary>
+///     A FormID text-file Processing Run that reached its terminal state, carrying the Store's import counts.
+/// </summary>
+/// <param name="ImportResult">The distinct Plugin and valid record counts the Store confirmed.</param>
+internal sealed record FormIdTextRunOutcome(FormIdTextFileImportResult ImportResult) : ProcessingRunOutcome;
+
+/// <summary>
+///     A dry run, which reports the work it would do without opening a FormID Record Store.
+/// </summary>
+/// <param name="Plan">The work the run would have performed.</param>
+internal sealed record PlannedRunOutcome(ProcessingRunPlan Plan) : ProcessingRunOutcome;
+
+/// <summary>
+///     A Processing Run that stopped because this executor's own cancellation was requested.
+/// </summary>
+internal sealed record CancelledRunOutcome : ProcessingRunOutcome;
+
+/// <summary>
+///     The work a dry run would perform, mirroring the request union.
+/// </summary>
+/// <remarks>
+///     The plan is currently shallow — it carries only what the request named. Resolving load order and reporting
+///     would-ingest and would-skip per Plugin is the substantive dry run, which is deliberately a later change.
+/// </remarks>
+internal abstract record ProcessingRunPlan;
+
+/// <summary>
+///     The planned work of a selected-Plugin dry run.
+/// </summary>
+/// <param name="PluginNames">The selected Plugin names, in selection order.</param>
+internal sealed record PluginRunPlan(ImmutableArray<string> PluginNames) : ProcessingRunPlan;
+
+/// <summary>
+///     The planned work of a FormID text-file dry run.
+/// </summary>
+/// <param name="FormIdListPath">The pipe-delimited FormID text file the run would import.</param>
+internal sealed record FormIdTextRunPlan(string FormIdListPath) : ProcessingRunPlan;
+
+/// <summary>
 ///     The kind of event emitted by a Processing Run.
 /// </summary>
 public enum ProcessingRunEventKind
@@ -284,9 +359,13 @@ internal interface IProcessingRunExecutor : IDisposable
     ///     Executes the supplied Processing Run request.
     /// </summary>
     /// <param name="request">The validated domain request describing the run.</param>
-    /// <param name="progress">Optional typed run event reporter.</param>
-    /// <returns>A task that completes when the run completes, fails, or observes cancellation.</returns>
-    Task ExecuteAsync(
+    /// <param name="progress">Optional typed run event reporter for transient status.</param>
+    /// <returns>How the run ended, including cancellation this executor was asked for.</returns>
+    /// <remarks>
+    ///     Validation failures, <see cref="UnresolvableMasterException" /> and unexpected internal failures propagate:
+    ///     only cancellation is a value, because only cancellation can be attributed to this executor precisely.
+    /// </remarks>
+    Task<ProcessingRunOutcome> ExecuteAsync(
         ProcessingRunRequest request,
         IProgress<ProcessingRunEvent>? progress = null);
 

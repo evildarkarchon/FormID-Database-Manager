@@ -659,16 +659,22 @@ public sealed class FormIdRecordStoreTests : IDisposable
     }
 
     /// <summary>
-    ///     Verifies start, interval, and completion progress across multiple progress-report intervals.
+    ///     Verifies the counters the Store reports across multiple progress-report intervals: the opening report, one
+    ///     report for each newly seen Plugin, and one every thousandth record, with byte counts that only advance.
     /// </summary>
+    /// <remarks>
+    ///     The Store reports facts, not sentences, so this pins the numbers rather than any wording. The final counts
+    ///     are no longer a progress report at all — they are the value the import returns.
+    /// </remarks>
     [Fact]
-    public async Task ImportFormIdTextFileAsync_CrossesProgressIntervals_ReportsMonotonicProgressAndFinalCounts()
+    public async Task ImportFormIdTextFileAsync_CrossesProgressIntervals_ReportsMonotonicCountersAndTheSeenPlugin()
     {
         const int totalRecords = 2500;
         var lines = Enumerable.Range(0, totalRecords).Select(i => $"Plugin.esp|{i:X6}|Entry{i}");
         var testFile = await WriteFormIdTextFileAsync("progress.txt", lines);
         var progressReports = new List<FormIdStoreProgress>();
         var progress = new SynchronousProgress<FormIdStoreProgress>(progressReports.Add);
+        var totalBytes = new FileInfo(testFile).Length;
         await using var store = await OpenStoreAsync();
 
         var result = await store.ImportFormIdTextFileAsync(
@@ -678,26 +684,102 @@ public sealed class FormIdRecordStoreTests : IDisposable
             TestContext.Current.CancellationToken);
 
         Assert.Equal(new FormIdTextFileImportResult(1, totalRecords), result);
-        Assert.Contains(
-            progressReports,
-            report => report is { Message: "Starting processing...", Value: 0 });
-        Assert.Contains(
-            progressReports,
-            report => report.Message.Contains("Processing:", StringComparison.Ordinal) && report.Value.HasValue);
 
-        var completionReport = progressReports.Last();
-        Assert.Contains($"{totalRecords:N0} total records", completionReport.Message, StringComparison.Ordinal);
-        Assert.Equal(100, completionReport.Value);
+        // The opening report counts nothing and names no Plugin; every report carries the file's total size.
+        Assert.Equal(new FormIdStoreProgress(0, 0, totalBytes, null), progressReports[0]);
+        Assert.All(progressReports, report => Assert.Equal(totalBytes, report.TotalBytes));
 
-        var progressValues = progressReports
-            .Where(report => report.Value.HasValue)
-            .Select(report => report.Value!.Value)
-            .ToArray();
-        Assert.All(progressValues, value => Assert.InRange(value, 0, 100));
-        for (var i = 1; i < progressValues.Length; i++)
+        // One report for the first record's newly seen Plugin, then one for every thousandth record.
+        Assert.Equal(
+            [0L, 1L, 1000L, 2000L],
+            progressReports.Select(report => report.RecordCount).ToArray());
+        List<string?> expectedPlugins = [null, "Plugin.esp", "Plugin.esp", "Plugin.esp"];
+        Assert.Equal(expectedPlugins, progressReports.Select(report => report.MostRecentPlugin).ToList());
+
+        var byteCounts = progressReports.Select(report => report.BytesRead).ToArray();
+        Assert.All(byteCounts, value => Assert.InRange(value, 0L, totalBytes));
+        for (var i = 1; i < byteCounts.Length; i++)
         {
-            Assert.True(progressValues[i] >= progressValues[i - 1]);
+            Assert.True(byteCounts[i] >= byteCounts[i - 1]);
         }
+    }
+
+    /// <summary>
+    ///     Verifies that an import reports each Plugin the first time the file mentions it, in file order, and reports
+    ///     it identically under both update modes.
+    /// </summary>
+    /// <param name="updateMode">The update mode the import applies to the Plugins in the file.</param>
+    /// <remarks>
+    ///     Running both modes is the point: whether a newly seen Plugin is worth naming to the user is the caller's
+    ///     decision, so the Store's reports must not vary with the update mode at all.
+    /// </remarks>
+    [Theory]
+    [InlineData(UpdateMode.Append)]
+    [InlineData(UpdateMode.ReplacePluginRecords)]
+    public async Task ImportFormIdTextFileAsync_MultiplePlugins_ReportsEachPluginTheFirstTimeItIsSeen(
+        UpdateMode updateMode)
+    {
+        var testFile = await WriteFormIdTextFileAsync(
+            "most_recent_plugin.txt",
+            [
+                "First.esp|000001|FirstEntry",
+                "First.esp|000002|SecondEntry",
+                "Second.esp|000003|ThirdEntry"
+            ]);
+        var progressReports = new List<FormIdStoreProgress>();
+        var progress = new SynchronousProgress<FormIdStoreProgress>(progressReports.Add);
+        await using var store = await OpenStoreAsync();
+
+        var result = await store.ImportFormIdTextFileAsync(
+            testFile,
+            updateMode,
+            progress,
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(new FormIdTextFileImportResult(2, 3), result);
+        List<string?> expectedPlugins = [null, "First.esp", "Second.esp"];
+        Assert.Equal(expectedPlugins, progressReports.Select(report => report.MostRecentPlugin).ToList());
+        Assert.Equal(
+            [0L, 1L, 3L],
+            progressReports.Select(report => report.RecordCount).ToArray());
+    }
+
+    /// <summary>
+    ///     Verifies that when a Plugin's first row lands exactly on a progress interval, the Store reports the interval
+    ///     under the Plugin it was still reading, and only then reports the newly seen one.
+    /// </summary>
+    /// <remarks>
+    ///     This pins an ordering contract a caller depends on to tell the two kinds of report apart: because the most
+    ///     recently seen Plugin advances only after the interval report is out, a changed name always means "newly
+    ///     seen" and never an interval report that happens to be the first row of the next Plugin. Swapping the two
+    ///     reports would reorder what the user sees on this one collision, which no other test exercises.
+    /// </remarks>
+    [Fact]
+    public async Task ImportFormIdTextFileAsync_NewPluginOnAProgressInterval_ReportsTheIntervalBeforeThePlugin()
+    {
+        const int intervalRecord = 1000;
+        var lines = Enumerable
+            .Range(0, intervalRecord)
+            .Select(index => index < intervalRecord - 1
+                ? $"First.esp|{index:X6}|Entry{index}"
+                : $"Second.esp|{index:X6}|Entry{index}");
+        var testFile = await WriteFormIdTextFileAsync("plugin_on_interval.txt", lines);
+        var progressReports = new List<FormIdStoreProgress>();
+        var progress = new SynchronousProgress<FormIdStoreProgress>(progressReports.Add);
+        await using var store = await OpenStoreAsync();
+
+        var result = await store.ImportFormIdTextFileAsync(
+            testFile,
+            UpdateMode.ReplacePluginRecords,
+            progress,
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(new FormIdTextFileImportResult(2, intervalRecord), result);
+        Assert.Equal(
+            [0L, 1L, intervalRecord, intervalRecord],
+            progressReports.Select(report => report.RecordCount).ToArray());
+        List<string?> expectedPlugins = [null, "First.esp", "First.esp", "Second.esp"];
+        Assert.Equal(expectedPlugins, progressReports.Select(report => report.MostRecentPlugin).ToList());
     }
 
     /// <summary>
@@ -764,11 +846,11 @@ public sealed class FormIdRecordStoreTests : IDisposable
             "after_cancelled.txt",
             ["Fresh.esp|FFFFFF|FreshEntry"]);
         using var cancellationSource = new CancellationTokenSource();
-        var processingReportCount = 0;
         var progress = new SynchronousProgress<FormIdStoreProgress>(report =>
         {
-            // The 11th report leaves one full batch in TEMP and 999 rows managed before cancellation is observed.
-            if (report.Message.Contains("Processing:", StringComparison.Ordinal) && ++processingReportCount == 11)
+            // Cancelling on the report for the 11,000th counted record leaves one full batch in TEMP and 999 rows
+            // managed before cancellation is observed: that report fires before the record it counts is staged.
+            if (report.RecordCount == cancelledRecordCount)
             {
                 cancellationSource.Cancel();
             }
