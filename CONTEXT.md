@@ -102,3 +102,7 @@ _Avoid_: Non-fatal error, ignored error.
 **User Workflow**:
 The end-to-end user interaction that turns a selected GameRelease, a game directory or FormID text file, Plugin selections, database path, and Update Mode into one FormID processing run.
 _Avoid_: UI event flow, MainWindow logic.
+
+**Workflow Activity**:
+One reportable activity that owns the User Workflow's progress channel: either a Processing Run or a Plugin List refresh. Exactly one module reports each — the User Workflow reports run activity, the Plugin List Presentation Adapter reports scan activity — so neither can overwrite the other's report. Run activity takes precedence over scan activity while it is active; scan activity shows otherwise. The progress channel is transient: it shows what an activity is doing now, and is overwritten or cleared as activity changes. Terminal facts about a Processing Run that must outlive it — its errors, its Processing Warnings, and its cancellation acknowledgement — go to the message lists instead, which is where the user looks for what a run did rather than what it is doing.
+_Avoid_: Progress state, busy state, status update, processing status.

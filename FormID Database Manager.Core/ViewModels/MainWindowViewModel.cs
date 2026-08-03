@@ -7,12 +7,10 @@ using Mutagen.Bethesda;
 
 namespace FormID_Database_Manager.ViewModels;
 
-public partial class MainWindowViewModel : ObservableObject, IDisposable
+public partial class MainWindowViewModel : ObservableObject
 {
-    private readonly int _debounceMs;
     private readonly IThreadDispatcher _dispatcher;
     private readonly Lock _messagesLock = new();
-    private CancellationTokenSource? _debounceCts;
     private bool _isApplyingGameContextProjection;
 
     private bool _advancedMode;
@@ -39,34 +37,32 @@ public partial class MainWindowViewModel : ObservableObject, IDisposable
     private bool _filterSuspended;
     private int _isApplyingFilter;
 
-    [ObservableProperty] [NotifyPropertyChangedFor(nameof(IsProgressVisible))]
-    private bool _isProcessing;
-
-    [ObservableProperty] [NotifyPropertyChangedFor(nameof(IsProgressVisible))]
-    private bool _isScanning;
-
     [ObservableProperty] private string _pluginFilter = string.Empty;
 
     private readonly ObservableCollection<PluginListItem> _plugins = [];
 
-    [ObservableProperty] private string _processButtonText = "Process FormIDs";
+    /// <summary>The Processing Run's Workflow Activity, written only by the User Workflow.</summary>
+    private ActivityProjection _runActivity = ActivityProjection.None;
 
-    [ObservableProperty] private string _progressStatus = string.Empty;
+    /// <summary>The Plugin List refresh's Workflow Activity, written only by the Plugin List Presentation Adapter.</summary>
+    private ActivityProjection _scanActivity = ActivityProjection.None;
 
     private GameRelease? _selectedGame;
 
-    [ObservableProperty] private double _progressValue;
-
     [ObservableProperty] private bool _updateMode;
 
-    public MainWindowViewModel(IThreadDispatcher? dispatcher = null) : this(dispatcher, 0)
+    /// <summary>
+    /// Initializes the ViewModel around the dispatcher that owns every projection it publishes.
+    /// </summary>
+    /// <param name="dispatcher">
+    /// The dispatcher every projection marshals through. Required: a caller that could omit it would silently opt out
+    /// of the UI-thread marshalling invariant the projections depend on.
+    /// </param>
+    /// <exception cref="ArgumentNullException"><paramref name="dispatcher" /> is null.</exception>
+    public MainWindowViewModel(IThreadDispatcher dispatcher)
     {
-    }
-
-    public MainWindowViewModel(IThreadDispatcher? dispatcher, int debounceMs)
-    {
-        _dispatcher = dispatcher ?? new ImmediateThreadDispatcher();
-        _debounceMs = debounceMs;
+        ArgumentNullException.ThrowIfNull(dispatcher);
+        _dispatcher = dispatcher;
         DetectedDirectories = new ReadOnlyObservableCollection<string>(_detectedDirectories);
         Plugins = new ReadOnlyObservableCollection<PluginListItem>(_plugins);
         FilteredPlugins = new ReadOnlyObservableCollection<PluginListItem>(_filteredPlugins);
@@ -129,7 +125,141 @@ public partial class MainWindowViewModel : ObservableObject, IDisposable
 
     public bool HasWarningMessages => WarningMessages.Count > 0;
 
-    public bool IsProgressVisible => IsProcessing || IsScanning;
+    /// <summary>
+    /// Gets the Workflow Activity that currently owns the progress channel.
+    /// </summary>
+    /// <remarks>
+    /// This is the precedence rule, and the only place it is stated: run activity owns the channel while it is active,
+    /// scan activity shows otherwise, and neither active shows nothing. Everything the channel presents is derived
+    /// from here, so changing which activity wins is one edit. The end-of-run fallback needs no special case — a run
+    /// clearing its activity simply stops winning, and a still-scanning refresh takes the channel back.
+    /// </remarks>
+    private ActivityProjection CurrentActivity => _runActivity.IsActive
+        ? _runActivity
+        : _scanActivity.IsActive
+            ? _scanActivity
+            : ActivityProjection.None;
+
+    /// <summary>
+    /// Gets the status text of the Workflow Activity that owns the progress channel.
+    /// </summary>
+    public string ProgressStatus => CurrentActivity.Status;
+
+    /// <summary>
+    /// Gets the progress percentage of the Workflow Activity that owns the progress channel.
+    /// </summary>
+    public double ProgressValue => CurrentActivity.Value;
+
+    /// <summary>
+    /// Gets whether any Workflow Activity is currently reporting, so the progress row has something to show.
+    /// </summary>
+    public bool IsProgressVisible => CurrentActivity.IsActive;
+
+    /// <summary>
+    /// Gets the process button caption for what pressing it will do.
+    /// </summary>
+    /// <remarks>
+    /// Derived here rather than rendered by the reporting module because it comes from a single boolean. Status text
+    /// encodes domain detail such as phase and Plugin counts, which is why that stays with the module reporting it.
+    /// </remarks>
+    public string ProcessButtonText => _runActivity.IsActive ? "Cancel Processing" : "Process FormIDs";
+
+    /// <summary>
+    /// Projects the Processing Run's Workflow Activity through the dispatcher that owns this ViewModel.
+    /// </summary>
+    /// <param name="runActivity">The User Workflow's complete already-rendered run report.</param>
+    /// <remarks>The User Workflow is the only writer of this fact; nothing else may call this.</remarks>
+    internal void ApplyRunActivityProjection(ActivityProjection runActivity)
+    {
+        if (!_dispatcher.CheckAccess())
+        {
+            // One posted action, as with Game Context: an observer must never pair one activity's status with
+            // another's progress value.
+            _dispatcher.Post(() => ApplyRunActivityProjectionCore(runActivity));
+            return;
+        }
+
+        ApplyRunActivityProjectionCore(runActivity);
+    }
+
+    /// <summary>
+    /// Projects the Plugin List refresh's Workflow Activity through the dispatcher that owns this ViewModel.
+    /// </summary>
+    /// <param name="scanActivity">The Plugin List Presentation Adapter's complete already-rendered scan report.</param>
+    /// <remarks>The Plugin List Presentation Adapter is the only writer of this fact; nothing else may call this.</remarks>
+    internal void ApplyScanActivityProjection(ActivityProjection scanActivity)
+    {
+        if (!_dispatcher.CheckAccess())
+        {
+            _dispatcher.Post(() => ApplyScanActivityProjectionCore(scanActivity));
+            return;
+        }
+
+        ApplyScanActivityProjectionCore(scanActivity);
+    }
+
+    /// <summary>
+    /// Applies one run report and raises notifications only after the backing fact is current.
+    /// </summary>
+    /// <param name="runActivity">The complete run report to make authoritative.</param>
+    private void ApplyRunActivityProjectionCore(ActivityProjection runActivity)
+    {
+        var previousChannel = CurrentActivity;
+        var previousRunActive = _runActivity.IsActive;
+
+        // The backing field is written before any notification so observers always read one complete snapshot.
+        _runActivity = runActivity;
+
+        RaiseChannelNotifications(previousChannel);
+        if (previousRunActive != runActivity.IsActive)
+        {
+            OnPropertyChanged(nameof(ProcessButtonText));
+        }
+    }
+
+    /// <summary>
+    /// Applies one scan report and raises notifications only after the backing fact is current.
+    /// </summary>
+    /// <param name="scanActivity">The complete scan report to make authoritative.</param>
+    private void ApplyScanActivityProjectionCore(ActivityProjection scanActivity)
+    {
+        var previousChannel = CurrentActivity;
+
+        // The backing field is written before any notification so observers always read one complete snapshot.
+        _scanActivity = scanActivity;
+
+        RaiseChannelNotifications(previousChannel);
+    }
+
+    /// <summary>
+    /// Raises a notification for each channel value the precedence rule now resolves differently.
+    /// </summary>
+    /// <param name="previousChannel">The activity that owned the channel before the applied projection.</param>
+    /// <remarks>
+    /// Comparing resolved channel values rather than the projected fact is what makes the losing activity silent:
+    /// a refresh reporting underneath an active run changes no bound value, so no notification is raised at all.
+    /// </remarks>
+    private void RaiseChannelNotifications(ActivityProjection previousChannel)
+    {
+        var currentChannel = CurrentActivity;
+
+        if (!string.Equals(previousChannel.Status, currentChannel.Status, StringComparison.Ordinal))
+        {
+            OnPropertyChanged(nameof(ProgressStatus));
+        }
+
+        // Exact comparison is right here: these values are carried through unchanged rather than computed, so an
+        // equal projection is the same double, and a tolerance would only suppress a genuinely tiny change.
+        if (previousChannel.Value != currentChannel.Value)
+        {
+            OnPropertyChanged(nameof(ProgressValue));
+        }
+
+        if (previousChannel.IsActive != currentChannel.IsActive)
+        {
+            OnPropertyChanged(nameof(IsProgressVisible));
+        }
+    }
 
     /// <summary>
     /// Projects one complete Game Context through the dispatcher that owns this ViewModel.
@@ -325,30 +455,10 @@ public partial class MainWindowViewModel : ObservableObject, IDisposable
 
     partial void OnPluginFilterChanged(string value)
     {
-        if (_debounceMs <= 0)
-        {
-            ApplyFilter(value);
-        }
-        else
-        {
-            DebounceApplyFilter();
-        }
-    }
-
-    private void DebounceApplyFilter()
-    {
-        _debounceCts?.Cancel();
-        _debounceCts?.Dispose();
-        _debounceCts = new CancellationTokenSource();
-        var token = _debounceCts.Token;
-
-        Task.Delay(_debounceMs, token).ContinueWith(_ =>
-        {
-            if (!token.IsCancellationRequested)
-            {
-                _dispatcher.Post(ApplyFilter);
-            }
-        }, token, TaskContinuationOptions.OnlyOnRanToCompletion, TaskScheduler.Default);
+        // Applied on every keystroke with no delay path behind it: ApplyFilter reconciles the existing collection in
+        // place rather than rebuilding it, so the per-change cost does not justify a timer and the cancellation source
+        // one would own.
+        ApplyFilter(value);
     }
 
     private void ApplyFilter()
@@ -479,49 +589,6 @@ public partial class MainWindowViewModel : ObservableObject, IDisposable
                 WarningMessages.RemoveAt(0);
             }
         }
-    }
-
-    public void ResetProgress()
-    {
-        // Ensure collection operations happen on UI thread
-        if (!_dispatcher.CheckAccess())
-        {
-            _dispatcher.Post(ResetProgress);
-            return;
-        }
-
-        ProgressValue = 0;
-        ProgressStatus = string.Empty;
-        IsProcessing = false;
-        lock (_messagesLock)
-        {
-            ErrorMessages.Clear();
-            InformationMessages.Clear();
-            WarningMessages.Clear();
-        }
-    }
-
-    public void UpdateProgress(string status, double? value = null)
-    {
-        // Ensure UI updates happen on UI thread
-        if (!_dispatcher.CheckAccess())
-        {
-            _dispatcher.Post(() => UpdateProgress(status, value));
-            return;
-        }
-
-        ProgressStatus = status;
-        if (value.HasValue)
-        {
-            ProgressValue = value.Value;
-        }
-    }
-
-    public void Dispose()
-    {
-        _debounceCts?.Cancel();
-        _debounceCts?.Dispose();
-        _debounceCts = null;
     }
 
 }

@@ -171,6 +171,11 @@ internal sealed class PluginListPresentationAdapter : IDisposable
     ///     Maps one new UI-neutral activity instance to existing Main Window progress and terminal presentation.
     /// </summary>
     /// <param name="state">The current Plugin List state containing the activity and optional confirmation.</param>
+    /// <remarks>
+    ///     Scan activity is the one Workflow Activity fact this module writes, and it is the only module that writes it.
+    ///     A Processing Run's activity is projected separately by the User Workflow, so a scan report can no longer
+    ///     overwrite a run's progress; the ViewModel's precedence rule decides which of the two the user sees.
+    /// </remarks>
     private void ProjectActivity(PluginListState state)
     {
         switch (state.Activity)
@@ -183,16 +188,18 @@ internal sealed class PluginListPresentationAdapter : IDisposable
                 return;
 
             case PluginListRefreshingActivity refreshing:
-                _viewModel.IsScanning = true;
+                // This module renders its own scanning wording: the counts and their phrasing are Plugin List
+                // detail that nothing outside here knows how to say.
                 if (refreshing.ScannedCount == 0 || refreshing.TotalCount == 0)
                 {
-                    _viewModel.UpdateProgress("Scanning plugins...", 0);
+                    _viewModel.ApplyScanActivityProjection(new ActivityProjection(true, "Scanning plugins...", 0));
                     return;
                 }
 
-                _viewModel.UpdateProgress(
+                _viewModel.ApplyScanActivityProjection(new ActivityProjection(
+                    true,
                     $"Scanning plugins... ({refreshing.ScannedCount}/{refreshing.TotalCount})",
-                    (double)refreshing.ScannedCount / refreshing.TotalCount * 100);
+                    (double)refreshing.ScannedCount / refreshing.TotalCount * 100));
                 return;
 
             case PluginListReadyActivity:
@@ -224,8 +231,6 @@ internal sealed class PluginListPresentationAdapter : IDisposable
 
     private void ClearScanningState()
     {
-        _viewModel.IsScanning = false;
-        _viewModel.ProgressValue = 0;
-        _viewModel.ProgressStatus = string.Empty;
+        _viewModel.ApplyScanActivityProjection(ActivityProjection.None);
     }
 }

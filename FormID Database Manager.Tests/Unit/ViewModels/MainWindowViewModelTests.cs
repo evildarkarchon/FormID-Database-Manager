@@ -291,57 +291,6 @@ public class MainWindowViewModelTests
         Assert.Contains(nameof(MainWindowViewModel.HasMultipleDirectories), notifiedProperties);
     }
 
-    [Fact]
-    public void IsProcessing_RaisesPropertyChanged_WhenSet()
-    {
-        // Arrange
-        var notifiedProperties = new System.Collections.Generic.List<string>();
-        _viewModel.PropertyChanged += (_, args) =>
-        {
-            if (args.PropertyName != null)
-            {
-                notifiedProperties.Add(args.PropertyName);
-            }
-        };
-
-        // Act
-        _viewModel.IsProcessing = true;
-
-        // Assert
-        Assert.Contains(nameof(MainWindowViewModel.IsProcessing), notifiedProperties);
-        Assert.True(_viewModel.IsProcessing);
-    }
-
-    [Fact]
-    public void ProgressValue_RaisesPropertyChanged_WhenSet()
-    {
-        // Arrange
-        var propertyName = string.Empty;
-        _viewModel.PropertyChanged += (_, args) => propertyName = args.PropertyName;
-
-        // Act
-        _viewModel.ProgressValue = 75.5;
-
-        // Assert
-        Assert.Equal(nameof(MainWindowViewModel.ProgressValue), propertyName);
-        Assert.Equal(75.5, _viewModel.ProgressValue);
-    }
-
-    [Fact]
-    public void ProgressStatus_RaisesPropertyChanged_WhenSet()
-    {
-        // Arrange
-        var propertyName = string.Empty;
-        _viewModel.PropertyChanged += (_, args) => propertyName = args.PropertyName;
-
-        // Act
-        _viewModel.ProgressStatus = "Processing plugins...";
-
-        // Assert
-        Assert.Equal(nameof(MainWindowViewModel.ProgressStatus), propertyName);
-        Assert.Equal("Processing plugins...", _viewModel.ProgressStatus);
-    }
-
     /// <summary>
     /// Verifies that a changed projected Advanced Mode raises its public presentation notification.
     /// </summary>
@@ -377,21 +326,6 @@ public class MainWindowViewModelTests
         // Assert
         Assert.Equal(nameof(MainWindowViewModel.UpdateMode), propertyName);
         Assert.True(_viewModel.UpdateMode);
-    }
-
-    [Fact]
-    public void ProcessButtonText_RaisesPropertyChanged_WhenSet()
-    {
-        // Arrange
-        var propertyName = string.Empty;
-        _viewModel.PropertyChanged += (_, args) => propertyName = args.PropertyName;
-
-        // Act
-        _viewModel.ProcessButtonText = "Cancel Processing";
-
-        // Assert
-        Assert.Equal(nameof(MainWindowViewModel.ProcessButtonText), propertyName);
-        Assert.Equal("Cancel Processing", _viewModel.ProcessButtonText);
     }
 
     [Fact]
@@ -680,109 +614,170 @@ public class MainWindowViewModelTests
 
     #endregion
 
-    #region Progress Management Tests
+    #region Workflow Activity Precedence Tests
 
-    [Fact]
-    public void ResetProgress_ClearsAllProgressState()
+    /// <summary>
+    /// Verifies the Workflow Activity precedence rule as a truth table over both projected facts: run activity owns
+    /// the progress channel while it is active, scan activity shows otherwise, and neither active shows nothing.
+    /// </summary>
+    /// <param name="runActive">Whether run activity is projected as active.</param>
+    /// <param name="scanActive">Whether scan activity is projected as active.</param>
+    /// <param name="expectedStatus">The status the channel is expected to show.</param>
+    /// <param name="expectedValue">The progress value the channel is expected to show.</param>
+    /// <param name="expectedVisible">Whether the channel is expected to be visible at all.</param>
+    [Theory]
+    [InlineData(false, false, "", 0d, false)]
+    [InlineData(true, false, "Processing User.esp", 40d, true)]
+    [InlineData(false, true, "Scanning plugins... (3/12)", 25d, true)]
+    [InlineData(true, true, "Processing User.esp", 40d, true)]
+    public void ActivityProjections_Precedence_ShowsTheWinningActivityOnTheChannel(
+        bool runActive,
+        bool scanActive,
+        string expectedStatus,
+        double expectedValue,
+        bool expectedVisible)
     {
-        // Arrange
-        _viewModel.ProgressValue = 50;
-        _viewModel.ProgressStatus = "Processing...";
-        _viewModel.IsProcessing = true;
-        _viewModel.ErrorMessages.Add("Error");
-        _viewModel.InformationMessages.Add("Info");
-        _viewModel.WarningMessages.Add("Warning");
+        _viewModel.ApplyRunActivityProjection(
+            runActive ? new ActivityProjection(true, "Processing User.esp", 40) : ActivityProjection.None);
+        _viewModel.ApplyScanActivityProjection(
+            scanActive ? new ActivityProjection(true, "Scanning plugins... (3/12)", 25) : ActivityProjection.None);
 
-        // Act
-        _viewModel.ResetProgress();
-
-        // Assert
-        Assert.Equal(0, _viewModel.ProgressValue);
-        Assert.Equal(string.Empty, _viewModel.ProgressStatus);
-        Assert.False(_viewModel.IsProcessing);
-        Assert.Empty(_viewModel.ErrorMessages);
-        Assert.Empty(_viewModel.InformationMessages);
-        Assert.Empty(_viewModel.WarningMessages);
+        Assert.Equal(expectedStatus, _viewModel.ProgressStatus);
+        Assert.Equal(expectedValue, _viewModel.ProgressValue);
+        Assert.Equal(expectedVisible, _viewModel.IsProgressVisible);
     }
 
+    /// <summary>
+    /// Verifies the end-of-run case the precedence rule exists to make correct: a run clearing its activity while a
+    /// Plugin List refresh is still scanning falls back to the refresh rather than blanking the channel.
+    /// </summary>
     [Fact]
-    public void UpdateProgress_UpdatesStatusAndValue()
+    public void ApplyRunActivityProjection_ClearedWhileScanActive_FallsBackToScanActivity()
     {
-        // Act
-        _viewModel.UpdateProgress("Processing item 5/10", 50);
+        _viewModel.ApplyScanActivityProjection(new ActivityProjection(true, "Scanning plugins... (3/12)", 25));
+        _viewModel.ApplyRunActivityProjection(new ActivityProjection(true, "Processing User.esp", 40));
 
-        // Assert
-        Assert.Equal("Processing item 5/10", _viewModel.ProgressStatus);
-        Assert.Equal(50, _viewModel.ProgressValue);
+        _viewModel.ApplyRunActivityProjection(ActivityProjection.None);
+
+        Assert.Equal("Scanning plugins... (3/12)", _viewModel.ProgressStatus);
+        Assert.Equal(25, _viewModel.ProgressValue);
+        Assert.True(_viewModel.IsProgressVisible);
     }
 
+    /// <summary>
+    /// Verifies that scan activity arriving mid-run cannot displace the run's report, which is the collision this
+    /// projection exists to arbitrate.
+    /// </summary>
     [Fact]
-    public void UpdateProgress_UpdatesOnlyStatus_WhenValueIsNull()
+    public void ApplyScanActivityProjection_WhileRunActive_RaisesNoChannelNotification()
     {
-        // Arrange
-        _viewModel.ProgressValue = 75;
-
-        // Act
-        _viewModel.UpdateProgress("Still processing...");
-
-        // Assert
-        Assert.Equal("Still processing...", _viewModel.ProgressStatus);
-        Assert.Equal(75, _viewModel.ProgressValue); // Unchanged
-    }
-
-    [Fact]
-    public async Task UpdateProgress_WorksFromBackgroundThread()
-    {
-        // Arrange
-        var tcs = new TaskCompletionSource<bool>();
-
-        _viewModel.PropertyChanged += (_, e) =>
+        _viewModel.ApplyRunActivityProjection(new ActivityProjection(true, "Processing User.esp", 40));
+        var notifiedProperties = new List<string>();
+        _viewModel.PropertyChanged += (_, args) =>
         {
-            if (e.PropertyName is nameof(MainWindowViewModel.ProgressStatus) or
-                nameof(MainWindowViewModel.ProgressValue))
+            if (args.PropertyName is not null)
             {
-                if (_viewModel.ProgressStatus == "Background update" &&
-                    Math.Abs(_viewModel.ProgressValue - 25) < 0.0001)
-                {
-                    tcs.TrySetResult(true);
-                }
+                notifiedProperties.Add(args.PropertyName);
             }
         };
 
-        // Act
-        await Task.Run(() =>
-        {
-            _viewModel.UpdateProgress("Background update", 25);
-        }, TestContext.Current.CancellationToken);
+        _viewModel.ApplyScanActivityProjection(new ActivityProjection(true, "Scanning plugins...", 0));
 
-        // Wait for property changed event with timeout
-        var completedTask = await Task.WhenAny(tcs.Task, Task.Delay(5000, TestContext.Current.CancellationToken));
-
-        // Assert
-        Assert.Same(tcs.Task, completedTask); // Ensure we didn't timeout
-        Assert.Equal("Background update", _viewModel.ProgressStatus);
-        Assert.Equal(25, _viewModel.ProgressValue);
+        Assert.Empty(notifiedProperties);
+        Assert.Equal("Processing User.esp", _viewModel.ProgressStatus);
+        Assert.Equal(40, _viewModel.ProgressValue);
     }
 
+    /// <summary>
+    /// Verifies that a changed channel raises every derived notification the Main Window binds to.
+    /// </summary>
     [Fact]
-    public async Task ResetProgress_WorksFromBackgroundThread()
+    public void ApplyScanActivityProjection_ChangedChannel_RaisesDerivedNotifications()
     {
-        // Arrange
-        _viewModel.ProgressValue = 100;
-        _viewModel.IsProcessing = true;
-        var reset = false;
-
-        // Act
-        await Task.Run(() =>
+        var notifiedProperties = new List<string>();
+        _viewModel.PropertyChanged += (_, args) =>
         {
-            _viewModel.ResetProgress();
-            reset = true;
-        }, TestContext.Current.CancellationToken);
+            if (args.PropertyName is not null)
+            {
+                notifiedProperties.Add(args.PropertyName);
+            }
+        };
 
-        // Assert
-        Assert.True(reset);
-        Assert.Equal(0, _viewModel.ProgressValue);
-        Assert.False(_viewModel.IsProcessing);
+        _viewModel.ApplyScanActivityProjection(new ActivityProjection(true, "Scanning plugins...", 10));
+
+        Assert.Contains(nameof(MainWindowViewModel.ProgressStatus), notifiedProperties);
+        Assert.Contains(nameof(MainWindowViewModel.ProgressValue), notifiedProperties);
+        Assert.Contains(nameof(MainWindowViewModel.IsProgressVisible), notifiedProperties);
+    }
+
+    /// <summary>
+    /// Verifies that the process button caption is derived from run activity alone, so presentation owns the wording
+    /// of a control whose meaning comes from a single boolean.
+    /// </summary>
+    [Fact]
+    public void ProcessButtonText_DerivedFromRunActivity_TracksWhetherARunIsActive()
+    {
+        Assert.Equal("Process FormIDs", _viewModel.ProcessButtonText);
+        var notifiedProperties = new List<string>();
+        _viewModel.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName is not null)
+            {
+                notifiedProperties.Add(args.PropertyName);
+            }
+        };
+
+        _viewModel.ApplyRunActivityProjection(new ActivityProjection(true, "Initializing...", 0));
+
+        Assert.Equal("Cancel Processing", _viewModel.ProcessButtonText);
+        Assert.Contains(nameof(MainWindowViewModel.ProcessButtonText), notifiedProperties);
+
+        _viewModel.ApplyRunActivityProjection(ActivityProjection.None);
+
+        Assert.Equal("Process FormIDs", _viewModel.ProcessButtonText);
+    }
+
+    /// <summary>
+    /// Verifies that scan activity leaves the process button alone: only run activity decides what pressing it means.
+    /// </summary>
+    [Fact]
+    public void ProcessButtonText_ScanActivityProjected_StaysAtItsIdleCaption()
+    {
+        _viewModel.ApplyScanActivityProjection(new ActivityProjection(true, "Scanning plugins...", 0));
+
+        Assert.Equal("Process FormIDs", _viewModel.ProcessButtonText);
+    }
+
+    /// <summary>
+    /// Verifies that an off-thread projection is marshalled as one posted action, so no observer can read a status
+    /// from one snapshot paired with a value from another.
+    /// </summary>
+    /// <param name="projectRunActivity">Whether the run activity seam is exercised rather than the scan seam.</param>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void ActivityProjection_WithoutDispatcherAccess_AppliesAsOnePostedAction(bool projectRunActivity)
+    {
+        var dispatcher = new RecordingThreadDispatcher(false);
+        var viewModel = new MainWindowViewModel(dispatcher);
+        var activity = new ActivityProjection(true, "Working...", 60);
+
+        if (projectRunActivity)
+        {
+            viewModel.ApplyRunActivityProjection(activity);
+        }
+        else
+        {
+            viewModel.ApplyScanActivityProjection(activity);
+        }
+
+        Assert.Equal(1, dispatcher.PostCount);
+        Assert.Equal(string.Empty, viewModel.ProgressStatus);
+
+        dispatcher.DrainPostedActions(true);
+
+        Assert.Equal("Working...", viewModel.ProgressStatus);
+        Assert.Equal(60, viewModel.ProgressValue);
     }
 
     #endregion
@@ -1100,99 +1095,105 @@ public class MainWindowViewModelTests
 
     #endregion
 
-    #region Debounce Tests
+    #region Construction Contract Tests
 
+    /// <summary>
+    ///     Verifies the ViewModel cannot be constructed without the dispatcher its marshalling invariant depends on.
+    /// </summary>
     [Fact]
-    public async Task PluginFilter_WithDebounce_DelaysFilterApplication()
+    public void Constructor_NullDispatcher_ThrowsArgumentNullException()
     {
-        // Arrange - Use SynchronousThreadDispatcher for deterministic debounce behavior
-        var dispatcher = new SynchronousThreadDispatcher();
-        var debouncedVm = new MainWindowViewModel(dispatcher, 200);
+        Assert.Throws<ArgumentNullException>(() => new MainWindowViewModel(null!));
+    }
+
+    /// <summary>
+    ///     Verifies the ViewModel carries no disposal obligation now that no delay path owns a cancellation source.
+    /// </summary>
+    [Fact]
+    public void TypeShape_ViewModelWithoutDelayPath_CarriesNoDisposalObligation()
+    {
+        Assert.DoesNotContain(typeof(IDisposable), typeof(MainWindowViewModel).GetInterfaces());
+    }
+
+    #endregion
+
+    #region Filter Application Tests
+
+    /// <summary>
+    ///     Verifies a filter change reaches the filtered projection immediately, with no delay path in between.
+    /// </summary>
+    [Fact]
+    public void PluginFilter_Changed_AppliesFilterImmediately()
+    {
+        // Arrange
+        var viewModel = new MainWindowViewModel(new SynchronousThreadDispatcher());
         ProjectPlugins(
-            debouncedVm,
+            viewModel,
             new PluginListItem { Name = "Plugin1.esp" },
             new PluginListItem { Name = "TestMod.esp" });
 
-        // Act - Set filter (should not apply immediately due to debounce)
-        debouncedVm.PluginFilter = "Plugin";
+        // Act
+        viewModel.PluginFilter = "Plugin";
 
-        // Assert - Immediately after setting, all plugins still visible (debounce not yet fired)
-        Assert.Equal(2, debouncedVm.FilteredPlugins.Count);
-
-        // After debounce period, filter should be applied
-        await Task.Delay(350, TestContext.Current.CancellationToken);
-        Assert.Single(debouncedVm.FilteredPlugins);
+        // Assert
+        Assert.Single(viewModel.FilteredPlugins);
+        Assert.Equal("Plugin1.esp", viewModel.FilteredPlugins[0].Name);
     }
 
+    /// <summary>
+    ///     Verifies a filter change made off the owning dispatcher is posted rather than applied in place.
+    /// </summary>
     [Fact]
-    public async Task PluginFilter_WithDebounceAndUnavailableDispatcher_PostsBeforeUpdatingFilteredPlugins()
+    public void PluginFilter_UnavailableDispatcher_PostsBeforeUpdatingFilteredPlugins()
     {
         // Arrange
         var dispatcher = new RecordingThreadDispatcher(hasAccess: true);
-        using var debouncedVm = new MainWindowViewModel(dispatcher, 50);
+        var viewModel = new MainWindowViewModel(dispatcher);
         ProjectPlugins(
-            debouncedVm,
+            viewModel,
             new PluginListItem { Name = "Plugin1.esp" },
             new PluginListItem { Name = "TestMod.esp" });
         dispatcher.HasAccess = false;
 
         // Act
-        debouncedVm.PluginFilter = "Plugin";
-        await Task.Delay(150, TestContext.Current.CancellationToken);
+        viewModel.PluginFilter = "Plugin";
 
         // Assert
         Assert.True(dispatcher.PostCount > 0);
-        Assert.Equal(2, debouncedVm.FilteredPlugins.Count);
+        Assert.Equal(2, viewModel.FilteredPlugins.Count);
 
         dispatcher.DrainPostedActions(hasAccessDuringDrain: true);
 
-        Assert.Single(debouncedVm.FilteredPlugins);
-        Assert.Equal("Plugin1.esp", debouncedVm.FilteredPlugins[0].Name);
+        Assert.Single(viewModel.FilteredPlugins);
+        Assert.Equal("Plugin1.esp", viewModel.FilteredPlugins[0].Name);
     }
 
+    /// <summary>
+    ///     Verifies filtering reconciles in place, so a hidden item keeps its instance identity and selection.
+    /// </summary>
     [Fact]
-    public async Task PluginFilter_WithDebounce_PreservesPluginInstancesAndSelectionAcrossHideShow()
+    public void PluginFilter_Changed_PreservesPluginInstancesAndSelectionAcrossHideShow()
     {
         // Arrange
-        var dispatcher = new SynchronousThreadDispatcher();
-        using var debouncedVm = new MainWindowViewModel(dispatcher, 25);
+        var viewModel = new MainWindowViewModel(new SynchronousThreadDispatcher());
         var selectedPlugin = new PluginListItem { Name = "SelectedPlugin.esp", IsSelected = true };
         var otherPlugin = new PluginListItem { Name = "OtherPlugin.esp" };
-        ProjectPlugins(debouncedVm, selectedPlugin, otherPlugin);
+        ProjectPlugins(viewModel, selectedPlugin, otherPlugin);
 
         // Act
-        debouncedVm.PluginFilter = "Other";
-        await Task.Delay(100, TestContext.Current.CancellationToken);
+        viewModel.PluginFilter = "Other";
 
         // Assert
-        Assert.DoesNotContain(selectedPlugin, debouncedVm.FilteredPlugins);
-        Assert.Contains(otherPlugin, debouncedVm.FilteredPlugins);
+        Assert.DoesNotContain(selectedPlugin, viewModel.FilteredPlugins);
+        Assert.Contains(otherPlugin, viewModel.FilteredPlugins);
 
         // Act
-        debouncedVm.PluginFilter = "Selected";
-        await Task.Delay(100, TestContext.Current.CancellationToken);
+        viewModel.PluginFilter = "Selected";
 
         // Assert
-        var visiblePlugin = Assert.Single(debouncedVm.FilteredPlugins);
+        var visiblePlugin = Assert.Single(viewModel.FilteredPlugins);
         Assert.Same(selectedPlugin, visiblePlugin);
         Assert.True(visiblePlugin.IsSelected);
-    }
-
-    [Fact]
-    public void PluginFilter_WithZeroDebounce_AppliesImmediately()
-    {
-        // Arrange - Zero debounce (default for existing tests)
-        var vm = new MainWindowViewModel(null, 0);
-        ProjectPlugins(
-            vm,
-            new PluginListItem { Name = "Plugin1.esp" },
-            new PluginListItem { Name = "TestMod.esp" });
-
-        // Act
-        vm.PluginFilter = "Plugin";
-
-        // Assert - Filter should apply immediately with zero debounce
-        Assert.Single(vm.FilteredPlugins);
     }
 
     #endregion
@@ -1350,81 +1351,6 @@ public class MainWindowViewModelTests
         // Assert
         Assert.False(eventRaised);
         Assert.Equal("TestPath", _viewModel.DatabasePath);
-    }
-
-    #endregion
-
-    #region IsProgressVisible and IsScanning Tests
-
-    [Fact]
-    public void IsProgressVisible_True_WhenIsProcessingTrue()
-    {
-        // Arrange & Act
-        _viewModel.IsProcessing = true;
-
-        // Assert
-        Assert.True(_viewModel.IsProgressVisible);
-    }
-
-    [Fact]
-    public void IsProgressVisible_True_WhenIsScanningTrue()
-    {
-        // Arrange & Act
-        _viewModel.IsScanning = true;
-
-        // Assert
-        Assert.True(_viewModel.IsProgressVisible);
-    }
-
-    [Fact]
-    public void IsProgressVisible_False_WhenBothFalse()
-    {
-        // Arrange - defaults are false, but be explicit
-        _viewModel.IsProcessing = false;
-        _viewModel.IsScanning = false;
-
-        // Assert
-        Assert.False(_viewModel.IsProgressVisible);
-    }
-
-    [Fact]
-    public void IsScanning_PropertyChanged_NotifiesIsProgressVisible()
-    {
-        // Arrange
-        var notifiedProperties = new System.Collections.Generic.List<string>();
-        _viewModel.PropertyChanged += (_, args) =>
-        {
-            if (args.PropertyName != null)
-            {
-                notifiedProperties.Add(args.PropertyName);
-            }
-        };
-
-        // Act
-        _viewModel.IsScanning = true;
-
-        // Assert
-        Assert.Contains(nameof(MainWindowViewModel.IsProgressVisible), notifiedProperties);
-    }
-
-    [Fact]
-    public void IsProcessing_PropertyChanged_NotifiesIsProgressVisible()
-    {
-        // Arrange
-        var notifiedProperties = new System.Collections.Generic.List<string>();
-        _viewModel.PropertyChanged += (_, args) =>
-        {
-            if (args.PropertyName != null)
-            {
-                notifiedProperties.Add(args.PropertyName);
-            }
-        };
-
-        // Act
-        _viewModel.IsProcessing = true;
-
-        // Assert
-        Assert.Contains(nameof(MainWindowViewModel.IsProgressVisible), notifiedProperties);
     }
 
     #endregion

@@ -7,6 +7,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using FormID_Database_Manager.Services;
 using FormID_Database_Manager.TestUtilities;
+using FormID_Database_Manager.TestUtilities.Mocks;
 using FormID_Database_Manager.ViewModels;
 using Microsoft.Data.Sqlite;
 using Mutagen.Bethesda;
@@ -203,7 +204,7 @@ public class StressTests : IDisposable
         // Arrange
         const int updateCount = 10000;
         const int threadCount = 5;
-        using var viewModel = new MainWindowViewModel();
+        var viewModel = new MainWindowViewModel(new SynchronousThreadDispatcher());
         var errors = new List<Exception>();
         var updateTimes = new List<long>();
         var updateLock = new object();
@@ -222,8 +223,10 @@ public class StressTests : IDisposable
                         var stopwatch = Stopwatch.StartNew();
 
                         // Rapid UI updates from multiple threads
-                        viewModel.ProgressValue = Random.Shared.Next(0, 101);
-                        viewModel.ProgressStatus = $"Thread {threadId} - Update {i}";
+                        viewModel.ApplyRunActivityProjection(new ActivityProjection(
+                            true,
+                            $"Thread {threadId} - Update {i}",
+                            Random.Shared.Next(0, 101)));
 
                         if (i % 10 == 0)
                         {

@@ -102,7 +102,6 @@ public sealed partial class MainWindow : Window, IDisposable
         // Detach presentation before the workflow retires its authoritative Plugin List.
         RetireService(_pluginListPresentationAdapter.Dispose, ref primaryException);
         RetireService(_userWorkflow.Dispose, ref primaryException);
-        RetireService(ViewModel.Dispose, ref primaryException);
         if (primaryException is not null)
         {
             // Rethrow through the dispatch info so the caller still sees the original throw site.

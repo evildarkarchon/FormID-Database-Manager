@@ -90,15 +90,24 @@ public class CoreProjectBoundaryTests
     }
 
     /// <summary>
-    /// Verifies that WinUI can only read the complete Game Context projection and its stable directory collection.
+    /// Verifies that WinUI can only read the complete Game Context projection, its stable directory collection, and
+    /// the Workflow Activity channel derived from the two projected activity facts.
     /// </summary>
-    /// <param name="propertyName">The projected Game Context property whose public shape is verified.</param>
+    /// <param name="propertyName">The projected property whose public shape is verified.</param>
+    /// <remarks>
+    /// The progress properties are pinned here for the same reason the Game Context ones are: a public setter would
+    /// let a third writer back onto the progress channel and reintroduce the collision the precedence rule removes.
+    /// </remarks>
     [Theory]
     [InlineData(nameof(MainWindowViewModel.SelectedGame))]
     [InlineData(nameof(MainWindowViewModel.GameDirectory))]
     [InlineData(nameof(MainWindowViewModel.AdvancedMode))]
     [InlineData(nameof(MainWindowViewModel.DetectedDirectories))]
-    public void GameContextProjectionProperties_PublicContract_ExposeGettersWithoutSetters(string propertyName)
+    [InlineData(nameof(MainWindowViewModel.ProgressStatus))]
+    [InlineData(nameof(MainWindowViewModel.ProgressValue))]
+    [InlineData(nameof(MainWindowViewModel.IsProgressVisible))]
+    [InlineData(nameof(MainWindowViewModel.ProcessButtonText))]
+    public void ProjectedProperties_PublicContract_ExposeGettersWithoutSetters(string propertyName)
     {
         var property = Assert.Single(
             typeof(MainWindowViewModel).GetProperties(),
@@ -107,6 +116,25 @@ public class CoreProjectBoundaryTests
         Assert.NotNull(property.GetMethod);
         Assert.True(property.GetMethod.IsPublic);
         Assert.Null(property.SetMethod);
+    }
+
+    /// <summary>
+    /// Verifies that the progress surface a caller could write directly is gone, leaving the two activity projections
+    /// as the only way onto the progress channel.
+    /// </summary>
+    /// <param name="memberName">The retired member name that must not reappear in any form.</param>
+    [Theory]
+    [InlineData("UpdateProgress")]
+    [InlineData("ResetProgress")]
+    [InlineData("IsScanning")]
+    [InlineData("IsProcessing")]
+    public void RetiredProgressMembers_ViewModelSurface_NoLongerExist(string memberName)
+    {
+        var members = typeof(MainWindowViewModel).GetMember(
+            memberName,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+
+        Assert.Empty(members);
     }
 
     /// <summary>

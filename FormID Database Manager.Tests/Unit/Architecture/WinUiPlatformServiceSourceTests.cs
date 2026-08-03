@@ -280,6 +280,76 @@ public class WinUiPlatformServiceSourceTests
     }
 
     /// <summary>
+    /// Verifies that the progress status text and progress bar collapse independently of the process button, so an
+    /// idle application shows no empty progress row while the button stays on screen.
+    /// </summary>
+    [Fact]
+    public void WinUiMainWindow_CollapsesProgressRowWithoutHidingTheProcessButton()
+    {
+        var winUiDirectory = GetWinUiProjectDirectory();
+        var converterPath = Path.Combine(winUiDirectory, "Converters", "BooleanToVisibilityConverter.cs");
+        var mainWindowXamlPath = Path.Combine(winUiDirectory, "MainWindow.xaml");
+
+        Assert.True(File.Exists(converterPath), $"Boolean-to-visibility converter was not found at {converterPath}.");
+
+        var converterSource = File.ReadAllText(converterPath);
+        Assert.Contains("namespace FormID_Database_Manager.WinUI.Converters", converterSource,
+            StringComparison.Ordinal);
+        Assert.Contains("public sealed class BooleanToVisibilityConverter : IValueConverter", converterSource,
+            StringComparison.Ordinal);
+        Assert.Contains("using Microsoft.UI.Xaml.Data;", converterSource, StringComparison.Ordinal);
+        // Pinned as the whole expression rather than two separate Contains calls, which would also pass on a
+        // converter wired backwards. The Tests project cannot reference the Windows-targeted WinUI assembly, so
+        // source text is the only seam available for the mapping direction.
+        Assert.Contains("value is true ? Visibility.Visible : Visibility.Collapsed", converterSource,
+            StringComparison.Ordinal);
+
+        var xaml = File.ReadAllText(mainWindowXamlPath);
+        Assert.Contains(
+            "xmlns:converters=\"using:FormID_Database_Manager.WinUI.Converters\"",
+            xaml,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "<converters:BooleanToVisibilityConverter x:Key=\"BooleanToVisibilityConverter\" />",
+            xaml,
+            StringComparison.Ordinal);
+        // The window's resource dictionary hangs off its root content element; MainWindow.xaml records why.
+        Assert.Contains("<Border.Resources>", xaml, StringComparison.Ordinal);
+
+        // Both progress controls bind their own visibility; the shared row Grid must not, because the process button
+        // lives in that same Grid and stays visible in every state.
+        const string progressVisibilityBinding =
+            "Visibility=\"{Binding IsProgressVisible, Mode=OneWay, " +
+            "Converter={StaticResource BooleanToVisibilityConverter}}\"";
+        Assert.Equal(2, CountOccurrences(xaml, progressVisibilityBinding));
+
+        var statusIndex = xaml.IndexOf(
+            "AutomationProperties.AutomationId=\"ProgressStatusTextBlock\"",
+            StringComparison.Ordinal);
+        var progressBarIndex = xaml.IndexOf(
+            "AutomationProperties.AutomationId=\"ProcessingProgressBar\"",
+            StringComparison.Ordinal);
+        var processButtonIndex = xaml.IndexOf(
+            "AutomationProperties.AutomationId=\"ProcessFormIdsButton\"",
+            StringComparison.Ordinal);
+        Assert.True(statusIndex >= 0 && progressBarIndex > statusIndex && processButtonIndex > progressBarIndex,
+            "The footer should declare the status text, then the progress bar, then the process button.");
+
+        // Bounded at the button's own self-closing tag rather than running to end of file, so a later Visibility on
+        // an unrelated footer control cannot fail an assertion about the process button.
+        var processButtonEndIndex = xaml.IndexOf("/>", processButtonIndex, StringComparison.Ordinal);
+        Assert.True(processButtonEndIndex > processButtonIndex,
+            "The process button should remain a self-closing element.");
+
+        var statusSegment = xaml[statusIndex..progressBarIndex];
+        var progressBarSegment = xaml[progressBarIndex..processButtonIndex];
+        var processButtonSegment = xaml[processButtonIndex..processButtonEndIndex];
+        Assert.Contains(progressVisibilityBinding, statusSegment, StringComparison.Ordinal);
+        Assert.Contains(progressVisibilityBinding, progressBarSegment, StringComparison.Ordinal);
+        Assert.DoesNotContain("Visibility=", processButtonSegment, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// Verifies that Phase 10 records responsive-layout resources and uses them in the main shell.
     /// </summary>
     [Fact]

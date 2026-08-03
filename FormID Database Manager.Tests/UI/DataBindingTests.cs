@@ -38,7 +38,7 @@ public class DataBindingTests
             }
         };
 
-        viewModel.UpdateProgress("Processing...", 50);
+        viewModel.ApplyRunActivityProjection(new ActivityProjection(true, "Processing...", 50));
 
         Assert.True(progressValueChanged);
         Assert.True(progressStatusChanged);

@@ -15,9 +15,27 @@ public sealed class UserWorkflow : IDisposable
     private readonly PluginList _pluginList;
     private readonly IProcessingRunExecutor _processingRunExecutor;
     private readonly MainWindowViewModel _viewModel;
+
+    /// <summary>
+    /// Guards the run activity this workflow holds as its state of record, because a Processing Run reports its
+    /// progress from whatever thread the executor is on while the UI thread reads it to decide what a button press means.
+    /// </summary>
+    private readonly Lock _runActivityLock = new();
+
     private GameContextSnapshot _gameContext;
     private bool _disposed;
     private int _gameContextVersion;
+
+    /// <summary>
+    /// The Processing Run's Workflow Activity, owned here rather than read back off the ViewModel.
+    /// </summary>
+    /// <remarks>
+    /// This has to be the source of truth: validation, Confirmed Plugin List resolution and database-path defaulting
+    /// all happen before the executor is handed the run, so there is a window in which this workflow is committed to a
+    /// run while the executor's cancellation source does not yet exist. Owning the fact closes that window, so a
+    /// second button press inside it cancels instead of starting a second run.
+    /// </remarks>
+    private ActivityProjection _runActivity = ActivityProjection.None;
 
     /// <summary>
     /// Creates a workflow module that coordinates existing Core modules behind one UI-neutral interface.
@@ -233,17 +251,15 @@ public sealed class UserWorkflow : IDisposable
     /// <returns>A task that completes after processing starts, finishes, fails, or observes cancellation.</returns>
     public async Task ProcessFormIdsAsync()
     {
-        if (_viewModel.IsProcessing)
+        // The run-active check and the transition into an active run happen together, so a second press arriving
+        // before validation finishes cancels the run in flight rather than starting another one.
+        if (!TryBeginRunActivity())
         {
-            _viewModel.ProgressStatus = "Cancelling...";
+            ReportRunActivity("Cancelling...", null);
             _processingRunExecutor.Cancel();
             return;
         }
 
-        _viewModel.ProcessButtonText = "Cancel Processing";
-        _viewModel.IsProcessing = true;
-        _viewModel.ProgressValue = 0;
-        _viewModel.ProgressStatus = "Initializing...";
         _viewModel.ErrorMessages.Clear();
         _viewModel.WarningMessages.Clear();
 
@@ -286,7 +302,7 @@ public sealed class UserWorkflow : IDisposable
         }
         catch (OperationCanceledException)
         {
-            _viewModel.ProgressStatus = "Processing cancelled by user.";
+            ReportRunActivity("Processing cancelled by user.", null);
         }
         catch (Exception ex)
         {
@@ -294,10 +310,75 @@ public sealed class UserWorkflow : IDisposable
         }
         finally
         {
-            _viewModel.IsProcessing = false;
-            _viewModel.ProgressStatus = string.Empty;
-            _viewModel.ProcessButtonText = "Process FormIDs";
+            // Clearing run activity hands the progress channel back rather than blanking it: a Plugin List refresh
+            // still scanning underneath this run keeps showing its own progress, by the ViewModel's precedence rule.
+            ProjectRunActivity(ActivityProjection.None);
         }
+    }
+
+    /// <summary>
+    /// Makes this workflow the owner of an active Processing Run, unless one is already active.
+    /// </summary>
+    /// <returns><see langword="true" /> when the caller now owns a new run, <see langword="false" /> when one is already active.</returns>
+    private bool TryBeginRunActivity()
+    {
+        lock (_runActivityLock)
+        {
+            if (_runActivity.IsActive)
+            {
+                return false;
+            }
+
+            ProjectRunActivityLocked(new ActivityProjection(true, "Initializing...", 0));
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Makes one complete run report authoritative and projects it.
+    /// </summary>
+    /// <param name="runActivity">The complete run report to publish.</param>
+    private void ProjectRunActivity(ActivityProjection runActivity)
+    {
+        lock (_runActivityLock)
+        {
+            ProjectRunActivityLocked(runActivity);
+        }
+    }
+
+    /// <summary>
+    /// Publishes new run activity, carrying the last reported progress value forward when the report omits one.
+    /// </summary>
+    /// <param name="status">The already-rendered status text for the run.</param>
+    /// <param name="value">The reported progress percentage, or null to keep the value already on screen.</param>
+    /// <remarks>
+    /// Whether the run is active is never changed here: a report arriving after the run has ended stays inactive and
+    /// therefore stays off the channel.
+    /// </remarks>
+    private void ReportRunActivity(string status, double? value)
+    {
+        lock (_runActivityLock)
+        {
+            ProjectRunActivityLocked(_runActivity with { Status = status, Value = value ?? _runActivity.Value });
+        }
+    }
+
+    /// <summary>
+    /// Stores one run report and projects it, with the caller already holding <see cref="_runActivityLock" />.
+    /// </summary>
+    /// <param name="runActivity">The complete run report that becomes authoritative.</param>
+    /// <remarks>
+    /// The projection happens under the lock on purpose. Releasing first would let two reports racing from the UI
+    /// thread and the executor thread reach the ViewModel in the opposite order to which they were sequenced here,
+    /// leaving a stale status on the channel. Holding it across the call is safe because a projection either posts to
+    /// the dispatcher without running anything else, or runs on the dispatcher and raises notifications whose handlers
+    /// may re-enter this workflow — and the lock is reentrant, so a handler pressing the process button still sees the
+    /// run it is nested inside as active.
+    /// </remarks>
+    private void ProjectRunActivityLocked(ActivityProjection runActivity)
+    {
+        _runActivity = runActivity;
+        _viewModel.ApplyRunActivityProjection(runActivity);
     }
 
     /// <summary>
@@ -668,7 +749,7 @@ public sealed class UserWorkflow : IDisposable
             return;
         }
 
-        _viewModel.UpdateProgress(runEvent.Message, runEvent.Value);
+        ReportRunActivity(runEvent.Message, runEvent.Value);
     }
 
     /// <summary>

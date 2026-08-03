@@ -230,7 +230,7 @@ public class LoadTests : IDisposable
                 .ToArray())
             .ToArray();
         var dispatcher = new SynchronousThreadDispatcher();
-        using var viewModel = new MainWindowViewModel(dispatcher);
+        var viewModel = new MainWindowViewModel(dispatcher);
         using var pluginList = new PluginList(new SequencedPluginListDiscovery(membershipSnapshots));
         using var presentationAdapter = new PluginListPresentationAdapter(pluginList, viewModel, dispatcher);
 
@@ -296,7 +296,7 @@ public class LoadTests : IDisposable
             .Select(static pluginIndex => $"Plugin_{pluginIndex:D4}.esp")
             .ToArray();
         var dispatcher = new SynchronousThreadDispatcher();
-        using var viewModel = new MainWindowViewModel(dispatcher);
+        var viewModel = new MainWindowViewModel(dispatcher);
         using var pluginList = new PluginList(new SequencedPluginListDiscovery([pluginNames]));
         using var presentationAdapter = new PluginListPresentationAdapter(pluginList, viewModel, dispatcher);
 
@@ -312,8 +312,10 @@ public class LoadTests : IDisposable
             var stopwatch = Stopwatch.StartNew();
 
             // Simulate UI updates
-            viewModel.ProgressValue = i * 100.0 / updateCount;
-            viewModel.ProgressStatus = $"Processing item {i + 1} of {updateCount}";
+            viewModel.ApplyRunActivityProjection(new ActivityProjection(
+                true,
+                $"Processing item {i + 1} of {updateCount}",
+                i * 100.0 / updateCount));
 
             // Update search filter periodically
             if (i % 100 == 0)

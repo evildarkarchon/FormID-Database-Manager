@@ -3,6 +3,7 @@
     x:Class="FormID_Database_Manager.WinUI.MainWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:converters="using:FormID_Database_Manager.WinUI.Converters"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     Title="FormID Database Manager"
@@ -12,6 +13,13 @@
         x:Name="Root"
         Background="{ThemeResource ApplicationPageBackgroundThemeBrush}"
         Padding="{StaticResource WindowContentMargin}">
+        <!--
+            Window-scoped resources hang off the root content element, not off Window: a WinUI 3 Window is not a
+            FrameworkElement and has no Resources property, so Window.Resources fails to compile (WMC0011).
+        -->
+        <Border.Resources>
+            <converters:BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
+        </Border.Resources>
         <Grid RowDefinitions="Auto,Auto,*,Auto,Auto,Auto" RowSpacing="10">
             <StackPanel Grid.Row="0" Spacing="2">
                 <TextBlock
@@ -261,13 +269,21 @@
                 ColumnSpacing="12"
                 RowDefinitions="Auto,Auto"
                 RowSpacing="6">
+                <!--
+                    The status text and the progress bar carry their own visibility rather than sharing the row's,
+                    because the process button lives in this same Grid and must stay on screen in every state.
+                    The binding is repeated rather than hoisted into a shared Style on purpose: WinRT ignores a
+                    Binding used as a Setter.Value and the setter simply has no effect, with no build or runtime
+                    error to show for it.
+                -->
                 <TextBlock
                     AutomationProperties.AutomationId="ProgressStatusTextBlock"
                     Grid.Row="0"
                     Grid.Column="0"
                     AutomationProperties.Name="Processing status"
                     Text="{Binding ProgressStatus, Mode=OneWay}"
-                    TextWrapping="WrapWholeWords" />
+                    TextWrapping="WrapWholeWords"
+                    Visibility="{Binding IsProgressVisible, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
                 <ProgressBar
                     AutomationProperties.AutomationId="ProcessingProgressBar"
                     Grid.Row="1"
@@ -276,7 +292,8 @@
                     AutomationProperties.Name="Processing progress"
                     Maximum="100"
                     Minimum="0"
-                    Value="{Binding ProgressValue, Mode=OneWay}" />
+                    Value="{Binding ProgressValue, Mode=OneWay}"
+                    Visibility="{Binding IsProgressVisible, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
                 <Button
                     AutomationProperties.AutomationId="ProcessFormIdsButton"
                     Grid.Row="0"

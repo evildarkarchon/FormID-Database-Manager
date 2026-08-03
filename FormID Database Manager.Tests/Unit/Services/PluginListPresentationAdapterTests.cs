@@ -41,7 +41,7 @@ public sealed class PluginListPresentationAdapterTests
             PluginListDiscoveryResult.Failed("new source unavailable"));
         using var pluginList = new PluginList(discovery);
         var dispatcher = new SynchronousThreadDispatcher();
-        using var viewModel = new MainWindowViewModel(dispatcher);
+        var viewModel = new MainWindowViewModel(dispatcher);
         using var sut = new PluginListPresentationAdapter(pluginList, viewModel, dispatcher);
         await pluginList.RefreshAsync(
             GameRelease.SkyrimSE,
@@ -71,7 +71,7 @@ public sealed class PluginListPresentationAdapterTests
         var discovery = new OvertakingPluginListDiscovery();
         using var pluginList = new PluginList(discovery);
         var dispatcher = new RecordingThreadDispatcher();
-        using var viewModel = new MainWindowViewModel(dispatcher);
+        var viewModel = new MainWindowViewModel(dispatcher);
         using var sut = new PluginListPresentationAdapter(pluginList, viewModel, dispatcher);
         Assert.True(dispatcher.RunNext());
 
@@ -93,7 +93,7 @@ public sealed class PluginListPresentationAdapterTests
 
         Assert.True(dispatcher.RunNext());
 
-        Assert.False(viewModel.IsScanning);
+        Assert.False(viewModel.IsProgressVisible);
         Assert.Equal(string.Empty, viewModel.ProgressStatus);
         Assert.Equal("Newer.esp", Assert.Single(viewModel.Plugins).Name);
 
@@ -113,19 +113,17 @@ public sealed class PluginListPresentationAdapterTests
             PluginListDiscoveryResult.Completed(["Ignored.esp"]));
         using var pluginList = new PluginList(discovery);
         var dispatcher = new RecordingThreadDispatcher();
-        using var viewModel = new MainWindowViewModel(dispatcher)
-        {
-            IsScanning = true,
-            ProgressValue = 42,
-            ProgressStatus = "Unchanged"
-        };
+        var viewModel = new MainWindowViewModel(dispatcher);
+        // Standing scan activity from before this adapter existed, so a projection surviving disposal would show.
+        viewModel.ApplyScanActivityProjection(new ActivityProjection(true, "Unchanged", 42));
+        dispatcher.Drain();
         var sut = new PluginListPresentationAdapter(pluginList, viewModel, dispatcher);
         Assert.Equal(1, dispatcher.PendingCount);
 
         sut.Dispose();
         dispatcher.Drain();
 
-        Assert.True(viewModel.IsScanning);
+        Assert.True(viewModel.IsProgressVisible);
         Assert.Equal(42, viewModel.ProgressValue);
         Assert.Equal("Unchanged", viewModel.ProgressStatus);
         var postCountAfterDispose = dispatcher.PostCount;
@@ -150,7 +148,7 @@ public sealed class PluginListPresentationAdapterTests
         var discovery = new ControlledPluginListDiscovery();
         using var pluginList = new PluginList(discovery);
         var dispatcher = new SynchronousThreadDispatcher();
-        using var viewModel = new MainWindowViewModel(dispatcher);
+        var viewModel = new MainWindowViewModel(dispatcher);
         using var sut = new PluginListPresentationAdapter(pluginList, viewModel, dispatcher);
         using var cancellation = new CancellationTokenSource();
         var refresh = pluginList.RefreshAsync(
@@ -160,12 +158,12 @@ public sealed class PluginListPresentationAdapterTests
             cancellation.Token);
         await discovery.Started.Task.WaitAsync(TestContext.Current.CancellationToken);
         discovery.ReportProgress(1, 4);
-        Assert.True(viewModel.IsScanning);
+        Assert.True(viewModel.IsProgressVisible);
 
         cancellation.Cancel();
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => refresh);
-        Assert.False(viewModel.IsScanning);
+        Assert.False(viewModel.IsProgressVisible);
         Assert.Equal(0, viewModel.ProgressValue);
         Assert.Equal(string.Empty, viewModel.ProgressStatus);
         Assert.Empty(viewModel.InformationMessages);
@@ -181,7 +179,7 @@ public sealed class PluginListPresentationAdapterTests
         var discovery = new ControlledPluginListDiscovery();
         using var pluginList = new PluginList(discovery);
         var dispatcher = new SynchronousThreadDispatcher();
-        using var viewModel = new MainWindowViewModel(dispatcher);
+        var viewModel = new MainWindowViewModel(dispatcher);
         using var sut = new PluginListPresentationAdapter(pluginList, viewModel, dispatcher);
         var refresh = pluginList.RefreshAsync(
             GameRelease.SkyrimSE,
@@ -190,14 +188,14 @@ public sealed class PluginListPresentationAdapterTests
             TestContext.Current.CancellationToken);
         await discovery.Started.Task.WaitAsync(TestContext.Current.CancellationToken);
         discovery.ReportProgress(1, 4);
-        Assert.True(viewModel.IsScanning);
+        Assert.True(viewModel.IsProgressVisible);
         var exception = new InvalidOperationException("Synthetic discovery fault.");
 
         discovery.Fault(exception);
 
         var propagated = await Record.ExceptionAsync(() => refresh);
         Assert.Same(exception, propagated);
-        Assert.False(viewModel.IsScanning);
+        Assert.False(viewModel.IsProgressVisible);
         Assert.Equal(0, viewModel.ProgressValue);
         Assert.Equal(string.Empty, viewModel.ProgressStatus);
         Assert.Empty(viewModel.InformationMessages);
@@ -215,7 +213,7 @@ public sealed class PluginListPresentationAdapterTests
             PluginListDiscoveryResult.Failed("load order failure"));
         using var pluginList = new PluginList(discovery);
         var dispatcher = new SynchronousThreadDispatcher();
-        using var viewModel = new MainWindowViewModel(dispatcher);
+        var viewModel = new MainWindowViewModel(dispatcher);
         using var sut = new PluginListPresentationAdapter(pluginList, viewModel, dispatcher);
         await pluginList.RefreshAsync(
             GameRelease.SkyrimSE,
@@ -234,7 +232,7 @@ public sealed class PluginListPresentationAdapterTests
         var projected = Assert.Single(viewModel.Plugins);
         Assert.Equal("Selected.esp", projected.Name);
         Assert.True(projected.IsSelected);
-        Assert.False(viewModel.IsScanning);
+        Assert.False(viewModel.IsProgressVisible);
         Assert.Equal(
             ["Failed to load plugins: load order failure", "Ensure you selected the correct game Data directory"],
             viewModel.ErrorMessages);
@@ -254,7 +252,7 @@ public sealed class PluginListPresentationAdapterTests
             PluginListDiscoveryResult.Completed(["First.esp", "Second.esp"]));
         using var pluginList = new PluginList(discovery);
         var dispatcher = new SynchronousThreadDispatcher();
-        using var viewModel = new MainWindowViewModel(dispatcher);
+        var viewModel = new MainWindowViewModel(dispatcher);
         using var sut = new PluginListPresentationAdapter(pluginList, viewModel, dispatcher);
         await pluginList.RefreshAsync(
             GameRelease.SkyrimSE,
@@ -282,7 +280,7 @@ public sealed class PluginListPresentationAdapterTests
         var discovery = new ControlledPluginListDiscovery();
         using var pluginList = new PluginList(discovery);
         var dispatcher = new SynchronousThreadDispatcher();
-        using var viewModel = new MainWindowViewModel(dispatcher);
+        var viewModel = new MainWindowViewModel(dispatcher);
         using var sut = new PluginListPresentationAdapter(pluginList, viewModel, dispatcher);
 
         var refresh = pluginList.RefreshAsync(
@@ -291,21 +289,21 @@ public sealed class PluginListPresentationAdapterTests
             AdvancedMode.On,
             TestContext.Current.CancellationToken);
 
-        Assert.True(viewModel.IsScanning);
+        Assert.True(viewModel.IsProgressVisible);
         Assert.Equal("Scanning plugins...", viewModel.ProgressStatus);
         Assert.Equal(0, viewModel.ProgressValue);
         await discovery.Started.Task.WaitAsync(TestContext.Current.CancellationToken);
 
         discovery.ReportProgress(3, 12);
 
-        Assert.True(viewModel.IsScanning);
+        Assert.True(viewModel.IsProgressVisible);
         Assert.Equal("Scanning plugins... (3/12)", viewModel.ProgressStatus);
         Assert.Equal(25, viewModel.ProgressValue);
 
         discovery.Complete("User.esp");
         await refresh;
 
-        Assert.False(viewModel.IsScanning);
+        Assert.False(viewModel.IsProgressVisible);
         Assert.Equal(string.Empty, viewModel.ProgressStatus);
         Assert.Equal(0, viewModel.ProgressValue);
     }
@@ -321,7 +319,7 @@ public sealed class PluginListPresentationAdapterTests
             PluginListDiscoveryResult.Completed(["Newer.esp"]));
         using var pluginList = new PluginList(discovery);
         var dispatcher = new RecordingThreadDispatcher();
-        using var viewModel = new MainWindowViewModel(dispatcher);
+        var viewModel = new MainWindowViewModel(dispatcher);
         using var sut = new PluginListPresentationAdapter(pluginList, viewModel, dispatcher);
         Assert.True(dispatcher.RunNext());
 

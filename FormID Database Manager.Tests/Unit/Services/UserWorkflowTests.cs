@@ -771,7 +771,7 @@ public class UserWorkflowTests
 
         Assert.Contains("Please select a game from the dropdown first.", _viewModel.ErrorMessages);
         Assert.Empty(_processingRuns);
-        Assert.False(_viewModel.IsProcessing);
+        Assert.False(_viewModel.IsProgressVisible);
         Assert.Equal("Process FormIDs", _viewModel.ProcessButtonText);
     }
 
@@ -1129,7 +1129,7 @@ public class UserWorkflowTests
 
         Assert.Equal([failure.Message], _viewModel.ErrorMessages);
         Assert.Empty(_viewModel.WarningMessages);
-        Assert.False(_viewModel.IsProcessing);
+        Assert.False(_viewModel.IsProgressVisible);
         // Cleared by the workflow's own finally, so the prefixed status is transient and never the lasting report.
         Assert.Equal(string.Empty, _viewModel.ProgressStatus);
     }
@@ -1144,20 +1144,176 @@ public class UserWorkflowTests
         await sut.ProcessFormIdsAsync();
 
         Assert.Equal(["Error processing FormIDs: store unavailable"], _viewModel.ErrorMessages);
-        Assert.False(_viewModel.IsProcessing);
+        Assert.False(_viewModel.IsProgressVisible);
     }
 
+    /// <summary>
+    ///     Verifies a press arriving while a run is in flight cancels that run instead of starting a second one, and
+    ///     that the acknowledgement reaches the progress channel while the run is still the activity that owns it.
+    /// </summary>
     [Fact]
-    public async Task ProcessFormIdsAsync_AlreadyProcessing_CancelsCurrentRunAndSetsCancellingState()
+    public async Task ProcessFormIdsAsync_PressedWhileRunActive_CancelsThatRunAndShowsCancellingStatus()
     {
-        _viewModel.IsProcessing = true;
-
         var sut = CreateSut();
+        await ConfigureValidPluginProcessingRunAsync(sut);
+        _processingRunExecutor.EventsToReport.Add(ProcessingRunEvent.Status("Processing User.esp", 40));
+        var statusDuringCancellation = string.Empty;
+        var buttonTextDuringRun = string.Empty;
+        // The run's own progress report notifies synchronously while the run is still in flight, which is how this
+        // test acts mid-run without the recording executor needing a gate.
+        OnRunStatus("Processing User.esp", () =>
+        {
+            buttonTextDuringRun = _viewModel.ProcessButtonText;
+            // The second press: the workflow's own run state, not the ViewModel, decides this means cancel.
+            sut.ProcessFormIdsAsync().GetAwaiter().GetResult();
+            statusDuringCancellation = _viewModel.ProgressStatus;
+        });
+
         await sut.ProcessFormIdsAsync();
 
         Assert.Equal(1, _processingRunExecutor.CancelCallCount);
-        Assert.True(_viewModel.IsProcessing);
-        Assert.Equal("Cancelling...", _viewModel.ProgressStatus);
+        Assert.Single(_processingRuns);
+        Assert.Equal("Cancel Processing", buttonTextDuringRun);
+        Assert.Equal("Cancelling...", statusDuringCancellation);
+        Assert.Equal("Process FormIDs", _viewModel.ProcessButtonText);
+    }
+
+    /// <summary>
+    ///     Verifies the window this workflow owns run state to close: a press landing after validation has begun but
+    ///     before the executor has been handed the run cancels rather than launching a second run.
+    /// </summary>
+    /// <remarks>
+    ///     The second press is delivered from the notification raised when the workflow defaults the database path,
+    ///     which happens inside that window. The executor's cancellation source does not exist yet at that point, so
+    ///     an executor-owned run flag could not have answered this press correctly.
+    /// </remarks>
+    [Fact]
+    public async Task ProcessFormIdsAsync_PressedBeforeTheRunReachesTheExecutor_DoesNotLaunchASecondRun()
+    {
+        var sut = CreateSut();
+        var confirmed = await ConfirmPluginListAsync(sut, ["User.esp"]);
+        sut.SetPluginSelection(confirmed.MembershipVersion, "User.esp", true);
+        var secondPressed = false;
+        _viewModel.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName != nameof(MainWindowViewModel.DatabasePath) || secondPressed)
+            {
+                return;
+            }
+
+            secondPressed = true;
+            sut.ProcessFormIdsAsync().GetAwaiter().GetResult();
+        };
+
+        await sut.ProcessFormIdsAsync();
+
+        Assert.True(secondPressed);
+        Assert.Single(_processingRuns);
+        Assert.Equal(1, _processingRunExecutor.CancelCallCount);
+    }
+
+    /// <summary>
+    ///     Verifies the collision this projection exists to arbitrate: a Plugin List refresh started during a
+    ///     Processing Run never takes the progress channel off the run, and the run's report survives the refresh.
+    /// </summary>
+    /// <param name="refreshTrigger">The user input used to trigger the mid-run refresh.</param>
+    [Theory]
+    [InlineData(RefreshTrigger.AdvancedMode)]
+    [InlineData(RefreshTrigger.GameRelease)]
+    [InlineData(RefreshTrigger.GameDirectory)]
+    public async Task ProcessFormIdsAsync_PluginListRefreshDuringRun_KeepsTheRunOnTheProgressChannel(
+        RefreshTrigger refreshTrigger)
+    {
+        var sut = CreateSut();
+        await ConfigureValidPluginProcessingRunAsync(sut);
+        _gameInstallationProbe.WithInstalledDirectories(GameRelease.Fallout4, @"C:\Games\Fallout4");
+        _fileDialogService.Setup(x => x.SelectGameDirectory())
+            .ReturnsAsync(FileDialogResult.Success(GameDirectory));
+        _processingRunExecutor.EventsToReport.Add(ProcessingRunEvent.Status("Processing User.esp", 40));
+        var projectedStatuses = new List<string>();
+        _viewModel.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(MainWindowViewModel.ProgressStatus))
+            {
+                projectedStatuses.Add(_viewModel.ProgressStatus);
+            }
+        };
+        var statusAfterRefresh = string.Empty;
+        var valueAfterRefresh = 0d;
+        // The refresh is triggered from the run's own progress notification, so it genuinely overlaps a run in flight.
+        OnRunStatus("Processing User.esp", () =>
+        {
+            TriggerRefreshAsync(sut, refreshTrigger).GetAwaiter().GetResult();
+            statusAfterRefresh = _viewModel.ProgressStatus;
+            valueAfterRefresh = _viewModel.ProgressValue;
+        });
+
+        await sut.ProcessFormIdsAsync();
+
+        Assert.Equal("Processing User.esp", statusAfterRefresh);
+        Assert.Equal(40, valueAfterRefresh);
+        Assert.DoesNotContain(projectedStatuses, status => status.StartsWith("Scanning", StringComparison.Ordinal));
+        // The run's own reports are the only thing the channel ever showed, and it ends empty.
+        Assert.Equal(["Initializing...", "Processing User.esp", string.Empty], projectedStatuses);
+    }
+
+    /// <summary>
+    ///     The user inputs that each start a Plugin List refresh, and stay live during a Processing Run because the
+    ///     window disables nothing.
+    /// </summary>
+    public enum RefreshTrigger
+    {
+        /// <summary>Toggling Advanced Mode.</summary>
+        AdvancedMode,
+
+        /// <summary>Choosing a different GameRelease.</summary>
+        GameRelease,
+
+        /// <summary>Browsing to a game directory.</summary>
+        GameDirectory
+    }
+
+    /// <summary>
+    ///     Runs a handler once, the first time the progress channel shows the given run status.
+    /// </summary>
+    /// <param name="status">The run status text to wait for.</param>
+    /// <param name="handler">The work to run while that run is still in flight.</param>
+    /// <remarks>
+    ///     A Processing Run reports its progress synchronously through the workflow, so the resulting notification is
+    ///     raised from inside the run. That makes this the seam for acting mid-run without gating the executor. The
+    ///     handler runs once because its own work changes the status again and would otherwise recurse.
+    /// </remarks>
+    private void OnRunStatus(string status, Action handler)
+    {
+        var handled = false;
+        _viewModel.PropertyChanged += (_, args) =>
+        {
+            if (handled ||
+                args.PropertyName != nameof(MainWindowViewModel.ProgressStatus) ||
+                _viewModel.ProgressStatus != status)
+            {
+                return;
+            }
+
+            handled = true;
+            handler();
+        };
+    }
+
+    /// <summary>
+    ///     Triggers a Plugin List refresh through the requested user input.
+    /// </summary>
+    /// <param name="sut">The workflow under test.</param>
+    /// <param name="refreshTrigger">The input to exercise.</param>
+    private static Task TriggerRefreshAsync(UserWorkflow sut, RefreshTrigger refreshTrigger)
+    {
+        return refreshTrigger switch
+        {
+            RefreshTrigger.AdvancedMode => sut.SetAdvancedModeAsync(AdvancedMode.On),
+            RefreshTrigger.GameRelease => sut.SelectGameReleaseAsync(GameRelease.Fallout4),
+            RefreshTrigger.GameDirectory => sut.BrowseGameDirectoryAsync(),
+            _ => throw new ArgumentOutOfRangeException(nameof(refreshTrigger), refreshTrigger, "Unsupported trigger.")
+        };
     }
 
     [Fact]
