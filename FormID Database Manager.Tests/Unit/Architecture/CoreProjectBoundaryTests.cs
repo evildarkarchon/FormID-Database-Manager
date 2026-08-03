@@ -193,7 +193,7 @@ public class CoreProjectBoundaryTests
     /// </summary>
     /// <remarks>
     ///     This pins the three retired sentences by name rather than proving the absence of prose in general, which no
-    ///     source-text guard can do. New wording is caught by the characterization tests, not here.
+    ///     source-text guard can do. What the app does say is pinned by <c>ProcessingRunPresentationTests</c>, not here.
     /// </remarks>
     [Fact]
     public void FormIdRecordStore_TextImportProgress_DoesNotContainTheRetiredProgressWording()
@@ -204,6 +204,84 @@ public class CoreProjectBoundaryTests
         Assert.DoesNotContain("Starting processing", storeSource, StringComparison.Ordinal);
         Assert.DoesNotContain("Processing plugin", storeSource, StringComparison.Ordinal);
         Assert.DoesNotContain("Completed processing", storeSource, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    ///     Verifies that every string a Processing Run once wrote has left the run, and that the event type those
+    ///     strings travelled on is gone from every source area rather than reshaped.
+    /// </summary>
+    /// <remarks>
+    ///     Issue #66, under parent #61. A run now reports typed progress and returns a typed outcome, so the executor
+    ///     holds no user-facing wording at all. Like the Store guard above this pins the retired sentences by name
+    ///     rather than proving the absence of prose in general, which no source-text guard can do; what the run does
+    ///     say is pinned by <c>ProcessingRunPresentationTests</c> instead.
+    /// </remarks>
+    [Fact]
+    public void ProcessingRunExecutor_AfterTypedProgress_ContainsNoUserFacingWordingAndNoRetiredEventType()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var processingRunSource = File.ReadAllText(
+            Path.Combine(GetCoreProjectDirectory(), "Services", "ProcessingRun.cs"));
+
+        foreach (var retiredWording in new[]
+                 {
+                     "Starting processing",
+                     "Processing plugin",
+                     "Processing: ",
+                     "Initializing plugin ingestion",
+                     // The space is what keeps this off the IngestingPlugin progress case, which is a type name the
+                     // run legitimately mentions rather than wording it writes.
+                     "Ingesting plugin",
+                     "Completed processing",
+                     "Processing completed",
+                     "Error during processing",
+                     "Would process"
+                 })
+        {
+            Assert.DoesNotContain(retiredWording, processingRunSource, StringComparison.Ordinal);
+        }
+
+        // Split so this guard does not trip over its own spelling of the name it forbids.
+        var retiredEventTypeName = string.Concat("ProcessingRun", "Event");
+        var retiredEventReferences = new[]
+            {
+                GetCoreProjectDirectory(),
+                Path.Combine(repositoryRoot, "FormID Database Manager.WinUI"),
+                Path.Combine(repositoryRoot, "FormID Database Manager.TestUtilities"),
+                Path.Combine(repositoryRoot, "FormID Database Manager.Tests")
+            }
+            .SelectMany(directory => Directory.EnumerateFiles(directory, "*.cs", SearchOption.AllDirectories))
+            .Where(path => !IsBuildOutput(path))
+            .Where(path => File.ReadAllText(path).Contains(retiredEventTypeName, StringComparison.Ordinal))
+            .Select(path => Path.GetRelativePath(repositoryRoot, path))
+            .OrderBy(static path => path, StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.Empty(retiredEventReferences);
+    }
+
+    /// <summary>
+    ///     Verifies that the dry-run wording a substantive plan replaced has not come back anywhere in Core.
+    /// </summary>
+    /// <remarks>
+    ///     Issue #67, under parent #61. A dry run used to echo the names the user had just selected — "Would process X"
+    ///     — which told them nothing they had not typed. It now reports would-ingest and would-skip per Plugin, and a
+    ///     text dry run reports the file's presence and size. Like the guards above this pins the retired sentence by
+    ///     name; the wording that replaced it is pinned by <c>ProcessingRunPresentationTests</c> instead.
+    /// </remarks>
+    [Fact]
+    public void CoreSources_AfterTheSubstantiveDryRun_DoNotContainTheRetiredPlanWording()
+    {
+        var retiredPlanWording = string.Concat("Would ", "process");
+        var retiredPlanWordingOwners = Directory
+            .EnumerateFiles(GetCoreProjectDirectory(), "*.cs", SearchOption.AllDirectories)
+            .Where(path => !IsBuildOutput(path))
+            .Where(path => File.ReadAllText(path).Contains(retiredPlanWording, StringComparison.Ordinal))
+            .Select(path => Path.GetRelativePath(FindRepositoryRoot(), path))
+            .OrderBy(static path => path, StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.Empty(retiredPlanWordingOwners);
     }
 
     /// <summary>

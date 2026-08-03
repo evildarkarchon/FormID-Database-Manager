@@ -128,6 +128,133 @@ internal sealed class PluginIngestion : IPluginIngestion
     }
 
     /// <summary>
+    ///     Prepares one load-order snapshot and opens every selected Plugin's overlay, without a Store session and
+    ///     without enumerating a single record, returning what each selected Plugin would contribute to a run.
+    /// </summary>
+    /// <param name="request">The immutable selected-Plugin request.</param>
+    /// <param name="cancellationToken">Stops planning without returning a plan.</param>
+    /// <returns>One planned outcome per selected Plugin, in selection order.</returns>
+    /// <remarks>
+    ///     <para>
+    ///         Planning shares the classification and overlay-opening steps of a real run so the two cannot drift, and
+    ///         stops exactly where record enumeration would begin. Every overlay it opens is released as soon as it has
+    ///         opened, because opening is the only question a plan asks of one — including when a later Plugin fails the
+    ///         plan, since no overlay outlives the Plugin it was opened for.
+    ///     </para>
+    ///     <para>
+    ///         The method is deliberately synchronous inside: it does no I/O that has an asynchronous form, and its
+    ///         caller already runs a Processing Run on a background worker.
+    ///     </para>
+    /// </remarks>
+    /// <exception cref="ArgumentNullException"><paramref name="request" /> is null.</exception>
+    /// <exception cref="OperationCanceledException"><paramref name="cancellationToken" /> requests cancellation.</exception>
+    /// <exception cref="UnresolvableMasterException">
+    ///     A selected Plugin declares a master the prepared load-order snapshot cannot supply a master style for. The
+    ///     plan stops there because every remaining Plugin would fail the same way (ADR-0006).
+    /// </exception>
+    public Task<PluginIngestionPlan> PlanAsync(
+        SelectedPluginIngestionRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        // A pre-cancelled plan must not consult any external adapter, exactly as a pre-cancelled run must not.
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var dataPath = GameInstallations.CanonicalizeDataDirectory(request.GameDirectory);
+        var loadOrderSnapshot = _loadOrderProvider.BuildSnapshot(
+            request.GameRelease,
+            dataPath,
+            includeMasterFlagsLookup: true);
+        var planned = new List<PlannedPlugin>(request.PluginNames.Length);
+
+        foreach (var pluginName in request.PluginNames)
+        {
+            // Selection order is the cancellation unit here too: no later Plugin is classified or opened.
+            cancellationToken.ThrowIfCancellationRequested();
+
+            planned.Add(PlanSelectedPlugin(pluginName, dataPath, request.GameRelease, loadOrderSnapshot));
+        }
+
+        // Close the final race so cancellation cannot produce a plan that looks complete.
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult(new PluginIngestionPlan(planned));
+    }
+
+    /// <summary>
+    ///     Classifies one selected Plugin for a plan, opening its overlay only when nothing cheaper rules it out.
+    /// </summary>
+    /// <param name="pluginName">The selected Plugin name.</param>
+    /// <param name="dataPath">The resolved Data directory.</param>
+    /// <param name="gameRelease">The GameRelease whose overlay rules apply.</param>
+    /// <param name="loadOrderSnapshot">The one snapshot prepared for the complete selection.</param>
+    /// <returns>What this Plugin would contribute to a run.</returns>
+    /// <exception cref="UnresolvableMasterException">
+    ///     The Plugin declares a master the load-order snapshot cannot supply a master style for, which fails the plan
+    ///     rather than this Plugin.
+    /// </exception>
+    private PlannedPlugin PlanSelectedPlugin(
+        string pluginName,
+        string dataPath,
+        GameRelease gameRelease,
+        GameLoadOrderSnapshot loadOrderSnapshot)
+    {
+        // The same classification a run performs, so a plan and the run it predicts cannot disagree about skips.
+        if (GetSkippedPlugin(pluginName, dataPath, loadOrderSnapshot) is { } skippedPlugin)
+        {
+            return ToPlannedSkip(skippedPlugin);
+        }
+
+        IModDisposeGetter plugin;
+        try
+        {
+            plugin = TryCreateOverlay(
+                pluginName,
+                Path.Combine(dataPath, pluginName),
+                gameRelease,
+                loadOrderSnapshot.ReadParameters);
+        }
+        catch (PluginReadException ex)
+        {
+            // A Plugin-specific read failure is this Plugin's, exactly as it is during a run; the run-level master
+            // failure raised by the same call is not caught here and fails the whole plan.
+            return new PlannedPluginFailure(pluginName, new PluginReadDiagnostic(ex.Phase, ex.DiagnosticMessage));
+        }
+
+        // Nothing runs between opening and releasing the overlay, because opening it was the entire question. A
+        // disposal failure here is standalone and propagates, matching how a run treats one.
+        plugin.Dispose();
+        return new PlannedPluginIngestion(pluginName);
+    }
+
+    /// <summary>
+    ///     Restates a run's typed skip as the narrower planned skip, which cannot represent a zero-record Plugin.
+    /// </summary>
+    /// <param name="skippedPlugin">The skip classification shared with a real run.</param>
+    /// <returns>The planned skip carrying the same reason and resolved path.</returns>
+    /// <exception cref="ArgumentOutOfRangeException">
+    ///     The skip reason is one a plan cannot reach, which means the shared classification started producing a reason
+    ///     that needs record enumeration to know.
+    /// </exception>
+    private static PlannedPluginSkip ToPlannedSkip(SkippedPlugin skippedPlugin)
+    {
+        return skippedPlugin.Reason switch
+        {
+            SkippedPluginReason.NotPresentInLoadOrder => new PlannedPluginSkip(
+                skippedPlugin.PluginName,
+                PlannedSkipReason.NotPresentInLoadOrder),
+            SkippedPluginReason.PluginFileUnavailable => new PlannedPluginSkip(
+                skippedPlugin.PluginName,
+                PlannedSkipReason.PluginFileUnavailable,
+                skippedPlugin.ResolvedPluginPath),
+            _ => throw new ArgumentOutOfRangeException(
+                nameof(skippedPlugin),
+                skippedPlugin.Reason,
+                "A Processing Run plan cannot represent this skip reason.")
+        };
+    }
+
+    /// <summary>
     ///     Opens, extracts, and stores one Plugin whose load-order membership and file availability were already verified.
     /// </summary>
     /// <param name="pluginName">The selected Plugin name.</param>

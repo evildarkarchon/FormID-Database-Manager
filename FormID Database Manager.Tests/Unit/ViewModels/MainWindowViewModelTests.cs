@@ -328,6 +328,33 @@ public class MainWindowViewModelTests
         Assert.True(_viewModel.UpdateMode);
     }
 
+    /// <summary>
+    ///     Verifies the Dry Run toggle is settable and notifies, as the checkbox two-way bound to it needs.
+    /// </summary>
+    [Fact]
+    public void DryRun_RaisesPropertyChanged_WhenSet()
+    {
+        // Arrange
+        var propertyName = string.Empty;
+        _viewModel.PropertyChanged += (_, args) => propertyName = args.PropertyName;
+
+        // Act
+        _viewModel.DryRun = true;
+
+        // Assert
+        Assert.Equal(nameof(MainWindowViewModel.DryRun), propertyName);
+        Assert.True(_viewModel.DryRun);
+    }
+
+    /// <summary>
+    ///     Verifies a fresh ViewModel does not start in Dry Run, so pressing Process writes records by default.
+    /// </summary>
+    [Fact]
+    public void DryRun_NewViewModel_IsOff()
+    {
+        Assert.False(_viewModel.DryRun);
+    }
+
     [Fact]
     public void Properties_DoNotRaisePropertyChanged_WhenSetToSameValue()
     {

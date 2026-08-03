@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using FormID_Database_Manager.Services;
@@ -702,6 +703,98 @@ public sealed class FormIdRecordStoreTests : IDisposable
         {
             Assert.True(byteCounts[i] >= byteCounts[i - 1]);
         }
+    }
+
+    /// <summary>
+    ///     Verifies the exact byte counts an import reports for a file of known size, pinning the stream-position
+    ///     arithmetic every reported percentage is derived from.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         Issue #68. The monotonicity assertion above bounds these counts but does not pin them, and a caller
+    ///         renders them as a percentage: an off-by-a-buffer error would keep every count in range and in order
+    ///         while showing the user the wrong number. Fixed-width rows are what make the expected values exact —
+    ///         with 2,048 rows of 32 bytes the file is exactly 65,536 bytes, so the two interval reports land on
+    ///         ratios that are exact in binary and comparable by value rather than by tolerance.
+    ///     </para>
+    ///     <para>
+    ///         What the Store reports is how far the <c>StreamReader</c> has pulled ahead of the row it just returned,
+    ///         not where that row ends, so these counts are a function of the reader's 1 KiB read size as well as the
+    ///         file's size. That is precisely why they are worth pinning: the counts are not derivable from the row
+    ///         number by anyone reading the caller.
+    ///     </para>
+    /// </remarks>
+    [Fact]
+    public async Task ImportFormIdTextFileAsync_FileOfKnownSize_ReportsTheExactReaderPositionAtEachInterval()
+    {
+        const int recordCount = 2048;
+        const int rowByteLength = 32;
+        const long totalBytes = recordCount * rowByteLength;
+        var testFile = await WriteFixedWidthFormIdTextFileAsync("known_size.txt", recordCount, rowByteLength);
+        var progressReports = new List<FormIdStoreProgress>();
+        var progress = new SynchronousProgress<FormIdStoreProgress>(progressReports.Add);
+        await using var store = await OpenStoreAsync();
+
+        var result = await store.ImportFormIdTextFileAsync(
+            testFile,
+            UpdateMode.Append,
+            progress,
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(new FormIdTextFileImportResult(2, recordCount), result);
+        Assert.Equal(totalBytes, new FileInfo(testFile).Length);
+        Assert.All(progressReports, report => Assert.Equal(totalBytes, report.TotalBytes));
+        // Half the file by the thousandth record, and all but one 1 KiB read by the two-thousandth.
+        Assert.Equal(32_768L, ReportedBytesAt(progressReports, 1_000));
+        Assert.Equal(64_512L, ReportedBytesAt(progressReports, 2_000));
+    }
+
+    /// <summary>
+    ///     Returns the reader position the Store reported alongside one record count.
+    /// </summary>
+    /// <param name="progressReports">Every report the import made, in order.</param>
+    /// <param name="recordCount">The counted-record milestone whose report is wanted.</param>
+    /// <returns>The bytes read at that milestone.</returns>
+    private static long ReportedBytesAt(IReadOnlyList<FormIdStoreProgress> progressReports, long recordCount)
+    {
+        return Assert.Single(progressReports, report => report.RecordCount == recordCount).BytesRead;
+    }
+
+    /// <summary>
+    ///     Writes a FormID text file of fixed-width rows, split evenly between two Plugins.
+    /// </summary>
+    /// <param name="fileName">The file name within the isolated directory.</param>
+    /// <param name="recordCount">The number of rows to write.</param>
+    /// <param name="rowByteLength">The exact byte length of every row, including its CRLF terminator.</param>
+    /// <returns>The absolute path to the written file.</returns>
+    /// <remarks>
+    ///     The rows carry an explicit CRLF rather than going through <c>File.WriteAllLines</c>, so the file is exactly
+    ///     <paramref name="recordCount" /> × <paramref name="rowByteLength" /> bytes on any platform rather than on
+    ///     whichever one supplies <see cref="Environment.NewLine" />. Every character is ASCII, so one character is
+    ///     one UTF-8 byte, and the encoding is written without a byte-order mark for the same reason.
+    /// </remarks>
+    private async Task<string> WriteFixedWidthFormIdTextFileAsync(
+        string fileName,
+        int recordCount,
+        int rowByteLength)
+    {
+        var contents = new StringBuilder(recordCount * rowByteLength);
+        for (var index = 0; index < recordCount; index++)
+        {
+            var pluginName = index < recordCount / 2 ? "PluginA.esp" : "PluginB.esp";
+            var row = $"{pluginName}|{index:X8}|Entry{index:D4}";
+            Assert.Equal(rowByteLength - 2, row.Length);
+            contents.Append(row).Append("\r\n");
+        }
+
+        var path = Path.Combine(_testFilesDirectory, fileName);
+        await File.WriteAllTextAsync(
+            path,
+            contents.ToString(),
+            new UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
+            TestContext.Current.CancellationToken);
+
+        return path;
     }
 
     /// <summary>

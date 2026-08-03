@@ -62,9 +62,10 @@ public class LoadTests : IDisposable
             GameRelease.SkyrimSE,
             plugins,
             UpdateMode.Append);
-        var progress = new Progress<ProcessingRunEvent>(update =>
+        var progress = new Progress<ProcessingRunProgress>(update =>
         {
-            _output.WriteLine($"{update.Value:F1}% - {update.Message}");
+            var rendered = ProcessingRunPresentation.Render(update);
+            _output.WriteLine($"{rendered.Value:F1}% - {rendered.Status}");
         });
 
         Assert.All(plugins, p => Assert.True(File.Exists(Path.Combine(dataPath, p))));

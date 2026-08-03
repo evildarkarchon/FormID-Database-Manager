@@ -27,6 +27,68 @@ internal static class ProcessingRunPresentation
     private const int OutcomeDetailLimit = 5;
 
     /// <summary>
+    ///     Renders one transient Processing Run progress report into the status its caller should show.
+    /// </summary>
+    /// <param name="progress">What the run is doing right now.</param>
+    /// <returns>The status text, and the percentage that goes with it when the report implies a new one.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="progress" /> is <see langword="null" />.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">The report is not one this module knows how to render.</exception>
+    internal static RenderedRunProgress Render(ProcessingRunProgress progress)
+    {
+        ArgumentNullException.ThrowIfNull(progress);
+
+        return progress switch
+        {
+            PreparingLoadOrder => new RenderedRunProgress("Initializing plugin ingestion...", 0),
+            IngestingPlugin ingesting => new RenderedRunProgress(
+                $"Ingesting plugin {ingesting.Position} of {ingesting.TotalPluginCount}: {ingesting.PluginName}",
+                (double)ingesting.Position / ingesting.TotalPluginCount * 100),
+            ImportingFormIdText importing => RenderFormIdTextImport(importing),
+            ImportedFormIdText imported => new RenderedRunProgress(
+                $"Completed processing {imported.ImportResult.PluginCount} plugins " +
+                $"({imported.ImportResult.RecordCount:N0} total records)",
+                100),
+            ProcessingRunFailure failure => new RenderedRunProgress(
+                $"Error during processing: {failure.FailureMessage}",
+                null),
+            _ => throw new ArgumentOutOfRangeException(
+                nameof(progress),
+                progress,
+                "Unsupported Processing Run progress.")
+        };
+    }
+
+    /// <summary>
+    ///     Renders one in-flight FormID text import report from the counters it carries.
+    /// </summary>
+    /// <param name="importing">The import counters and the Plugin the run chose to name, if any.</param>
+    /// <returns>The status text and its percentage.</returns>
+    private static RenderedRunProgress RenderFormIdTextImport(ImportingFormIdText importing)
+    {
+        // A named Plugin carries no percentage: reaching a Plugin says nothing new about how far through the file the
+        // import is, so the percentage already on screen is the honest one to keep showing.
+        if (importing.MostRecentPlugin is { } pluginName)
+        {
+            return new RenderedRunProgress($"Processing plugin: {pluginName}", null);
+        }
+
+        // Nothing counted and no Plugin named is the report that opens an import, by the contract on the case itself.
+        // This is the only place that decision is made; the run reports the counters and leaves the reading here.
+        if (importing.RecordCount == 0)
+        {
+            return new RenderedRunProgress("Starting processing...", 0);
+        }
+
+        // A file the Store measured as empty leaves nothing to divide by, so it reads as no progress at all.
+        var progressPercent = importing.TotalBytes > 0
+            ? (double)importing.BytesRead / importing.TotalBytes * 100
+            : 0;
+        return new RenderedRunProgress(
+            $"Processing: {progressPercent:F1}% ({importing.RecordCount:N0} records)",
+            progressPercent);
+    }
+
+    /// <summary>
     ///     Renders one Processing Run outcome into the report its caller should show.
     /// </summary>
     /// <param name="outcome">How the run ended.</param>
@@ -140,11 +202,8 @@ internal static class ProcessingRunPresentation
     {
         var plannedWork = plan switch
         {
-            PluginRunPlan pluginPlan => pluginPlan.PluginNames
-                .Select(static pluginName => $"Would process {pluginName}")
-                .ToImmutableArray(),
-            FormIdTextRunPlan textPlan =>
-                ImmutableArray.Create($"Would process FormID list file: {textPlan.FormIdListPath}"),
+            PluginRunPlan pluginPlan => FormatPluginPlan(pluginPlan.Plan),
+            FormIdTextRunPlan textPlan => ImmutableArray.Create(FormatPlannedFormIdTextFile(textPlan)),
             _ => throw new ArgumentOutOfRangeException(nameof(plan), plan, "Unsupported Processing Run plan.")
         };
 
@@ -153,6 +212,103 @@ internal static class ProcessingRunPresentation
             ImmutableArray<string>.Empty,
             ImmutableArray<string>.Empty,
             plannedWork);
+    }
+
+    /// <summary>
+    ///     Formats a selected-Plugin plan as one message: a summary, then one line per selected Plugin in selection
+    ///     order.
+    /// </summary>
+    /// <param name="plan">What Plugin Ingestion would do to each selected Plugin.</param>
+    /// <returns>The single planned-work message, or nothing at all when the plan covers no Plugin.</returns>
+    /// <remarks>
+    ///     One message rather than one per Plugin because the message lists are bounded and evict the oldest entry, so
+    ///     a plan longer than that bound would silently lose its head — and the head is where the summary is. The
+    ///     warning and failure reports of a completed run join their details for the same reason.
+    /// </remarks>
+    private static ImmutableArray<string> FormatPluginPlan(PluginIngestionPlan plan)
+    {
+        if (plan.Plugins.IsEmpty)
+        {
+            return ImmutableArray<string>.Empty;
+        }
+
+        var lines = new List<string> { FormatPlanSummary(plan) };
+        lines.AddRange(plan.Plugins.Select(FormatPlannedPlugin));
+
+        return [string.Join(Environment.NewLine, lines)];
+    }
+
+    /// <summary>
+    ///     Formats the counts a selected-Plugin plan comes to, mirroring a completed run's own count line.
+    /// </summary>
+    /// <param name="plan">What Plugin Ingestion would do to each selected Plugin.</param>
+    /// <returns>The summary line shown above the per-Plugin detail.</returns>
+    private static string FormatPlanSummary(PluginIngestionPlan plan)
+    {
+        var wouldIngest = plan.Plugins.OfType<PlannedPluginIngestion>().Count();
+        var wouldSkip = plan.Plugins.OfType<PlannedPluginSkip>().Count();
+        var wouldFail = plan.Plugins.OfType<PlannedPluginFailure>().Count();
+
+        return $"Dry run: {wouldIngest} would be ingested, {wouldSkip} would be skipped, " +
+               $"and {wouldFail} would fail.";
+    }
+
+    /// <summary>
+    ///     Formats what one selected Plugin would contribute to a run.
+    /// </summary>
+    /// <param name="planned">The planned outcome for one selected Plugin.</param>
+    /// <returns>User-facing detail naming the Plugin and what would happen to it.</returns>
+    /// <exception cref="ArgumentOutOfRangeException">The planned outcome is unsupported.</exception>
+    private static string FormatPlannedPlugin(PlannedPlugin planned)
+    {
+        return planned switch
+        {
+            PlannedPluginIngestion ingestion => $"Would ingest {ingestion.PluginName}",
+            PlannedPluginSkip skip => $"Would skip {skip.PluginName}: {FormatPlannedSkipReason(skip)}",
+            // Only the opening phase is reachable from a plan, which opens overlays and enumerates no records, so the
+            // wording names opening rather than switching on a phase that cannot vary here.
+            PlannedPluginFailure failure =>
+                $"Would fail to open {failure.PluginName}: {failure.Diagnostic.Message}",
+            _ => throw new ArgumentOutOfRangeException(
+                nameof(planned),
+                planned,
+                "Unsupported planned Plugin outcome.")
+        };
+    }
+
+    /// <summary>
+    ///     Formats one predictable skip reason for a planned Plugin.
+    /// </summary>
+    /// <param name="skip">The planned skip facts.</param>
+    /// <returns>The reason clause shown after the Plugin name.</returns>
+    /// <exception cref="ArgumentOutOfRangeException">The planned skip reason is unsupported.</exception>
+    private static string FormatPlannedSkipReason(PlannedPluginSkip skip)
+    {
+        return skip.Reason switch
+        {
+            PlannedSkipReason.NotPresentInLoadOrder => "not present in the load order",
+            PlannedSkipReason.PluginFileUnavailable => $"could not find plugin file: {skip.ResolvedPluginPath}",
+            _ => throw new ArgumentOutOfRangeException(
+                nameof(skip),
+                skip.Reason,
+                "Unsupported planned skip reason.")
+        };
+    }
+
+    /// <summary>
+    ///     Formats the presence and size of the file a FormID text-file dry run would import.
+    /// </summary>
+    /// <param name="plan">The planned text-file work.</param>
+    /// <returns>User-facing detail naming the file and either its size or its absence.</returns>
+    /// <remarks>
+    ///     The line reports only what the plan looked up. It deliberately says nothing about rows or Plugins, because
+    ///     the plan did not read the file to find out.
+    /// </remarks>
+    private static string FormatPlannedFormIdTextFile(FormIdTextRunPlan plan)
+    {
+        return plan.SizeInBytes is { } sizeInBytes
+            ? $"Would import FormID list file: {plan.FormIdListPath} ({sizeInBytes:N0} bytes)"
+            : $"Would import FormID list file: {plan.FormIdListPath} (file not found)";
     }
 
     /// <summary>
@@ -272,6 +428,20 @@ internal static class ProcessingRunPresentation
         return $"{prefix}: {ingestedPlugins} ingested, {skippedPlugins} skipped, and {failedPlugins} failed Plugins.";
     }
 }
+
+/// <summary>
+///     One transient Processing Run status, rendered but not yet written anywhere.
+/// </summary>
+/// <param name="Status">The status text for the run's progress channel.</param>
+/// <param name="Value">
+///     The progress percentage, or <see langword="null" /> to keep the percentage already on screen.
+/// </param>
+/// <remarks>
+///     This is deliberately not an <see cref="ActivityProjection" />, which a terminal report does return: that type
+///     carries a non-nullable percentage and so cannot express "this report changes the words but not the bar", which
+///     is exactly what a Plugin-named text-import report does.
+/// </remarks>
+internal readonly record struct RenderedRunProgress(string Status, double? Value);
 
 /// <summary>
 ///     Everything one Processing Run outcome has to say to the user, rendered but not yet written anywhere.

@@ -52,6 +52,15 @@ public partial class MainWindowViewModel : ObservableObject
     [ObservableProperty] private bool _updateMode;
 
     /// <summary>
+    /// Whether the next Processing Run should report what it would do instead of doing it.
+    /// </summary>
+    /// <remarks>
+    /// Editable by the user like <see cref="UpdateMode" /> rather than projected like the Game Context values: it is
+    /// an input to the next run, not a fact the User Workflow publishes about the current one.
+    /// </remarks>
+    [ObservableProperty] private bool _dryRun;
+
+    /// <summary>
     /// Initializes the ViewModel around the dispatcher that owns every projection it publishes.
     /// </summary>
     /// <param name="dispatcher">

@@ -30,6 +30,35 @@ internal interface IPluginIngestion
         IFormIdRecordStoreSession recordStore,
         IProgress<PluginIngestionProgress>? progress = null,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    ///     Plans the captured selection: resolves the Data path, prepares the load order, and opens every selected
+    ///     Plugin's overlay without enumerating a single record.
+    /// </summary>
+    /// <param name="request">The immutable selected-Plugin request.</param>
+    /// <param name="cancellationToken">Stops planning without returning a plan.</param>
+    /// <returns>One planned outcome for every selected Plugin, in selection order.</returns>
+    /// <remarks>
+    ///     <para>
+    ///         Planning takes no Store session and opens no database, which is the whole point: it answers what a run
+    ///         would do without doing any of it. It reports no progress either, because the plan is the dry run's
+    ///         entire output and is terminal — the run's transient channel is handed back as the run ends.
+    ///     </para>
+    ///     <para>
+    ///         Opening overlays is what makes a plan substantive rather than an echo of the selection, and it is also
+    ///         what reaches the ADR-0006 condition: a selected Plugin declaring a master the Data directory cannot
+    ///         supply fails the whole plan exactly as it fails a whole run, so the user sees it before committing.
+    ///     </para>
+    /// </remarks>
+    /// <exception cref="ArgumentNullException"><paramref name="request" /> is <see langword="null" />.</exception>
+    /// <exception cref="OperationCanceledException"><paramref name="cancellationToken" /> requests cancellation.</exception>
+    /// <exception cref="UnresolvableMasterException">
+    ///     A selected Plugin declares a master the Data directory cannot supply, which fails the whole plan rather than
+    ///     one Plugin (ADR-0006).
+    /// </exception>
+    Task<PluginIngestionPlan> PlanAsync(
+        SelectedPluginIngestionRequest request,
+        CancellationToken cancellationToken = default);
 }
 
 /// <summary>
@@ -474,6 +503,182 @@ internal sealed record FailedPlugin : PluginIngestionOutcome
 
     /// <summary>
     ///     Internal Plugin-read diagnostics kept separate from the stable reason.
+    /// </summary>
+    public PluginReadDiagnostic Diagnostic { get; }
+}
+
+/// <summary>
+///     What Plugin Ingestion would do to the complete captured selection, in selection order.
+/// </summary>
+/// <remarks>
+///     The plan mirrors <see cref="PluginIngestionReport" /> in shape and order but not in authority: a report states
+///     what happened, while a plan states what would happen and is therefore limited to what can be known without
+///     enumerating a single record.
+/// </remarks>
+internal sealed record PluginIngestionPlan
+{
+    /// <summary>
+    ///     Creates a plan from one planned outcome per selected Plugin.
+    /// </summary>
+    /// <param name="plugins">The planned outcomes in selected-Plugin order.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="plugins" /> is <see langword="null" />.</exception>
+    /// <exception cref="ArgumentException">The planned outcomes contain a null entry.</exception>
+    public PluginIngestionPlan(IEnumerable<PlannedPlugin> plugins)
+    {
+        ArgumentNullException.ThrowIfNull(plugins);
+
+        var snapshot = ImmutableArray.CreateRange(plugins);
+        if (snapshot.Any(static planned => planned is null))
+        {
+            throw new ArgumentException("A Plugin Ingestion plan must not contain null entries.", nameof(plugins));
+        }
+
+        Plugins = snapshot;
+    }
+
+    /// <summary>
+    ///     The immutable planned outcomes in selected-Plugin order.
+    /// </summary>
+    public ImmutableArray<PlannedPlugin> Plugins { get; }
+}
+
+/// <summary>
+///     What one selected Plugin would contribute to a run, at its position in the captured selection.
+/// </summary>
+internal abstract record PlannedPlugin
+{
+    /// <summary>
+    ///     Creates a planned outcome for one selected Plugin name.
+    /// </summary>
+    /// <param name="pluginName">The selected Plugin name.</param>
+    /// <exception cref="ArgumentException"><paramref name="pluginName" /> is blank.</exception>
+    private protected PlannedPlugin(string pluginName)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(pluginName);
+        PluginName = pluginName;
+    }
+
+    /// <summary>
+    ///     The selected Plugin name this planned outcome is about.
+    /// </summary>
+    public string PluginName { get; }
+}
+
+/// <summary>
+///     A selected Plugin a run would ingest: it is in the load order, its file is present, and its overlay opened.
+/// </summary>
+/// <remarks>
+///     Would-ingest is as far as a plan can honestly go. Whether the Plugin actually yields FormID records is only
+///     knowable by enumerating them, which is precisely the work a dry run does not do, so a run may still skip this
+///     Plugin for having none.
+/// </remarks>
+internal sealed record PlannedPluginIngestion : PlannedPlugin
+{
+    /// <inheritdoc cref="PlannedPlugin(string)" />
+    public PlannedPluginIngestion(string pluginName)
+        : base(pluginName)
+    {
+    }
+}
+
+/// <summary>
+///     The skip reasons a plan can predict without enumerating records.
+/// </summary>
+/// <remarks>
+///     Deliberately narrower than <see cref="SkippedPluginReason" />: the run's third reason, zero FormID records, is
+///     unpredictable without doing the enumeration a dry run refuses to do, so a plan cannot honestly represent it and
+///     has no case for it at all.
+/// </remarks>
+internal enum PlannedSkipReason
+{
+    /// <summary>
+    ///     The selected Plugin is absent from the prepared load-order snapshot.
+    /// </summary>
+    NotPresentInLoadOrder,
+
+    /// <summary>
+    ///     The selected Plugin's file is not present in the resolved Data directory.
+    /// </summary>
+    PluginFileUnavailable
+}
+
+/// <summary>
+///     A selected Plugin a run would skip, for one of the two reasons a plan can predict.
+/// </summary>
+internal sealed record PlannedPluginSkip : PlannedPlugin
+{
+    /// <summary>
+    ///     Creates a planned skip, retaining the resolved path when the Plugin file is the thing that is missing.
+    /// </summary>
+    /// <param name="pluginName">The selected Plugin name.</param>
+    /// <param name="reason">The predictable reason the run would skip it.</param>
+    /// <param name="resolvedPluginPath">
+    ///     The resolved missing Plugin path, or <see langword="null" /> for the load-order reason.
+    /// </param>
+    /// <exception cref="ArgumentException">
+    ///     <paramref name="pluginName" /> is blank, the unavailable-file reason lacks a resolved path, or the
+    ///     load-order reason supplies one.
+    /// </exception>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="reason" /> is not defined.</exception>
+    public PlannedPluginSkip(string pluginName, PlannedSkipReason reason, string? resolvedPluginPath = null)
+        : base(pluginName)
+    {
+        if (!Enum.IsDefined(reason))
+        {
+            throw new ArgumentOutOfRangeException(nameof(reason));
+        }
+
+        if (reason == PlannedSkipReason.PluginFileUnavailable)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(resolvedPluginPath);
+        }
+        else if (resolvedPluginPath is not null)
+        {
+            throw new ArgumentException(
+                "A resolved Plugin path is only valid for an unavailable Plugin file.",
+                nameof(resolvedPluginPath));
+        }
+
+        Reason = reason;
+        ResolvedPluginPath = resolvedPluginPath;
+    }
+
+    /// <summary>
+    ///     The predictable reason the run would skip this Plugin.
+    /// </summary>
+    public PlannedSkipReason Reason { get; }
+
+    /// <summary>
+    ///     The resolved missing Plugin path, or <see langword="null" /> for the load-order reason.
+    /// </summary>
+    public string? ResolvedPluginPath { get; }
+}
+
+/// <summary>
+///     A selected Plugin whose overlay could not be opened, which a run would report as a Failed Plugin.
+/// </summary>
+/// <remarks>
+///     This is not a skip and carries no <see cref="PlannedSkipReason" />. A plan opens overlays, so it observes this
+///     failure directly rather than predicting it, and reporting the Plugin as one that would be ingested would be a
+///     claim the plan has already disproved.
+/// </remarks>
+internal sealed record PlannedPluginFailure : PlannedPlugin
+{
+    /// <summary>
+    ///     Creates a planned failure from the Plugin-read diagnostics observed while opening the overlay.
+    /// </summary>
+    /// <param name="pluginName">The selected Plugin name.</param>
+    /// <param name="diagnostic">The internal phase and underlying failure message.</param>
+    /// <exception cref="ArgumentException"><paramref name="pluginName" /> is blank.</exception>
+    /// <exception cref="ArgumentNullException"><paramref name="diagnostic" /> is <see langword="null" />.</exception>
+    public PlannedPluginFailure(string pluginName, PluginReadDiagnostic diagnostic)
+        : base(pluginName)
+    {
+        Diagnostic = diagnostic ?? throw new ArgumentNullException(nameof(diagnostic));
+    }
+
+    /// <summary>
+    ///     Internal Plugin-read diagnostics for the overlay that could not be opened.
     /// </summary>
     public PluginReadDiagnostic Diagnostic { get; }
 }

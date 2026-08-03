@@ -51,8 +51,8 @@ public sealed class ProcessingRunIntegrationTests : IDisposable
             TestContext.Current.CancellationToken);
 
         using var executor = new ProcessingRunExecutor();
-        var events = new List<ProcessingRunEvent>();
-        var progress = new SynchronousProgress<ProcessingRunEvent>(events.Add);
+        var reports = new List<ProcessingRunProgress>();
+        var progress = new SynchronousProgress<ProcessingRunProgress>(reports.Add);
         var request = new FormIdTextProcessingRunRequest(
             formIdTextFilePath,
             databasePath,
@@ -102,10 +102,9 @@ public sealed class ProcessingRunIntegrationTests : IDisposable
                     .ThenBy(record => record.FormId, StringComparer.Ordinal));
         }
 
-        Assert.Contains(events, runEvent =>
-            runEvent.Kind == ProcessingRunEventKind.Status &&
-            runEvent.Message.Contains("Completed processing 2 plugins", StringComparison.Ordinal) &&
-            runEvent.Value == 100);
+        Assert.Contains(
+            reports,
+            reported => reported is ImportedFormIdText { ImportResult: { PluginCount: 2, RecordCount: 3 } });
 
         // The run's own terminal fact is the returned outcome, carrying the real Store's confirmed counts.
         Assert.Equal(
@@ -136,8 +135,8 @@ public sealed class ProcessingRunIntegrationTests : IDisposable
         using var executor = new ProcessingRunExecutor(
             pluginIngestion,
             new FormIdRecordStoreSessionOpener());
-        var events = new List<ProcessingRunEvent>();
-        var progress = new SynchronousProgress<ProcessingRunEvent>(events.Add);
+        var reports = new List<ProcessingRunProgress>();
+        var progress = new SynchronousProgress<ProcessingRunProgress>(reports.Add);
 
         var outcome = await executor.ExecuteAsync(
             new PluginProcessingRunRequest(
@@ -176,7 +175,10 @@ public sealed class ProcessingRunIntegrationTests : IDisposable
         Assert.Equal(pluginName, ingested.PluginName);
         Assert.Equal(1, ingested.FormIdCount);
         Assert.Null(ingested.Warning);
-        Assert.All(events, runEvent => Assert.Equal(ProcessingRunEventKind.Status, runEvent.Kind));
+        // A run that succeeded reported only what it was doing: no failure, and no completed text import either.
+        Assert.All(
+            reports,
+            reported => Assert.True(reported is PreparingLoadOrder or IngestingPlugin));
     }
 
     /// <summary>

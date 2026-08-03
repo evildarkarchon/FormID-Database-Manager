@@ -255,12 +255,18 @@
                     IsChecked="{Binding UpdateMode, Mode=TwoWay}"
                     TabIndex="12" />
                 <CheckBox
+                    AutomationProperties.AutomationId="DryRunCheckBox"
+                    AutomationProperties.HelpText="Report what processing would do without opening or writing the database."
+                    Content="Dry Run (reports without writing)"
+                    IsChecked="{Binding DryRun, Mode=TwoWay}"
+                    TabIndex="13" />
+                <CheckBox
                     AutomationProperties.AutomationId="AdvancedModeCheckBox"
                     AutomationProperties.HelpText="Include base game and DLC plugins in the plugin list."
                     Click="AdvancedModeCheckBox_Click"
                     Content="Show Base Game/DLC Files"
                     IsChecked="{Binding AdvancedMode, Mode=OneWay}"
-                    TabIndex="13" />
+                    TabIndex="14" />
             </StackPanel>
 
             <Grid
@@ -303,7 +309,7 @@
                     Click="ProcessFormIds_Click"
                     Content="{Binding ProcessButtonText, Mode=OneWay}"
                     Style="{StaticResource PrimaryWorkflowButtonStyle}"
-                    TabIndex="14" />
+                    TabIndex="15" />
             </Grid>
 
             <StackPanel Grid.Row="5" Margin="0,0,0,4" Spacing="8">

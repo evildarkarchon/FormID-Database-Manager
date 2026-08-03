@@ -164,6 +164,7 @@ public class WinUiPlatformServiceSourceTests
         Assert.Contains("AutomationProperties.AutomationId=\"PluginList\"", xaml, StringComparison.Ordinal);
         Assert.Contains("AutomationProperties.AutomationId=\"AdvancedModeCheckBox\"", xaml, StringComparison.Ordinal);
         Assert.Contains("AutomationProperties.AutomationId=\"UpdateModeCheckBox\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("AutomationProperties.AutomationId=\"DryRunCheckBox\"", xaml, StringComparison.Ordinal);
         Assert.Contains("AutomationProperties.AutomationId=\"SelectAllButton\"", xaml, StringComparison.Ordinal);
         Assert.Contains("AutomationProperties.AutomationId=\"SelectNoneButton\"", xaml, StringComparison.Ordinal);
         Assert.Contains("AutomationProperties.AutomationId=\"ProcessFormIdsButton\"", xaml, StringComparison.Ordinal);
@@ -249,6 +250,9 @@ public class WinUiPlatformServiceSourceTests
         Assert.Contains("Text=\"{Binding PluginFilter, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}\"", xaml,
             StringComparison.Ordinal);
         Assert.Contains("IsChecked=\"{Binding UpdateMode, Mode=TwoWay}\"", xaml, StringComparison.Ordinal);
+        // Two-way like Update Mode, and for the same reason: both are inputs the user sets for the next run rather
+        // than facts the User Workflow projects about the current one (issue #67).
+        Assert.Contains("IsChecked=\"{Binding DryRun, Mode=TwoWay}\"", xaml, StringComparison.Ordinal);
         Assert.Contains("ItemsSource=\"{Binding FilteredPlugins}\"", xaml, StringComparison.Ordinal);
         Assert.Contains("Content=\"{Binding Name}\"", xaml, StringComparison.Ordinal);
         Assert.Contains("IsChecked=\"{Binding IsSelected, Mode=OneWay}\"", xaml, StringComparison.Ordinal);

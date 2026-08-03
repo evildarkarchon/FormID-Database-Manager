@@ -1066,6 +1066,88 @@ public class UserWorkflowTests
         Assert.Equal(UpdateMode.ReplacePluginRecords, run.UpdateMode);
     }
 
+    /// <summary>
+    ///     Verifies that the Dry Run toggle reaches the run request, for both request kinds.
+    /// </summary>
+    /// <remarks>
+    ///     Issue #67. The toggle is what makes a dry run reachable at all: without it the plan a run can produce is
+    ///     something no user can ask for.
+    /// </remarks>
+    [Fact]
+    public async Task ProcessFormIdsAsync_DryRunOn_CreatesADryRunRequest()
+    {
+        var sut = CreateSut();
+        await ConfigureValidPluginProcessingRunAsync(sut);
+        _viewModel.DryRun = true;
+
+        await sut.ProcessFormIdsAsync();
+
+        Assert.True(Assert.IsType<PluginProcessingRunRequest>(Assert.Single(_processingRuns)).DryRun);
+    }
+
+    [Fact]
+    public async Task ProcessFormIdsAsync_DryRunOnWithAFormIdTextFile_CreatesADryRunRequest()
+    {
+        var sut = CreateSut();
+        await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
+        _viewModel.FormIdListPath = @"C:\Imports\formids.txt";
+        _viewModel.DryRun = true;
+
+        await sut.ProcessFormIdsAsync();
+
+        Assert.True(Assert.IsType<FormIdTextProcessingRunRequest>(Assert.Single(_processingRuns)).DryRun);
+    }
+
+    /// <summary>
+    ///     Verifies that a dry run leaves an empty database path empty.
+    /// </summary>
+    /// <remarks>
+    ///     A dry run opens no FormID Record Store, so defaulting a path for it would leave one the user never chose in
+    ///     the box after a run that deliberately wrote nothing.
+    /// </remarks>
+    [Fact]
+    public async Task ProcessFormIdsAsync_DryRunWithEmptyDatabasePath_DoesNotChooseADefaultPath()
+    {
+        var sut = CreateSut();
+        var confirmed = await ConfirmPluginListAsync(sut, ["User.esp"]);
+        sut.SetPluginSelection(confirmed.MembershipVersion, "User.esp", true);
+        _viewModel.DatabasePath = string.Empty;
+        _viewModel.DryRun = true;
+
+        await sut.ProcessFormIdsAsync();
+
+        var run = Assert.IsType<PluginProcessingRunRequest>(Assert.Single(_processingRuns));
+        Assert.Empty(_viewModel.DatabasePath);
+        Assert.Empty(run.DatabasePath);
+    }
+
+    /// <summary>
+    ///     Verifies the workflow writes a dry run's plan to the information messages the user reads.
+    /// </summary>
+    [Fact]
+    public async Task ProcessFormIdsAsync_DryRunOutcome_AddsTheRenderedPlanToTheInformationMessages()
+    {
+        var sut = CreateSut();
+        await ConfigureValidPluginProcessingRunAsync(sut);
+        _viewModel.DryRun = true;
+        _processingRunExecutor.Outcome = new PlannedRunOutcome(new PluginRunPlan(new PluginIngestionPlan([
+            new PlannedPluginIngestion("User.esp"),
+            new PlannedPluginSkip("Absent.esp", PlannedSkipReason.NotPresentInLoadOrder)
+        ])));
+
+        await sut.ProcessFormIdsAsync();
+
+        // The last message rather than the only one: confirming a Plugin List already reported what it loaded, and a
+        // run does not clear the information list the way it clears warnings and errors.
+        Assert.Equal(
+            "Dry run: 1 would be ingested, 1 would be skipped, and 0 would fail." + Environment.NewLine +
+            "Would ingest User.esp" + Environment.NewLine +
+            "Would skip Absent.esp: not present in the load order",
+            _viewModel.InformationMessages[^1]);
+        Assert.Empty(_viewModel.WarningMessages);
+        Assert.Empty(_viewModel.ErrorMessages);
+    }
+
     [Fact]
     public async Task ProcessFormIdsAsync_StartsNewRun_ClearsStaleWarnings()
     {
@@ -1145,9 +1227,11 @@ public class UserWorkflowTests
         var failure = new UnresolvableMasterException("User.esp", "Starfield.esm");
         // The real executor reports this status for any terminal failure before rethrowing, so it is reproduced here:
         // what the assertion needs to show is that it stays out of the error list rather than doubling the message.
-        _processingRunExecutor.EventsToReport.Add(
-            ProcessingRunEvent.Status($"Error during processing: {failure.Message}"));
+        _processingRunExecutor.ProgressToReport.Add(
+            new ProcessingRunFailure(failure.Message));
         _processingRunExecutor.ExecuteFailure = failure;
+        // Recorded after the setup that confirmed the Plugin List, so the sequence below is the run's alone.
+        var projectedStatuses = RecordProjectedStatuses();
 
         await sut.ProcessFormIdsAsync();
 
@@ -1156,6 +1240,57 @@ public class UserWorkflowTests
         Assert.False(_viewModel.IsProgressVisible);
         // Cleared by the workflow's own finally, so the prefixed status is transient and never the lasting report.
         Assert.Equal(string.Empty, _viewModel.ProgressStatus);
+        // The complete sequence rather than a containment check: the prefixed status appearing once on the transient
+        // channel and nowhere else is the whole distinction this test draws.
+        Assert.Equal(
+            ["Initializing...", $"Error during processing: {failure.Message}", string.Empty],
+            projectedStatuses);
+    }
+
+    /// <summary>
+    ///     Verifies where each part of a rendered run report lands when one run produced both: the warning message in
+    ///     the warning list, the failure message in the error list, and the completion status only on the transient
+    ///     progress channel.
+    /// </summary>
+    /// <remarks>
+    ///     The separate warned-run and failed-run tests above cannot show this, because each has only one part to
+    ///     place. Routing is the workflow's own responsibility — the wording of all three parts is pinned by
+    ///     <see cref="ProcessingRunPresentationTests" /> — so what is asserted here is which list each part reached,
+    ///     and that the completion status reached none of them.
+    /// </remarks>
+    [Fact]
+    public async Task ProcessFormIdsAsync_RunOutcomeWithWarningsAndFailures_RoutesEachRenderedPartToItsOwnList()
+    {
+        var sut = CreateSut();
+        await ConfigureValidPluginProcessingRunAsync(sut);
+        _processingRunExecutor.Outcome = CreatePluginRunOutcome(
+            new IngestedPlugin("User.esp", 1, new ProcessingWarning(1, ["Recoverable issue"])),
+            new FailedPlugin(
+                "Bad.esp",
+                new PluginReadDiagnostic(PluginReadPhase.OpeningPlugin, "Invalid plugin header.")));
+        var projectedStatuses = RecordProjectedStatuses();
+
+        await sut.ProcessFormIdsAsync();
+
+        Assert.Equal(
+            [
+                "1 processing warning." + Environment.NewLine +
+                "User.esp: 1 recoverable record issue. Recoverable issue"
+            ],
+            _viewModel.WarningMessages);
+        Assert.Equal(
+            [
+                "1 failed plugin." + Environment.NewLine +
+                "Bad.esp: Error opening Bad.esp: Invalid plugin header."
+            ],
+            _viewModel.ErrorMessages);
+        Assert.Equal(
+            [
+                "Initializing...",
+                "Processing completed with failures: 1 ingested, 0 skipped, and 1 failed Plugins.",
+                string.Empty
+            ],
+            projectedStatuses);
     }
 
     [Fact]
@@ -1180,12 +1315,12 @@ public class UserWorkflowTests
     {
         var sut = CreateSut();
         await ConfigureValidPluginProcessingRunAsync(sut);
-        _processingRunExecutor.EventsToReport.Add(ProcessingRunEvent.Status("Processing User.esp", 40));
+        _processingRunExecutor.ProgressToReport.Add(new IngestingPlugin("User.esp", 2, 5));
         var statusDuringCancellation = string.Empty;
         var buttonTextDuringRun = string.Empty;
         // The run's own progress report notifies synchronously while the run is still in flight, which is how this
         // test acts mid-run without the recording executor needing a gate.
-        OnRunStatus("Processing User.esp", () =>
+        OnRunStatus("Ingesting plugin 2 of 5: User.esp", () =>
         {
             buttonTextDuringRun = _viewModel.ProcessButtonText;
             // The second press: the workflow's own run state, not the ViewModel, decides this means cancel.
@@ -1217,17 +1352,10 @@ public class UserWorkflowTests
     {
         var sut = CreateSut();
         await ConfigureValidPluginProcessingRunAsync(sut);
-        _processingRunExecutor.EventsToReport.Add(ProcessingRunEvent.Status("Processing User.esp", 40));
-        var projectedStatuses = new List<string>();
-        _viewModel.PropertyChanged += (_, args) =>
-        {
-            if (args.PropertyName == nameof(MainWindowViewModel.ProgressStatus))
-            {
-                projectedStatuses.Add(_viewModel.ProgressStatus);
-            }
-        };
+        _processingRunExecutor.ProgressToReport.Add(new IngestingPlugin("User.esp", 2, 5));
+        var projectedStatuses = RecordProjectedStatuses();
         // The second press is the cancellation intent, delivered mid-run from the run's own progress notification.
-        OnRunStatus("Processing User.esp", () =>
+        OnRunStatus("Ingesting plugin 2 of 5: User.esp", () =>
         {
             sut.ProcessFormIdsAsync().GetAwaiter().GetResult();
             // Armed only once the press has reached the executor, so the run ends as cancelled because it was
@@ -1246,7 +1374,11 @@ public class UserWorkflowTests
         // The run's cleanup hands the channel back, and can no longer erase an acknowledgement that was never on it.
         Assert.Equal(string.Empty, _viewModel.ProgressStatus);
         Assert.False(_viewModel.IsProgressVisible);
-        Assert.DoesNotContain("Processing cancelled by user.", projectedStatuses);
+        // The complete sequence rather than a containment check: showing that the acknowledgement never reached a
+        // channel that erases itself means stating everything that did reach it, not just the one string it did not.
+        Assert.Equal(
+            ["Initializing...", "Ingesting plugin 2 of 5: User.esp", "Cancelling...", string.Empty],
+            projectedStatuses);
     }
 
     /// <summary>
@@ -1300,19 +1432,12 @@ public class UserWorkflowTests
         _gameInstallationProbe.WithInstalledDirectories(GameRelease.Fallout4, @"C:\Games\Fallout4");
         _fileDialogService.Setup(x => x.SelectGameDirectory())
             .ReturnsAsync(FileDialogResult.Success(GameDirectory));
-        _processingRunExecutor.EventsToReport.Add(ProcessingRunEvent.Status("Processing User.esp", 40));
-        var projectedStatuses = new List<string>();
-        _viewModel.PropertyChanged += (_, args) =>
-        {
-            if (args.PropertyName == nameof(MainWindowViewModel.ProgressStatus))
-            {
-                projectedStatuses.Add(_viewModel.ProgressStatus);
-            }
-        };
+        _processingRunExecutor.ProgressToReport.Add(new IngestingPlugin("User.esp", 2, 5));
+        var projectedStatuses = RecordProjectedStatuses();
         var statusAfterRefresh = string.Empty;
         var valueAfterRefresh = 0d;
         // The refresh is triggered from the run's own progress notification, so it genuinely overlaps a run in flight.
-        OnRunStatus("Processing User.esp", () =>
+        OnRunStatus("Ingesting plugin 2 of 5: User.esp", () =>
         {
             TriggerRefreshAsync(sut, refreshTrigger).GetAwaiter().GetResult();
             statusAfterRefresh = _viewModel.ProgressStatus;
@@ -1321,11 +1446,12 @@ public class UserWorkflowTests
 
         await sut.ProcessFormIdsAsync();
 
-        Assert.Equal("Processing User.esp", statusAfterRefresh);
+        Assert.Equal("Ingesting plugin 2 of 5: User.esp", statusAfterRefresh);
+        // The second of five selected Plugins, which the run's progress renders as 40%.
         Assert.Equal(40, valueAfterRefresh);
         Assert.DoesNotContain(projectedStatuses, status => status.StartsWith("Scanning", StringComparison.Ordinal));
         // The run's own reports are the only thing the channel ever showed, and it ends empty.
-        Assert.Equal(["Initializing...", "Processing User.esp", string.Empty], projectedStatuses);
+        Assert.Equal(["Initializing...", "Ingesting plugin 2 of 5: User.esp", string.Empty], projectedStatuses);
     }
 
     /// <summary>
@@ -1369,6 +1495,28 @@ public class UserWorkflowTests
             handled = true;
             handler();
         };
+    }
+
+    /// <summary>
+    ///     Starts recording every status the transient progress channel shows from this point on.
+    /// </summary>
+    /// <returns>The list that receives the projected statuses, in the order they were shown.</returns>
+    /// <remarks>
+    ///     Attached after a test's setup rather than in the fixture, so a Plugin List refresh that ran while the run
+    ///     was being configured does not land in a sequence that is supposed to be the run's alone.
+    /// </remarks>
+    private List<string> RecordProjectedStatuses()
+    {
+        var projectedStatuses = new List<string>();
+        _viewModel.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(MainWindowViewModel.ProgressStatus))
+            {
+                projectedStatuses.Add(_viewModel.ProgressStatus);
+            }
+        };
+
+        return projectedStatuses;
     }
 
     /// <summary>
@@ -1690,16 +1838,17 @@ public class UserWorkflowTests
         ///     The default is a dry run of nothing, which renders no message and no status at all, so a test that is
         ///     not about how a run ended sees only the reports it scripted for itself.
         /// </remarks>
-        public ProcessingRunOutcome Outcome { get; set; } = new PlannedRunOutcome(new PluginRunPlan([]));
+        public ProcessingRunOutcome Outcome { get; set; } =
+            new PlannedRunOutcome(new PluginRunPlan(new PluginIngestionPlan([])));
 
-        public List<ProcessingRunEvent> EventsToReport { get; } = [];
+        public List<ProcessingRunProgress> ProgressToReport { get; } = [];
 
         public Task<ProcessingRunOutcome> ExecuteAsync(
             ProcessingRunRequest request,
-            IProgress<ProcessingRunEvent>? progress = null)
+            IProgress<ProcessingRunProgress>? progress = null)
         {
             processingRuns.Add(request);
-            foreach (var runEvent in EventsToReport)
+            foreach (var runEvent in ProgressToReport)
             {
                 progress?.Report(runEvent);
             }

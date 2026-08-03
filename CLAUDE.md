@@ -53,7 +53,12 @@ that look harmless can break the build. Among other things these tests require t
   `GameInstallations.CanonicalizeDataDirectory`, while `PluginIngestion.cs` must
 - Specific `MainWindowViewModel` properties have getters and no setters
 - Retired member names (`UpdateProgress`, `ResetProgress`, `IsScanning`, `IsProcessing`, `DatabaseService`,
-  `DatabaseFixture`, `PluginListManager`, …) never reappear in any of the four source trees
+  `DatabaseFixture`, `PluginListManager`, `ProcessingRunEvent`, …) never reappear in any of the four source trees
+- `ProcessingRun.cs` contains no user-facing wording at all: a run reports typed `ProcessingRunProgress` and returns
+  a typed `ProcessingRunOutcome`, and `ProcessingRunPresentation` renders both. The guard pins the retired sentences
+  by name, so reintroducing one there fails the build
+- `"Would process"` appears nowhere in the Core project: a dry run reports a substantive plan — would-ingest and
+  would-skip per Plugin, and file presence and size for a FormID text file — rather than echoing the selection
 
 Check these tests before renaming anything in Core or reintroducing an old name.
 

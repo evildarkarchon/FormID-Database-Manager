@@ -1,4 +1,3 @@
-using System.Collections.Immutable;
 using Mutagen.Bethesda;
 
 namespace FormID_Database_Manager.Services;
@@ -274,81 +273,119 @@ internal sealed record CancelledRunOutcome : ProcessingRunOutcome;
 /// <summary>
 ///     The work a dry run would perform, mirroring the request union.
 /// </summary>
-/// <remarks>
-///     The plan is currently shallow — it carries only what the request named. Resolving load order and reporting
-///     would-ingest and would-skip per Plugin is the substantive dry run, which is deliberately a later change.
-/// </remarks>
 internal abstract record ProcessingRunPlan;
 
 /// <summary>
 ///     The planned work of a selected-Plugin dry run.
 /// </summary>
-/// <param name="PluginNames">The selected Plugin names, in selection order.</param>
-internal sealed record PluginRunPlan(ImmutableArray<string> PluginNames) : ProcessingRunPlan;
+/// <param name="Plan">What Plugin Ingestion would do to each selected Plugin, in selection order.</param>
+/// <remarks>
+///     The plan is substantive: Plugin Ingestion resolved the Data path, prepared the load order and opened every
+///     selected Plugin's overlay to produce it, so this says what a run would do rather than echoing the names the
+///     user selected.
+/// </remarks>
+internal sealed record PluginRunPlan(PluginIngestionPlan Plan) : ProcessingRunPlan;
 
 /// <summary>
-///     The planned work of a FormID text-file dry run.
+///     The planned work of a FormID text-file dry run, which is a file-metadata lookup and nothing more.
 /// </summary>
 /// <param name="FormIdListPath">The pipe-delimited FormID text file the run would import.</param>
-internal sealed record FormIdTextRunPlan(string FormIdListPath) : ProcessingRunPlan;
+/// <param name="SizeInBytes">
+///     The file's size in bytes, or <see langword="null" /> when no file exists at that path.
+/// </param>
+/// <remarks>
+///     A text plan deliberately does not open, parse or count the file's rows. Row counts are exactly what an import
+///     measures, and measuring them would be doing the run rather than planning it — so presence and size are the two
+///     honest facts a plan can report about the file.
+/// </remarks>
+internal sealed record FormIdTextRunPlan(string FormIdListPath, long? SizeInBytes) : ProcessingRunPlan;
 
 /// <summary>
-///     The kind of event emitted by a Processing Run.
+///     What a Processing Run is doing right now, as facts the run itself defines rather than words it writes.
 /// </summary>
-public enum ProcessingRunEventKind
+/// <remarks>
+///     <para>
+///         This is the run's own vocabulary, not a collaborator's forwarded on: Plugin Ingestion's stage enum and the
+///         FormID Record Store's counters are both translated into these cases, so the run says what it is doing in
+///         terms of its own work rather than in terms of whichever collaborator happens to be doing it.
+///     </para>
+///     <para>
+///         Every case is transient. How a run <em>ended</em> is a <see cref="ProcessingRunOutcome" />, because the
+///         progress channel is handed back as soon as a run finishes and anything terminal written here is erased
+///         before the user can read it (issue #60).
+///     </para>
+///     <para>
+///         The base is public because the executor that reports it is; every case is internal because only this
+///         assembly renders them. Derivation is closed to this assembly, exactly as it is for the request and outcome
+///         unions.
+///     </para>
+/// </remarks>
+public abstract record ProcessingRunProgress
 {
-    /// <summary>
-    ///     A status/progress update that can be shown as the current run status.
-    /// </summary>
-    Status,
-
-    /// <summary>
-    ///     A non-fatal Processing Warning that should be shown separately from errors.
-    /// </summary>
-    Warning,
-
-    /// <summary>
-    ///     A failed Plugin or fatal run error message associated with the run.
-    /// </summary>
-    Error
+    private protected ProcessingRunProgress()
+    {
+    }
 }
 
 /// <summary>
-///     A typed event emitted by a Processing Run.
+///     Load order is being prepared for the captured selection, before any Plugin has been read.
 /// </summary>
-/// <param name="Kind">The event kind.</param>
-/// <param name="Message">The user-facing event message.</param>
-/// <param name="Value">Optional progress percentage.</param>
-public readonly record struct ProcessingRunEvent(ProcessingRunEventKind Kind, string Message, double? Value = null)
-{
-    /// <summary>
-    ///     Creates a status/progress event.
-    /// </summary>
-    /// <param name="message">The user-facing status message.</param>
-    /// <param name="value">Optional progress percentage.</param>
-    public static ProcessingRunEvent Status(string message, double? value = null)
-    {
-        return new ProcessingRunEvent(ProcessingRunEventKind.Status, message, value);
-    }
+/// <param name="TotalPluginCount">The number of selected Plugins the run will attempt.</param>
+internal sealed record PreparingLoadOrder(int TotalPluginCount) : ProcessingRunProgress;
 
-    /// <summary>
-    ///     Creates a warning event.
-    /// </summary>
-    /// <param name="message">The user-facing warning message.</param>
-    public static ProcessingRunEvent Warning(string message)
-    {
-        return new ProcessingRunEvent(ProcessingRunEventKind.Warning, message);
-    }
+/// <summary>
+///     One selected Plugin is being ingested at a position within the captured selection.
+/// </summary>
+/// <param name="PluginName">The Plugin currently being read.</param>
+/// <param name="Position">The one-based position of that Plugin in the captured selection.</param>
+/// <param name="TotalPluginCount">The number of selected Plugins the run will attempt.</param>
+internal sealed record IngestingPlugin(string PluginName, int Position, int TotalPluginCount) : ProcessingRunProgress;
 
-    /// <summary>
-    ///     Creates an error event.
-    /// </summary>
-    /// <param name="message">The user-facing error message.</param>
-    public static ProcessingRunEvent Error(string message)
-    {
-        return new ProcessingRunEvent(ProcessingRunEventKind.Error, message);
-    }
-}
+/// <summary>
+///     A FormID text file is being imported, reported as the counters the Store measured.
+/// </summary>
+/// <param name="RecordCount">The number of valid FormID text rows counted so far.</param>
+/// <param name="BytesRead">How far into the file the reader has pulled, in bytes.</param>
+/// <param name="TotalBytes">The total size of the FormID text file, in bytes.</param>
+/// <param name="MostRecentPlugin">
+///     The Plugin this report is about, or <see langword="null" /> when the report is about the file's progress
+///     instead. Naming a Plugin is the run's decision and not the Store's: the Store reports every Plugin the first
+///     time it sees one, and the run populates this only for the reports it wants shown by name.
+/// </param>
+/// <remarks>
+///     The three things an import has to say are told apart by the counters rather than by three cases, and this is
+///     the contract that says how: a report naming a Plugin is about that Plugin, a report naming none with no
+///     records counted is the import opening, and anything else is the file's progress. Whoever produces one of
+///     these owes the same reading — a report of no records that names no new Plugin means the import has started,
+///     and must not be sent for anything else.
+/// </remarks>
+internal sealed record ImportingFormIdText(
+    long RecordCount,
+    long BytesRead,
+    long TotalBytes,
+    string? MostRecentPlugin) : ProcessingRunProgress;
+
+/// <summary>
+///     A FormID text import has finished, carrying the counts the Store confirmed.
+/// </summary>
+/// <param name="ImportResult">The distinct Plugin and valid record counts of the finished import.</param>
+/// <remarks>
+///     This is still transient progress rather than an outcome: it describes the import, which finishes before the
+///     run does, and the run continues into Store maintenance afterwards. The counts are not derivable from
+///     <see cref="ImportingFormIdText" /> — that case knows bytes and rows but never how many distinct Plugins the
+///     file named — which is why the finished import is a case of its own.
+/// </remarks>
+internal sealed record ImportedFormIdText(FormIdTextFileImportResult ImportResult) : ProcessingRunProgress;
+
+/// <summary>
+///     The run is failing with the message of the exception about to be rethrown.
+/// </summary>
+/// <param name="FailureMessage">The failure's own message, without any prefix.</param>
+/// <remarks>
+///     A failure produces no outcome to render — only cancellation becomes a value — so the last thing a failing run
+///     has to say goes out on the progress channel like everything else it says while running.
+/// </remarks>
+internal sealed record ProcessingRunFailure(string FailureMessage) : ProcessingRunProgress;
 
 /// <summary>
 ///     Executes typed Processing Run requests and owns cancellation for the active run.
@@ -359,7 +396,7 @@ internal interface IProcessingRunExecutor : IDisposable
     ///     Executes the supplied Processing Run request.
     /// </summary>
     /// <param name="request">The validated domain request describing the run.</param>
-    /// <param name="progress">Optional typed run event reporter for transient status.</param>
+    /// <param name="progress">Optional typed reporter for the run's transient progress.</param>
     /// <returns>How the run ended, including cancellation this executor was asked for.</returns>
     /// <remarks>
     ///     Validation failures, <see cref="UnresolvableMasterException" /> and unexpected internal failures propagate:
@@ -367,7 +404,7 @@ internal interface IProcessingRunExecutor : IDisposable
     /// </remarks>
     Task<ProcessingRunOutcome> ExecuteAsync(
         ProcessingRunRequest request,
-        IProgress<ProcessingRunEvent>? progress = null);
+        IProgress<ProcessingRunProgress>? progress = null);
 
     /// <summary>
     ///     Requests cancellation for the active Processing Run, if one is active.

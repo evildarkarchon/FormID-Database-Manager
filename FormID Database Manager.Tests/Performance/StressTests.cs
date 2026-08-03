@@ -65,7 +65,7 @@ public class StressTests : IDisposable
                 GameRelease.SkyrimSE,
                 [pluginNames[i]],
                 UpdateMode.Append);
-            var progress = new CancelOnFirstStatusProgress(processingRunExecutor);
+            var progress = new CancelOnFirstProgressReport(processingRunExecutor);
 
             try
             {
@@ -374,14 +374,16 @@ public class StressTests : IDisposable
             $"Search too slow: {searchStopwatch.ElapsedMilliseconds} ms");
     }
 
-    private sealed class CancelOnFirstStatusProgress(ProcessingRunExecutor executor)
-        : IProgress<ProcessingRunEvent>
+    private sealed class CancelOnFirstProgressReport(ProcessingRunExecutor executor)
+        : IProgress<ProcessingRunProgress>
     {
         private bool _cancellationRequested;
 
-        public void Report(ProcessingRunEvent value)
+        public void Report(ProcessingRunProgress value)
         {
-            if (!_cancellationRequested && value.Kind == ProcessingRunEventKind.Status)
+            // Every report a run makes is transient progress now, so the first one of any kind is the mid-run moment
+            // this stress test wants to cancel from.
+            if (!_cancellationRequested)
             {
                 _cancellationRequested = true;
                 executor.Cancel();

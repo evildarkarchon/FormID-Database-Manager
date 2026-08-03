@@ -285,7 +285,11 @@ public sealed class UserWorkflow : IDisposable
                 ? GetConfirmedPluginListFor(gameContext)
                 : null;
             var databasePath = _viewModel.DatabasePath;
-            if (string.IsNullOrEmpty(databasePath))
+
+            // A dry run opens no FormID Record Store, so it neither needs a database path nor gets to choose one on
+            // the user's behalf: defaulting here would leave a path they never picked in the box after a run that
+            // deliberately wrote nothing.
+            if (string.IsNullOrEmpty(databasePath) && !_viewModel.DryRun)
             {
                 databasePath = DefaultDatabasePathProvider.CreateDefaultDatabasePath(gameRelease);
                 _viewModel.DatabasePath = databasePath;
@@ -296,7 +300,7 @@ public sealed class UserWorkflow : IDisposable
                 formIdListPath,
                 databasePath,
                 confirmedPluginList);
-            var progress = new ProcessingRunProgressAdapter(ApplyProcessingRunEvent);
+            var progress = new ProcessingRunProgressAdapter(ApplyProcessingRunProgress);
 
             var outcome = await _processingRunExecutor.ExecuteAsync(request, progress);
             ApplyProcessingRunOutcome(outcome);
@@ -707,6 +711,7 @@ public sealed class UserWorkflow : IDisposable
                                   throw new InvalidOperationException(
                                       "Processing Run creation requires an authoritative GameRelease.");
         var updateMode = _viewModel.UpdateMode ? UpdateMode.ReplacePluginRecords : UpdateMode.Append;
+        var dryRun = _viewModel.DryRun;
 
         if (!string.IsNullOrWhiteSpace(formIdListPath))
         {
@@ -714,7 +719,8 @@ public sealed class UserWorkflow : IDisposable
                 formIdListPath,
                 databasePath,
                 selectedGameRelease,
-                updateMode);
+                updateMode,
+                dryRun);
         }
 
         if (confirmedPluginList is null)
@@ -725,7 +731,8 @@ public sealed class UserWorkflow : IDisposable
                 databasePath,
                 selectedGameRelease,
                 [],
-                updateMode);
+                updateMode,
+                dryRun);
         }
 
         return new PluginProcessingRunRequest(
@@ -735,7 +742,8 @@ public sealed class UserWorkflow : IDisposable
             databasePath,
             selectedGameRelease,
             confirmedPluginList.SelectedPluginNames,
-            updateMode);
+            updateMode,
+            dryRun);
     }
 
     /// <summary>
@@ -775,29 +783,18 @@ public sealed class UserWorkflow : IDisposable
     }
 
     /// <summary>
-    /// Routes one report from the run's progress channel.
+    /// Renders one transient report from the run's progress channel and applies it.
     /// </summary>
-    /// <param name="runEvent">The event the run reported.</param>
+    /// <param name="runProgress">What the run said it is doing.</param>
     /// <remarks>
-    /// Only the status branch is reachable now: a run reports transient progress here and nothing else, because its
-    /// warning and failure wording is rendered from the outcome it returns. The other two branches survive only
-    /// because <see cref="ProcessingRunEventKind" /> still admits them; they go when the event type is retyped.
+    /// A run reports transient progress here and nothing else: how it ended is rendered from the outcome it returns.
+    /// Applying the render through <see cref="ReportRunActivity" /> is what keeps a report arriving after the run has
+    /// ended off the channel, and what carries the last percentage forward for a report that implies no new one.
     /// </remarks>
-    private void ApplyProcessingRunEvent(ProcessingRunEvent runEvent)
+    private void ApplyProcessingRunProgress(ProcessingRunProgress runProgress)
     {
-        if (runEvent.Kind == ProcessingRunEventKind.Error)
-        {
-            _viewModel.AddErrorMessage(runEvent.Message);
-            return;
-        }
-
-        if (runEvent.Kind == ProcessingRunEventKind.Warning)
-        {
-            _viewModel.AddWarningMessage(runEvent.Message);
-            return;
-        }
-
-        ReportRunActivity(runEvent.Message, runEvent.Value);
+        var rendered = ProcessingRunPresentation.Render(runProgress);
+        ReportRunActivity(rendered.Status, rendered.Value);
     }
 
     /// <summary>
@@ -813,9 +810,10 @@ public sealed class UserWorkflow : IDisposable
         ImmutableArray<string> AvailableDirectories,
         AdvancedMode AdvancedMode);
 
-    private sealed class ProcessingRunProgressAdapter(Action<ProcessingRunEvent> handler) : IProgress<ProcessingRunEvent>
+    private sealed class ProcessingRunProgressAdapter(Action<ProcessingRunProgress> handler)
+        : IProgress<ProcessingRunProgress>
     {
-        public void Report(ProcessingRunEvent value)
+        public void Report(ProcessingRunProgress value)
         {
             handler(value);
         }

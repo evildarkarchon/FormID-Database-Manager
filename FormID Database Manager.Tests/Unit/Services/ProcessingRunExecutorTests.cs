@@ -13,6 +13,17 @@ using Xunit;
 
 namespace FormID_Database_Manager.Tests.Unit.Services;
 
+/// <summary>
+///     Covers what a Processing Run does: which outcome it returns, which typed progress it reports and in what order,
+///     which collaborators it reaches with which arguments, and how it ends when it is cancelled or fails.
+/// </summary>
+/// <remarks>
+///     Issue #68, under parent #61. This suite asserts facts and no wording. A run reports typed progress and returns a
+///     typed outcome now, and <see cref="ProcessingRunPresentation" /> turns both into the words the user reads — so
+///     every user-facing string a run produces is pinned by <see cref="ProcessingRunPresentationTests" />, and the two
+///     suites cannot fail for each other's reasons. The request validation wording a run rejects on lives with the
+///     request types in <see cref="ProcessingRunContractTests" /> for the same reason.
+/// </remarks>
 public sealed class ProcessingRunExecutorTests : IDisposable
 {
     private readonly List<string> _tempDirectories = [];
@@ -32,18 +43,24 @@ public sealed class ProcessingRunExecutorTests : IDisposable
     }
 
     /// <summary>
-    ///     Verifies that a FormID text-file dry run returns its plan without opening a FormID Record Store.
+    ///     Verifies that a FormID text-file dry run reports the file's presence and size without opening a FormID
+    ///     Record Store and without reading a single row.
     /// </summary>
     [Fact]
-    public async Task ExecuteAsync_DryRunFormIdTextFile_ReturnsPlannedWorkWithoutOpeningRecordStore()
+    public async Task ExecuteAsync_DryRunFormIdTextFile_ReportsFilePresenceAndSizeWithoutOpeningRecordStore()
     {
-        var ingestion = new UnexpectedPluginIngestion();
+        var formIdListPath = CreateTempFilePath("formids.txt");
+        await File.WriteAllTextAsync(
+            formIdListPath,
+            "Skyrim.esm|000001|Entry",
+            TestContext.Current.CancellationToken);
+        var ingestion = new PlanningPluginIngestion();
         var opener = new RecordingRecordStoreSessionOpener(new RecordingRecordStoreSession());
         using var sut = new ProcessingRunExecutor(ingestion, opener);
-        var events = new List<ProcessingRunEvent>();
-        var progress = new SynchronousProgress<ProcessingRunEvent>(events.Add);
+        var reports = new List<ProcessingRunProgress>();
+        var progress = new SynchronousProgress<ProcessingRunProgress>(reports.Add);
         var request = new FormIdTextProcessingRunRequest(
-            @"C:\Imports\formids.txt",
+            formIdListPath,
             string.Empty,
             GameRelease.SkyrimSE,
             UpdateMode.Append,
@@ -52,10 +69,39 @@ public sealed class ProcessingRunExecutorTests : IDisposable
         var outcome = await sut.ExecuteAsync(request, progress);
 
         Assert.Empty(opener.OpenCalls);
-        Assert.Equal(0, ingestion.CallCount);
-        Assert.Empty(events);
+        Assert.Empty(ingestion.PlanCalls);
+        Assert.Empty(reports);
         var plan = Assert.IsType<FormIdTextRunPlan>(Assert.IsType<PlannedRunOutcome>(outcome).Plan);
-        Assert.Equal(@"C:\Imports\formids.txt", plan.FormIdListPath);
+        Assert.Equal(formIdListPath, plan.FormIdListPath);
+        Assert.Equal(new FileInfo(formIdListPath).Length, plan.SizeInBytes);
+    }
+
+    /// <summary>
+    ///     Verifies that a FormID text-file dry run reports absence rather than failing when no file is there.
+    /// </summary>
+    /// <remarks>
+    ///     Telling the user the file is missing is the point of looking it up, so absence is a reportable fact and not
+    ///     a failure the run raises.
+    /// </remarks>
+    [Fact]
+    public async Task ExecuteAsync_DryRunFormIdTextFileThatDoesNotExist_ReportsAbsenceWithoutASize()
+    {
+        var formIdListPath = CreateTempFilePath("missing-formids.txt");
+        var opener = new RecordingRecordStoreSessionOpener(new RecordingRecordStoreSession());
+        using var sut = new ProcessingRunExecutor(new PlanningPluginIngestion(), opener);
+        var request = new FormIdTextProcessingRunRequest(
+            formIdListPath,
+            string.Empty,
+            GameRelease.SkyrimSE,
+            UpdateMode.Append,
+            dryRun: true);
+
+        var outcome = await sut.ExecuteAsync(request);
+
+        Assert.Empty(opener.OpenCalls);
+        var plan = Assert.IsType<FormIdTextRunPlan>(Assert.IsType<PlannedRunOutcome>(outcome).Plan);
+        Assert.Equal(formIdListPath, plan.FormIdListPath);
+        Assert.Null(plan.SizeInBytes);
     }
 
     /// <summary>
@@ -64,7 +110,10 @@ public sealed class ProcessingRunExecutorTests : IDisposable
     [Fact]
     public async Task Cancel_IdleAndRepeatedBetweenRuns_DoesNotCancelLaterRuns()
     {
-        using var sut = new ProcessingRunExecutor();
+        var ingestion = new PlanningPluginIngestion();
+        using var sut = new ProcessingRunExecutor(
+            ingestion,
+            new RecordingRecordStoreSessionOpener(new RecordingRecordStoreSession()));
 
         sut.Cancel();
         var firstOutcome = await sut.ExecuteAsync(CreateDryRunRequest("First.esp"));
@@ -78,17 +127,18 @@ public sealed class ProcessingRunExecutorTests : IDisposable
     }
 
     /// <summary>
-    ///     Verifies a selected-Plugin dry run returns planned work without opening a Store or invoking Plugin Ingestion.
+    ///     Verifies a selected-Plugin dry run plans through Plugin Ingestion, carrying the captured selection and the
+    ///     run's own cancellation token, without opening a Store or ingesting anything.
     /// </summary>
     [Fact]
-    public async Task ExecuteAsync_DryRunPluginRun_ReturnsPlannedPluginsWithoutOpeningDatabase()
+    public async Task ExecuteAsync_DryRunPluginRun_PlansThroughPluginIngestionWithoutOpeningDatabase()
     {
         var databasePath = CreateTempFilePath("dry-run.db");
-        var ingestion = new UnexpectedPluginIngestion();
+        var ingestion = new PlanningPluginIngestion();
         var opener = new RecordingRecordStoreSessionOpener(new RecordingRecordStoreSession());
         using var sut = new ProcessingRunExecutor(ingestion, opener);
-        var events = new List<ProcessingRunEvent>();
-        var progress = new SynchronousProgress<ProcessingRunEvent>(events.Add);
+        var reports = new List<ProcessingRunProgress>();
+        var progress = new SynchronousProgress<ProcessingRunProgress>(reports.Add);
 
         var request = new PluginProcessingRunRequest(
             @"C:\Games\Skyrim",
@@ -102,9 +152,36 @@ public sealed class ProcessingRunExecutorTests : IDisposable
 
         Assert.False(File.Exists(databasePath));
         Assert.Empty(opener.OpenCalls);
-        Assert.Equal(0, ingestion.CallCount);
-        Assert.Empty(events);
+        Assert.Equal(0, ingestion.IngestCallCount);
+        Assert.Empty(reports);
+        var planCall = Assert.Single(ingestion.PlanCalls);
+        Assert.Equal(@"C:\Games\Skyrim", planCall.Request.GameDirectory);
+        Assert.Equal(GameRelease.SkyrimSE, planCall.Request.GameRelease);
+        Assert.Equal(["PluginA.esp", "PluginB.esp"], planCall.Request.PluginNames);
+        Assert.Equal(UpdateMode.Append, planCall.Request.UpdateMode);
+        Assert.True(planCall.CancellationToken.CanBeCanceled);
         Assert.Equal(["PluginA.esp", "PluginB.esp"], AssertPlannedPluginNames(outcome));
+    }
+
+    /// <summary>
+    ///     Verifies that a plan's run-level master failure reaches the caller unchanged, so a dry run surfaces the
+    ///     ADR-0006 condition exactly as a real run does — before the user commits to one.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_DryRunPluginRunWithUnresolvableMaster_PropagatesThatFailure()
+    {
+        var failure = new UnresolvableMasterException("Patch.esp", "Starfield.esm");
+        var ingestion = new PlanningPluginIngestion { PlanFailure = failure };
+        var opener = new RecordingRecordStoreSessionOpener(new RecordingRecordStoreSession());
+        using var sut = new ProcessingRunExecutor(ingestion, opener);
+        var reports = new List<ProcessingRunProgress>();
+        var progress = new SynchronousProgress<ProcessingRunProgress>(reports.Add);
+
+        var thrown = await Assert.ThrowsAsync<UnresolvableMasterException>(() =>
+            sut.ExecuteAsync(CreateDryRunRequest("Patch.esp"), progress));
+
+        Assert.Same(failure, thrown);
+        Assert.Empty(opener.OpenCalls);
     }
 
     /// <summary>
@@ -113,11 +190,11 @@ public sealed class ProcessingRunExecutorTests : IDisposable
     [Fact]
     public async Task ExecuteAsync_DryRunPluginRun_AllowsEmptyDatabasePath()
     {
-        var ingestion = new UnexpectedPluginIngestion();
+        var ingestion = new PlanningPluginIngestion();
         var opener = new RecordingRecordStoreSessionOpener(new RecordingRecordStoreSession());
         using var sut = new ProcessingRunExecutor(ingestion, opener);
-        var events = new List<ProcessingRunEvent>();
-        var progress = new SynchronousProgress<ProcessingRunEvent>(events.Add);
+        var reports = new List<ProcessingRunProgress>();
+        var progress = new SynchronousProgress<ProcessingRunProgress>(reports.Add);
 
         var request = new PluginProcessingRunRequest(
             @"C:\Games\Skyrim",
@@ -130,7 +207,7 @@ public sealed class ProcessingRunExecutorTests : IDisposable
         var outcome = await sut.ExecuteAsync(request, progress);
 
         Assert.Empty(opener.OpenCalls);
-        Assert.Equal(0, ingestion.CallCount);
+        Assert.Equal(0, ingestion.IngestCallCount);
         Assert.Equal(["PluginA.esp"], AssertPlannedPluginNames(outcome));
     }
 
@@ -148,14 +225,14 @@ public sealed class ProcessingRunExecutorTests : IDisposable
             ],
             TestContext.Current.CancellationToken);
 
-        var events = new List<ProcessingRunEvent>();
+        var reports = new List<ProcessingRunProgress>();
         var recordStore = new RecordingRecordStoreSession
         {
             TextFileImportResult = new FormIdTextFileImportResult(2, 2)
         };
         var opener = new RecordingRecordStoreSessionOpener(recordStore);
         var sut = new ProcessingRunExecutor(new UnexpectedPluginIngestion(), opener);
-        var progress = new SynchronousProgress<ProcessingRunEvent>(events.Add);
+        var progress = new SynchronousProgress<ProcessingRunProgress>(reports.Add);
         var request = new FormIdTextProcessingRunRequest(
             textFilePath,
             databasePath,
@@ -170,30 +247,30 @@ public sealed class ProcessingRunExecutorTests : IDisposable
         Assert.Equal(UpdateMode.Append, recordStore.ImportedTextFileUpdateMode);
         Assert.Equal(1, recordStore.OptimizeCallCount);
         Assert.True(recordStore.Disposed);
-        // The Store reports counts, not sentences: the run renders the completed import from the counts it returned.
+        // The Store reports counts and the run restates them; neither writes the sentence the user finally reads.
         Assert.Equal(
-            [ProcessingRunEvent.Status("Completed processing 2 plugins (2 total records)", 100)],
-            events);
+            [new ImportedFormIdText(new FormIdTextFileImportResult(2, 2))],
+            reports);
         Assert.Equal(
             new FormIdTextFileImportResult(2, 2),
             Assert.IsType<FormIdTextRunOutcome>(outcome).ImportResult);
     }
 
     /// <summary>
-    ///     Verifies that an appending text run renders the Store's counters without naming any Plugin, which is the
+    ///     Verifies that an appending text run restates the Store's counters without naming any Plugin, which is the
     ///     mode that has never shown Plugin-named status updates.
     /// </summary>
     [Fact]
-    public async Task ExecuteAsync_FormIdTextRunInAppendMode_RendersStoreCountersWithoutNamingAPlugin()
+    public async Task ExecuteAsync_FormIdTextRunInAppendMode_RestatesStoreCountersWithoutNamingAPlugin()
     {
-        var events = await ExecuteTextRunWithStoreProgressAsync(UpdateMode.Append);
+        var reports = await ExecuteTextRunWithStoreProgressAsync(UpdateMode.Append);
 
         Assert.Equal(
             [
-                ProcessingRunEvent.Status("Starting processing...", 0),
-                ProcessingRunEvent.Status("Completed processing 2 plugins (2 total records)", 100)
+                new ImportingFormIdText(0, 0, 64, null),
+                new ImportedFormIdText(new FormIdTextFileImportResult(2, 2))
             ],
-            events);
+            reports);
     }
 
     /// <summary>
@@ -203,52 +280,57 @@ public sealed class ProcessingRunExecutorTests : IDisposable
     [Fact]
     public async Task ExecuteAsync_FormIdTextRunInReplaceMode_NamesEachPluginTheStoreReportsSeeing()
     {
-        var events = await ExecuteTextRunWithStoreProgressAsync(UpdateMode.ReplacePluginRecords);
+        var reports = await ExecuteTextRunWithStoreProgressAsync(UpdateMode.ReplacePluginRecords);
 
         Assert.Equal(
             [
-                ProcessingRunEvent.Status("Starting processing...", 0),
-                ProcessingRunEvent.Status("Processing plugin: PluginA.esp"),
-                ProcessingRunEvent.Status("Processing plugin: PluginB.esp"),
-                ProcessingRunEvent.Status("Completed processing 2 plugins (2 total records)", 100)
+                new ImportingFormIdText(0, 0, 64, null),
+                new ImportingFormIdText(1, 16, 64, "PluginA.esp"),
+                new ImportingFormIdText(2, 32, 64, "PluginB.esp"),
+                new ImportedFormIdText(new FormIdTextFileImportResult(2, 2))
             ],
-            events);
+            reports);
     }
 
     /// <summary>
-    ///     Verifies that a Store reporting no total bytes yields a zero percentage rather than a division by zero.
+    ///     Verifies that a Plugin the Store reports twice is named once: the second report is a record count that
+    ///     happens to carry the same name, not a newly seen Plugin.
     /// </summary>
     [Fact]
-    public async Task ExecuteAsync_FormIdTextRunReportingNoTotalBytes_RendersZeroPercentInsteadOfNaN()
+    public async Task ExecuteAsync_FormIdTextRunSeeingTheSamePluginTwice_NamesItOnlyOnTheFirstReport()
     {
-        var events = await ExecuteTextRunWithStoreProgressAsync(
-            UpdateMode.Append,
+        var reports = await ExecuteTextRunWithStoreProgressAsync(
+            UpdateMode.ReplacePluginRecords,
             [
-                new FormIdStoreProgress(0, 0, 0, null),
-                new FormIdStoreProgress(1, 0, 0, "PluginA.esp"),
-                new FormIdStoreProgress(500, 0, 0, "PluginA.esp")
+                new FormIdStoreProgress(0, 0, 64, null),
+                new FormIdStoreProgress(1, 16, 64, "PluginA.esp"),
+                new FormIdStoreProgress(500, 32, 64, "PluginA.esp")
             ]);
 
-        // The values alone, because the percentage's wording formats with the ambient culture: the opening report, the
-        // percentage report the appending run renders between the dropped Plugin-named ones, then the completion.
-        List<double?> expectedValues = [0, 0, 100];
-        Assert.Equal(expectedValues, events.Select(runEvent => runEvent.Value).ToList());
+        Assert.Equal(
+            [
+                new ImportingFormIdText(0, 0, 64, null),
+                new ImportingFormIdText(1, 16, 64, "PluginA.esp"),
+                new ImportingFormIdText(500, 32, 64, null),
+                new ImportedFormIdText(new FormIdTextFileImportResult(2, 2))
+            ],
+            reports);
     }
 
     /// <summary>
     ///     Executes one FormID text-file run against a Store that reports a fixed sequence of counters, and collects
-    ///     the events the run rendered from them.
+    ///     the progress the run restated them as.
     /// </summary>
     /// <param name="updateMode">The update mode the run applies, which decides whether Plugins are named.</param>
     /// <param name="storeProgressReports">
     ///     The counters the Store reports, defaulting to an opening report followed by two newly seen Plugins.
     /// </param>
-    /// <returns>The rendered run events, in report order.</returns>
-    private static async Task<IReadOnlyList<ProcessingRunEvent>> ExecuteTextRunWithStoreProgressAsync(
+    /// <returns>The run's own progress reports, in report order.</returns>
+    private static async Task<IReadOnlyList<ProcessingRunProgress>> ExecuteTextRunWithStoreProgressAsync(
         UpdateMode updateMode,
         IReadOnlyList<FormIdStoreProgress>? storeProgressReports = null)
     {
-        var events = new List<ProcessingRunEvent>();
+        var reports = new List<ProcessingRunProgress>();
         var recordStore = new RecordingRecordStoreSession
         {
             TextFileImportResult = new FormIdTextFileImportResult(2, 2),
@@ -267,8 +349,8 @@ public sealed class ProcessingRunExecutorTests : IDisposable
             GameRelease.SkyrimSE,
             updateMode);
 
-        await sut.ExecuteAsync(request, new SynchronousProgress<ProcessingRunEvent>(events.Add));
-        return events;
+        await sut.ExecuteAsync(request, new SynchronousProgress<ProcessingRunProgress>(reports.Add));
+        return reports;
     }
 
     /// <summary>
@@ -278,16 +360,17 @@ public sealed class ProcessingRunExecutorTests : IDisposable
     public async Task ExecuteAsync_OptimizationAndCleanupFail_PreservesOptimizationFailure()
     {
         var optimizationFailure = new InvalidOperationException("optimization failed");
+        var cleanupFailure = new InvalidOperationException("cleanup failed");
         var recordStore = new RecordingRecordStoreSession
         {
             OptimizeException = optimizationFailure,
-            DisposeException = new InvalidOperationException("cleanup failed")
+            DisposeException = cleanupFailure
         };
         using var sut = new ProcessingRunExecutor(
             new UnexpectedPluginIngestion(),
             new RecordingRecordStoreSessionOpener(recordStore));
-        var events = new List<ProcessingRunEvent>();
-        var progress = new SynchronousProgress<ProcessingRunEvent>(events.Add);
+        var reports = new List<ProcessingRunProgress>();
+        var progress = new SynchronousProgress<ProcessingRunProgress>(reports.Add);
 
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             sut.ExecuteAsync(CreateTextFileRequest("optimization-failure.txt"), progress));
@@ -295,11 +378,8 @@ public sealed class ProcessingRunExecutorTests : IDisposable
         Assert.Same(optimizationFailure, exception);
         Assert.Equal(1, recordStore.OptimizeCallCount);
         Assert.True(recordStore.Disposed);
-        Assert.Contains(events, runEvent =>
-            runEvent.Kind == ProcessingRunEventKind.Status &&
-            runEvent.Message.Contains("Error during processing: optimization failed", StringComparison.Ordinal));
-        Assert.DoesNotContain(events, runEvent =>
-            runEvent.Message.Contains("cleanup failed", StringComparison.Ordinal));
+        AssertReportedFailure(reports, optimizationFailure);
+        AssertDidNotReportFailure(reports, cleanupFailure);
     }
 
     /// <summary>
@@ -319,15 +399,15 @@ public sealed class ProcessingRunExecutorTests : IDisposable
             new RecordingRecordStoreSessionOpener(recordStore));
         using (sut)
         {
-            var events = new List<ProcessingRunEvent>();
-            var progress = new SynchronousProgress<ProcessingRunEvent>(events.Add);
+            var reports = new List<ProcessingRunProgress>();
+            var progress = new SynchronousProgress<ProcessingRunProgress>(reports.Add);
 
             var outcome = await sut.ExecuteAsync(CreateTextFileRequest("cancel-after-import.txt"), progress);
 
             Assert.IsType<CancelledRunOutcome>(outcome);
             Assert.Equal(0, recordStore.OptimizeCallCount);
             Assert.True(recordStore.Disposed);
-            AssertNoCancellationReportedOnTheProgressChannel(events);
+            AssertNoCancellationReportedOnTheProgressChannel(reports);
         }
     }
 
@@ -348,28 +428,28 @@ public sealed class ProcessingRunExecutorTests : IDisposable
             new RecordingRecordStoreSessionOpener(recordStore));
         using (sut)
         {
-            var events = new List<ProcessingRunEvent>();
-            var progress = new SynchronousProgress<ProcessingRunEvent>(events.Add);
+            var reports = new List<ProcessingRunProgress>();
+            var progress = new SynchronousProgress<ProcessingRunProgress>(reports.Add);
 
             var outcome = await sut.ExecuteAsync(CreateTextFileRequest("cancel-after-optimize.txt"), progress);
 
             Assert.IsType<CancelledRunOutcome>(outcome);
             Assert.Equal(1, recordStore.OptimizeCallCount);
             Assert.True(recordStore.Disposed);
-            AssertNoCancellationReportedOnTheProgressChannel(events);
+            AssertNoCancellationReportedOnTheProgressChannel(reports);
         }
     }
 
     /// <summary>
     ///     Verifies that Processing Run delegates the complete immutable selection to one Plugin Ingestion operation,
-    ///     adapts its structured progress into user-facing run status, and returns the report it produced.
+    ///     restates its structured progress in the run's own vocabulary, and returns the report it produced.
     /// </summary>
     [Fact]
     public async Task ExecuteAsync_PluginRun_InvokesAggregateIngestionOnceWithCompleteSelectionAndStructuredProgress()
     {
         var gameDirectory = CreateTempDirectory();
         var databasePath = Path.Combine(gameDirectory, "plugins.db");
-        var events = new List<ProcessingRunEvent>();
+        var reports = new List<ProcessingRunProgress>();
         var recordStore = new RecordingRecordStoreSession();
         var ingestion = new RecordingReportPluginIngestion((request, _, progress, _) =>
         {
@@ -383,7 +463,7 @@ public sealed class ProcessingRunExecutorTests : IDisposable
         using var sut = new ProcessingRunExecutor(
             ingestion,
             opener);
-        var progress = new SynchronousProgress<ProcessingRunEvent>(events.Add);
+        var progress = new SynchronousProgress<ProcessingRunProgress>(reports.Add);
         var request = new PluginProcessingRunRequest(
             gameDirectory,
             databasePath,
@@ -405,15 +485,9 @@ public sealed class ProcessingRunExecutorTests : IDisposable
         Assert.Equal(call.CancellationToken, recordStore.OptimizeCancellationToken);
         Assert.Equal(1, recordStore.OptimizeCallCount);
         Assert.True(recordStore.Disposed);
-        Assert.Contains(events, runEvent =>
-            runEvent.Kind == ProcessingRunEventKind.Status &&
-            runEvent.Message.Contains("Initializing plugin ingestion", StringComparison.Ordinal) &&
-            runEvent.Value == 0);
-        Assert.Contains(events, runEvent =>
-            runEvent.Kind == ProcessingRunEventKind.Status &&
-            runEvent.Message.Contains("Ingesting plugin 2 of 2: Second.esp", StringComparison.Ordinal) &&
-            runEvent.Value == 100);
-        AssertNoTerminalReportOnTheProgressChannel(events);
+        Assert.Contains(reports, reported => reported is PreparingLoadOrder(2));
+        Assert.Contains(reports, reported => reported is IngestingPlugin("Second.esp", 2, 2));
+        AssertNoTerminalReportOnTheProgressChannel(reports);
         Assert.Equal(
             ["First.esp", "Second.esp"],
             Assert.IsType<PluginRunOutcome>(outcome).Report.Outcomes.Select(reported => reported.PluginName));
@@ -440,8 +514,8 @@ public sealed class ProcessingRunExecutorTests : IDisposable
             new RecordingRecordStoreSessionOpener(recordStore));
         using (sut)
         {
-            var events = new List<ProcessingRunEvent>();
-            var progress = new SynchronousProgress<ProcessingRunEvent>(events.Add);
+            var reports = new List<ProcessingRunProgress>();
+            var progress = new SynchronousProgress<ProcessingRunProgress>(reports.Add);
             var request = new PluginProcessingRunRequest(
                 CreateTempDirectory(),
                 @"C:\Databases\formids.db",
@@ -455,8 +529,8 @@ public sealed class ProcessingRunExecutorTests : IDisposable
             Assert.Single(ingestion.Calls);
             Assert.Equal(0, recordStore.OptimizeCallCount);
             Assert.True(recordStore.Disposed);
-            AssertNoCancellationReportedOnTheProgressChannel(events);
-            AssertNoTerminalReportOnTheProgressChannel(events);
+            AssertNoCancellationReportedOnTheProgressChannel(reports);
+            AssertNoTerminalReportOnTheProgressChannel(reports);
         }
     }
 
@@ -487,8 +561,8 @@ public sealed class ProcessingRunExecutorTests : IDisposable
             new RecordingRecordStoreSessionOpener(recordStore));
         using (sut)
         {
-            var events = new List<ProcessingRunEvent>();
-            var progress = new SynchronousProgress<ProcessingRunEvent>(events.Add);
+            var reports = new List<ProcessingRunProgress>();
+            var progress = new SynchronousProgress<ProcessingRunProgress>(reports.Add);
             var request = new PluginProcessingRunRequest(
                 CreateTempDirectory(),
                 @"C:\Databases\formids.db",
@@ -502,8 +576,8 @@ public sealed class ProcessingRunExecutorTests : IDisposable
             Assert.Single(ingestion.Calls);
             Assert.Equal(1, recordStore.OptimizeCallCount);
             Assert.True(recordStore.Disposed);
-            AssertNoCancellationReportedOnTheProgressChannel(events);
-            AssertNoTerminalReportOnTheProgressChannel(events);
+            AssertNoCancellationReportedOnTheProgressChannel(reports);
+            AssertNoTerminalReportOnTheProgressChannel(reports);
         }
     }
 
@@ -528,16 +602,17 @@ public sealed class ProcessingRunExecutorTests : IDisposable
                         "Failed.esp",
                         new PluginReadDiagnostic(PluginReadPhase.ReadingRecords, "read failed"))
                 ])));
+        var cleanupFailure = new InvalidOperationException("cleanup failed");
         var recordStore = new RecordingRecordStoreSession
         {
             OptimizeException = optimizationFailure,
-            DisposeException = new InvalidOperationException("cleanup failed")
+            DisposeException = cleanupFailure
         };
         using var sut = new ProcessingRunExecutor(
             ingestion,
             new RecordingRecordStoreSessionOpener(recordStore));
-        var events = new List<ProcessingRunEvent>();
-        var progress = new SynchronousProgress<ProcessingRunEvent>(events.Add);
+        var reports = new List<ProcessingRunProgress>();
+        var progress = new SynchronousProgress<ProcessingRunProgress>(reports.Add);
         var request = new PluginProcessingRunRequest(
             CreateTempDirectory(),
             @"C:\Databases\formids.db",
@@ -551,15 +626,11 @@ public sealed class ProcessingRunExecutorTests : IDisposable
         Assert.Single(ingestion.Calls);
         Assert.Equal(1, recordStore.OptimizeCallCount);
         Assert.True(recordStore.Disposed);
-        Assert.Contains(events, runEvent =>
-            runEvent.Kind == ProcessingRunEventKind.Status &&
-            runEvent.Message.Contains("Error during processing: plugin optimization failed", StringComparison.Ordinal));
-        AssertNoTerminalReportOnTheProgressChannel(events);
-        Assert.DoesNotContain(events, runEvent =>
-            runEvent.Message.Contains("Warned.esp", StringComparison.Ordinal) ||
-            runEvent.Message.Contains("Skipped.esp", StringComparison.Ordinal) ||
-            runEvent.Message.Contains("Failed.esp", StringComparison.Ordinal) ||
-            runEvent.Message.Contains("cleanup failed", StringComparison.Ordinal));
+        AssertReportedFailure(reports, optimizationFailure);
+        AssertNoTerminalReportOnTheProgressChannel(reports);
+        // No Plugin from the withheld report reached the channel, and neither did the cleanup failure.
+        Assert.DoesNotContain(reports, reported => reported is IngestingPlugin);
+        AssertDidNotReportFailure(reports, cleanupFailure);
     }
 
     /// <summary>
@@ -585,7 +656,7 @@ public sealed class ProcessingRunExecutorTests : IDisposable
                     new IngestedPlugin("Good.esp", 3)
                 ])));
 
-        var events = new List<ProcessingRunEvent>();
+        var reports = new List<ProcessingRunProgress>();
         var optimizedBeforeReturning = false;
         var recordStore = new RecordingRecordStoreSession
         {
@@ -594,7 +665,7 @@ public sealed class ProcessingRunExecutorTests : IDisposable
         using var sut = new ProcessingRunExecutor(
             ingestion,
             new RecordingRecordStoreSessionOpener(recordStore));
-        var progress = new SynchronousProgress<ProcessingRunEvent>(events.Add);
+        var progress = new SynchronousProgress<ProcessingRunProgress>(reports.Add);
         var request = new PluginProcessingRunRequest(
             gameDirectory,
             databasePath,
@@ -608,7 +679,7 @@ public sealed class ProcessingRunExecutorTests : IDisposable
         Assert.Equal(1, recordStore.OptimizeCallCount);
         Assert.True(optimizedBeforeReturning);
         Assert.True(recordStore.Disposed);
-        AssertNoTerminalReportOnTheProgressChannel(events);
+        AssertNoTerminalReportOnTheProgressChannel(reports);
 
         var outcomes = Assert.IsType<PluginRunOutcome>(outcome).Report.Outcomes;
         Assert.Equal(["Warned.esp", "Skipped.esp", "Bad.esp", "Good.esp"], outcomes.Select(o => o.PluginName));
@@ -629,15 +700,16 @@ public sealed class ProcessingRunExecutorTests : IDisposable
         var ingestionFailure = new InvalidOperationException("store failed");
         var ingestion = new ThrowingPluginIngestion(ingestionFailure);
 
+        var cleanupFailure = new InvalidOperationException("cleanup failed");
         var recordStore = new RecordingRecordStoreSession
         {
-            DisposeException = new InvalidOperationException("cleanup failed")
+            DisposeException = cleanupFailure
         };
         using var sut = new ProcessingRunExecutor(
             ingestion,
             new RecordingRecordStoreSessionOpener(recordStore));
-        var events = new List<ProcessingRunEvent>();
-        var progress = new SynchronousProgress<ProcessingRunEvent>(events.Add);
+        var reports = new List<ProcessingRunProgress>();
+        var progress = new SynchronousProgress<ProcessingRunProgress>(reports.Add);
         var request = new PluginProcessingRunRequest(
             gameDirectory,
             databasePath,
@@ -651,12 +723,9 @@ public sealed class ProcessingRunExecutorTests : IDisposable
         Assert.Equal(1, ingestion.CallCount);
         Assert.Equal(0, recordStore.OptimizeCallCount);
         Assert.True(recordStore.Disposed);
-        Assert.Contains(events, runEvent =>
-            runEvent.Kind == ProcessingRunEventKind.Status &&
-            runEvent.Message.Contains("Error during processing: store failed", StringComparison.Ordinal));
-        AssertNoTerminalReportOnTheProgressChannel(events);
-        Assert.DoesNotContain(events, runEvent =>
-            runEvent.Message.Contains("cleanup failed", StringComparison.Ordinal));
+        AssertReportedFailure(reports, ingestionFailure);
+        AssertNoTerminalReportOnTheProgressChannel(reports);
+        AssertDidNotReportFailure(reports, cleanupFailure);
     }
 
     /// <summary>
@@ -676,15 +745,16 @@ public sealed class ProcessingRunExecutorTests : IDisposable
         var cancellation = new OperationCanceledException("cancelled during ingestion");
         var ingestion = new ThrowingPluginIngestion(cancellation);
 
+        var cleanupFailure = new InvalidOperationException("cleanup failed");
         var recordStore = new RecordingRecordStoreSession
         {
-            DisposeException = new InvalidOperationException("cleanup failed")
+            DisposeException = cleanupFailure
         };
         using var sut = new ProcessingRunExecutor(
             ingestion,
             new RecordingRecordStoreSessionOpener(recordStore));
-        var events = new List<ProcessingRunEvent>();
-        var progress = new SynchronousProgress<ProcessingRunEvent>(events.Add);
+        var reports = new List<ProcessingRunProgress>();
+        var progress = new SynchronousProgress<ProcessingRunProgress>(reports.Add);
         var request = new PluginProcessingRunRequest(
             gameDirectory,
             databasePath,
@@ -698,75 +768,9 @@ public sealed class ProcessingRunExecutorTests : IDisposable
         Assert.Equal(1, ingestion.CallCount);
         Assert.Equal(0, recordStore.OptimizeCallCount);
         Assert.True(recordStore.Disposed);
-        AssertNoCancellationReportedOnTheProgressChannel(events);
-        AssertNoTerminalReportOnTheProgressChannel(events);
-        Assert.DoesNotContain(events, runEvent =>
-            runEvent.Message.Contains("cleanup failed", StringComparison.Ordinal));
-    }
-
-    [Fact]
-    public void PluginProcessingRunRequest_EmptyPluginNames_ThrowsRunValidationException()
-    {
-        var exception = Assert.Throws<ProcessingRunValidationException>(() =>
-            new PluginProcessingRunRequest(
-                @"C:\Games\Skyrim",
-                @"C:\Databases\formids.db",
-                GameRelease.SkyrimSE,
-                [],
-                UpdateMode.Append));
-
-        Assert.Equal("No plugins selected", exception.Message);
-    }
-
-    [Fact]
-    public void PluginProcessingRunRequest_BlankPluginName_ThrowsRunValidationException()
-    {
-        var exception = Assert.Throws<ProcessingRunValidationException>(() =>
-            new PluginProcessingRunRequest(
-                @"C:\Games\Skyrim",
-                @"C:\Databases\formids.db",
-                GameRelease.SkyrimSE,
-                ["Valid.esp", " "],
-                UpdateMode.Append));
-
-        Assert.Equal("Plugin name must be specified", exception.Message);
-    }
-
-    [Fact]
-    public async Task PluginProcessingRunRequest_CaseInsensitiveDuplicateNames_RejectsBeforeStoreCanOpen()
-    {
-        var ingestion = new UnexpectedPluginIngestion();
-        var opener = new RecordingRecordStoreSessionOpener(new RecordingRecordStoreSession());
-        using var sut = new ProcessingRunExecutor(ingestion, opener);
-
-        var exception = await Assert.ThrowsAsync<ProcessingRunValidationException>(() =>
-            sut.ExecuteAsync(new PluginProcessingRunRequest(
-                @"C:\Games\Skyrim",
-                @"C:\Databases\formids.db",
-                GameRelease.SkyrimSE,
-                ["Duplicate.esp", "DUPLICATE.ESP"],
-                UpdateMode.Append)));
-
-        Assert.Equal("Plugin names must be unique", exception.Message);
-        Assert.Empty(opener.OpenCalls);
-        Assert.Equal(0, ingestion.CallCount);
-    }
-
-    [Fact]
-    public void PluginProcessingRunRequest_CallerMutatesSource_PreservesCapturedNamesAndOrder()
-    {
-        var pluginNames = new List<string> { "First.esp", "Second.esp" };
-        var request = new PluginProcessingRunRequest(
-            @"C:\Games\Skyrim",
-            @"C:\Databases\formids.db",
-            GameRelease.SkyrimSE,
-            pluginNames,
-            UpdateMode.Append);
-
-        pluginNames[0] = "Changed.esp";
-        pluginNames.Reverse();
-
-        Assert.Equal(["First.esp", "Second.esp"], request.PluginNames);
+        AssertNoCancellationReportedOnTheProgressChannel(reports);
+        AssertNoTerminalReportOnTheProgressChannel(reports);
+        AssertDidNotReportFailure(reports, cleanupFailure);
     }
 
     /// <summary>
@@ -783,8 +787,8 @@ public sealed class ProcessingRunExecutorTests : IDisposable
         using var sut = new ProcessingRunExecutor(
             ingestion,
             new RecordingRecordStoreSessionOpener(recordStore));
-        var events = new List<ProcessingRunEvent>();
-        var progress = new SynchronousProgress<ProcessingRunEvent>(events.Add);
+        var reports = new List<ProcessingRunProgress>();
+        var progress = new SynchronousProgress<ProcessingRunProgress>(reports.Add);
         var request = new PluginProcessingRunRequest(
             gameDirectory,
             databasePath,
@@ -801,7 +805,7 @@ public sealed class ProcessingRunExecutorTests : IDisposable
         Assert.IsType<CancelledRunOutcome>(await processingTask);
         Assert.Equal(0, recordStore.OptimizeCallCount);
         Assert.True(recordStore.Disposed);
-        AssertNoCancellationReportedOnTheProgressChannel(events);
+        AssertNoCancellationReportedOnTheProgressChannel(reports);
     }
 
     /// <summary>
@@ -890,12 +894,13 @@ public sealed class ProcessingRunExecutorTests : IDisposable
     [Fact]
     public async Task ExecuteAsync_FatalInitializationError_ReportsStatusOnlyAndRethrows()
     {
+        var initializationFailure = new InvalidOperationException("open failed");
         var sut = new ProcessingRunExecutor(
             new UnexpectedPluginIngestion(),
-            new ThrowingRecordStoreSessionOpener(new InvalidOperationException("open failed")));
+            new ThrowingRecordStoreSessionOpener(initializationFailure));
         var databasePath = Path.Combine(CreateTempDirectory(), "fatal.db");
-        var events = new List<ProcessingRunEvent>();
-        var progress = new SynchronousProgress<ProcessingRunEvent>(events.Add);
+        var reports = new List<ProcessingRunProgress>();
+        var progress = new SynchronousProgress<ProcessingRunProgress>(reports.Add);
         var request = new PluginProcessingRunRequest(
             @"C:\Games\Skyrim",
             databasePath,
@@ -905,10 +910,8 @@ public sealed class ProcessingRunExecutorTests : IDisposable
 
         await Assert.ThrowsAnyAsync<Exception>(() => sut.ExecuteAsync(request, progress));
 
-        Assert.Contains(events, runEvent =>
-            runEvent.Kind == ProcessingRunEventKind.Status &&
-            runEvent.Message.Contains("Error during processing: open failed", StringComparison.Ordinal));
-        AssertNoTerminalReportOnTheProgressChannel(events);
+        AssertReportedFailure(reports, initializationFailure);
+        AssertNoTerminalReportOnTheProgressChannel(reports);
     }
 
     public void Dispose()
@@ -958,36 +961,60 @@ public sealed class ProcessingRunExecutorTests : IDisposable
     }
 
     /// <summary>
-    ///     Asserts that a cancelled Processing Run said nothing about its cancellation on the progress channel.
+    ///     Asserts that a cancelled Processing Run reported nothing about the cancellation on the progress channel.
     /// </summary>
-    /// <param name="events">The complete run events reported by the executor.</param>
+    /// <param name="reports">The complete progress reported by the executor.</param>
     /// <remarks>
     ///     Issue #60. The progress channel is transient and is cleared as soon as the run ends, so an acknowledgement
     ///     written here is erased before the user can read it. The cancellation acknowledgement is an information
-    ///     message written by the User Workflow instead, and this executor has no second copy of that fact.
-    ///     The acknowledgement's own wording is matched rather than any "cancel" substring, because a Plugin name can
-    ///     contain one — these runs select a Plugin called Cancelled.esp — and a status naming it is not this fact.
+    ///     message rendered from the outcome instead, and the run's progress vocabulary cannot express it at all now —
+    ///     which leaves this to check what remains expressible and wrong: a cancelled run reporting itself as failing.
     /// </remarks>
-    private static void AssertNoCancellationReportedOnTheProgressChannel(IReadOnlyList<ProcessingRunEvent> events)
+    private static void AssertNoCancellationReportedOnTheProgressChannel(IReadOnlyList<ProcessingRunProgress> reports)
     {
-        Assert.DoesNotContain(events, runEvent =>
-            runEvent.Message.Contains("Processing cancelled", StringComparison.Ordinal));
+        Assert.DoesNotContain(reports, reported => reported is ProcessingRunFailure);
     }
 
     /// <summary>
-    ///     Asserts that a run said nothing about how it ended on the event channel.
+    ///     Asserts that a run said nothing about how it ended on the progress channel.
     /// </summary>
-    /// <param name="events">The complete run events reported by the executor.</param>
+    /// <param name="reports">The complete progress reported by the executor.</param>
     /// <remarks>
-    ///     Issue #64. Terminal wording is rendered from the returned outcome by <c>ProcessingRunPresentation</c>, so
-    ///     the executor emits neither warning nor failure events, and no completion status either. The only terminal
-    ///     string it still reports is the prefixed error status for a failure, which produces no outcome to render.
+    ///     Issue #64. Terminal facts are rendered from the returned outcome by <c>ProcessingRunPresentation</c>, and
+    ///     Processing Warnings and Failed Plugins have no progress case at all, so what remains to check is that a
+    ///     selected-Plugin run reported no completed import either — the one completion fact the vocabulary still
+    ///     carries, and one that belongs to a text run rather than this one.
     /// </remarks>
-    private static void AssertNoTerminalReportOnTheProgressChannel(IReadOnlyList<ProcessingRunEvent> events)
+    private static void AssertNoTerminalReportOnTheProgressChannel(IReadOnlyList<ProcessingRunProgress> reports)
     {
-        Assert.DoesNotContain(events, runEvent =>
-            runEvent.Kind is ProcessingRunEventKind.Warning or ProcessingRunEventKind.Error ||
-            runEvent.Message.Contains("Processing completed", StringComparison.Ordinal));
+        Assert.DoesNotContain(reports, reported => reported is ImportedFormIdText);
+    }
+
+    /// <summary>
+    ///     Asserts that the run restated one failure on the progress channel before rethrowing it.
+    /// </summary>
+    /// <param name="reports">The complete progress reported by the executor.</param>
+    /// <param name="failure">The failure the run was expected to report.</param>
+    /// <remarks>
+    ///     Matched against the failure's own message rather than a literal, because what is being asserted is
+    ///     <em>which</em> failure survived, not how it reads: the run reports the message unprefixed, and the
+    ///     "Error during processing" wording belongs to <c>ProcessingRunPresentation</c> and its own suite.
+    /// </remarks>
+    private static void AssertReportedFailure(IReadOnlyList<ProcessingRunProgress> reports, Exception failure)
+    {
+        Assert.Contains(reports, reported => reported is ProcessingRunFailure(var message) &&
+                                             message == failure.Message);
+    }
+
+    /// <summary>
+    ///     Asserts that the run did not restate one failure on the progress channel.
+    /// </summary>
+    /// <param name="reports">The complete progress reported by the executor.</param>
+    /// <param name="failure">The failure the run was expected to keep to itself.</param>
+    private static void AssertDidNotReportFailure(IReadOnlyList<ProcessingRunProgress> reports, Exception failure)
+    {
+        Assert.DoesNotContain(reports, reported => reported is ProcessingRunFailure(var message) &&
+                                                   message == failure.Message);
     }
 
     /// <summary>
@@ -997,7 +1024,9 @@ public sealed class ProcessingRunExecutorTests : IDisposable
     /// <returns>The planned Plugin names, in selection order.</returns>
     private static IReadOnlyList<string> AssertPlannedPluginNames(ProcessingRunOutcome outcome)
     {
-        return Assert.IsType<PluginRunPlan>(Assert.IsType<PlannedRunOutcome>(outcome).Plan).PluginNames;
+        var pluginPlan = Assert.IsType<PluginRunPlan>(Assert.IsType<PlannedRunOutcome>(outcome).Plan).Plan;
+
+        return pluginPlan.Plugins.Select(planned => planned.PluginName).ToArray();
     }
 
     /// <summary>
@@ -1062,6 +1091,15 @@ public sealed class ProcessingRunExecutorTests : IDisposable
             Calls.Add((request, recordStore, progress, cancellationToken));
             return response(request, recordStore, progress, cancellationToken);
         }
+
+        /// <inheritdoc />
+        public Task<PluginIngestionPlan> PlanAsync(
+            SelectedPluginIngestionRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromException<PluginIngestionPlan>(
+                new InvalidOperationException("Planning was not expected for this Processing Run."));
+        }
     }
 
     private sealed class UnexpectedPluginIngestion : IPluginIngestion
@@ -1079,6 +1117,60 @@ public sealed class ProcessingRunExecutorTests : IDisposable
             return Task.FromException<PluginIngestionReport>(
                 new InvalidOperationException("Plugin Ingestion was not expected for this Processing Run."));
         }
+
+        /// <inheritdoc />
+        public Task<PluginIngestionPlan> PlanAsync(
+            SelectedPluginIngestionRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            CallCount++;
+            return Task.FromException<PluginIngestionPlan>(
+                new InvalidOperationException("Planning was not expected for this Processing Run."));
+        }
+    }
+
+    /// <summary>
+    ///     Plugin Ingestion that only plans: it reports every selected Plugin as one that would be ingested, or raises
+    ///     the configured planning failure, and fails loudly if a run reaches its ingestion path.
+    /// </summary>
+    private sealed class PlanningPluginIngestion : IPluginIngestion
+    {
+        public List<(SelectedPluginIngestionRequest Request, CancellationToken CancellationToken)> PlanCalls { get; } =
+            [];
+
+        public int IngestCallCount { get; private set; }
+
+        /// <summary>
+        ///     The failure planning raises instead of returning a plan, when one is configured.
+        /// </summary>
+        public Exception? PlanFailure { get; init; }
+
+        /// <inheritdoc />
+        public Task<PluginIngestionReport> IngestAsync(
+            SelectedPluginIngestionRequest request,
+            IFormIdRecordStoreSession recordStore,
+            IProgress<PluginIngestionProgress>? progress = null,
+            CancellationToken cancellationToken = default)
+        {
+            IngestCallCount++;
+            return Task.FromException<PluginIngestionReport>(
+                new InvalidOperationException("Plugin Ingestion was not expected for this Processing Run."));
+        }
+
+        /// <inheritdoc />
+        public Task<PluginIngestionPlan> PlanAsync(
+            SelectedPluginIngestionRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            PlanCalls.Add((request, cancellationToken));
+            if (PlanFailure is not null)
+            {
+                return Task.FromException<PluginIngestionPlan>(PlanFailure);
+            }
+
+            return Task.FromResult(new PluginIngestionPlan(
+                request.PluginNames.Select(pluginName => new PlannedPluginIngestion(pluginName))));
+        }
     }
 
     private sealed class ThrowingPluginIngestion(Exception exception) : IPluginIngestion
@@ -1094,6 +1186,15 @@ public sealed class ProcessingRunExecutorTests : IDisposable
         {
             CallCount++;
             return Task.FromException<PluginIngestionReport>(exception);
+        }
+
+        /// <inheritdoc />
+        public Task<PluginIngestionPlan> PlanAsync(
+            SelectedPluginIngestionRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            CallCount++;
+            return Task.FromException<PluginIngestionPlan>(exception);
         }
     }
 
@@ -1219,6 +1320,15 @@ public sealed class ProcessingRunExecutorTests : IDisposable
             Started.SetResult(true);
             await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false);
             throw new UnreachableException();
+        }
+
+        /// <inheritdoc />
+        public Task<PluginIngestionPlan> PlanAsync(
+            SelectedPluginIngestionRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromException<PluginIngestionPlan>(
+                new InvalidOperationException("Planning was not expected for this Processing Run."));
         }
     }
 
