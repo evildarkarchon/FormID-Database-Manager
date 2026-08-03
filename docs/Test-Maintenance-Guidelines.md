@@ -95,8 +95,8 @@ find %TEMP% -name "TestDB_*.db" -mtime +7 -delete
 #### 3. Performance Baseline Updates
 
 ```bash
-# Run performance benchmarks
-dotnet run -c Release --project "FormID Database Manager.Tests" -- --filter "*Benchmark*"
+# Run the opt-in performance suites (skipped by default)
+RUN_MANUAL_PERFORMANCE_TESTS=1 dotnet test "FormID Database Manager.Tests" --filter "FullyQualifiedName~Performance"
 
 # Compare with previous baselines
 # Update expected performance thresholds if needed

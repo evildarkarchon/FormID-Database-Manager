@@ -414,3 +414,6 @@ coverage/
 # CocoIndex Code (ccc)
 /.cocoindex_code/
 graphify-out/
+.codex/hooks.json
+.claude/skills/graphify/.graphify_version
+.codex/skills/graphify/.graphify_version

@@ -43,7 +43,6 @@ pwsh ./scripts/publish-portable.ps1
 - **Mutagen 0.51.5** (Bethesda plugin parsing)
 - **Microsoft.Data.Sqlite** (database)
 - **xUnit** + **Moq** (testing)
-- **BenchmarkDotNet** (performance benchmarks)
 
 ## Architecture
 
@@ -73,14 +72,15 @@ The solution has four projects in `FormID Database Manager.slnx`:
 - `Mocks/SynchronousThreadDispatcher` — Test-friendly IThreadDispatcher (executes immediately)
 - `Mocks/SynchronousProgress` — Synchronous IProgress for testing
 - `Builders/` — Test data builders (GameDetectionBuilder, PluginBuilder)
-- Custom test attributes: `RequiresGameInstallationAttribute`, `ExpectsGameEnvironmentFailureAttribute`
+- `ManualPerformanceFactAttribute` / `ManualPerformanceTheoryAttribute` — Skip the load, stress, and regression suites unless `RUN_MANUAL_PERFORMANCE_TESTS` is set
+- `TestCleanupHelper` — Deterministic temp-file and connection-pool cleanup for the manual performance suites
 
 ### Tests (`FormID Database Manager.Tests/`)
 - `Unit/Services/` — Service unit tests
 - `Unit/ViewModels/` — ViewModel tests
 - `Unit/Architecture/` — Core/WinUI source-boundary and wiring tests
 - `Integration/` — Tests with real database/Mutagen (some require game installations)
-- `Performance/` — Benchmarks, load tests, stress tests, regression tests
+- `Performance/` — Load, stress, and regression suites, skipped unless `RUN_MANUAL_PERFORMANCE_TESTS` is set
 
 ## Key Patterns
 
@@ -97,7 +97,8 @@ The solution has four projects in `FormID Database Manager.slnx`:
 - Use `SynchronousThreadDispatcher` in tests instead of platform dispatchers
 - Open databases through `FormIdRecordStore.OpenAsync`; use raw SQLite only for workload generation, failure injection, or persisted-state inspection
 - Store-opening tests use isolated temporary SQLite files and clean up connection pools deterministically
-- Integration tests requiring game installations use `[RequiresGameInstallationFact]`
+- Tests do not depend on a real game installation; supply an in-memory `IGameInstallationProbe` adapter instead (ADR-0002)
+- The load, stress, and regression suites are opt-in: set `RUN_MANUAL_PERFORMANCE_TESTS=1` to run them
 
 ## Important Notes
 
