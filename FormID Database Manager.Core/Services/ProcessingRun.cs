@@ -509,12 +509,10 @@ public sealed class ProcessingRunExecutor : IProcessingRunExecutor
                 }
             }
         }
-        catch (OperationCanceledException)
-        {
-            ReportStatus(progress, "Processing cancelled.");
-            throw;
-        }
-        catch (Exception ex)
+        // Cancellation reports nothing of its own and is excluded from failure formatting: the acknowledgement is a
+        // terminal fact that belongs in the message lists, while this channel is transient and is cleared as soon as
+        // the run ends, so anything written here about a cancelled run is erased before the user can read it (#60).
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             ReportStatus(progress, $"Error during processing: {ex.Message}");
             throw;

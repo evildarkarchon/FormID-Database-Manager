@@ -230,7 +230,7 @@ public sealed class ProcessingRunExecutorTests : IDisposable
     ///     Verifies that cancellation observed after text import ends the Processing Run without optimization or completion.
     /// </summary>
     [Fact]
-    public async Task ExecuteAsync_CancelledAfterTextImport_ReportsCancellationWithoutOptimization()
+    public async Task ExecuteAsync_CancelledAfterTextImport_EndsTheRunWithoutOptimizationOrCompletion()
     {
         ProcessingRunExecutor? sut = null;
         var recordStore = new RecordingRecordStoreSession
@@ -250,9 +250,7 @@ public sealed class ProcessingRunExecutorTests : IDisposable
 
             Assert.Equal(0, recordStore.OptimizeCallCount);
             Assert.True(recordStore.Disposed);
-            Assert.Contains(events, runEvent =>
-                runEvent.Kind == ProcessingRunEventKind.Status &&
-                runEvent.Message.Contains("Processing cancelled", StringComparison.Ordinal));
+            AssertNoCancellationReportedOnTheProgressChannel(events);
             Assert.DoesNotContain(events, runEvent =>
                 runEvent.Message.Contains("Processing completed", StringComparison.Ordinal));
         }
@@ -263,7 +261,7 @@ public sealed class ProcessingRunExecutorTests : IDisposable
     ///     rather than reporting success.
     /// </summary>
     [Fact]
-    public async Task ExecuteAsync_CancelledAfterTextOptimization_ReportsCancellationWithoutCompletion()
+    public async Task ExecuteAsync_CancelledAfterTextOptimization_EndsTheRunWithoutCompletion()
     {
         ProcessingRunExecutor? sut = null;
         var recordStore = new RecordingRecordStoreSession
@@ -283,9 +281,7 @@ public sealed class ProcessingRunExecutorTests : IDisposable
 
             Assert.Equal(1, recordStore.OptimizeCallCount);
             Assert.True(recordStore.Disposed);
-            Assert.Contains(events, runEvent =>
-                runEvent.Kind == ProcessingRunEventKind.Status &&
-                runEvent.Message.Contains("Processing cancelled", StringComparison.Ordinal));
+            AssertNoCancellationReportedOnTheProgressChannel(events);
             Assert.DoesNotContain(events, runEvent =>
                 runEvent.Message.Contains("Processing completed", StringComparison.Ordinal));
         }
@@ -392,9 +388,7 @@ public sealed class ProcessingRunExecutorTests : IDisposable
             Assert.Single(ingestion.Calls);
             Assert.Equal(0, recordStore.OptimizeCallCount);
             Assert.True(recordStore.Disposed);
-            Assert.Contains(events, runEvent =>
-                runEvent.Kind == ProcessingRunEventKind.Status &&
-                runEvent.Message.Contains("Processing cancelled", StringComparison.Ordinal));
+            AssertNoCancellationReportedOnTheProgressChannel(events);
             Assert.DoesNotContain(events, runEvent =>
                 runEvent.Kind is ProcessingRunEventKind.Warning or ProcessingRunEventKind.Error ||
                 runEvent.Message.Contains("Processing completed", StringComparison.Ordinal));
@@ -442,9 +436,7 @@ public sealed class ProcessingRunExecutorTests : IDisposable
             Assert.Single(ingestion.Calls);
             Assert.Equal(1, recordStore.OptimizeCallCount);
             Assert.True(recordStore.Disposed);
-            Assert.Contains(events, runEvent =>
-                runEvent.Kind == ProcessingRunEventKind.Status &&
-                runEvent.Message.Contains("Processing cancelled", StringComparison.Ordinal));
+            AssertNoCancellationReportedOnTheProgressChannel(events);
             Assert.DoesNotContain(events, runEvent =>
                 runEvent.Kind is ProcessingRunEventKind.Warning or ProcessingRunEventKind.Error ||
                 runEvent.Message.Contains("Processing completed", StringComparison.Ordinal));
@@ -753,9 +745,7 @@ public sealed class ProcessingRunExecutorTests : IDisposable
         Assert.Equal(1, ingestion.CallCount);
         Assert.Equal(0, recordStore.OptimizeCallCount);
         Assert.True(recordStore.Disposed);
-        Assert.Contains(events, runEvent =>
-            runEvent.Kind == ProcessingRunEventKind.Status &&
-            runEvent.Message.Contains("Processing cancelled", StringComparison.Ordinal));
+        AssertNoCancellationReportedOnTheProgressChannel(events);
         Assert.DoesNotContain(events, runEvent =>
             runEvent.Kind == ProcessingRunEventKind.Status &&
             runEvent.Message.Contains("Processing completed", StringComparison.Ordinal));
@@ -919,7 +909,7 @@ public sealed class ProcessingRunExecutorTests : IDisposable
     ///     Verifies active-run cancellation reaches the Plugin Ingestion interface token and prevents Store optimization.
     /// </summary>
     [Fact]
-    public async Task ExecuteAsync_CancelledDuringPluginIngestion_ReportsCancelledAndThrows()
+    public async Task ExecuteAsync_CancelledDuringPluginIngestion_StopsBeforeOptimizationAndThrows()
     {
         var gameDirectory = CreateTempDirectory();
         var databasePath = Path.Combine(gameDirectory, "cancel.db");
@@ -946,9 +936,7 @@ public sealed class ProcessingRunExecutorTests : IDisposable
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => processingTask);
         Assert.Equal(0, recordStore.OptimizeCallCount);
         Assert.True(recordStore.Disposed);
-        Assert.Contains(events, runEvent =>
-            runEvent.Kind == ProcessingRunEventKind.Status &&
-            runEvent.Message.Contains("Processing cancelled", StringComparison.Ordinal));
+        AssertNoCancellationReportedOnTheProgressChannel(events);
     }
 
     /// <summary>
@@ -1104,6 +1092,23 @@ public sealed class ProcessingRunExecutorTests : IDisposable
         var filePath = Path.Combine(Path.GetTempPath(), $"processing_run_{Guid.NewGuid():N}_{fileName}");
         _tempFiles.Add(filePath);
         return filePath;
+    }
+
+    /// <summary>
+    ///     Asserts that a cancelled Processing Run said nothing about its cancellation on the progress channel.
+    /// </summary>
+    /// <param name="events">The complete run events reported by the executor.</param>
+    /// <remarks>
+    ///     Issue #60. The progress channel is transient and is cleared as soon as the run ends, so an acknowledgement
+    ///     written here is erased before the user can read it. The cancellation acknowledgement is an information
+    ///     message written by the User Workflow instead, and this executor has no second copy of that fact.
+    ///     The acknowledgement's own wording is matched rather than any "cancel" substring, because a Plugin name can
+    ///     contain one — these runs select a Plugin called Cancelled.esp — and a status naming it is not this fact.
+    /// </remarks>
+    private static void AssertNoCancellationReportedOnTheProgressChannel(IReadOnlyList<ProcessingRunEvent> events)
+    {
+        Assert.DoesNotContain(events, runEvent =>
+            runEvent.Message.Contains("Processing cancelled", StringComparison.Ordinal));
     }
 
     /// <summary>

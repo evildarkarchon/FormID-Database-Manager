@@ -1179,6 +1179,52 @@ public class UserWorkflowTests
     }
 
     /// <summary>
+    ///     Verifies that cancelling an active Processing Run leaves a lasting acknowledgement in the information
+    ///     messages, and that the acknowledgement never reaches the transient progress channel at all.
+    /// </summary>
+    /// <remarks>
+    ///     Issue #60. The notice used to be written to the progress channel by this workflow's cancellation handler and
+    ///     then erased by the run's own cleanup one step later, so the user never saw it and nothing covered the case.
+    ///     Both halves are asserted here: that it lands in the message lists where the other terminal facts about a run
+    ///     go, and that it survives the cleanup that used to erase it.
+    /// </remarks>
+    [Fact]
+    public async Task ProcessFormIdsAsync_CancelledMidRun_PutsTheAcknowledgementInTheInformationMessages()
+    {
+        var sut = CreateSut();
+        await ConfigureValidPluginProcessingRunAsync(sut);
+        _processingRunExecutor.EventsToReport.Add(ProcessingRunEvent.Status("Processing User.esp", 40));
+        var projectedStatuses = new List<string>();
+        _viewModel.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(MainWindowViewModel.ProgressStatus))
+            {
+                projectedStatuses.Add(_viewModel.ProgressStatus);
+            }
+        };
+        // The second press is the cancellation intent, delivered mid-run from the run's own progress notification.
+        OnRunStatus("Processing User.esp", () =>
+        {
+            sut.ProcessFormIdsAsync().GetAwaiter().GetResult();
+            // Armed only once the press has reached the executor, so the run ends as cancelled because it was
+            // cancelled: the real executor propagates the cancellation it accepted, and never one it was not asked for.
+            _processingRunExecutor.ExecuteFailure = new OperationCanceledException();
+        });
+
+        await sut.ProcessFormIdsAsync();
+
+        Assert.Equal(1, _processingRunExecutor.CancelCallCount);
+        // The Plugin List refresh that set this run up leaves its own information message ahead of the acknowledgement.
+        Assert.Contains("Processing cancelled by user.", _viewModel.InformationMessages);
+        Assert.Empty(_viewModel.ErrorMessages);
+        Assert.Empty(_viewModel.WarningMessages);
+        // The run's cleanup hands the channel back, and can no longer erase an acknowledgement that was never on it.
+        Assert.Equal(string.Empty, _viewModel.ProgressStatus);
+        Assert.False(_viewModel.IsProgressVisible);
+        Assert.DoesNotContain("Processing cancelled by user.", projectedStatuses);
+    }
+
+    /// <summary>
     ///     Verifies the window this workflow owns run state to close: a press landing after validation has begun but
     ///     before the executor has been handed the run cancels rather than launching a second run.
     /// </summary>

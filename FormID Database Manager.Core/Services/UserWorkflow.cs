@@ -249,12 +249,18 @@ public sealed class UserWorkflow : IDisposable
     /// Starts processing or requests cancellation for the active processing run.
     /// </summary>
     /// <returns>A task that completes after processing starts, finishes, fails, or observes cancellation.</returns>
+    /// <remarks>
+    /// How the run ended — cancelled or failed — is reported to the message lists, never to the progress channel,
+    /// because this method's own cleanup hands that channel back as soon as the run ends.
+    /// </remarks>
     public async Task ProcessFormIdsAsync()
     {
         // The run-active check and the transition into an active run happen together, so a second press arriving
         // before validation finishes cancels the run in flight rather than starting another one.
         if (!TryBeginRunActivity())
         {
+            // "Cancelling..." is what the run is doing now, not how it ended, so it belongs on the transient channel:
+            // it is deliberately not the acknowledgement, which the cancellation handler below writes instead (#60).
             ReportRunActivity("Cancelling...", null);
             _processingRunExecutor.Cancel();
             return;
@@ -300,9 +306,10 @@ public sealed class UserWorkflow : IDisposable
         {
             _viewModel.AddErrorMessage(ex.Message);
         }
+        // A terminal fact, so it goes to the message lists with the run's other terminal facts (issue #60).
         catch (OperationCanceledException)
         {
-            ReportRunActivity("Processing cancelled by user.", null);
+            _viewModel.AddInformationMessage("Processing cancelled by user.");
         }
         catch (Exception ex)
         {
