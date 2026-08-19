@@ -268,7 +268,10 @@ public sealed class PluginListPresentationAdapterTests
             TestContext.Current.CancellationToken);
         var secondFailure = pluginList.Current;
 
-        Assert.Equal(firstFailure.Activity, secondFailure.Activity);
+        var firstFailed = Assert.IsType<PluginListFailedState>(firstFailure);
+        var secondFailed = Assert.IsType<PluginListFailedState>(secondFailure);
+        Assert.Equal(firstFailed.Source, secondFailed.Source);
+        Assert.Equal(firstFailed.ErrorMessage, secondFailed.ErrorMessage);
         Assert.True(secondFailure.ActivityRevision > firstFailure.ActivityRevision);
         Assert.Equal(
             [
@@ -313,7 +316,7 @@ public sealed class PluginListPresentationAdapterTests
     ///     Verifies raw refresh counts map to legacy scanning wording and Ready clears transient progress.
     /// </summary>
     [Fact]
-    public async Task Projection_RefreshingActivity_MapsCountsAndReadyClearsProgress()
+    public async Task Projection_RefreshingState_MapsCountsAndReadyClearsProgress()
     {
         var discovery = new ControlledPluginListDiscovery();
         using var pluginList = new PluginList(discovery);
@@ -338,9 +341,17 @@ public sealed class PluginListPresentationAdapterTests
         Assert.Equal("Scanning plugins... (3/12)", viewModel.ProgressStatus);
         Assert.Equal(25, viewModel.ProgressValue);
 
+        var membershipWasVisibleBeforeReadyMessage = false;
+        viewModel.InformationMessages.CollectionChanged += (_, _) =>
+        {
+            Assert.Equal("User.esp", Assert.Single(viewModel.Plugins).Name);
+            membershipWasVisibleBeforeReadyMessage = true;
+        };
+
         discovery.Complete("User.esp");
         await refresh;
 
+        Assert.True(membershipWasVisibleBeforeReadyMessage);
         Assert.False(viewModel.IsProgressVisible);
         Assert.Equal(string.Empty, viewModel.ProgressStatus);
         Assert.Equal(0, viewModel.ProgressValue);

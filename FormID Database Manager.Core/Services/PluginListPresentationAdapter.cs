@@ -172,9 +172,9 @@ internal sealed class PluginListPresentationAdapter : IDisposable
     }
 
     /// <summary>
-    ///     Maps one new UI-neutral activity occurrence to existing Main Window progress and terminal presentation.
+    ///     Maps one new concrete Plugin List state occurrence to existing Main Window progress and terminal presentation.
     /// </summary>
-    /// <param name="state">The current Plugin List state containing the activity and optional confirmation.</param>
+    /// <param name="state">The concrete activity occurrence and its optional confirmation.</param>
     /// <remarks>
     ///     Scan activity is the one Workflow Activity fact this module writes, and it is the only module that writes it.
     ///     A Processing Run's activity is projected separately by the User Workflow, so a scan report can no longer
@@ -182,16 +182,16 @@ internal sealed class PluginListPresentationAdapter : IDisposable
     /// </remarks>
     private void ProjectActivity(PluginListState state)
     {
-        switch (state.Activity)
+        switch (state)
         {
-            case PluginListNoSourceActivity:
-            case PluginListCancelledActivity:
-            case PluginListFaultedActivity:
+            case PluginListNoSourceState:
+            case PluginListCancelledState:
+            case PluginListFaultedState:
                 // Callers report unexpected exceptions; these message-free terminal facts only clear transient scanning UI.
                 ClearScanningState();
                 return;
 
-            case PluginListRefreshingActivity refreshing:
+            case PluginListRefreshingState refreshing:
                 // This module renders its own scanning wording: the counts and their phrasing are Plugin List
                 // detail that nothing outside here knows how to say.
                 if (refreshing.ScannedCount == 0 || refreshing.TotalCount == 0)
@@ -206,17 +206,15 @@ internal sealed class PluginListPresentationAdapter : IDisposable
                     (double)refreshing.ScannedCount / refreshing.TotalCount * 100));
                 return;
 
-            case PluginListReadyActivity:
+            case PluginListReadyState ready:
                 ClearScanningState();
-                var confirmed = state.Confirmed ??
-                                throw new InvalidOperationException("Ready Plugin List state requires confirmed membership.");
-                var pluginLabel = confirmed.AdvancedMode == AdvancedMode.On
+                var pluginLabel = ready.Confirmed.AdvancedMode == AdvancedMode.On
                     ? "plugins"
                     : "non-base game plugins";
-                _viewModel.AddInformationMessage($"Loaded {confirmed.Entries.Length} {pluginLabel}");
+                _viewModel.AddInformationMessage($"Loaded {ready.Confirmed.Entries.Length} {pluginLabel}");
                 return;
 
-            case PluginListFailedActivity failed:
+            case PluginListFailedState failed:
                 ClearScanningState();
                 var message = string.IsNullOrWhiteSpace(failed.ErrorMessage)
                     ? "Unknown error"
@@ -228,8 +226,8 @@ internal sealed class PluginListPresentationAdapter : IDisposable
             default:
                 throw new ArgumentOutOfRangeException(
                     nameof(state),
-                    state.Activity,
-                    "Unsupported Plugin List presentation activity.");
+                    state,
+                    "Unsupported Plugin List presentation state.");
         }
     }
 

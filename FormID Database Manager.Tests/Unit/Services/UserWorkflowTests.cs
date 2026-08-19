@@ -1682,7 +1682,7 @@ public class UserWorkflowTests
         await sut.SelectDetectedDirectoryAsync(null);
 
         Assert.Null(_pluginList.Current.Confirmed);
-        Assert.IsType<PluginListNoSourceActivity>(_pluginList.Current.Activity);
+        Assert.IsType<PluginListNoSourceState>(_pluginList.Current);
         Assert.Empty(_viewModel.Plugins);
     }
 

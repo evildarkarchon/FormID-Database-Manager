@@ -360,7 +360,14 @@ public class CoreProjectBoundaryTests
             string.Concat("PluginListRefresh", "Request"),
             string.Concat("PluginListRefresh", "Status"),
             string.Concat("PluginListRefresh", "Progress"),
-            string.Concat("PluginListRefresh", "Result")
+            string.Concat("PluginListRefresh", "Result"),
+            string.Concat("PluginList", "Activity"),
+            string.Concat("PluginListNoSource", "Activity"),
+            string.Concat("PluginListRefreshing", "Activity"),
+            string.Concat("PluginListReady", "Activity"),
+            string.Concat("PluginListFailed", "Activity"),
+            string.Concat("PluginListCancelled", "Activity"),
+            string.Concat("PluginListFaulted", "Activity")
         };
 
         Assert.All(retiredTypeNames, typeName =>

@@ -12,7 +12,7 @@ internal sealed class PluginList : IDisposable
     private readonly object _gate = new();
     private RefreshOperation? _activeRefresh;
     private long _activityRevision;
-    private PluginListState _current = PluginListState.Initial;
+    private PluginListState _current = new PluginListNoSourceState(0, 0);
     private long _membershipVersion;
     private long _refreshGeneration;
     private long _stateRevision;
@@ -133,7 +133,7 @@ internal sealed class PluginList : IDisposable
         {
             try
             {
-                PublishTerminal(operation, new PluginListFaultedActivity(operation.Source));
+                PublishFault(operation);
             }
             catch
             {
@@ -170,7 +170,9 @@ internal sealed class PluginList : IDisposable
             retired = _activeRefresh;
             _activeRefresh = null;
             _refreshGeneration++;
-            changed = PublishActivityLocked(null, new PluginListNoSourceActivity());
+            changed = PublishActivityLocked(
+                (stateRevision, activityRevision) =>
+                    new PluginListNoSourceState(stateRevision, activityRevision));
         }
 
         try
@@ -340,7 +342,15 @@ internal sealed class PluginList : IDisposable
             var currentConfirmed = _current.Confirmed;
             // The last confirmed membership remains coherent only when the normalized Plugin List Source is unchanged.
             var retainedConfirmed = currentConfirmed?.Source == source ? currentConfirmed : null;
-            changed = PublishActivityLocked(retainedConfirmed, new PluginListRefreshingActivity(source, 0, 0));
+            changed = PublishActivityLocked(
+                (stateRevision, activityRevision) =>
+                    new PluginListRefreshingState(
+                        stateRevision,
+                        activityRevision,
+                        source,
+                        retainedConfirmed,
+                        0,
+                        0));
         }
 
         try
@@ -353,7 +363,7 @@ internal sealed class PluginList : IDisposable
         {
             try
             {
-                PublishTerminal(operation, new PluginListFaultedActivity(operation.Source));
+                PublishFault(operation);
             }
             catch
             {
@@ -436,8 +446,8 @@ internal sealed class PluginList : IDisposable
                 selectedNames);
             _activeRefresh = null;
             changed = PublishActivityLocked(
-                confirmed,
-                new PluginListReadyActivity(operation.Source, membershipVersion));
+                (stateRevision, activityRevision) =>
+                    new PluginListReadyState(stateRevision, activityRevision, confirmed));
         }
 
         changed?.Invoke(this, EventArgs.Empty);
@@ -474,7 +484,13 @@ internal sealed class PluginList : IDisposable
     {
         PublishTerminal(
             operation,
-            new PluginListFailedActivity(operation.Source, errorMessage));
+            (stateRevision, activityRevision, retainedConfirmed) =>
+                new PluginListFailedState(
+                    stateRevision,
+                    activityRevision,
+                    operation.Source,
+                    retainedConfirmed,
+                    errorMessage));
     }
 
     /// <summary>
@@ -483,15 +499,40 @@ internal sealed class PluginList : IDisposable
     /// <param name="operation">The refresh generation cancelled by its caller.</param>
     private void PublishCancellation(RefreshOperation operation)
     {
-        PublishTerminal(operation, new PluginListCancelledActivity(operation.Source));
+        PublishTerminal(
+            operation,
+            (stateRevision, activityRevision, retainedConfirmed) =>
+                new PluginListCancelledState(
+                    stateRevision,
+                    activityRevision,
+                    operation.Source,
+                    retainedConfirmed));
+    }
+
+    /// <summary>
+    ///     Publishes an unexpected refresh fault while retaining only coherent same-source confirmation.
+    /// </summary>
+    /// <param name="operation">The refresh generation that faulted.</param>
+    private void PublishFault(RefreshOperation operation)
+    {
+        PublishTerminal(
+            operation,
+            (stateRevision, activityRevision, retainedConfirmed) =>
+                new PluginListFaultedState(
+                    stateRevision,
+                    activityRevision,
+                    operation.Source,
+                    retainedConfirmed));
     }
 
     /// <summary>
     ///     Publishes a non-success terminal activity while retaining only coherent same-source confirmation.
     /// </summary>
     /// <param name="operation">The refresh generation that produced the terminal activity.</param>
-    /// <param name="activity">The UI-neutral failure or cancellation fact to publish.</param>
-    private void PublishTerminal(RefreshOperation operation, PluginListActivity activity)
+    /// <param name="createState">Creates the concrete terminal state with its retained confirmation.</param>
+    private void PublishTerminal(
+        RefreshOperation operation,
+        Func<long, long, ConfirmedPluginList?, PluginListState> createState)
     {
         EventHandler? changed;
         lock (_gate)
@@ -503,7 +544,9 @@ internal sealed class PluginList : IDisposable
 
             var retainedConfirmed = _current.Confirmed?.Source == operation.Source ? _current.Confirmed : null;
             _activeRefresh = null;
-            changed = PublishActivityLocked(retainedConfirmed, activity);
+            changed = PublishActivityLocked(
+                (stateRevision, activityRevision) =>
+                    createState(stateRevision, activityRevision, retainedConfirmed));
         }
 
         changed?.Invoke(this, EventArgs.Empty);
@@ -524,12 +567,16 @@ internal sealed class PluginList : IDisposable
                 return;
             }
 
+            var retainedConfirmed = _current.Confirmed;
             changed = PublishActivityLocked(
-                _current.Confirmed,
-                new PluginListRefreshingActivity(
-                    operation.Source,
-                    progress.ScannedCount,
-                    progress.TotalCount));
+                (stateRevision, activityRevision) =>
+                    new PluginListRefreshingState(
+                        stateRevision,
+                        activityRevision,
+                        operation.Source,
+                        retainedConfirmed,
+                        progress.ScannedCount,
+                        progress.TotalCount));
         }
 
         changed?.Invoke(this, EventArgs.Empty);
@@ -538,12 +585,15 @@ internal sealed class PluginList : IDisposable
     /// <summary>
     ///     Publishes one activity occurrence while the caller holds the publication gate.
     /// </summary>
-    /// <param name="confirmed">The optional confirmed membership exposed by the new state.</param>
-    /// <param name="activity">The UI-neutral activity exposed by the new state.</param>
+    /// <param name="createState">Creates the concrete state for the next state and activity revisions.</param>
     /// <returns>The signal-only change handlers to invoke after releasing the gate.</returns>
-    private EventHandler? PublishActivityLocked(ConfirmedPluginList? confirmed, PluginListActivity activity)
+    private EventHandler? PublishActivityLocked(Func<long, long, PluginListState> createState)
     {
-        var state = new PluginListState(++_stateRevision, ++_activityRevision, confirmed, activity);
+        var nextStateRevision = _stateRevision + 1;
+        var nextActivityRevision = _activityRevision + 1;
+        var state = createState(nextStateRevision, nextActivityRevision);
+        _stateRevision = nextStateRevision;
+        _activityRevision = nextActivityRevision;
         Volatile.Write(ref _current, state);
         return Changed;
     }
@@ -555,11 +605,45 @@ internal sealed class PluginList : IDisposable
     /// <returns>The signal-only change handlers to invoke after releasing the gate.</returns>
     private EventHandler? PublishSelectionLocked(ConfirmedPluginList confirmed)
     {
-        var state = new PluginListState(
-            ++_stateRevision,
-            _activityRevision,
-            confirmed,
-            _current.Activity);
+        var nextStateRevision = _stateRevision + 1;
+        var current = _current;
+        PluginListState state = current switch
+        {
+            PluginListRefreshingState refreshing => new PluginListRefreshingState(
+                nextStateRevision,
+                current.ActivityRevision,
+                refreshing.Source,
+                confirmed,
+                refreshing.ScannedCount,
+                refreshing.TotalCount),
+            PluginListReadyState => new PluginListReadyState(
+                nextStateRevision,
+                current.ActivityRevision,
+                confirmed),
+            PluginListFailedState failed => new PluginListFailedState(
+                nextStateRevision,
+                current.ActivityRevision,
+                failed.Source,
+                confirmed,
+                failed.ErrorMessage),
+            PluginListCancelledState cancelled => new PluginListCancelledState(
+                nextStateRevision,
+                current.ActivityRevision,
+                cancelled.Source,
+                confirmed),
+            PluginListFaultedState faulted => new PluginListFaultedState(
+                nextStateRevision,
+                current.ActivityRevision,
+                faulted.Source,
+                confirmed),
+            PluginListNoSourceState => throw new InvalidOperationException(
+                "No-source Plugin List state cannot publish confirmed selection."),
+            _ => throw new ArgumentOutOfRangeException(
+                nameof(current),
+                current,
+                "Unsupported Plugin List state for selection publication.")
+        };
+        _stateRevision = nextStateRevision;
         Volatile.Write(ref _current, state);
         return Changed;
     }
