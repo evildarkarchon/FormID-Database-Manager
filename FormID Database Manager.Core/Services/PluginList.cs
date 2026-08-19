@@ -11,6 +11,7 @@ internal sealed class PluginList : IDisposable
     private readonly IPluginListDiscovery _discovery;
     private readonly object _gate = new();
     private RefreshOperation? _activeRefresh;
+    private long _activityRevision;
     private PluginListState _current = PluginListState.Initial;
     private long _membershipVersion;
     private long _refreshGeneration;
@@ -169,7 +170,7 @@ internal sealed class PluginList : IDisposable
             retired = _activeRefresh;
             _activeRefresh = null;
             _refreshGeneration++;
-            changed = PublishLocked(null, new PluginListNoSourceActivity());
+            changed = PublishActivityLocked(null, new PluginListNoSourceActivity());
         }
 
         try
@@ -244,9 +245,8 @@ internal sealed class PluginList : IDisposable
                     completeSelection = completeSelectionBuilder.ToImmutable();
                 }
 
-                changed = PublishLocked(
-                    confirmed with { SelectedPluginNames = completeSelection },
-                    _current.Activity);
+                changed = PublishSelectionLocked(
+                    confirmed with { SelectedPluginNames = completeSelection });
             }
             else if (intent is PluginSelectionByNameIntent individualIntent)
             {
@@ -280,12 +280,11 @@ internal sealed class PluginList : IDisposable
                     selectedNames.Remove(confirmedName);
                 }
 
-                changed = PublishLocked(
+                changed = PublishSelectionLocked(
                     confirmed with
                     {
                         SelectedPluginNames = MaterializeSelectedPluginNames(confirmed.Entries, selectedNames)
-                    },
-                    _current.Activity);
+                    });
             }
             else
             {
@@ -341,7 +340,7 @@ internal sealed class PluginList : IDisposable
             var currentConfirmed = _current.Confirmed;
             // The last confirmed membership remains coherent only when the normalized Plugin List Source is unchanged.
             var retainedConfirmed = currentConfirmed?.Source == source ? currentConfirmed : null;
-            changed = PublishLocked(retainedConfirmed, new PluginListRefreshingActivity(source, 0, 0));
+            changed = PublishActivityLocked(retainedConfirmed, new PluginListRefreshingActivity(source, 0, 0));
         }
 
         try
@@ -436,7 +435,7 @@ internal sealed class PluginList : IDisposable
                 confirmedEntries,
                 selectedNames);
             _activeRefresh = null;
-            changed = PublishLocked(
+            changed = PublishActivityLocked(
                 confirmed,
                 new PluginListReadyActivity(operation.Source, membershipVersion));
         }
@@ -504,7 +503,7 @@ internal sealed class PluginList : IDisposable
 
             var retainedConfirmed = _current.Confirmed?.Source == operation.Source ? _current.Confirmed : null;
             _activeRefresh = null;
-            changed = PublishLocked(retainedConfirmed, activity);
+            changed = PublishActivityLocked(retainedConfirmed, activity);
         }
 
         changed?.Invoke(this, EventArgs.Empty);
@@ -525,7 +524,7 @@ internal sealed class PluginList : IDisposable
                 return;
             }
 
-            changed = PublishLocked(
+            changed = PublishActivityLocked(
                 _current.Confirmed,
                 new PluginListRefreshingActivity(
                     operation.Source,
@@ -537,14 +536,30 @@ internal sealed class PluginList : IDisposable
     }
 
     /// <summary>
-    ///     Replaces current state while the caller holds the publication gate.
+    ///     Publishes one activity occurrence while the caller holds the publication gate.
     /// </summary>
     /// <param name="confirmed">The optional confirmed membership exposed by the new state.</param>
     /// <param name="activity">The UI-neutral activity exposed by the new state.</param>
     /// <returns>The signal-only change handlers to invoke after releasing the gate.</returns>
-    private EventHandler? PublishLocked(ConfirmedPluginList? confirmed, PluginListActivity activity)
+    private EventHandler? PublishActivityLocked(ConfirmedPluginList? confirmed, PluginListActivity activity)
     {
-        var state = new PluginListState(++_stateRevision, confirmed, activity);
+        var state = new PluginListState(++_stateRevision, ++_activityRevision, confirmed, activity);
+        Volatile.Write(ref _current, state);
+        return Changed;
+    }
+
+    /// <summary>
+    ///     Publishes selection-only state while preserving the current activity occurrence revision.
+    /// </summary>
+    /// <param name="confirmed">The confirmed membership containing the new selection.</param>
+    /// <returns>The signal-only change handlers to invoke after releasing the gate.</returns>
+    private EventHandler? PublishSelectionLocked(ConfirmedPluginList confirmed)
+    {
+        var state = new PluginListState(
+            ++_stateRevision,
+            _activityRevision,
+            confirmed,
+            _current.Activity);
         Volatile.Write(ref _current, state);
         return Changed;
     }

@@ -243,6 +243,44 @@ public sealed class PluginListPresentationAdapterTests
     }
 
     /// <summary>
+    ///     Verifies structurally equal failures remain distinct presentation occurrences.
+    /// </summary>
+    [Fact]
+    public async Task Projection_StructurallyEqualFailures_PresentsEachActivityOccurrence()
+    {
+        var failure = PluginListDiscoveryResult.Failed("load order failure");
+        var discovery = new SequencedPluginListDiscovery(failure, failure);
+        using var pluginList = new PluginList(discovery);
+        var dispatcher = new SynchronousThreadDispatcher();
+        var viewModel = new MainWindowViewModel(dispatcher);
+        using var sut = new PluginListPresentationAdapter(pluginList, viewModel, dispatcher);
+
+        await pluginList.RefreshAsync(
+            GameRelease.SkyrimSE,
+            discovery.GameDirectory,
+            AdvancedMode.Off,
+            TestContext.Current.CancellationToken);
+        var firstFailure = pluginList.Current;
+        await pluginList.RefreshAsync(
+            GameRelease.SkyrimSE,
+            discovery.GameDirectory,
+            AdvancedMode.Off,
+            TestContext.Current.CancellationToken);
+        var secondFailure = pluginList.Current;
+
+        Assert.Equal(firstFailure.Activity, secondFailure.Activity);
+        Assert.True(secondFailure.ActivityRevision > firstFailure.ActivityRevision);
+        Assert.Equal(
+            [
+                "Failed to load plugins: load order failure",
+                "Ensure you selected the correct game Data directory",
+                "Failed to load plugins: load order failure",
+                "Ensure you selected the correct game Data directory"
+            ],
+            viewModel.ErrorMessages);
+    }
+
+    /// <summary>
     ///     Verifies versioned selection facts update projected items without rebuilding membership or echoing Ready.
     /// </summary>
     [Fact]

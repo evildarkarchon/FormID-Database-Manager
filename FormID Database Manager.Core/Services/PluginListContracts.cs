@@ -51,12 +51,17 @@ internal sealed record PluginListFaultedActivity(PluginListSource Source) : Plug
 /// <summary>
 ///     Provides one immutable view of Plugin List membership, selection, and current activity.
 /// </summary>
+/// <param name="StateRevision">The revision of this complete published snapshot.</param>
+/// <param name="ActivityRevision">The revision of the most recent genuine activity occurrence.</param>
+/// <param name="Confirmed">The optional confirmed Plugin List membership and selection.</param>
+/// <param name="Activity">The current UI-neutral Plugin List activity.</param>
 internal sealed record PluginListState(
     long StateRevision,
+    long ActivityRevision,
     ConfirmedPluginList? Confirmed,
     PluginListActivity Activity)
 {
-    public static PluginListState Initial { get; } = new(0, null, new PluginListNoSourceActivity());
+    public static PluginListState Initial { get; } = new(0, 0, null, new PluginListNoSourceActivity());
 }
 
 /// <summary>

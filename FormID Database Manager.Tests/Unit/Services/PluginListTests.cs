@@ -48,6 +48,7 @@ public sealed class PluginListTests
         };
 
         Assert.Equal(0, sut.Current.StateRevision);
+        Assert.Equal(0, sut.Current.ActivityRevision);
         Assert.Null(sut.Current.Confirmed);
         Assert.IsType<PluginListNoSourceActivity>(sut.Current.Activity);
 
@@ -71,6 +72,48 @@ public sealed class PluginListTests
         Assert.Same(EventArgs.Empty, lastEventArgs);
         Assert.Contains(publishedActivities, activity => activity is PluginListRefreshingActivity);
         Assert.Contains(publishedActivities, activity => activity is PluginListReadyActivity);
+    }
+
+    /// <summary>
+    ///     Verifies each refresh activity occurrence advances both revisions, including structurally equal progress.
+    /// </summary>
+    [Fact]
+    public async Task RefreshAsync_EqualProgressOccurrences_AdvanceStateAndActivityRevisions()
+    {
+        var discovery = new ControlledPluginListDiscovery();
+        var operation = discovery.Enqueue();
+        using var sut = new PluginList(discovery);
+
+        Assert.Equal(0, sut.Current.StateRevision);
+        Assert.Equal(0, sut.Current.ActivityRevision);
+
+        var refresh = sut.RefreshAsync(
+            GameRelease.SkyrimSE,
+            CreateGameDirectory(),
+            AdvancedMode.Off,
+            TestContext.Current.CancellationToken);
+        var refreshing = sut.Current;
+
+        Assert.Equal(1, refreshing.StateRevision);
+        Assert.Equal(1, refreshing.ActivityRevision);
+
+        operation.ReportProgress(3, 12);
+        var firstProgress = sut.Current;
+        operation.ReportProgress(3, 12);
+        var secondProgress = sut.Current;
+
+        Assert.Equal(refreshing.StateRevision + 1, firstProgress.StateRevision);
+        Assert.Equal(refreshing.ActivityRevision + 1, firstProgress.ActivityRevision);
+        Assert.Equal(firstProgress.StateRevision + 1, secondProgress.StateRevision);
+        Assert.Equal(firstProgress.ActivityRevision + 1, secondProgress.ActivityRevision);
+        Assert.Equal(firstProgress.Activity, secondProgress.Activity);
+
+        operation.Complete("User.esp");
+        await refresh;
+
+        Assert.Equal(secondProgress.StateRevision + 1, sut.Current.StateRevision);
+        Assert.Equal(secondProgress.ActivityRevision + 1, sut.Current.ActivityRevision);
+        Assert.IsType<PluginListReadyActivity>(sut.Current.Activity);
     }
 
     [Fact]
@@ -182,6 +225,7 @@ public sealed class PluginListTests
                 true));
 
         Assert.Equal(beforeSelection.StateRevision + 2, sut.Current.StateRevision);
+        Assert.Equal(beforeSelection.ActivityRevision, sut.Current.ActivityRevision);
         Assert.Equal(["First.esp", "Second.esp"], sut.Current.Confirmed!.SelectedPluginNames);
         Assert.Equal(2, changedCount);
     }
@@ -408,6 +452,8 @@ public sealed class PluginListTests
         var failure = PluginListDiscoveryResult.Failed("The local Plugin List could not be read.");
         var discovery = new FixedPluginListDiscovery(failure);
         using var sut = new PluginList(discovery);
+        var publishedStates = new List<PluginListState>();
+        sut.Changed += (_, _) => publishedStates.Add(sut.Current);
 
         await sut.RefreshAsync(
             GameRelease.SkyrimSE,
@@ -419,6 +465,20 @@ public sealed class PluginListTests
         var failed = Assert.IsType<PluginListFailedActivity>(sut.Current.Activity);
         Assert.Equal("The local Plugin List could not be read.", failed.ErrorMessage);
         Assert.Equal(PluginListSource.Create(GameRelease.SkyrimSE, discovery.GameDirectory), failed.Source);
+        Assert.Collection(
+            publishedStates,
+            state =>
+            {
+                Assert.Equal(1, state.StateRevision);
+                Assert.Equal(1, state.ActivityRevision);
+                Assert.IsType<PluginListRefreshingActivity>(state.Activity);
+            },
+            state =>
+            {
+                Assert.Equal(2, state.StateRevision);
+                Assert.Equal(2, state.ActivityRevision);
+                Assert.IsType<PluginListFailedActivity>(state.Activity);
+            });
     }
 
     [Fact]
@@ -610,6 +670,8 @@ public sealed class PluginListTests
             gameDirectory,
             AdvancedMode.Off,
             callerCancellation.Token);
+        var refreshingStateRevision = sut.Current.StateRevision;
+        var refreshingActivityRevision = sut.Current.ActivityRevision;
 
         callerCancellation.Cancel();
         operation.Complete("Ignored.esp");
@@ -618,6 +680,8 @@ public sealed class PluginListTests
         Assert.Null(sut.Current.Confirmed);
         var cancelled = Assert.IsType<PluginListCancelledActivity>(sut.Current.Activity);
         Assert.Equal(PluginListSource.Create(GameRelease.SkyrimSE, gameDirectory), cancelled.Source);
+        Assert.Equal(refreshingStateRevision + 1, sut.Current.StateRevision);
+        Assert.Equal(refreshingActivityRevision + 1, sut.Current.ActivityRevision);
     }
 
     [Fact]
@@ -696,10 +760,13 @@ public sealed class PluginListTests
         Assert.True(retired.CancellationToken.IsCancellationRequested);
         var faulted = Assert.IsType<PluginListFaultedActivity>(sut.Current.Activity);
         Assert.Equal(PluginListSource.Create(GameRelease.SkyrimSE, replacementDirectory), faulted.Source);
+        var faultedStateRevision = sut.Current.StateRevision;
+        var faultedActivityRevision = sut.Current.ActivityRevision;
 
         retired.Cancel();
         await retiredRefresh;
-        Assert.Same(faulted, sut.Current.Activity);
+        Assert.Equal(faultedStateRevision, sut.Current.StateRevision);
+        Assert.Equal(faultedActivityRevision, sut.Current.ActivityRevision);
         var retryRefresh = sut.RefreshAsync(
             GameRelease.SkyrimSE,
             replacementDirectory,
@@ -852,6 +919,8 @@ public sealed class PluginListTests
             gameDirectory,
             AdvancedMode.Off,
             TestContext.Current.CancellationToken);
+        var refreshingStateRevision = sut.Current.StateRevision;
+        var refreshingActivityRevision = sut.Current.ActivityRevision;
         var terminalNotificationAttempted = false;
         sut.Changed += (_, _) =>
         {
@@ -870,6 +939,8 @@ public sealed class PluginListTests
         Assert.Same(confirmed, sut.Current.Confirmed);
         var faulted = Assert.IsType<PluginListFaultedActivity>(sut.Current.Activity);
         Assert.Equal(confirmed.Source, faulted.Source);
+        Assert.Equal(refreshingStateRevision + 1, sut.Current.StateRevision);
+        Assert.Equal(refreshingActivityRevision + 1, sut.Current.ActivityRevision);
     }
 
     [Fact]
@@ -883,12 +954,14 @@ public sealed class PluginListTests
             AdvancedMode.Off,
             TestContext.Current.CancellationToken);
         var confirmedRevision = sut.Current.StateRevision;
+        var confirmedActivityRevision = sut.Current.ActivityRevision;
 
         sut.Invalidate();
 
         Assert.Null(sut.Current.Confirmed);
         Assert.IsType<PluginListNoSourceActivity>(sut.Current.Activity);
-        Assert.True(sut.Current.StateRevision > confirmedRevision);
+        Assert.Equal(confirmedRevision + 1, sut.Current.StateRevision);
+        Assert.Equal(confirmedActivityRevision + 1, sut.Current.ActivityRevision);
     }
 
     private sealed class DeterministicPluginListDiscovery(params string[] pluginNames) : IPluginListDiscovery

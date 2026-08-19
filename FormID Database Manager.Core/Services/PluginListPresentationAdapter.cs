@@ -13,7 +13,7 @@ internal sealed class PluginListPresentationAdapter : IDisposable
     private readonly PluginList _pluginList;
     private readonly MainWindowViewModel _viewModel;
     private bool _disposed;
-    private PluginListActivity? _lastPresentedActivity;
+    private long _lastPresentedActivityRevision = -1;
     private long _lastPresentedStateRevision = -1;
 
     /// <summary>
@@ -93,15 +93,19 @@ internal sealed class PluginListPresentationAdapter : IDisposable
                 return;
             }
 
+            var hasNewActivity = state.ActivityRevision > _lastPresentedActivityRevision;
+            // Membership must be visible before its activity, and revisions commit only after every projection succeeds.
             ProjectPlugins(state.Confirmed);
-            // Selection-only revisions reuse their activity instance, so reference identity suppresses terminal echoes.
-            if (!ReferenceEquals(state.Activity, _lastPresentedActivity))
+            if (hasNewActivity)
             {
                 ProjectActivity(state);
-                _lastPresentedActivity = state.Activity;
             }
 
             _lastPresentedStateRevision = state.StateRevision;
+            if (hasNewActivity)
+            {
+                _lastPresentedActivityRevision = state.ActivityRevision;
+            }
         }
     }
 
@@ -168,7 +172,7 @@ internal sealed class PluginListPresentationAdapter : IDisposable
     }
 
     /// <summary>
-    ///     Maps one new UI-neutral activity instance to existing Main Window progress and terminal presentation.
+    ///     Maps one new UI-neutral activity occurrence to existing Main Window progress and terminal presentation.
     /// </summary>
     /// <param name="state">The current Plugin List state containing the activity and optional confirmation.</param>
     /// <remarks>
