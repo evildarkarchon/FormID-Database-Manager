@@ -40,6 +40,9 @@ renaming Core members or changing project boundaries. In particular:
 - `FormIdRecordStore.cs` is the only production source file that may reference `Microsoft.Data.Sqlite`.
 - `ProcessingRun` owns Store opening, optimization, and disposal; `PluginIngestion` owns load-order, overlay, and
   Data-path adapters.
+- `ProcessingRun.cs` contains no user-facing wording. A run reports typed `ProcessingRunProgress` and returns a typed
+  `ProcessingRunOutcome`; `ProcessingRunPresentation` renders both (ADR-0007). The retired sentences are pinned by
+  name, and `"Would process"` must not reappear anywhere in Core.
 - Projected `MainWindowViewModel` state is read-only to consumers, and retired APIs must not be reintroduced.
 
 ## Engineering conventions
@@ -48,8 +51,18 @@ renaming Core members or changing project boundaries. In particular:
 - Keep `GameInstallations.CanonicalizeDataDirectory()` as the only production implementation of the game-root-or-Data
   rule (ADR-0002).
 - Resolve Store table names only through the closed `SupportedGameReleases` table (ADR-0003).
-- `ProcessingRunExecutor` owns active-run cancellation. Mutagen's `CreateFromBinaryOverlay` is synchronous and cannot
-  be cancelled.
+- `ProcessingRunExecutor` executes one typed Processing Run request, reports its transient progress, and returns how it
+  ended. It owns active-run cancellation: because the token is executor-owned, cancellation is returned as a
+  `CancelledRunOutcome`, while validation failures, `UnresolvableMasterException`, and unexpected internal failures
+  propagate as exceptions rather than becoming outcomes (ADR-0007). Mutagen's `CreateFromBinaryOverlay` is synchronous
+  and cannot be cancelled.
+- A dry run returns a Processing Run Plan and opens no Store. A selected-Plugin dry run still resolves the Data path,
+  prepares the load order, and opens each Plugin's overlay, so it reports would-ingest and would-skip per Plugin rather
+  than echoing the selection. A FormID text dry run reports the file's presence and size, and neither opens nor parses
+  it — counting rows is what an import does.
+- `ProcessingRunPresentation` is a pure renderer and writes nothing. `UserWorkflow` keeps the run activity, its
+  ordering lock, and every ViewModel write, so do not move them there for symmetry with
+  `PluginListPresentationAdapter` (ADR-0007).
 - Open databases through `FormIdRecordStore.OpenAsync`. Use raw SQLite only for workload generation, failure
   injection, or persisted-state inspection.
 - Tests must not depend on an installed game. Supply an in-memory `IGameInstallationProbe`.
