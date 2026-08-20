@@ -4,15 +4,52 @@ using Mutagen.Bethesda;
 namespace FormID_Database_Manager.Services;
 
 /// <summary>
+///     Consumer-owned FormID Record Store role for one atomic Plugin write during Plugin Ingestion.
+/// </summary>
+/// <remarks>
+///     <para>
+///         The surrounding Processing Run owns the complete Store session and its lifetime. Plugin Ingestion borrows
+///         this role only while ingesting a selection; it does not open, optimize, import through, or dispose the Store.
+///     </para>
+///     <para>
+///         Calls do not overlap. The supplied lazy records are enumerated exactly once during the operation and are not
+///         retained after it completes. Each call is one Plugin-scoped transaction: append mode stores every enumerated
+///         record or none, while replace mode matches the Plugin name case-insensitively and performs deletion and
+///         insertion atomically. A zero-record replacement preserves existing rows.
+///     </para>
+/// </remarks>
+internal interface IPluginFormIdRecordWriter
+{
+    /// <summary>
+    ///     Writes one Plugin's lazy FormID record sequence using the requested Update Mode.
+    /// </summary>
+    /// <param name="pluginName">The selected Plugin name stored with each FormID record.</param>
+    /// <param name="records">The lazy records consumed exactly once before this operation completes.</param>
+    /// <param name="updateMode">Whether to append records or atomically replace this Plugin's existing records.</param>
+    /// <param name="cancellationToken">Stops enumeration or the transactional write.</param>
+    /// <returns>The Store-confirmed count of records written by the completed transaction.</returns>
+    /// <exception cref="OperationCanceledException"><paramref name="cancellationToken" /> requests cancellation.</exception>
+    /// <exception cref="Exception">
+    ///     Record enumeration or Store persistence fails. The Plugin transaction is rolled back and the failure
+    ///     propagates unchanged.
+    /// </exception>
+    Task<FormIdPluginWriteResult> WritePluginAsync(
+        string pluginName,
+        IEnumerable<FormIdRecord> records,
+        UpdateMode updateMode,
+        CancellationToken cancellationToken = default);
+}
+
+/// <summary>
 ///     Defines the complete selected-Plugin phase used by a Processing Run.
 /// </summary>
 internal interface IPluginIngestion
 {
     /// <summary>
-    ///     Ingests the captured selection through the already-open run-scoped FormID Record Store session.
+    ///     Ingests the captured selection through the borrowed Plugin-write role of the already-open Store session.
     /// </summary>
     /// <param name="request">The immutable selected-Plugin request.</param>
-    /// <param name="recordStore">The Store session owned by the surrounding Processing Run.</param>
+    /// <param name="recordStore">The Plugin-write Store role borrowed from the surrounding Processing Run.</param>
     /// <param name="progress">Optional transient preparation and current-Plugin facts.</param>
     /// <param name="cancellationToken">Stops the selected set without returning a completed report.</param>
     /// <returns>The authoritative ordered outcome report for the complete selection.</returns>
@@ -27,7 +64,7 @@ internal interface IPluginIngestion
     /// </exception>
     Task<PluginIngestionReport> IngestAsync(
         SelectedPluginIngestionRequest request,
-        IFormIdRecordStoreSession recordStore,
+        IPluginFormIdRecordWriter recordStore,
         IProgress<PluginIngestionProgress>? progress = null,
         CancellationToken cancellationToken = default);
 

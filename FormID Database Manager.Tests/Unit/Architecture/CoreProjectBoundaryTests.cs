@@ -285,8 +285,8 @@ public class CoreProjectBoundaryTests
     }
 
     /// <summary>
-    ///     Verifies the final selected-Plugin dependency direction: Processing Run owns the Store lifecycle, while the
-    ///     Plugin Ingestion role owns Game Load Orders, Data-path canonicalization, and overlay use behind its interface.
+    ///     Verifies the final selected-Plugin dependency direction: Processing Run owns the complete Store session,
+    ///     while Plugin Ingestion borrows only Plugin-write behavior and owns its read-side adapters.
     /// </summary>
     [Fact]
     public void CoreServices_SelectedPluginOwnership_KeepsAdaptersAndStoreLifecycleOnTheirOwningSides()
@@ -300,8 +300,10 @@ public class CoreProjectBoundaryTests
         var planningOperation = Assert.Single(
             typeof(IPluginIngestion).GetMethods(),
             method => method.Name == nameof(IPluginIngestion.PlanAsync));
+        var pluginWriterType = typeof(IPluginFormIdRecordWriter);
 
         Assert.Contains("IPluginIngestion", processingRunSource, StringComparison.Ordinal);
+        Assert.Contains("IFormIdRecordStoreSession recordStore", processingRunSource, StringComparison.Ordinal);
         Assert.Contains("IFormIdRecordStoreSessionOpener", processingRunSource, StringComparison.Ordinal);
         Assert.Contains("OpenAsync(", processingRunSource, StringComparison.Ordinal);
         Assert.Contains("OptimizeAsync(", processingRunSource, StringComparison.Ordinal);
@@ -320,6 +322,9 @@ public class CoreProjectBoundaryTests
         Assert.Contains("IPluginOverlayReader", pluginIngestionSource, StringComparison.Ordinal);
         Assert.Contains("GameInstallations.CanonicalizeDataDirectory", pluginIngestionSource, StringComparison.Ordinal);
         Assert.Contains(
+            ingestionOperation.GetParameters(),
+            parameter => parameter.ParameterType == pluginWriterType);
+        Assert.DoesNotContain(
             ingestionOperation.GetParameters(),
             parameter => parameter.ParameterType == typeof(IFormIdRecordStoreSession));
         Assert.DoesNotContain(

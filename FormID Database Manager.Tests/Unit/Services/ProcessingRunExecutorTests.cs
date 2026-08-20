@@ -1070,21 +1070,21 @@ public sealed class ProcessingRunExecutorTests : IDisposable
     private sealed class RecordingReportPluginIngestion(
         Func<
             SelectedPluginIngestionRequest,
-            IFormIdRecordStoreSession,
+            IPluginFormIdRecordWriter,
             IProgress<PluginIngestionProgress>?,
             CancellationToken,
             Task<PluginIngestionReport>> response) : IPluginIngestion
     {
         public List<(
             SelectedPluginIngestionRequest Request,
-            IFormIdRecordStoreSession RecordStore,
+            IPluginFormIdRecordWriter RecordStore,
             IProgress<PluginIngestionProgress>? Progress,
             CancellationToken CancellationToken)> Calls { get; } = [];
 
         /// <inheritdoc />
         public Task<PluginIngestionReport> IngestAsync(
             SelectedPluginIngestionRequest request,
-            IFormIdRecordStoreSession recordStore,
+            IPluginFormIdRecordWriter recordStore,
             IProgress<PluginIngestionProgress>? progress = null,
             CancellationToken cancellationToken = default)
         {
@@ -1109,7 +1109,7 @@ public sealed class ProcessingRunExecutorTests : IDisposable
         /// <inheritdoc />
         public Task<PluginIngestionReport> IngestAsync(
             SelectedPluginIngestionRequest request,
-            IFormIdRecordStoreSession recordStore,
+            IPluginFormIdRecordWriter recordStore,
             IProgress<PluginIngestionProgress>? progress = null,
             CancellationToken cancellationToken = default)
         {
@@ -1148,7 +1148,7 @@ public sealed class ProcessingRunExecutorTests : IDisposable
         /// <inheritdoc />
         public Task<PluginIngestionReport> IngestAsync(
             SelectedPluginIngestionRequest request,
-            IFormIdRecordStoreSession recordStore,
+            IPluginFormIdRecordWriter recordStore,
             IProgress<PluginIngestionProgress>? progress = null,
             CancellationToken cancellationToken = default)
         {
@@ -1180,7 +1180,7 @@ public sealed class ProcessingRunExecutorTests : IDisposable
         /// <inheritdoc />
         public Task<PluginIngestionReport> IngestAsync(
             SelectedPluginIngestionRequest request,
-            IFormIdRecordStoreSession recordStore,
+            IPluginFormIdRecordWriter recordStore,
             IProgress<PluginIngestionProgress>? progress = null,
             CancellationToken cancellationToken = default)
         {
@@ -1313,7 +1313,7 @@ public sealed class ProcessingRunExecutorTests : IDisposable
         /// <inheritdoc />
         public async Task<PluginIngestionReport> IngestAsync(
             SelectedPluginIngestionRequest request,
-            IFormIdRecordStoreSession recordStore,
+            IPluginFormIdRecordWriter recordStore,
             IProgress<PluginIngestionProgress>? progress = null,
             CancellationToken cancellationToken = default)
         {

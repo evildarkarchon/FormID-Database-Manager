@@ -51,10 +51,10 @@ internal sealed class PluginIngestion : IPluginIngestion
 
     /// <summary>
     ///     Prepares one selected-Plugin case per selection and attempts every ready Plugin sequentially through the
-    ///     supplied Store session, returning one authoritative outcome in selection order.
+    ///     borrowed Plugin-write Store role, returning one authoritative outcome in selection order.
     /// </summary>
     /// <param name="request">The immutable selected-Plugin request.</param>
-    /// <param name="recordStore">The already-open Store session owned by the surrounding Processing Run.</param>
+    /// <param name="recordStore">The Plugin-write Store role borrowed from the surrounding Processing Run.</param>
     /// <param name="progress">Optional transient preparation and current-Plugin facts.</param>
     /// <param name="cancellationToken">Stops the selected set without returning a completed report.</param>
     /// <returns>One ordered outcome for every selected Plugin on normal completion.</returns>
@@ -70,7 +70,7 @@ internal sealed class PluginIngestion : IPluginIngestion
     /// </exception>
     public async Task<PluginIngestionReport> IngestAsync(
         SelectedPluginIngestionRequest request,
-        IFormIdRecordStoreSession recordStore,
+        IPluginFormIdRecordWriter recordStore,
         IProgress<PluginIngestionProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
@@ -260,7 +260,7 @@ internal sealed class PluginIngestion : IPluginIngestion
     /// </summary>
     /// <param name="readyPlugin">The prepared selected Plugin passed intact to the overlay seam.</param>
     /// <param name="updateMode">The Store update behavior.</param>
-    /// <param name="recordStore">The already-open Store session.</param>
+    /// <param name="recordStore">The borrowed Plugin-write Store role.</param>
     /// <param name="cancellationToken">Stops overlay enumeration or the Store write.</param>
     /// <returns>Facts describing the one selected Plugin attempt.</returns>
     /// <remarks>
@@ -276,7 +276,7 @@ internal sealed class PluginIngestion : IPluginIngestion
     private async Task<PluginIngestionOutcome> IngestAvailablePluginAsync(
         SelectedPluginReady readyPlugin,
         UpdateMode updateMode,
-        IFormIdRecordStoreSession recordStore,
+        IPluginFormIdRecordWriter recordStore,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();

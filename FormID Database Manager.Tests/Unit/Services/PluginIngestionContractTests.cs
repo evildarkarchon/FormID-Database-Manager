@@ -17,13 +17,14 @@ public sealed class PluginIngestionContractTests
     /// </summary>
     /// <remarks>
     ///     Issue #67 added the second. The parameter lists are pinned because their difference is the contract: doing
-    ///     the work takes a Store session and reports progress, while planning takes neither — a plan opens no database
-    ///     at all, and its output is terminal rather than transient.
+    ///     the work takes the Plugin-write Store role and reports progress, while planning takes neither — a plan opens
+    ///     no database at all, and its output is terminal rather than transient.
     /// </remarks>
     [Fact]
     public void IPluginIngestion_TypeDefinition_IsInternalInterfaceWithOneIngestionAndOnePlanningOperation()
     {
         var interfaceType = typeof(IPluginIngestion);
+        var pluginWriterType = typeof(IPluginFormIdRecordWriter);
         var ingestion = Assert.Single(interfaceType.GetMethods(), method => method.Name == "IngestAsync");
         var planning = Assert.Single(interfaceType.GetMethods(), method => method.Name == "PlanAsync");
 
@@ -34,7 +35,7 @@ public sealed class PluginIngestionContractTests
         Assert.Collection(
             ingestion.GetParameters(),
             parameter => Assert.Equal(typeof(SelectedPluginIngestionRequest), parameter.ParameterType),
-            parameter => Assert.Equal(typeof(IFormIdRecordStoreSession), parameter.ParameterType),
+            parameter => Assert.Equal(pluginWriterType, parameter.ParameterType),
             parameter =>
             {
                 Assert.Equal(typeof(IProgress<PluginIngestionProgress>), parameter.ParameterType);
@@ -56,6 +57,41 @@ public sealed class PluginIngestionContractTests
                 Assert.Equal(typeof(CancellationToken), parameter.ParameterType);
                 Assert.True(parameter.HasDefaultValue);
             });
+    }
+
+    /// <summary>
+    ///     Verifies Plugin Ingestion's consumer-owned Store role exposes one atomic Plugin write without carrying Store
+    ///     lifetime or maintenance operations across the seam.
+    /// </summary>
+    [Fact]
+    public void IPluginFormIdRecordWriter_TypeDefinition_IsInternalSingleOperationRoleInheritedByStoreSession()
+    {
+        var writerType = typeof(IPluginFormIdRecordWriter);
+        var storeSessionType = typeof(IFormIdRecordStoreSession);
+        var writeOperation = Assert.Single(writerType.GetMethods());
+
+        Assert.True(writerType.IsInterface);
+        Assert.True(writerType.IsNotPublic);
+        Assert.Equal("WritePluginAsync", writeOperation.Name);
+        Assert.Equal(typeof(Task<FormIdPluginWriteResult>), writeOperation.ReturnType);
+        Assert.Collection(
+            writeOperation.GetParameters(),
+            parameter => Assert.Equal(typeof(string), parameter.ParameterType),
+            parameter => Assert.Equal(typeof(IEnumerable<FormIdRecord>), parameter.ParameterType),
+            parameter => Assert.Equal(typeof(UpdateMode), parameter.ParameterType),
+            parameter =>
+            {
+                Assert.Equal(typeof(CancellationToken), parameter.ParameterType);
+                Assert.True(parameter.HasDefaultValue);
+            });
+        Assert.False(typeof(IAsyncDisposable).IsAssignableFrom(writerType));
+        Assert.Contains(writerType, storeSessionType.GetInterfaces());
+        Assert.Contains(typeof(IAsyncDisposable), storeSessionType.GetInterfaces());
+        Assert.DoesNotContain(
+            storeSessionType.GetMethods(System.Reflection.BindingFlags.Instance |
+                                        System.Reflection.BindingFlags.Public |
+                                        System.Reflection.BindingFlags.DeclaredOnly),
+            method => method.Name == "WritePluginAsync");
     }
 
     /// <summary>

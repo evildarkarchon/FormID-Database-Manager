@@ -65,7 +65,7 @@ public sealed class PluginIngestionTests : IDisposable
         await CreatePluginFileAsync(gameDirectory, "Second.esp");
         var events = new List<string>();
         var gameLoadOrders = new RecordingGameLoadOrders(["First.esp", "Second.esp"], events);
-        var recordStore = new RecordingRecordStoreSession(events);
+        var recordStore = new RecordingPluginRecordWriter(events);
         var overlayReader = new RecordingOverlayReader(events);
         IPluginIngestion sut = new PluginIngestion(
             gameLoadOrders,
@@ -90,8 +90,6 @@ public sealed class PluginIngestionTests : IDisposable
         Assert.Equal(GameRelease.Starfield, gameLoadOrders.CapturedGameRelease);
         Assert.Equal(["First.esp", "Second.esp"], gameLoadOrders.CapturedSelection);
         Assert.Equal(1, gameLoadOrders.PrepareCallCount);
-        Assert.Equal(0, recordStore.OptimizeCallCount);
-        Assert.Equal(0, recordStore.DisposeCallCount);
         Assert.Equal(
             [
                 "progress:preparing",
@@ -154,7 +152,7 @@ public sealed class PluginIngestionTests : IDisposable
                 GameRelease.SkyrimSE,
                 ["NotListed.esp", "Unavailable.ESP", "READY.esp"],
                 UpdateMode.Append),
-            new RecordingRecordStoreSession([]),
+            new RecordingPluginRecordWriter([]),
             cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Equal(1, gameLoadOrders.PrepareCallCount);
@@ -197,7 +195,7 @@ public sealed class PluginIngestionTests : IDisposable
                 GameRelease.SkyrimSE,
                 ["First.esp"],
                 UpdateMode.Append),
-            new RecordingRecordStoreSession(events),
+            new RecordingPluginRecordWriter(events),
             progress: null,
             TestContext.Current.CancellationToken);
 
@@ -230,7 +228,7 @@ public sealed class PluginIngestionTests : IDisposable
                 GameRelease.SkyrimSE,
                 ["Never.esp"],
                 UpdateMode.Append),
-            new RecordingRecordStoreSession(events),
+            new RecordingPluginRecordWriter(events),
             new SynchronousProgress<PluginIngestionProgress>(_ => events.Add("progress")),
             cancellationTokenSource.Token));
 
@@ -262,7 +260,7 @@ public sealed class PluginIngestionTests : IDisposable
                 GameRelease.SkyrimSE,
                 ["Never.esp"],
                 UpdateMode.Append),
-            new RecordingRecordStoreSession(events),
+            new RecordingPluginRecordWriter(events),
             progress,
             cancellationTokenSource.Token));
 
@@ -293,7 +291,7 @@ public sealed class PluginIngestionTests : IDisposable
                 GameRelease.SkyrimSE,
                 ["Never.esp"],
                 UpdateMode.Append),
-            new RecordingRecordStoreSession(events),
+            new RecordingPluginRecordWriter(events),
             new SynchronousProgress<PluginIngestionProgress>(_ => events.Add("progress:preparing")),
             TestContext.Current.CancellationToken));
 
@@ -332,7 +330,7 @@ public sealed class PluginIngestionTests : IDisposable
                 GameRelease.SkyrimSE,
                 ["First.esp", "Never.esp"],
                 UpdateMode.Append),
-            new RecordingRecordStoreSession(events),
+            new RecordingPluginRecordWriter(events),
             progress,
             TestContext.Current.CancellationToken));
 
@@ -368,7 +366,7 @@ public sealed class PluginIngestionTests : IDisposable
                 GameRelease.SkyrimSE,
                 ["Never.esp"],
                 UpdateMode.Append),
-            new RecordingRecordStoreSession(events),
+            new RecordingPluginRecordWriter(events),
             progress,
             cancellationTokenSource.Token));
 
@@ -402,7 +400,7 @@ public sealed class PluginIngestionTests : IDisposable
                 GameRelease.SkyrimSE,
                 ["Bad.esp", "Good.esp"],
                 UpdateMode.Append),
-            new RecordingRecordStoreSession(storeEvents),
+            new RecordingPluginRecordWriter(storeEvents),
             cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Collection(
@@ -446,7 +444,7 @@ public sealed class PluginIngestionTests : IDisposable
                 GameRelease.SkyrimSE,
                 ["BadRecords.esp", "Good.esp"],
                 UpdateMode.Append),
-            new RecordingRecordStoreSession(storeEvents),
+            new RecordingPluginRecordWriter(storeEvents),
             cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Collection(
@@ -493,7 +491,7 @@ public sealed class PluginIngestionTests : IDisposable
                 GameRelease.SkyrimSE,
                 ["BadRecords.esp"],
                 UpdateMode.Append),
-            new RecordingRecordStoreSession([]),
+            new RecordingPluginRecordWriter([]),
             cancellationToken: TestContext.Current.CancellationToken);
 
         var failed = Assert.IsType<FailedPlugin>(Assert.Single(report.Outcomes));
@@ -526,7 +524,7 @@ public sealed class PluginIngestionTests : IDisposable
                 GameRelease.SkyrimSE,
                 ["Broken.esp", "Never.esp"],
                 UpdateMode.Append),
-            new RecordingRecordStoreSession(storeEvents),
+            new RecordingPluginRecordWriter(storeEvents),
             cancellationToken: TestContext.Current.CancellationToken));
 
         Assert.Same(failure, thrown);
@@ -567,7 +565,7 @@ public sealed class PluginIngestionTests : IDisposable
                 GameRelease.Starfield,
                 ["Patch.esp", "Never.esp"],
                 UpdateMode.Append),
-            new RecordingRecordStoreSession(storeEvents),
+            new RecordingPluginRecordWriter(storeEvents),
             cancellationToken: TestContext.Current.CancellationToken));
 
         Assert.Equal("Patch.esp", thrown.PluginName);
@@ -606,7 +604,7 @@ public sealed class PluginIngestionTests : IDisposable
                 GameRelease.Starfield,
                 ["Patch.esp"],
                 UpdateMode.Append),
-            new RecordingRecordStoreSession(storeEvents),
+            new RecordingPluginRecordWriter(storeEvents),
             cancellationToken: TestContext.Current.CancellationToken));
 
         Assert.Equal("Patch.esp", thrown.PluginName);
@@ -640,7 +638,7 @@ public sealed class PluginIngestionTests : IDisposable
                 GameRelease.SkyrimSE,
                 ["BrokenRecords.esp", "Never.esp"],
                 UpdateMode.Append),
-            new RecordingRecordStoreSession(storeEvents),
+            new RecordingPluginRecordWriter(storeEvents),
             cancellationToken: TestContext.Current.CancellationToken));
 
         Assert.Same(failure, thrown);
@@ -669,7 +667,7 @@ public sealed class PluginIngestionTests : IDisposable
                 GameRelease.SkyrimSE,
                 ["Cancelled.esp"],
                 UpdateMode.Append),
-            new RecordingRecordStoreSession([]),
+            new RecordingPluginRecordWriter([]),
             cancellationToken: TestContext.Current.CancellationToken));
 
         Assert.Same(cancellation, thrown);
@@ -705,7 +703,7 @@ public sealed class PluginIngestionTests : IDisposable
                 GameRelease.SkyrimSE,
                 ["CancelledRecords.esp", "Never.esp"],
                 UpdateMode.Append),
-            new RecordingRecordStoreSession(storeEvents),
+            new RecordingPluginRecordWriter(storeEvents),
             cancellationToken: TestContext.Current.CancellationToken));
 
         Assert.Same(cancellation, thrown);
@@ -723,7 +721,7 @@ public sealed class PluginIngestionTests : IDisposable
         var gameDirectory = CreateGameDirectory();
         await CreatePluginFileAsync(gameDirectory, "Cancelled.esp");
         using var cancellationTokenSource = new CancellationTokenSource();
-        var recordStore = new CancellingRecordStoreSession(cancellationTokenSource);
+        var recordStore = new CancellingPluginRecordWriter(cancellationTokenSource);
         IPluginIngestion sut = new PluginIngestion(
             new RecordingGameLoadOrders(["Cancelled.esp"], []),
             new RecordingOverlayReader([]),
@@ -754,7 +752,7 @@ public sealed class PluginIngestionTests : IDisposable
         await CreatePluginFileAsync(gameDirectory, "Never.esp");
         var events = new List<string>();
         var cancellation = new OperationCanceledException("FormID Record Store write cancelled.");
-        var recordStore = new ThrowingRecordStoreSession(cancellation);
+        var recordStore = new ThrowingPluginRecordWriter(cancellation);
         IPluginIngestion sut = new PluginIngestion(
             new RecordingGameLoadOrders(["First.esp", "Never.esp"], []),
             new RecordingOverlayReader(events),
@@ -797,7 +795,7 @@ public sealed class PluginIngestionTests : IDisposable
                 GameRelease.SkyrimSE,
                 ["First.esp", "Never.esp"],
                 UpdateMode.Append),
-            new RecordingRecordStoreSession(events),
+            new RecordingPluginRecordWriter(events),
             cancellationToken: cancellationTokenSource.Token));
 
         Assert.Equal(cancellationTokenSource.Token, thrown.CancellationToken);
@@ -832,7 +830,7 @@ public sealed class PluginIngestionTests : IDisposable
                 GameRelease.SkyrimSE,
                 ["First.esp"],
                 UpdateMode.Append),
-            new RecordingRecordStoreSession([]),
+            new RecordingPluginRecordWriter([]),
             cancellationToken: cancellationTokenSource.Token));
 
         Assert.Equal(cancellationTokenSource.Token, thrown.CancellationToken);
@@ -850,7 +848,7 @@ public sealed class PluginIngestionTests : IDisposable
         await CreatePluginFileAsync(gameDirectory, "Never.esp");
         var events = new List<string>();
         var failure = new IOException("FormID Record Store write failed.");
-        var recordStore = new ThrowingRecordStoreSession(failure);
+        var recordStore = new ThrowingPluginRecordWriter(failure);
         IPluginIngestion sut = new PluginIngestion(
             new RecordingGameLoadOrders(["First.esp", "Never.esp"], []),
             new RecordingOverlayReader(events),
@@ -867,8 +865,6 @@ public sealed class PluginIngestionTests : IDisposable
 
         Assert.Same(failure, thrown);
         Assert.Equal(["First.esp"], recordStore.AttemptedPlugins);
-        Assert.Equal(0, recordStore.OptimizeCallCount);
-        Assert.Equal(0, recordStore.DisposeCallCount);
         Assert.Equal(["overlay:First.esp"], events);
     }
 
@@ -883,7 +879,7 @@ public sealed class PluginIngestionTests : IDisposable
         await CreatePluginFileAsync(gameDirectory, "Broken.esp");
         var storeFailure = new IOException("FormID Record Store write failed.");
         var disposalFailure = new InvalidOperationException("Overlay disposal failed.");
-        var recordStore = new ThrowingRecordStoreSession(storeFailure);
+        var recordStore = new ThrowingPluginRecordWriter(storeFailure);
         var overlayReader = new DisposalFailureOverlayReader(disposalFailure);
         IPluginIngestion sut = new PluginIngestion(
             new RecordingGameLoadOrders(["Broken.esp"], []),
@@ -901,8 +897,6 @@ public sealed class PluginIngestionTests : IDisposable
 
         Assert.Same(storeFailure, thrown);
         Assert.Equal(1, overlayReader.DisposeCallCount);
-        Assert.Equal(0, recordStore.OptimizeCallCount);
-        Assert.Equal(0, recordStore.DisposeCallCount);
     }
 
     /// <summary>
@@ -916,7 +910,7 @@ public sealed class PluginIngestionTests : IDisposable
         await CreatePluginFileAsync(gameDirectory, "Broken.esp");
         var events = new List<string>();
         var disposalFailure = new InvalidOperationException("Overlay disposal failed.");
-        var recordStore = new RecordingRecordStoreSession(events);
+        var recordStore = new RecordingPluginRecordWriter(events);
         var overlayReader = new DisposalFailureOverlayReader(disposalFailure);
         IPluginIngestion sut = new PluginIngestion(
             new RecordingGameLoadOrders(["Broken.esp"], []),
@@ -935,8 +929,6 @@ public sealed class PluginIngestionTests : IDisposable
         Assert.Same(disposalFailure, thrown);
         Assert.Equal(1, overlayReader.DisposeCallCount);
         Assert.Equal(["write:Broken.esp"], events);
-        Assert.Equal(0, recordStore.OptimizeCallCount);
-        Assert.Equal(0, recordStore.DisposeCallCount);
     }
 
     /// <summary>
@@ -960,7 +952,7 @@ public sealed class PluginIngestionTests : IDisposable
                 GameRelease.SkyrimSE,
                 ["Warned.esp", "Clean.esp"],
                 UpdateMode.Append),
-            new RecordingRecordStoreSession([]),
+            new RecordingPluginRecordWriter([]),
             cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Collection(
@@ -1006,7 +998,7 @@ public sealed class PluginIngestionTests : IDisposable
                 GameRelease.SkyrimSE,
                 ["Absent.esp", "Unavailable.esp", "Zero.esp", "Available.esp"],
                 UpdateMode.Append),
-            new RecordingRecordStoreSession(events),
+            new RecordingPluginRecordWriter(events),
             cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Equal(
@@ -1588,12 +1580,8 @@ public sealed class PluginIngestionTests : IDisposable
         }
     }
 
-    private sealed class RecordingRecordStoreSession(List<string> events) : IFormIdRecordStoreSession
+    private sealed class RecordingPluginRecordWriter(List<string> events) : IPluginFormIdRecordWriter
     {
-        public int OptimizeCallCount { get; private set; }
-
-        public int DisposeCallCount { get; private set; }
-
         public Task<FormIdPluginWriteResult> WritePluginAsync(
             string pluginName,
             IEnumerable<FormIdRecord> records,
@@ -1603,30 +1591,9 @@ public sealed class PluginIngestionTests : IDisposable
             events.Add($"write:{pluginName}");
             return Task.FromResult(new FormIdPluginWriteResult(records.Count()));
         }
-
-        public Task<FormIdTextFileImportResult> ImportFormIdTextFileAsync(
-            string formIdTextFilePath,
-            UpdateMode updateMode,
-            IProgress<FormIdStoreProgress>? progress = null,
-            CancellationToken cancellationToken = default)
-        {
-            throw new InvalidOperationException("Plugin Ingestion should not import a FormID text file.");
-        }
-
-        public Task OptimizeAsync(CancellationToken cancellationToken = default)
-        {
-            OptimizeCallCount++;
-            throw new InvalidOperationException("Plugin Ingestion should not optimize the FormID Record Store.");
-        }
-
-        public ValueTask DisposeAsync()
-        {
-            DisposeCallCount++;
-            throw new InvalidOperationException("Plugin Ingestion should not dispose the FormID Record Store.");
-        }
     }
 
-    private sealed class UnusedRecordStoreSession : IFormIdRecordStoreSession
+    private sealed class UnusedPluginRecordWriter : IPluginFormIdRecordWriter
     {
         public Task<FormIdPluginWriteResult> WritePluginAsync(
             string pluginName,
@@ -1636,34 +1603,11 @@ public sealed class PluginIngestionTests : IDisposable
         {
             throw new InvalidOperationException("This test should not write Plugin records.");
         }
-
-        public Task<FormIdTextFileImportResult> ImportFormIdTextFileAsync(
-            string formIdTextFilePath,
-            UpdateMode updateMode,
-            IProgress<FormIdStoreProgress>? progress = null,
-            CancellationToken cancellationToken = default)
-        {
-            throw new InvalidOperationException("This test should not import a FormID text file.");
-        }
-
-        public Task OptimizeAsync(CancellationToken cancellationToken = default)
-        {
-            throw new InvalidOperationException("This test should not optimize the FormID Record Store.");
-        }
-
-        public ValueTask DisposeAsync()
-        {
-            return ValueTask.CompletedTask;
-        }
     }
 
-    private sealed class ThrowingRecordStoreSession(Exception failure) : IFormIdRecordStoreSession
+    private sealed class ThrowingPluginRecordWriter(Exception failure) : IPluginFormIdRecordWriter
     {
         public List<string> AttemptedPlugins { get; } = [];
-
-        public int OptimizeCallCount { get; private set; }
-
-        public int DisposeCallCount { get; private set; }
 
         public Task<FormIdPluginWriteResult> WritePluginAsync(
             string pluginName,
@@ -1674,31 +1618,10 @@ public sealed class PluginIngestionTests : IDisposable
             AttemptedPlugins.Add(pluginName);
             return Task.FromException<FormIdPluginWriteResult>(failure);
         }
-
-        public Task<FormIdTextFileImportResult> ImportFormIdTextFileAsync(
-            string formIdTextFilePath,
-            UpdateMode updateMode,
-            IProgress<FormIdStoreProgress>? progress = null,
-            CancellationToken cancellationToken = default)
-        {
-            throw new InvalidOperationException("Plugin Ingestion should not import a FormID text file.");
-        }
-
-        public Task OptimizeAsync(CancellationToken cancellationToken = default)
-        {
-            OptimizeCallCount++;
-            throw new InvalidOperationException("Plugin Ingestion should not optimize the FormID Record Store.");
-        }
-
-        public ValueTask DisposeAsync()
-        {
-            DisposeCallCount++;
-            throw new InvalidOperationException("Plugin Ingestion should not dispose the FormID Record Store.");
-        }
     }
 
-    private sealed class CancellingRecordStoreSession(CancellationTokenSource cancellationTokenSource)
-        : IFormIdRecordStoreSession
+    private sealed class CancellingPluginRecordWriter(CancellationTokenSource cancellationTokenSource)
+        : IPluginFormIdRecordWriter
     {
         public List<string> AttemptedPlugins { get; } = [];
 
@@ -1716,25 +1639,6 @@ public sealed class PluginIngestionTests : IDisposable
             var result = new FormIdPluginWriteResult(records.Count());
             cancellationTokenSource.Cancel();
             return Task.FromResult(result);
-        }
-
-        public Task<FormIdTextFileImportResult> ImportFormIdTextFileAsync(
-            string formIdTextFilePath,
-            UpdateMode updateMode,
-            IProgress<FormIdStoreProgress>? progress = null,
-            CancellationToken cancellationToken = default)
-        {
-            throw new InvalidOperationException("Plugin Ingestion should not import a FormID text file.");
-        }
-
-        public Task OptimizeAsync(CancellationToken cancellationToken = default)
-        {
-            throw new InvalidOperationException("Plugin Ingestion should not optimize the FormID Record Store.");
-        }
-
-        public ValueTask DisposeAsync()
-        {
-            throw new InvalidOperationException("Plugin Ingestion should not dispose the FormID Record Store.");
         }
     }
 }

@@ -3,16 +3,10 @@ using Mutagen.Bethesda;
 namespace FormID_Database_Manager.Services;
 
 /// <summary>
-///     Run-scoped adapter for the FormID Record Store behavior used by a Processing Run.
+///     Complete run-scoped FormID Record Store session owned by a Processing Run.
 /// </summary>
-internal interface IFormIdRecordStoreSession : IAsyncDisposable
+internal interface IFormIdRecordStoreSession : IPluginFormIdRecordWriter, IAsyncDisposable
 {
-    Task<FormIdPluginWriteResult> WritePluginAsync(
-        string pluginName,
-        IEnumerable<FormIdRecord> records,
-        UpdateMode updateMode,
-        CancellationToken cancellationToken = default);
-
     Task<FormIdTextFileImportResult> ImportFormIdTextFileAsync(
         string formIdTextFilePath,
         UpdateMode updateMode,
