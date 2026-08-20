@@ -299,6 +299,8 @@ public class CoreProjectBoundaryTests
         Assert.Contains("_recordStoreOpener.OpenAsync", processingRunSource, StringComparison.Ordinal);
         Assert.Contains("recordStore.OptimizeAsync", processingRunSource, StringComparison.Ordinal);
         Assert.Contains("recordStore.DisposeAsync", processingRunSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("IGameLoadOrders", processingRunSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("GameLoadOrders", processingRunSource, StringComparison.Ordinal);
         Assert.DoesNotContain("IGameLoadOrderProvider", processingRunSource, StringComparison.Ordinal);
         Assert.DoesNotContain("GameLoadOrderProvider", processingRunSource, StringComparison.Ordinal);
         Assert.DoesNotContain("IPluginOverlayReader", processingRunSource, StringComparison.Ordinal);
@@ -308,10 +310,15 @@ public class CoreProjectBoundaryTests
             processingRunSource,
             StringComparison.Ordinal);
 
-        Assert.Contains("IGameLoadOrderProvider", pluginIngestionSource, StringComparison.Ordinal);
+        Assert.Contains("IGameLoadOrders", pluginIngestionSource, StringComparison.Ordinal);
+        Assert.Contains("PrepareSelectedPlugins", pluginIngestionSource, StringComparison.Ordinal);
         Assert.Contains("IPluginOverlayReader", pluginIngestionSource, StringComparison.Ordinal);
         Assert.Contains("GameInstallations.CanonicalizeDataDirectory", pluginIngestionSource, StringComparison.Ordinal);
         Assert.Contains("IFormIdRecordStoreSession recordStore", pluginIngestionSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("IGameLoadOrderProvider", pluginIngestionSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("GameLoadOrderSnapshot", pluginIngestionSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("BinaryReadParameters", pluginIngestionSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("File.Exists", pluginIngestionSource, StringComparison.Ordinal);
         Assert.DoesNotContain("FormIdRecordStore.OpenAsync", pluginIngestionSource, StringComparison.Ordinal);
         Assert.DoesNotContain("recordStore.OptimizeAsync", pluginIngestionSource, StringComparison.Ordinal);
         Assert.DoesNotContain("recordStore.DisposeAsync", pluginIngestionSource, StringComparison.Ordinal);

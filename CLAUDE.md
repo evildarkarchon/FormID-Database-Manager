@@ -49,8 +49,9 @@ Tests projects.
 that look harmless can break the build. Among other things these tests require that:
 
 - `Microsoft.Data.Sqlite` appears in exactly one production file, `Core/Services/FormIdRecordStore.cs`
-- `ProcessingRun.cs` does *not* mention `IGameLoadOrderProvider`, `IPluginOverlayReader`, or
-  `GameInstallations.CanonicalizeDataDirectory`, while `PluginIngestion.cs` must
+- `ProcessingRun.cs` does *not* mention `IGameLoadOrders`, `IGameLoadOrderProvider`, `IPluginOverlayReader`, or
+  `GameInstallations.CanonicalizeDataDirectory`; `PluginIngestion.cs` owns `IGameLoadOrders`, overlay use, and
+  canonicalization
 - Specific `MainWindowViewModel` properties have getters and no setters
 - Retired member names (`UpdateProgress`, `ResetProgress`, `IsScanning`, `IsProcessing`, `DatabaseService`,
   `DatabaseFixture`, `PluginListManager`, `ProcessingRunEvent`, …) never reappear in any of the four source trees

@@ -95,11 +95,11 @@ public class WinUiPlatformServiceSourceTests
     }
 
     /// <summary>
-    ///     Verifies production and smoke-test compositions inject the highest Game Load Orders seam into one authoritative
-    ///     Plugin List shared with projection and workflow.
+    ///     Verifies production and smoke-test compositions share the highest Game Load Orders seam between one
+    ///     authoritative Plugin List and matched Plugin Ingestion composition.
     /// </summary>
     [Fact]
-    public void WinUiMainWindow_ProductionAndSmokeComposition_InjectGameLoadOrdersAndShareAuthoritativePluginList()
+    public void WinUiMainWindow_ProductionAndSmokeComposition_ShareGameLoadOrdersAcrossLiveCallerPaths()
     {
         var mainWindowSourcePath = Path.Combine(GetWinUiProjectDirectory(), "MainWindow.xaml.cs");
         var source = File.ReadAllText(mainWindowSourcePath);
@@ -112,6 +112,10 @@ public class WinUiPlatformServiceSourceTests
         Assert.Equal(2, compositions.Count);
         Assert.Contains("IGameLoadOrders? gameLoadOrders", source, StringComparison.Ordinal);
         Assert.Contains("gameLoadOrders ?? new GameLoadOrders()", source, StringComparison.Ordinal);
+        Assert.Contains("CreateProcessingRunExecutor(gameLoadOrders)", source, StringComparison.Ordinal);
+        Assert.Contains("CreateProcessingRunExecutor(effectiveGameLoadOrders)", source, StringComparison.Ordinal);
+        Assert.Contains("new PluginIngestion(", source, StringComparison.Ordinal);
+        Assert.Contains("new MutagenPluginOverlayReader()", source, StringComparison.Ordinal);
     }
 
     /// <summary>

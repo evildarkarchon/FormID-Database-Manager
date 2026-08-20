@@ -32,8 +32,8 @@ namespace FormID_Database_Manager.TestUtilities.Builders;
 ///     <para>
 ///         Every fixture declares its game's main master first, because that is what the Plugin format requires of
 ///         every Plugin. The declared master does not have to exist on disk; a game with separated master load orders
-///         needs only a master-flags lookup that can resolve the ModKey, which
-///         <c>GameLoadOrderSnapshotFactory.CreateFixtureSnapshot</c> supplies from <see cref="MasterStylesFor" />.
+///         needs only a master-flags lookup that can resolve the ModKey, which fixture-side Plugin-read preparation
+///         supplies from <see cref="MasterStylesFor" />.
 ///     </para>
 ///     <para>
 ///         Fixtures are generated at test time and never committed, so a format change in a Mutagen upgrade surfaces

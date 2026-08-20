@@ -1,6 +1,5 @@
 using System.Runtime.ExceptionServices;
 using Mutagen.Bethesda;
-using Mutagen.Bethesda.Plugins.Binary.Parameters;
 using Mutagen.Bethesda.Plugins.Exceptions;
 using Mutagen.Bethesda.Plugins.Records;
 
@@ -12,47 +11,47 @@ namespace FormID_Database_Manager.Services;
 internal sealed class PluginIngestion : IPluginIngestion
 {
     private readonly EntryExtraction _entryExtraction;
-    private readonly IGameLoadOrderProvider _loadOrderProvider;
+    private readonly IGameLoadOrders _gameLoadOrders;
     private readonly IPluginOverlayReader _overlayReader;
 
     /// <summary>
     ///     Creates production Plugin Ingestion with its Mutagen-backed load-order and overlay adapters.
     /// </summary>
     internal PluginIngestion()
-        : this(new GameLoadOrderProvider(), new MutagenPluginOverlayReader(), new EntryExtraction())
+        : this(new GameLoadOrders(), new MutagenPluginOverlayReader(), new EntryExtraction())
     {
     }
 
     /// <summary>
     ///     Creates Plugin Ingestion with a supplied load-order boundary and production overlay behavior.
     /// </summary>
-    /// <param name="loadOrderProvider">The provider used once for the complete captured selection.</param>
-    /// <exception cref="ArgumentNullException"><paramref name="loadOrderProvider" /> is null.</exception>
-    internal PluginIngestion(IGameLoadOrderProvider loadOrderProvider)
-        : this(loadOrderProvider, new MutagenPluginOverlayReader(), new EntryExtraction())
+    /// <param name="gameLoadOrders">Game Load Orders used once to prepare the complete captured selection.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="gameLoadOrders" /> is null.</exception>
+    internal PluginIngestion(IGameLoadOrders gameLoadOrders)
+        : this(gameLoadOrders, new MutagenPluginOverlayReader(), new EntryExtraction())
     {
     }
 
     /// <summary>
     ///     Creates aggregate Plugin Ingestion from its load-order, overlay, and Entry Extraction adapters.
     /// </summary>
-    /// <param name="loadOrderProvider">The provider used once for the complete captured selection.</param>
+    /// <param name="gameLoadOrders">Game Load Orders used once to prepare the complete captured selection.</param>
     /// <param name="overlayReader">The Plugin overlay adapter used sequentially for available selections.</param>
     /// <param name="entryExtraction">The Entry Extraction module used while the Store enumerates records.</param>
     /// <exception cref="ArgumentNullException">Any adapter is null.</exception>
     internal PluginIngestion(
-        IGameLoadOrderProvider loadOrderProvider,
+        IGameLoadOrders gameLoadOrders,
         IPluginOverlayReader overlayReader,
         EntryExtraction entryExtraction)
     {
-        _loadOrderProvider = loadOrderProvider ?? throw new ArgumentNullException(nameof(loadOrderProvider));
+        _gameLoadOrders = gameLoadOrders ?? throw new ArgumentNullException(nameof(gameLoadOrders));
         _overlayReader = overlayReader ?? throw new ArgumentNullException(nameof(overlayReader));
         _entryExtraction = entryExtraction ?? throw new ArgumentNullException(nameof(entryExtraction));
     }
 
     /// <summary>
-    ///     Prepares one load-order snapshot and attempts every selected Plugin sequentially through the supplied Store
-    ///     session, returning one authoritative outcome in selection order.
+    ///     Prepares one selected-Plugin case per selection and attempts every ready Plugin sequentially through the
+    ///     supplied Store session, returning one authoritative outcome in selection order.
     /// </summary>
     /// <param name="request">The immutable selected-Plugin request.</param>
     /// <param name="recordStore">The already-open Store session owned by the surrounding Processing Run.</param>
@@ -66,7 +65,7 @@ internal sealed class PluginIngestion : IPluginIngestion
     /// <exception cref="ArgumentNullException"><paramref name="request" /> or <paramref name="recordStore" /> is null.</exception>
     /// <exception cref="OperationCanceledException"><paramref name="cancellationToken" /> requests cancellation.</exception>
     /// <exception cref="UnresolvableMasterException">
-    ///     A selected Plugin declares a master the prepared load-order snapshot cannot supply a master style for. The
+    ///     A selected Plugin declares a master the prepared read capability cannot resolve. The
     ///     selected set stops there because every remaining Plugin would fail the same way (ADR-0006).
     /// </exception>
     public async Task<PluginIngestionReport> IngestAsync(
@@ -86,23 +85,25 @@ internal sealed class PluginIngestion : IPluginIngestion
         progress?.Report(PluginIngestionProgress.PreparingLoadOrder(totalPluginCount));
         // Synchronous progress callbacks can request cancellation before load-order initialization begins.
         cancellationToken.ThrowIfCancellationRequested();
-        var loadOrderSnapshot = _loadOrderProvider.BuildSnapshot(
+        var preparedPlugins = _gameLoadOrders.PrepareSelectedPlugins(
             request.GameRelease,
             dataPath,
-            includeMasterFlagsLookup: true);
+            request.PluginNames,
+            cancellationToken);
         var outcomes = new List<PluginIngestionOutcome>(totalPluginCount);
 
-        for (var index = 0; index < totalPluginCount; index++)
+        for (var index = 0; index < preparedPlugins.Length; index++)
         {
             // This boundary makes selection order the cancellation unit: no later Plugin is announced or attempted.
             cancellationToken.ThrowIfCancellationRequested();
 
-            var pluginName = request.PluginNames[index];
+            var preparedPlugin = preparedPlugins[index];
+            var pluginName = preparedPlugin.PluginName;
             progress?.Report(PluginIngestionProgress.IngestingPlugin(pluginName, index + 1, totalPluginCount));
             // A synchronous reporter can cancel after the selection gate but before this Plugin attempt begins.
             cancellationToken.ThrowIfCancellationRequested();
 
-            var skippedPlugin = GetSkippedPlugin(pluginName, dataPath, loadOrderSnapshot);
+            var skippedPlugin = GetSkippedPlugin(preparedPlugin);
             if (skippedPlugin is not null)
             {
                 outcomes.Add(skippedPlugin);
@@ -110,10 +111,7 @@ internal sealed class PluginIngestion : IPluginIngestion
             }
 
             var outcome = await IngestAvailablePluginAsync(
-                    pluginName,
-                    Path.Combine(dataPath, pluginName),
-                    request.GameRelease,
-                    loadOrderSnapshot,
+                    (SelectedPluginReady)preparedPlugin,
                     request.UpdateMode,
                     recordStore,
                     cancellationToken)
@@ -128,8 +126,8 @@ internal sealed class PluginIngestion : IPluginIngestion
     }
 
     /// <summary>
-    ///     Prepares one load-order snapshot and opens every selected Plugin's overlay, without a Store session and
-    ///     without enumerating a single record, returning what each selected Plugin would contribute to a run.
+    ///     Prepares one selected-Plugin case per selection and opens every ready Plugin's overlay, without a Store
+    ///     session and without enumerating a single record, returning what each selection would contribute to a run.
     /// </summary>
     /// <param name="request">The immutable selected-Plugin request.</param>
     /// <param name="cancellationToken">Stops planning without returning a plan.</param>
@@ -149,7 +147,7 @@ internal sealed class PluginIngestion : IPluginIngestion
     /// <exception cref="ArgumentNullException"><paramref name="request" /> is null.</exception>
     /// <exception cref="OperationCanceledException"><paramref name="cancellationToken" /> requests cancellation.</exception>
     /// <exception cref="UnresolvableMasterException">
-    ///     A selected Plugin declares a master the prepared load-order snapshot cannot supply a master style for. The
+    ///     A selected Plugin declares a master the prepared read capability cannot resolve. The
     ///     plan stops there because every remaining Plugin would fail the same way (ADR-0006).
     /// </exception>
     public Task<PluginIngestionPlan> PlanAsync(
@@ -162,18 +160,19 @@ internal sealed class PluginIngestion : IPluginIngestion
         cancellationToken.ThrowIfCancellationRequested();
 
         var dataPath = GameInstallations.CanonicalizeDataDirectory(request.GameDirectory);
-        var loadOrderSnapshot = _loadOrderProvider.BuildSnapshot(
+        var preparedPlugins = _gameLoadOrders.PrepareSelectedPlugins(
             request.GameRelease,
             dataPath,
-            includeMasterFlagsLookup: true);
+            request.PluginNames,
+            cancellationToken);
         var planned = new List<PlannedPlugin>(request.PluginNames.Length);
 
-        foreach (var pluginName in request.PluginNames)
+        foreach (var preparedPlugin in preparedPlugins)
         {
             // Selection order is the cancellation unit here too: no later Plugin is classified or opened.
             cancellationToken.ThrowIfCancellationRequested();
 
-            planned.Add(PlanSelectedPlugin(pluginName, dataPath, request.GameRelease, loadOrderSnapshot));
+            planned.Add(PlanSelectedPlugin(preparedPlugin, cancellationToken));
         }
 
         // Close the final race so cancellation cannot produce a plan that looks complete.
@@ -184,47 +183,49 @@ internal sealed class PluginIngestion : IPluginIngestion
     /// <summary>
     ///     Classifies one selected Plugin for a plan, opening its overlay only when nothing cheaper rules it out.
     /// </summary>
-    /// <param name="pluginName">The selected Plugin name.</param>
-    /// <param name="dataPath">The resolved Data directory.</param>
-    /// <param name="gameRelease">The GameRelease whose overlay rules apply.</param>
-    /// <param name="loadOrderSnapshot">The one snapshot prepared for the complete selection.</param>
+    /// <param name="preparedPlugin">The immutable selected-Plugin preparation case.</param>
+    /// <param name="cancellationToken">Preserves cancellation that races with immediate overlay cleanup.</param>
     /// <returns>What this Plugin would contribute to a run.</returns>
     /// <exception cref="UnresolvableMasterException">
-    ///     The Plugin declares a master the load-order snapshot cannot supply a master style for, which fails the plan
+    ///     The Plugin declares a master the prepared capability cannot resolve, which fails the plan
     ///     rather than this Plugin.
     /// </exception>
     private PlannedPlugin PlanSelectedPlugin(
-        string pluginName,
-        string dataPath,
-        GameRelease gameRelease,
-        GameLoadOrderSnapshot loadOrderSnapshot)
+        PreparedSelectedPlugin preparedPlugin,
+        CancellationToken cancellationToken)
     {
-        // The same classification a run performs, so a plan and the run it predicts cannot disagree about skips.
-        if (GetSkippedPlugin(pluginName, dataPath, loadOrderSnapshot) is { } skippedPlugin)
+        if (GetSkippedPlugin(preparedPlugin) is { } skippedPlugin)
         {
             return ToPlannedSkip(skippedPlugin);
         }
 
+        var readyPlugin = (SelectedPluginReady)preparedPlugin;
         IModDisposeGetter plugin;
         try
         {
-            plugin = TryCreateOverlay(
-                pluginName,
-                Path.Combine(dataPath, pluginName),
-                gameRelease,
-                loadOrderSnapshot.ReadParameters);
+            plugin = TryCreateOverlay(readyPlugin);
         }
         catch (PluginReadException ex)
         {
             // A Plugin-specific read failure is this Plugin's, exactly as it is during a run; the run-level master
             // failure raised by the same call is not caught here and fails the whole plan.
-            return new PlannedPluginFailure(pluginName, new PluginReadDiagnostic(ex.Phase, ex.DiagnosticMessage));
+            return new PlannedPluginFailure(
+                readyPlugin.PluginName,
+                new PluginReadDiagnostic(ex.Phase, ex.DiagnosticMessage));
         }
 
-        // Nothing runs between opening and releasing the overlay, because opening it was the entire question. A
-        // disposal failure here is standalone and propagates, matching how a run treats one.
-        plugin.Dispose();
-        return new PlannedPluginIngestion(pluginName);
+        // Nothing runs between opening and releasing the overlay, because opening it was the entire question.
+        try
+        {
+            plugin.Dispose();
+        }
+        catch when (cancellationToken.IsCancellationRequested)
+        {
+            // Cancellation won the completion race, so cleanup cannot replace the plan's cancellation identity.
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        return new PlannedPluginIngestion(readyPlugin.PluginName);
     }
 
     /// <summary>
@@ -257,10 +258,7 @@ internal sealed class PluginIngestion : IPluginIngestion
     /// <summary>
     ///     Opens, extracts, and stores one Plugin whose load-order membership and file availability were already verified.
     /// </summary>
-    /// <param name="pluginName">The selected Plugin name.</param>
-    /// <param name="pluginPath">The resolved Plugin file path.</param>
-    /// <param name="gameRelease">The GameRelease whose overlay rules apply.</param>
-    /// <param name="loadOrderSnapshot">The one snapshot shared by the complete selection.</param>
+    /// <param name="readyPlugin">The prepared selected Plugin passed intact to the overlay seam.</param>
     /// <param name="updateMode">The Store update behavior.</param>
     /// <param name="recordStore">The already-open Store session.</param>
     /// <param name="cancellationToken">Stops overlay enumeration or the Store write.</param>
@@ -271,15 +269,12 @@ internal sealed class PluginIngestion : IPluginIngestion
     /// </remarks>
     /// <exception cref="OperationCanceledException"><paramref name="cancellationToken" /> requests cancellation.</exception>
     /// <exception cref="UnresolvableMasterException">
-    ///     The Plugin declares a master the load-order snapshot cannot supply a master style for, which fails the run
+    ///     The Plugin declares a master the prepared capability cannot resolve, which fails the run
     ///     rather than this Plugin.
     /// </exception>
     /// <exception cref="Exception">An unexpected infrastructure or standalone overlay-cleanup failure occurs.</exception>
     private async Task<PluginIngestionOutcome> IngestAvailablePluginAsync(
-        string pluginName,
-        string pluginPath,
-        GameRelease gameRelease,
-        GameLoadOrderSnapshot loadOrderSnapshot,
+        SelectedPluginReady readyPlugin,
         UpdateMode updateMode,
         IFormIdRecordStoreSession recordStore,
         CancellationToken cancellationToken)
@@ -289,12 +284,12 @@ internal sealed class PluginIngestion : IPluginIngestion
         IModDisposeGetter plugin;
         try
         {
-            plugin = TryCreateOverlay(pluginName, pluginPath, gameRelease, loadOrderSnapshot.ReadParameters);
+            plugin = TryCreateOverlay(readyPlugin);
         }
         catch (PluginReadException ex)
         {
             // Only normalized Plugin-read failures are nonfatal; every infrastructure exception aborts the selected set.
-            return CreateFailedPlugin(pluginName, ex);
+            return CreateFailedPlugin(readyPlugin.PluginName, ex);
         }
 
         Exception? primaryException = null;
@@ -306,7 +301,7 @@ internal sealed class PluginIngestion : IPluginIngestion
             try
             {
                 var writeResult = await recordStore.WritePluginAsync(
-                        pluginName,
+                        readyPlugin.PluginName,
                         records,
                         updateMode,
                         cancellationToken)
@@ -317,18 +312,21 @@ internal sealed class PluginIngestion : IPluginIngestion
 
                 if (writeResult.RecordCount == 0)
                 {
-                    return new SkippedPlugin(pluginName, SkippedPluginReason.ZeroFormIdRecords);
+                    return new SkippedPlugin(readyPlugin.PluginName, SkippedPluginReason.ZeroFormIdRecords);
                 }
 
                 return new IngestedPlugin(
-                    pluginName,
+                    readyPlugin.PluginName,
                     writeResult.RecordCount,
                     warningCollector.CreateWarning());
             }
             catch (PluginReadException ex)
             {
                 // Lazy enumeration uses the same narrow marker boundary while Store and cancellation failures escape unchanged.
-                return CreateFailedPlugin(pluginName, ex);
+                // Retain it as the active failure even though it becomes an outcome, so cleanup cannot replace the
+                // Plugin classification that record enumeration already determined.
+                primaryException = ex;
+                return CreateFailedPlugin(readyPlugin.PluginName, ex);
             }
         }
         catch (Exception ex)
@@ -342,9 +340,9 @@ internal sealed class PluginIngestion : IPluginIngestion
             {
                 plugin.Dispose();
             }
-            catch when (primaryException is not null)
+            catch when (primaryException is not null || cancellationToken.IsCancellationRequested)
             {
-                // Overlay cleanup is best-effort while preserving the cancellation or infrastructure failure in flight.
+                // Cleanup is best-effort while preserving an active failure or cancellation that won completion.
             }
         }
     }
@@ -363,26 +361,27 @@ internal sealed class PluginIngestion : IPluginIngestion
     }
 
     /// <summary>
-    ///     Classifies a selection that cannot reach overlay reading from the shared load-order and filesystem facts.
+    ///     Classifies a prepared selection that cannot reach overlay reading.
     /// </summary>
-    /// <param name="pluginName">The selected Plugin name.</param>
-    /// <param name="dataPath">The resolved Data directory.</param>
-    /// <param name="loadOrderSnapshot">The one snapshot prepared for the complete selection.</param>
+    /// <param name="preparedPlugin">The immutable selected-Plugin preparation case.</param>
     /// <returns>The complete typed skip fact, or <see langword="null" /> when the Plugin can be read.</returns>
-    private static SkippedPlugin? GetSkippedPlugin(
-        string pluginName,
-        string dataPath,
-        GameLoadOrderSnapshot loadOrderSnapshot)
+    private static SkippedPlugin? GetSkippedPlugin(PreparedSelectedPlugin preparedPlugin)
     {
-        if (!loadOrderSnapshot.ContainsPlugin(pluginName))
+        return preparedPlugin switch
         {
-            return new SkippedPlugin(pluginName, SkippedPluginReason.NotPresentInLoadOrder);
-        }
-
-        var pluginPath = Path.Combine(dataPath, pluginName);
-        return File.Exists(pluginPath)
-            ? null
-            : new SkippedPlugin(pluginName, SkippedPluginReason.PluginFileUnavailable, pluginPath);
+            SelectedPluginNotListed notListed => new SkippedPlugin(
+                notListed.PluginName,
+                SkippedPluginReason.NotPresentInLoadOrder),
+            SelectedPluginFileUnavailable unavailable => new SkippedPlugin(
+                unavailable.PluginName,
+                SkippedPluginReason.PluginFileUnavailable,
+                unavailable.ResolvedPluginPath),
+            SelectedPluginReady => null,
+            _ => throw new ArgumentOutOfRangeException(
+                nameof(preparedPlugin),
+                preparedPlugin,
+                "Unsupported prepared selected-Plugin case.")
+        };
     }
 
     /// <summary>
@@ -457,10 +456,7 @@ internal sealed class PluginIngestion : IPluginIngestion
     /// <summary>
     ///     Opens an overlay and attaches the opening phase to adapter-normalized Plugin-read failures.
     /// </summary>
-    /// <param name="pluginName">The selected Plugin name, used to name the run-level master failure below.</param>
-    /// <param name="pluginPath">The available selected Plugin path.</param>
-    /// <param name="gameRelease">The target GameRelease.</param>
-    /// <param name="readParameters">The shared load-order-aware binary read parameters.</param>
+    /// <param name="readyPlugin">The selected Plugin and opaque capability prepared by Game Load Orders.</param>
     /// <returns>The disposable Plugin overlay.</returns>
     /// <remarks>
     ///     The two master-resolution failures below are classified here rather than in the overlay adapter on purpose.
@@ -470,17 +466,13 @@ internal sealed class PluginIngestion : IPluginIngestion
     /// </remarks>
     /// <exception cref="PluginReadException">The overlay adapter reports an expected Plugin-specific failure.</exception>
     /// <exception cref="UnresolvableMasterException">
-    ///     The Plugin declares a master the prepared load-order snapshot cannot supply a master style for.
+    ///     The Plugin declares a master the prepared capability cannot resolve.
     /// </exception>
-    private IModDisposeGetter TryCreateOverlay(
-        string pluginName,
-        string pluginPath,
-        GameRelease gameRelease,
-        BinaryReadParameters readParameters)
+    private IModDisposeGetter TryCreateOverlay(SelectedPluginReady readyPlugin)
     {
         try
         {
-            return _overlayReader.ReadOverlay(pluginPath, gameRelease, readParameters);
+            return _overlayReader.ReadOverlay(readyPlugin);
         }
         catch (PluginOverlayReadException ex)
         {
@@ -495,12 +487,15 @@ internal sealed class PluginIngestion : IPluginIngestion
             // ModPath is the first of the exception's keys, which is the only one here: Mutagen's separated-master
             // path raises this per unresolved master, from a ModKey rather than a path, so it carries exactly one and
             // that key has no directory to report — only its file name.
-            throw new UnresolvableMasterException(pluginName, ex.ModPath.ModKey.FileName.ToString(), ex);
+            throw new UnresolvableMasterException(
+                readyPlugin.PluginName,
+                ex.ModPath.ModKey.FileName.ToString(),
+                ex);
         }
         catch (MissingModMappingException ex)
         {
             // Mutagen reports only that no lookup was supplied, so there is no individual master to name.
-            throw new UnresolvableMasterException(pluginName, null, ex);
+            throw new UnresolvableMasterException(readyPlugin.PluginName, null, ex);
         }
     }
 

@@ -23,7 +23,7 @@ public sealed partial class MainWindow : Window, IDisposable
         var gameInstallations = new GameInstallations(new GameInstallationProbe());
         var gameLoadOrders = new GameLoadOrders();
         var pluginList = new PluginList(gameLoadOrders);
-        var processingRunExecutor = new ProcessingRunExecutor();
+        var processingRunExecutor = CreateProcessingRunExecutor(gameLoadOrders);
 
         InitializeWindow();
         _pluginListPresentationAdapter = new PluginListPresentationAdapter(pluginList, ViewModel, dispatcher);
@@ -57,7 +57,7 @@ public sealed partial class MainWindow : Window, IDisposable
         var effectiveGameInstallations = gameInstallations ?? new GameInstallations(new GameInstallationProbe());
         var effectiveGameLoadOrders = gameLoadOrders ?? new GameLoadOrders();
         var pluginList = new PluginList(effectiveGameLoadOrders);
-        var effectiveProcessingRun = processingRunExecutor ?? new ProcessingRunExecutor();
+        var effectiveProcessingRun = processingRunExecutor ?? CreateProcessingRunExecutor(effectiveGameLoadOrders);
 
         InitializeWindow();
         _pluginListPresentationAdapter = new PluginListPresentationAdapter(pluginList, ViewModel, dispatcher);
@@ -67,6 +67,21 @@ public sealed partial class MainWindow : Window, IDisposable
             effectiveGameInstallations,
             pluginList,
             effectiveProcessingRun);
+    }
+
+    /// <summary>
+    ///     Composes selected-Plugin processing from the same highest Game Load Orders seam used by Plugin List and the
+    ///     matched production overlay adapter.
+    /// </summary>
+    /// <param name="gameLoadOrders">The Game Load Orders module shared by the window's two caller paths.</param>
+    /// <returns>A Processing Run executor whose Store lifecycle remains internally owned by each run.</returns>
+    private static ProcessingRunExecutor CreateProcessingRunExecutor(IGameLoadOrders gameLoadOrders)
+    {
+        var pluginIngestion = new PluginIngestion(
+            gameLoadOrders,
+            new MutagenPluginOverlayReader(),
+            new EntryExtraction());
+        return new ProcessingRunExecutor(pluginIngestion, new FormIdRecordStoreSessionOpener());
     }
 
     /// <summary>

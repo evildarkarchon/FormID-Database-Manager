@@ -7,6 +7,7 @@ using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using FormID_Database_Manager.Services;
+using FormID_Database_Manager.Tests.Fakes;
 using FormID_Database_Manager.TestUtilities.Mocks;
 using Microsoft.Data.Sqlite;
 using Mutagen.Bethesda;
@@ -131,7 +132,7 @@ public sealed class ProcessingRunIntegrationTests : IDisposable
         sourceRecord.Name = "Selected NPC";
         sourcePlugin.WriteToBinary(pluginPath);
 
-        var pluginIngestion = new PluginIngestion(new FixedGameLoadOrderProvider([pluginName]));
+        var pluginIngestion = new PluginIngestion(new PreparedGameLoadOrders([pluginName]));
         using var executor = new ProcessingRunExecutor(
             pluginIngestion,
             new FormIdRecordStoreSessionOpener());
@@ -201,18 +202,6 @@ public sealed class ProcessingRunIntegrationTests : IDisposable
         command.CommandText = "SELECT COUNT(*) FROM sqlite_stat1 WHERE tbl = @tableName";
         command.Parameters.AddWithValue("@tableName", gameRelease.ToString());
         return Convert.ToInt32(command.ExecuteScalar()) > 0;
-    }
-
-    private sealed class FixedGameLoadOrderProvider(IReadOnlyList<string> pluginNames) : IGameLoadOrderProvider
-    {
-        /// <inheritdoc />
-        public GameLoadOrderSnapshot BuildSnapshot(
-            GameRelease gameRelease,
-            string dataPath,
-            bool includeMasterFlagsLookup = false)
-        {
-            return new GameLoadOrderSnapshot(pluginNames);
-        }
     }
 
     /// <summary>

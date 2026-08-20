@@ -46,7 +46,7 @@ namespace FormID_Database_Manager.Tests.Unit.Services;
 /// </remarks>
 public sealed class PluginOverlayConstructionTests : IDisposable
 {
-    private readonly MutagenPluginOverlayReader _reader = new();
+    private readonly IPluginOverlayReader _reader = new MutagenPluginOverlayReader();
     private readonly string _testDirectory;
 
     public PluginOverlayConstructionTests()
@@ -109,9 +109,9 @@ public sealed class PluginOverlayConstructionTests : IDisposable
     [MemberData(nameof(SupportedReleases))]
     public void ReadOverlay_GeneratedPluginForEachRow_ReportsThatRowsGameRelease(GameRelease release)
     {
-        var pluginPath = PluginFixture.Write(release, _testDirectory, "Wiring.esp");
+        var readyPlugin = CreateProductionReadyPlugin(release, "Wiring.esp");
 
-        using var overlay = _reader.ReadOverlay(pluginPath, release, ReadParametersFor(release, "Wiring.esp"));
+        using var overlay = _reader.ReadOverlay(readyPlugin);
 
         Assert.Equal(release, overlay.GameRelease);
     }
@@ -126,9 +126,9 @@ public sealed class PluginOverlayConstructionTests : IDisposable
         GameRelease release,
         Type expectedFamily)
     {
-        var pluginPath = PluginFixture.Write(release, _testDirectory, "Family.esp");
+        var readyPlugin = CreateProductionReadyPlugin(release, "Family.esp");
 
-        using var overlay = _reader.ReadOverlay(pluginPath, release, ReadParametersFor(release, "Family.esp"));
+        using var overlay = _reader.ReadOverlay(readyPlugin);
 
         Assert.True(
             expectedFamily.IsInstanceOfType(overlay),
@@ -294,18 +294,20 @@ public sealed class PluginOverlayConstructionTests : IDisposable
     ///     its game's main master first, so declaring <c>Starfield.esm</c> is what makes it spec-correct rather than
     ///     what makes it unusual. Starfield uses separated master load orders, so reading one without a lookup raises
     ///     <see cref="MissingModMappingException" />, which matches none of the adapter's classified branches. The
-    ///     default read parameters below deliberately bypass
-    ///     <see cref="GameLoadOrderSnapshotFactory.CreateFixtureSnapshot" />. What is asserted is the boundary of the
-    ///     list, not this specific Mutagen type — widening the list to swallow this would have to be a deliberate
-    ///     edit here.
+    ///     capability below deliberately carries default read parameters instead of prepared separated-master state.
+    ///     What is asserted is the boundary of the list, not this specific Mutagen type — widening the list to swallow
+    ///     this would have to be a deliberate edit here.
     /// </remarks>
     [Fact]
     public void ReadOverlay_MasterFlagsLookupMissingEntirely_EscapesWithoutBecomingAPluginReadFailure()
     {
-        var pluginPath = PluginFixture.Write(GameRelease.Starfield, _testDirectory, "NoLookup.esp");
+        const string pluginName = "NoLookup.esp";
+        var pluginPath = PluginFixture.Write(GameRelease.Starfield, _testDirectory, pluginName);
+        var capability = new PluginReadCapability(
+            new MutagenPluginReadCapabilityPayload(GameRelease.Starfield, BinaryReadParameters.Default));
+        var readyPlugin = new SelectedPluginReady(pluginName, pluginPath, capability);
 
-        var exception = Record.Exception(() =>
-            _reader.ReadOverlay(pluginPath, GameRelease.Starfield, BinaryReadParameters.Default));
+        var exception = Record.Exception(() => _reader.ReadOverlay(readyPlugin));
 
         // The "not a Failed Plugin" assertion comes first and names the actual regression; the type assertion below
         // is what identifies which Mutagen failure this case reached.
@@ -318,8 +320,8 @@ public sealed class PluginOverlayConstructionTests : IDisposable
     ///     different Mutagen failure reaching the same boundary.
     /// </summary>
     /// <remarks>
-    ///     This case is reachable in production, not merely a constructed one: production's load-order provider
-    ///     collects master styles only for listings whose file exists on disk, so a Starfield Data directory holding
+    ///     This case is reachable in production, not merely a constructed one: production Game Load Orders collects
+    ///     master styles only for listings whose file exists on disk, so a Starfield Data directory holding
     ///     mods but not <c>Starfield.esm</c> builds exactly this lookup. Issue #52 fixed what a Processing Run does
     ///     with it, and fixed it one layer up — Plugin Ingestion turns this exception into an
     ///     <c>UnresolvableMasterException</c> that stops the run and names the master (ADR-0006). The adapter's list
@@ -329,27 +331,21 @@ public sealed class PluginOverlayConstructionTests : IDisposable
     [Fact]
     public void ReadOverlay_MasterFlagsLookupWithoutTheDeclaredMaster_EscapesWithoutBecomingAPluginReadFailure()
     {
-        var pluginPath = PluginFixture.Write(GameRelease.Starfield, _testDirectory, "WrongLookup.esp");
+        const string pluginName = "WrongLookup.esp";
+        var pluginPath = PluginFixture.Write(GameRelease.Starfield, _testDirectory, pluginName);
         var lookupMissingTheMaster = new BinaryReadParameters
         {
             MasterFlagsLookup = new LoadOrder<IModMasterStyledGetter>(
                 [new KeyedMasterStyle(ModKey.FromNameAndExtension("NotTheMaster.esm"), MasterStyle.Full)])
         };
+        var capability = new PluginReadCapability(
+            new MutagenPluginReadCapabilityPayload(GameRelease.Starfield, lookupMissingTheMaster));
+        var readyPlugin = new SelectedPluginReady(pluginName, pluginPath, capability);
 
-        var exception = Record.Exception(() =>
-            _reader.ReadOverlay(pluginPath, GameRelease.Starfield, lookupMissingTheMaster));
+        var exception = Record.Exception(() => _reader.ReadOverlay(readyPlugin));
 
         Assert.IsNotType<PluginOverlayReadException>(exception);
         Assert.IsType<MissingModException>(exception);
-    }
-
-    /// <summary>
-    ///     Builds the read parameters a fixture is opened with, the same way production builds them from a load-order
-    ///     snapshot.
-    /// </summary>
-    private static BinaryReadParameters ReadParametersFor(GameRelease release, string pluginName)
-    {
-        return GameLoadOrderSnapshotFactory.CreateFixtureSnapshot(release, pluginName).ReadParameters;
     }
 
     /// <summary>

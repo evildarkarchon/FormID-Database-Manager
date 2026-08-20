@@ -346,7 +346,7 @@ internal sealed record IngestedPlugin : PluginIngestionOutcome
 internal enum SkippedPluginReason
 {
     /// <summary>
-    ///     The selected Plugin was absent from the prepared load-order snapshot.
+    ///     Game Load Orders prepared the selected Plugin as not listed.
     /// </summary>
     NotPresentInLoadOrder,
 
@@ -592,7 +592,7 @@ internal sealed record PlannedPluginIngestion : PlannedPlugin
 internal enum PlannedSkipReason
 {
     /// <summary>
-    ///     The selected Plugin is absent from the prepared load-order snapshot.
+    ///     Game Load Orders prepared the selected Plugin as not listed.
     /// </summary>
     NotPresentInLoadOrder,
 

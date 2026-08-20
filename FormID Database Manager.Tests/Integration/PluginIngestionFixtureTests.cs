@@ -6,6 +6,7 @@ using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using FormID_Database_Manager.Services;
+using FormID_Database_Manager.Tests.Fakes;
 using FormID_Database_Manager.TestUtilities.Builders;
 using Mutagen.Bethesda;
 using Mutagen.Bethesda.Plugins.Exceptions;
@@ -205,8 +206,7 @@ public sealed class PluginIngestionFixtureTests : IDisposable
         var databasePath = Path.Combine(_testDirectory, $"{release}-required-named.db");
 
         var ingestion = new PluginIngestion(
-            new StaticGameLoadOrderProvider(
-                GameLoadOrderSnapshotFactory.CreateFixtureSnapshot(release, PluginName)));
+            PreparedGameLoadOrders.ForGeneratedPlugins([PluginName]));
 
         await using (var store = await FormIdRecordStore.OpenAsync(databasePath, release, cancellationToken))
         {
@@ -246,8 +246,7 @@ public sealed class PluginIngestionFixtureTests : IDisposable
         var databasePath = Path.Combine(_testDirectory, $"{release}-required-unnamed.db");
 
         var ingestion = new PluginIngestion(
-            new StaticGameLoadOrderProvider(
-                GameLoadOrderSnapshotFactory.CreateFixtureSnapshot(release, PluginName)));
+            PreparedGameLoadOrders.ForGeneratedPlugins([PluginName]));
 
         PluginIngestionReport report;
         await using (var store = await FormIdRecordStore.OpenAsync(databasePath, release, cancellationToken))
@@ -282,11 +281,9 @@ public sealed class PluginIngestionFixtureTests : IDisposable
     ///         requires each one to declare its game's main master (ADR-0006).
     ///     </para>
     ///     <para>
-    ///         The snapshot is built the way production's <c>GameLoadOrderProvider</c> builds one, not the way the
-    ///         other tests in this file do. That difference is the whole point: production collects master styles only
-    ///         for listings whose file exists on disk, so a Data directory without the game master produces exactly the
-    ///         empty-lookup snapshot below. <see cref="GameLoadOrderSnapshotFactory.CreateFixtureSnapshot" /> supplies
-    ///         the lookup populated, which is right for covering the happy path and wrong for covering this.
+    ///         Preparation uses the production environment over the fixture files, unlike the happy-path helper in
+    ///         this file. That difference is the point: without the game master on disk, production prepares an empty
+    ///         lookup for Starfield, so Mutagen can identify the declared master that cannot be resolved.
     ///     </para>
     /// </remarks>
     [Fact]
@@ -299,10 +296,12 @@ public sealed class PluginIngestionFixtureTests : IDisposable
         PluginFixture.Write(release, dataPath, PluginName);
         var databasePath = Path.Combine(_testDirectory, "starfield-missing-master.db");
 
-        // No master styles: Starfield.esm is not on disk, so production's provider would collect none either.
-        var ingestion = new PluginIngestion(
-            new StaticGameLoadOrderProvider(
-                GameLoadOrderSnapshotFactory.CreateSnapshotWithoutAnyMasterOnDisk(PluginName)));
+        var capability = new GameLoadOrderEnvironment().PreparePluginReads(release, []);
+        var readyPlugin = new SelectedPluginReady(
+            PluginName,
+            Path.Combine(dataPath, PluginName),
+            capability);
+        var ingestion = new PluginIngestion(new RecordingPreparedGameLoadOrders([readyPlugin]));
 
         await using var store = await FormIdRecordStore.OpenAsync(databasePath, release, cancellationToken);
         var exception = await Assert.ThrowsAsync<UnresolvableMasterException>(() => ingestion.IngestAsync(
@@ -328,11 +327,10 @@ public sealed class PluginIngestionFixtureTests : IDisposable
         PluginFixture.Write(release, dataPath, PluginName);
         var databasePath = Path.Combine(_testDirectory, $"{release}.db");
 
-        // The load order is supplied rather than discovered because no game is installed here; its read parameters
-        // resolve the master every fixture declares, which a game with separated master load orders requires.
+        // The load order is supplied rather than discovered because no game is installed here. The helper prepares
+        // the matched opaque capability, including the independently known master style generated fixtures require.
         var ingestion = new PluginIngestion(
-            new StaticGameLoadOrderProvider(
-                GameLoadOrderSnapshotFactory.CreateFixtureSnapshot(release, PluginName)));
+            PreparedGameLoadOrders.ForGeneratedPlugins([PluginName]));
 
         PluginIngestionReport report;
         await using (var store = await FormIdRecordStore.OpenAsync(databasePath, release, cancellationToken))

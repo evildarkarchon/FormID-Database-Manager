@@ -1,14 +1,14 @@
 using System;
+using System.Collections.Immutable;
 using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using FormID_Database_Manager.Services;
-using FormID_Database_Manager.TestUtilities.Builders;
+using FormID_Database_Manager.Tests.Fakes;
 using Moq;
 using Mutagen.Bethesda;
 using Mutagen.Bethesda.Plugins;
-using Mutagen.Bethesda.Plugins.Binary.Parameters;
 using Mutagen.Bethesda.Plugins.Exceptions;
 using Mutagen.Bethesda.Plugins.Records;
 using Xunit;
@@ -28,7 +28,44 @@ public sealed class PluginIngestionPlanTests : IDisposable
     private readonly List<string> _tempDirectories = [];
 
     /// <summary>
-    ///     Verifies that planning prepares one load-order snapshot from the canonical Data directory, opens each
+    ///     Verifies that planning canonicalizes once, prepares the complete ordered selection once, and passes each
+    ///     ready case through the opaque overlay seam without reconstructing its path or capability.
+    /// </summary>
+    [Fact]
+    public async Task PlanAsync_PreparedReadyCases_PreparesOnceAndPassesEachCaseIntact()
+    {
+        var gameDirectory = CreateGameDirectory();
+        var dataDirectory = Path.Combine(gameDirectory, "Data");
+        var capability = new PluginReadCapability(new object());
+        var first = new SelectedPluginReady(
+            "FIRST.esp",
+            Path.Combine(dataDirectory, "First-Resolved.esp"),
+            capability);
+        var second = new SelectedPluginReady(
+            "second.ESP",
+            Path.Combine(dataDirectory, "Second-Resolved.esp"),
+            capability);
+        var gameLoadOrders = new RecordingPreparedGameLoadOrders([first, second]);
+        var overlayReader = new PreparedCaseOverlayReader();
+        IPluginIngestion sut = new PluginIngestion(gameLoadOrders, overlayReader, new EntryExtraction());
+
+        var plan = await sut.PlanAsync(
+            CreateRequest(gameDirectory, "FIRST.esp", "second.ESP"),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, gameLoadOrders.PrepareCallCount);
+        Assert.Equal(dataDirectory, gameLoadOrders.CapturedCanonicalDataDirectory);
+        Assert.Equal(["FIRST.esp", "second.ESP"], gameLoadOrders.CapturedSelection);
+        Assert.Collection(
+            overlayReader.OpenedPlugins,
+            opened => Assert.Same(first, opened),
+            opened => Assert.Same(second, opened));
+        Assert.Equal(["FIRST.esp", "second.ESP"], overlayReader.DisposedPlugins);
+        Assert.All(plan.Plugins, planned => Assert.IsType<PlannedPluginIngestion>(planned));
+    }
+
+    /// <summary>
+    ///     Verifies that planning prepares the selected set from the canonical Data directory, opens each
     ///     selected Plugin's overlay exactly once in selection order, releases every one of them, and enumerates no
     ///     records at all.
     /// </summary>
@@ -36,26 +73,19 @@ public sealed class PluginIngestionPlanTests : IDisposable
     public async Task PlanAsync_SelectedPlugins_OpensAndReleasesEveryOverlayWithoutEnumeratingRecords()
     {
         var gameDirectory = CreateGameDirectory();
-        await CreatePluginFileAsync(gameDirectory, "First.esp");
-        await CreatePluginFileAsync(gameDirectory, "Second.esp");
-        var loadOrderProvider = new RecordingLoadOrderProvider(
-            new GameLoadOrderSnapshot(
-                ["First.esp", "Second.esp"],
-                [
-                    new KeyedMasterStyle(ModKey.FromNameAndExtension("First.esp"), MasterStyle.Full),
-                    new KeyedMasterStyle(ModKey.FromNameAndExtension("Second.esp"), MasterStyle.Full)
-                ]));
+        var gameLoadOrders = new RecordingPreparedGameLoadOrders(CreateReadyPlugins(
+            gameDirectory,
+            "First.esp",
+            "Second.esp"));
         var overlayReader = new PlanningOverlayReader();
-        IPluginIngestion sut = new PluginIngestion(loadOrderProvider, overlayReader, new EntryExtraction());
+        IPluginIngestion sut = new PluginIngestion(gameLoadOrders, overlayReader, new EntryExtraction());
 
         var plan = await sut.PlanAsync(
             CreateRequest(gameDirectory, "First.esp", "Second.esp"),
             TestContext.Current.CancellationToken);
 
-        Assert.Equal(Path.Combine(gameDirectory, "Data"), loadOrderProvider.CapturedDataPath);
-        Assert.Equal(1, loadOrderProvider.BuildSnapshotCallCount);
-        Assert.True(loadOrderProvider.CapturedIncludeMasterFlagsLookup);
-        Assert.All(overlayReader.CapturedReadParameters, parameters => Assert.NotNull(parameters.MasterFlagsLookup));
+        Assert.Equal(Path.Combine(gameDirectory, "Data"), gameLoadOrders.CapturedCanonicalDataDirectory);
+        Assert.Equal(1, gameLoadOrders.PrepareCallCount);
         Assert.Equal(["First.esp", "Second.esp"], overlayReader.OpenedPlugins);
         Assert.Equal(["First.esp", "Second.esp"], overlayReader.DisposedPlugins);
         Assert.Collection(
@@ -76,9 +106,8 @@ public sealed class PluginIngestionPlanTests : IDisposable
     public async Task PlanAsync_PluginWithNoRecords_StillReportsWouldIngestBecauseZeroRecordsIsNotPredictable()
     {
         var gameDirectory = CreateGameDirectory();
-        await CreatePluginFileAsync(gameDirectory, "Empty.esp");
         IPluginIngestion sut = new PluginIngestion(
-            new RecordingLoadOrderProvider(new GameLoadOrderSnapshot(["Empty.esp"])),
+            new RecordingPreparedGameLoadOrders(CreateReadyPlugins(gameDirectory, "Empty.esp")),
             new EmptyPluginOverlayReader(),
             new EntryExtraction());
 
@@ -97,10 +126,20 @@ public sealed class PluginIngestionPlanTests : IDisposable
     public async Task PlanAsync_PredictableSkips_ReportsBothReasonsWithoutOpeningAnOverlay()
     {
         var gameDirectory = CreateGameDirectory();
-        await CreatePluginFileAsync(gameDirectory, "Available.esp");
+        var dataDirectory = Path.Combine(gameDirectory, "Data");
         var overlayReader = new PlanningOverlayReader();
         IPluginIngestion sut = new PluginIngestion(
-            new RecordingLoadOrderProvider(new GameLoadOrderSnapshot(["Unavailable.esp", "Available.esp"])),
+            new RecordingPreparedGameLoadOrders(
+            [
+                new SelectedPluginNotListed("Absent.esp"),
+                new SelectedPluginFileUnavailable(
+                    "Unavailable.esp",
+                    Path.Combine(dataDirectory, "Unavailable.esp")),
+                new SelectedPluginReady(
+                    "Available.esp",
+                    Path.Combine(dataDirectory, "Available.esp"),
+                    new PluginReadCapability(new object()))
+            ]),
             overlayReader,
             new EntryExtraction());
 
@@ -136,8 +175,6 @@ public sealed class PluginIngestionPlanTests : IDisposable
     public async Task PlanAsync_OverlayOpeningFailure_ReportsAPlannedFailureAndKeepsPlanningLaterPlugins()
     {
         var gameDirectory = CreateGameDirectory();
-        await CreatePluginFileAsync(gameDirectory, "Broken.esp");
-        await CreatePluginFileAsync(gameDirectory, "Later.esp");
         var overlayReader = new PlanningOverlayReader
         {
             Failures =
@@ -148,7 +185,7 @@ public sealed class PluginIngestionPlanTests : IDisposable
             }
         };
         IPluginIngestion sut = new PluginIngestion(
-            new RecordingLoadOrderProvider(new GameLoadOrderSnapshot(["Broken.esp", "Later.esp"])),
+            new RecordingPreparedGameLoadOrders(CreateReadyPlugins(gameDirectory, "Broken.esp", "Later.esp")),
             overlayReader,
             new EntryExtraction());
 
@@ -182,19 +219,16 @@ public sealed class PluginIngestionPlanTests : IDisposable
     public async Task PlanAsync_DeclaredMasterMissingFromTheLookup_FailsTheWholePlanAndReleasesEarlierOverlays()
     {
         var gameDirectory = CreateGameDirectory();
-        await CreatePluginFileAsync(gameDirectory, "First.esp");
-        await CreatePluginFileAsync(gameDirectory, "Patch.esp");
-        await CreatePluginFileAsync(gameDirectory, "Never.esp");
         var failure = new MissingModException(
             ModKey.FromNameAndExtension("Starfield.esm"),
             "Mod was missing from load order when constructing the separate mod lists needed for FormID translation.");
         var overlayReader = new PlanningOverlayReader { Failures = { ["Patch.esp"] = failure } };
         IPluginIngestion sut = new PluginIngestion(
-            new RecordingLoadOrderProvider(
-                GameLoadOrderSnapshotFactory.CreateSnapshotWithoutAnyMasterOnDisk(
-                    "First.esp",
-                    "Patch.esp",
-                    "Never.esp")),
+            new RecordingPreparedGameLoadOrders(CreateReadyPlugins(
+                gameDirectory,
+                "First.esp",
+                "Patch.esp",
+                "Never.esp")),
             overlayReader,
             new EntryExtraction());
 
@@ -210,16 +244,90 @@ public sealed class PluginIngestionPlanTests : IDisposable
     }
 
     /// <summary>
+    ///     Verifies that Mutagen's unnamed missing-mapping failure stops the whole plan as an unnamed Unresolvable
+    ///     Master instead of becoming one planned Plugin failure.
+    /// </summary>
+    [Fact]
+    public async Task PlanAsync_MasterMappingMissing_FailsTheWholePlanWithoutNamingAMaster()
+    {
+        var gameDirectory = CreateGameDirectory();
+        var failure = new MissingModMappingException("Master flag lookup was not provided.");
+        var overlayReader = new PlanningOverlayReader { Failures = { ["Patch.esp"] = failure } };
+        IPluginIngestion sut = new PluginIngestion(
+            new RecordingPreparedGameLoadOrders(CreateReadyPlugins(gameDirectory, "Patch.esp")),
+            overlayReader,
+            new EntryExtraction());
+
+        var thrown = await Assert.ThrowsAsync<UnresolvableMasterException>(() => sut.PlanAsync(
+            CreateRequest(gameDirectory, "Patch.esp"),
+            TestContext.Current.CancellationToken));
+
+        Assert.Equal("Patch.esp", thrown.PluginName);
+        Assert.Null(thrown.MasterName);
+        Assert.Same(failure, thrown.InnerException);
+        Assert.Empty(overlayReader.DisposedPlugins);
+    }
+
+    /// <summary>
+    ///     Verifies that an opaque capability from an incompatible adapter remains a composition failure and escapes
+    ///     planning before any filesystem access.
+    /// </summary>
+    [Fact]
+    public async Task PlanAsync_IncompatibleReadCapability_PropagatesCompositionFailure()
+    {
+        var gameDirectory = CreateGameDirectory();
+        var readyPlugin = new SelectedPluginReady(
+            "Mismatch.esp",
+            Path.Combine(gameDirectory, "does-not-exist", "Mismatch.esp"),
+            new PluginReadCapability(new object()));
+        IPluginIngestion sut = new PluginIngestion(
+            new RecordingPreparedGameLoadOrders([readyPlugin]),
+            new MutagenPluginOverlayReader(),
+            new EntryExtraction());
+
+        var thrown = await Assert.ThrowsAsync<InvalidOperationException>(() => sut.PlanAsync(
+            CreateRequest(gameDirectory, "Mismatch.esp"),
+            TestContext.Current.CancellationToken));
+
+        Assert.Contains("different adapter", thrown.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    ///     Verifies that an overlay cleanup failure propagates when planning has no active failure or cancellation to
+    ///     preserve.
+    /// </summary>
+    [Fact]
+    public async Task PlanAsync_OverlayDisposalFailure_PropagatesStandaloneFailure()
+    {
+        var gameDirectory = CreateGameDirectory();
+        var disposalFailure = new InvalidOperationException("Overlay disposal failed.");
+        var overlayReader = new PlanningOverlayReader
+        {
+            DisposalFailures = { ["First.esp"] = disposalFailure }
+        };
+        IPluginIngestion sut = new PluginIngestion(
+            new RecordingPreparedGameLoadOrders(CreateReadyPlugins(gameDirectory, "First.esp")),
+            overlayReader,
+            new EntryExtraction());
+
+        var thrown = await Assert.ThrowsAsync<InvalidOperationException>(() => sut.PlanAsync(
+            CreateRequest(gameDirectory, "First.esp"),
+            TestContext.Current.CancellationToken));
+
+        Assert.Same(disposalFailure, thrown);
+        Assert.Equal(["First.esp"], overlayReader.DisposedPlugins);
+    }
+
+    /// <summary>
     ///     Verifies that a plan cancelled before it starts consults no adapter at all.
     /// </summary>
     [Fact]
     public async Task PlanAsync_CancelledBeforePlanning_ThrowsWithoutPreparingLoadOrder()
     {
         var gameDirectory = CreateGameDirectory();
-        await CreatePluginFileAsync(gameDirectory, "First.esp");
-        var loadOrderProvider = new RecordingLoadOrderProvider(new GameLoadOrderSnapshot(["First.esp"]));
+        var gameLoadOrders = new RecordingPreparedGameLoadOrders(CreateReadyPlugins(gameDirectory, "First.esp"));
         var overlayReader = new PlanningOverlayReader();
-        IPluginIngestion sut = new PluginIngestion(loadOrderProvider, overlayReader, new EntryExtraction());
+        IPluginIngestion sut = new PluginIngestion(gameLoadOrders, overlayReader, new EntryExtraction());
         using var cancellationTokenSource = new CancellationTokenSource();
         await cancellationTokenSource.CancelAsync();
 
@@ -228,7 +336,7 @@ public sealed class PluginIngestionPlanTests : IDisposable
             cancellationTokenSource.Token));
 
         Assert.Equal(cancellationTokenSource.Token, thrown.CancellationToken);
-        Assert.Equal(0, loadOrderProvider.BuildSnapshotCallCount);
+        Assert.Equal(0, gameLoadOrders.PrepareCallCount);
         Assert.Empty(overlayReader.OpenedPlugins);
     }
 
@@ -240,8 +348,6 @@ public sealed class PluginIngestionPlanTests : IDisposable
     public async Task PlanAsync_CancelledBetweenSelectedPlugins_StopsBeforeTheNextOverlay()
     {
         var gameDirectory = CreateGameDirectory();
-        await CreatePluginFileAsync(gameDirectory, "First.esp");
-        await CreatePluginFileAsync(gameDirectory, "Second.esp");
         using var cancellationTokenSource = new CancellationTokenSource();
         var overlayReader = new PlanningOverlayReader
         {
@@ -254,7 +360,7 @@ public sealed class PluginIngestionPlanTests : IDisposable
             }
         };
         IPluginIngestion sut = new PluginIngestion(
-            new RecordingLoadOrderProvider(new GameLoadOrderSnapshot(["First.esp", "Second.esp"])),
+            new RecordingPreparedGameLoadOrders(CreateReadyPlugins(gameDirectory, "First.esp", "Second.esp")),
             overlayReader,
             new EntryExtraction());
 
@@ -263,6 +369,36 @@ public sealed class PluginIngestionPlanTests : IDisposable
             cancellationTokenSource.Token));
 
         Assert.Equal(["First.esp"], overlayReader.OpenedPlugins);
+        Assert.Equal(["First.esp"], overlayReader.DisposedPlugins);
+    }
+
+    /// <summary>
+    ///     Verifies that cancellation requested during final overlay cleanup wins the completion race even when that
+    ///     same cleanup raises a standalone failure.
+    /// </summary>
+    [Fact]
+    public async Task PlanAsync_FinalOverlayDisposalCancelsAndFails_PreservesCancellation()
+    {
+        var gameDirectory = CreateGameDirectory();
+        using var cancellationTokenSource = new CancellationTokenSource();
+        var overlayReader = new PlanningOverlayReader
+        {
+            OnDisposed = _ => cancellationTokenSource.Cancel(),
+            DisposalFailures =
+            {
+                ["First.esp"] = new InvalidOperationException("Overlay disposal failed.")
+            }
+        };
+        IPluginIngestion sut = new PluginIngestion(
+            new RecordingPreparedGameLoadOrders(CreateReadyPlugins(gameDirectory, "First.esp")),
+            overlayReader,
+            new EntryExtraction());
+
+        var thrown = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sut.PlanAsync(
+            CreateRequest(gameDirectory, "First.esp"),
+            cancellationTokenSource.Token));
+
+        Assert.Equal(cancellationTokenSource.Token, thrown.CancellationToken);
         Assert.Equal(["First.esp"], overlayReader.DisposedPlugins);
     }
 
@@ -320,10 +456,17 @@ public sealed class PluginIngestionPlanTests : IDisposable
         return directory;
     }
 
-    private static async Task CreatePluginFileAsync(string gameDirectory, string pluginName)
+    private static ImmutableArray<PreparedSelectedPlugin> CreateReadyPlugins(
+        string gameDirectory,
+        params string[] pluginNames)
     {
-        var pluginPath = Path.Combine(gameDirectory, "Data", pluginName);
-        await File.WriteAllBytesAsync(pluginPath, [0x00], TestContext.Current.CancellationToken);
+        var capability = new PluginReadCapability(new object());
+        return pluginNames
+            .Select(pluginName => (PreparedSelectedPlugin)new SelectedPluginReady(
+                pluginName,
+                Path.Combine(gameDirectory, "Data", pluginName),
+                capability))
+            .ToImmutableArray();
     }
 
     /// <summary>
@@ -336,26 +479,30 @@ public sealed class PluginIngestionPlanTests : IDisposable
 
         public List<string> DisposedPlugins { get; } = [];
 
-        public List<BinaryReadParameters> CapturedReadParameters { get; } = [];
-
         /// <summary>
         ///     The failure to raise instead of returning an overlay, keyed by Plugin name.
         /// </summary>
         public Dictionary<string, Exception> Failures { get; } = new(StringComparer.Ordinal);
 
         /// <summary>
+        ///     The failure to raise while releasing an opened overlay, keyed by Plugin name.
+        /// </summary>
+        public Dictionary<string, Exception> DisposalFailures { get; } = new(StringComparer.Ordinal);
+
+        /// <summary>
         ///     Runs after a Plugin has been recorded as opened, so a scenario can cancel mid-plan.
         /// </summary>
         public Action<string>? OnOpened { get; init; }
 
-        public IModDisposeGetter ReadOverlay(
-            string pluginPath,
-            GameRelease gameRelease,
-            BinaryReadParameters readParameters)
+        /// <summary>
+        ///     Runs during overlay cleanup, after the cleanup attempt has been recorded.
+        /// </summary>
+        public Action<string>? OnDisposed { get; init; }
+
+        public IModDisposeGetter ReadOverlay(SelectedPluginReady readyPlugin)
         {
-            var pluginName = Path.GetFileName(pluginPath);
+            var pluginName = readyPlugin.PluginName;
             OpenedPlugins.Add(pluginName);
-            CapturedReadParameters.Add(readParameters);
             OnOpened?.Invoke(pluginName);
             if (Failures.TryGetValue(pluginName, out var failure))
             {
@@ -366,7 +513,17 @@ public sealed class PluginIngestionPlanTests : IDisposable
             overlay
                 .Setup(plugin => plugin.EnumerateMajorRecords())
                 .Throws(new InvalidOperationException("A Processing Run plan must not enumerate records."));
-            overlay.Setup(plugin => plugin.Dispose()).Callback(() => DisposedPlugins.Add(pluginName));
+            overlay
+                .Setup(plugin => plugin.Dispose())
+                .Callback(() =>
+                {
+                    DisposedPlugins.Add(pluginName);
+                    OnDisposed?.Invoke(pluginName);
+                    if (DisposalFailures.TryGetValue(pluginName, out var disposalFailure))
+                    {
+                        throw disposalFailure;
+                    }
+                });
             return overlay.Object;
         }
     }
@@ -376,10 +533,7 @@ public sealed class PluginIngestionPlanTests : IDisposable
     /// </summary>
     private sealed class EmptyPluginOverlayReader : IPluginOverlayReader
     {
-        public IModDisposeGetter ReadOverlay(
-            string pluginPath,
-            GameRelease gameRelease,
-            BinaryReadParameters readParameters)
+        public IModDisposeGetter ReadOverlay(SelectedPluginReady readyPlugin)
         {
             var overlay = new Mock<IModDisposeGetter>();
             overlay.Setup(plugin => plugin.EnumerateMajorRecords()).Returns([]);
@@ -387,23 +541,22 @@ public sealed class PluginIngestionPlanTests : IDisposable
         }
     }
 
-    private sealed class RecordingLoadOrderProvider(GameLoadOrderSnapshot snapshot) : IGameLoadOrderProvider
+    private sealed class PreparedCaseOverlayReader : IPluginOverlayReader
     {
-        public int BuildSnapshotCallCount { get; private set; }
+        public List<SelectedPluginReady> OpenedPlugins { get; } = [];
 
-        public string CapturedDataPath { get; private set; } = null!;
+        public List<string> DisposedPlugins { get; } = [];
 
-        public bool CapturedIncludeMasterFlagsLookup { get; private set; }
-
-        public GameLoadOrderSnapshot BuildSnapshot(
-            GameRelease gameRelease,
-            string dataPath,
-            bool includeMasterFlagsLookup = false)
+        /// <summary>
+        ///     Records the exact ready case presented by the prepared Plugin Ingestion path.
+        /// </summary>
+        public IModDisposeGetter ReadOverlay(SelectedPluginReady readyPlugin)
         {
-            BuildSnapshotCallCount++;
-            CapturedDataPath = dataPath;
-            CapturedIncludeMasterFlagsLookup = includeMasterFlagsLookup;
-            return snapshot;
+            OpenedPlugins.Add(readyPlugin);
+            var overlay = new Mock<IModDisposeGetter>();
+            overlay.Setup(plugin => plugin.Dispose()).Callback(() => DisposedPlugins.Add(readyPlugin.PluginName));
+            return overlay.Object;
         }
+
     }
 }

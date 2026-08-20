@@ -52,11 +52,11 @@ public sealed class GameLoadOrdersArchitectureTests
     }
 
     /// <summary>
-    ///     Pins direct Plugin List use of the highest Game Load Orders seam and the complete absence of its retired
-    ///     forwarding discovery layer while Plugin Ingestion remains on the separately migrated provider path.
+    ///     Pins direct Plugin List and Plugin Ingestion use of the highest Game Load Orders seam and the complete
+    ///     absence of the retired forwarding discovery layer.
     /// </summary>
     [Fact]
-    public void PluginList_GameLoadOrdersCutover_UsesHighestSeamWithoutForwardingDiscoveryLayer()
+    public void LiveCallers_GameLoadOrdersCutover_UseHighestSeamWithoutForwardingDiscoveryLayer()
     {
         var servicesDirectory = Path.Combine(FindRepositoryRoot(), "FormID Database Manager.Core", "Services");
         var pluginListSource = File.ReadAllText(Path.Combine(servicesDirectory, "PluginList.cs"));
@@ -73,12 +73,27 @@ public sealed class GameLoadOrdersArchitectureTests
         Assert.Contains("IGameLoadOrders", pluginListSource, StringComparison.Ordinal);
         Assert.Contains("DiscoverAvailablePluginsAsync", pluginListSource, StringComparison.Ordinal);
         Assert.DoesNotContain("IGameLoadOrderProvider", pluginListSource, StringComparison.Ordinal);
-        Assert.Contains("IGameLoadOrderProvider", ingestionSource, StringComparison.Ordinal);
+        Assert.Contains("IGameLoadOrders", ingestionSource, StringComparison.Ordinal);
+        Assert.Contains("PrepareSelectedPlugins", ingestionSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("IGameLoadOrderProvider", ingestionSource, StringComparison.Ordinal);
         Assert.False(File.Exists(Path.Combine(servicesDirectory, "PluginListDiscovery.cs")));
         Assert.All(
             retiredTypeNames,
             retiredTypeName => Assert.Null(typeof(IGameLoadOrders).Assembly.GetType(
                 $"{typeof(IGameLoadOrders).Namespace}.{retiredTypeName}")));
+    }
+
+    /// <summary>
+    ///     Pins the live overlay seam to one intact ready selected-Plugin case without exposing binary preparation.
+    /// </summary>
+    [Fact]
+    public void PluginOverlayReaderContract_LiveOperation_AcceptsOnlyPreparedReadyCase()
+    {
+        var operation = Assert.Single(typeof(IPluginOverlayReader).GetMethods());
+        var parameter = Assert.Single(operation.GetParameters());
+
+        Assert.Equal(nameof(IPluginOverlayReader.ReadOverlay), operation.Name);
+        Assert.Equal(typeof(SelectedPluginReady), parameter.ParameterType);
     }
 
     /// <summary>
