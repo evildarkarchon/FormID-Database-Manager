@@ -132,7 +132,8 @@ public sealed class ProcessingRunIntegrationTests : IDisposable
         sourceRecord.Name = "Selected NPC";
         sourcePlugin.WriteToBinary(pluginPath);
 
-        var pluginIngestion = new PluginIngestion(new PreparedGameLoadOrders([pluginName]));
+        var gameLoadOrders = new GameLoadOrders(new FixtureGameLoadOrderEnvironment([pluginName]));
+        var pluginIngestion = new PluginIngestion(gameLoadOrders);
         using var executor = new ProcessingRunExecutor(
             pluginIngestion,
             new FormIdRecordStoreSessionOpener());

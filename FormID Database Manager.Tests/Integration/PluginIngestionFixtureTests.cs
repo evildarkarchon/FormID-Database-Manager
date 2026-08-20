@@ -205,8 +205,7 @@ public sealed class PluginIngestionFixtureTests : IDisposable
         PluginFixture.WriteWithRequiredNamedRecord(release, dataPath, PluginName);
         var databasePath = Path.Combine(_testDirectory, $"{release}-required-named.db");
 
-        var ingestion = new PluginIngestion(
-            PreparedGameLoadOrders.ForGeneratedPlugins([PluginName]));
+        var ingestion = new PluginIngestion(CreateFixtureGameLoadOrders(release, dataPath));
 
         await using (var store = await FormIdRecordStore.OpenAsync(databasePath, release, cancellationToken))
         {
@@ -245,8 +244,7 @@ public sealed class PluginIngestionFixtureTests : IDisposable
         PluginFixture.WriteWithRequiredNamedRecord(release, dataPath, PluginName, name: null);
         var databasePath = Path.Combine(_testDirectory, $"{release}-required-unnamed.db");
 
-        var ingestion = new PluginIngestion(
-            PreparedGameLoadOrders.ForGeneratedPlugins([PluginName]));
+        var ingestion = new PluginIngestion(CreateFixtureGameLoadOrders(release, dataPath));
 
         PluginIngestionReport report;
         await using (var store = await FormIdRecordStore.OpenAsync(databasePath, release, cancellationToken))
@@ -327,10 +325,8 @@ public sealed class PluginIngestionFixtureTests : IDisposable
         PluginFixture.Write(release, dataPath, PluginName);
         var databasePath = Path.Combine(_testDirectory, $"{release}.db");
 
-        // The load order is supplied rather than discovered because no game is installed here. The helper prepares
-        // the matched opaque capability, including the independently known master style generated fixtures require.
-        var ingestion = new PluginIngestion(
-            PreparedGameLoadOrders.ForGeneratedPlugins([PluginName]));
+        // The load order is supplied rather than discovered because no game is installed here.
+        var ingestion = new PluginIngestion(CreateFixtureGameLoadOrders(release, dataPath));
 
         PluginIngestionReport report;
         await using (var store = await FormIdRecordStore.OpenAsync(databasePath, release, cancellationToken))
@@ -346,6 +342,21 @@ public sealed class PluginIngestionFixtureTests : IDisposable
         var storedRecords = await reopened.ReadRecordsAsync(FormIdRecordQuery.All, cancellationToken);
 
         return new FixtureIngestionResult(report.Outcomes, storedRecords);
+    }
+
+    /// <summary>
+    ///     Composes production Game Load Orders over deterministic listings and a present main-master fixture, so the
+    ///     production environment prepares the matched opaque capability without an installed game.
+    /// </summary>
+    /// <param name="release">The fixture's Supported GameRelease.</param>
+    /// <param name="dataPath">The canonical Data directory that owns the generated files.</param>
+    /// <returns>Production Game Load Orders ready for real overlay construction.</returns>
+    private static IGameLoadOrders CreateFixtureGameLoadOrders(GameRelease release, string dataPath)
+    {
+        var mainMasterName = PluginFixture.MainMasterFor(release);
+        PluginFixture.Write(release, dataPath, mainMasterName);
+        return new GameLoadOrders(
+            new FixtureGameLoadOrderEnvironment([mainMasterName, PluginName]));
     }
 
     private sealed record FixtureIngestionResult(

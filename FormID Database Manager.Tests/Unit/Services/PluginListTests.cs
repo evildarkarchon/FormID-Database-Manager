@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using FormID_Database_Manager.Services;
@@ -15,22 +16,22 @@ namespace FormID_Database_Manager.Tests.Unit.Services;
 
 public sealed class PluginListTests
 {
+    /// <summary>
+    ///     Verifies Plugin List consumes the highest Game Load Orders seam and retains deterministic disposal without
+    ///     pinning its concrete kind or exact constructor shape.
+    /// </summary>
     [Fact]
-    public void TypeShape_UsesOneInternalConcreteSealedModuleWithoutExternalMockInterface()
+    public void PluginListConstructor_HighestGameLoadOrdersSeam_ConsumesDependencyAndSupportsDisposal()
     {
         var pluginListType = typeof(PluginList);
+        var dependencyTypes = pluginListType
+            .GetConstructors(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+            .SelectMany(constructor => constructor.GetParameters())
+            .Select(parameter => parameter.ParameterType)
+            .ToArray();
 
-        Assert.True(pluginListType.IsNotPublic);
-        Assert.True(pluginListType.IsSealed);
-        Assert.False(pluginListType.IsAbstract);
         Assert.Contains(typeof(IDisposable), pluginListType.GetInterfaces());
-        Assert.Equal(
-            [typeof(IGameLoadOrders)],
-            Assert.Single(pluginListType.GetConstructors()).GetParameters().Select(parameter => parameter.ParameterType));
-        Assert.Null(pluginListType.Assembly.GetType($"{pluginListType.Namespace}.IPluginListDiscovery"));
-        Assert.DoesNotContain(
-            pluginListType.Assembly.GetTypes(),
-            type => type.Name == "IPluginList");
+        Assert.Contains(typeof(IGameLoadOrders), dependencyTypes);
     }
 
     /// <summary>

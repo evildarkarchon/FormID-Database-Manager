@@ -9,8 +9,9 @@ namespace FormID_Database_Manager.Tests.Performance;
 ///     Composes deterministic performance load orders behind production aggregate Plugin Ingestion.
 /// </summary>
 /// <remarks>
-///     Prepared Game Load Orders observes each generated file when the run starts. Load scenarios therefore receive
-///     ready cases while cancellation scenarios that deliberately name no files receive unavailable cases.
+///     Production Game Load Orders observes each generated file through a deterministic fixture environment when the
+///     run starts. Load scenarios therefore receive ready cases while cancellation scenarios that deliberately name
+///     no files receive unavailable cases.
 /// </remarks>
 internal static class PerformanceProcessingRunFactory
 {
@@ -22,7 +23,9 @@ internal static class PerformanceProcessingRunFactory
     /// <returns>A Processing Run executor using the production aggregate and Store lifecycle seams.</returns>
     public static ProcessingRunExecutor Create(IEnumerable<string> pluginNames)
     {
-        var pluginIngestion = new PluginIngestion(new PreparedGameLoadOrders(pluginNames.ToArray()));
+        var gameLoadOrders = new GameLoadOrders(
+            new FixtureGameLoadOrderEnvironment(pluginNames.ToArray()));
+        var pluginIngestion = new PluginIngestion(gameLoadOrders);
         return new ProcessingRunExecutor(pluginIngestion, new FormIdRecordStoreSessionOpener());
     }
 }

@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Text.RegularExpressions;
 using FormID_Database_Manager.Services;
 using Mutagen.Bethesda.Plugins.Binary.Parameters;
 using Mutagen.Bethesda.Plugins.Order;
@@ -38,7 +39,7 @@ public sealed class GameLoadOrdersArchitectureTests
         var exposedTypes = operations
             .SelectMany(operation => operation.GetParameters().Select(parameter => parameter.ParameterType)
                 .Append(operation.ReturnType))
-            .SelectMany(FlattenType)
+            .SelectMany(type => ExpandPublicContractTypes(type, typeof(IGameLoadOrders).Assembly))
             .ToArray();
         var forbiddenTypes = new[]
         {
@@ -48,7 +49,9 @@ public sealed class GameLoadOrdersArchitectureTests
             typeof(BinaryReadParameters)
         };
 
-        Assert.DoesNotContain(exposedTypes, forbiddenTypes.Contains);
+        Assert.DoesNotContain(
+            exposedTypes,
+            exposedType => forbiddenTypes.Any(forbiddenType => forbiddenType.IsAssignableFrom(exposedType)));
     }
 
     /// <summary>
@@ -63,20 +66,20 @@ public sealed class GameLoadOrdersArchitectureTests
         var ingestionSource = File.ReadAllText(Path.Combine(servicesDirectory, "PluginIngestion.cs"));
         var retiredTypeNames = new[]
         {
-            "IPluginListDiscovery",
-            "PluginListDiscoveryProgress",
-            "PluginListDiscoveryResult",
-            "PluginListDiscoveryCompleted",
-            "PluginListDiscoveryFailed"
+            string.Concat("IPluginList", "Discovery"),
+            string.Concat("PluginList", "Discovery", "Progress"),
+            string.Concat("PluginList", "Discovery", "Result"),
+            string.Concat("PluginList", "Discovery", "Completed"),
+            string.Concat("PluginList", "Discovery", "Failed")
         };
 
         Assert.Contains("IGameLoadOrders", pluginListSource, StringComparison.Ordinal);
         Assert.Contains("DiscoverAvailablePluginsAsync", pluginListSource, StringComparison.Ordinal);
-        Assert.DoesNotContain("IGameLoadOrderProvider", pluginListSource, StringComparison.Ordinal);
         Assert.Contains("IGameLoadOrders", ingestionSource, StringComparison.Ordinal);
         Assert.Contains("PrepareSelectedPlugins", ingestionSource, StringComparison.Ordinal);
-        Assert.DoesNotContain("IGameLoadOrderProvider", ingestionSource, StringComparison.Ordinal);
-        Assert.False(File.Exists(Path.Combine(servicesDirectory, "PluginListDiscovery.cs")));
+        Assert.False(File.Exists(Path.Combine(
+            servicesDirectory,
+            string.Concat("PluginList", "Discovery", ".cs"))));
         Assert.All(
             retiredTypeNames,
             retiredTypeName => Assert.Null(typeof(IGameLoadOrders).Assembly.GetType(
@@ -89,26 +92,26 @@ public sealed class GameLoadOrdersArchitectureTests
     [Fact]
     public void PluginOverlayReaderContract_LiveOperation_AcceptsOnlyPreparedReadyCase()
     {
-        var operation = Assert.Single(typeof(IPluginOverlayReader).GetMethods());
-        var parameter = Assert.Single(operation.GetParameters());
+        var contractOperation = Assert.Single(typeof(IPluginOverlayReader).GetMethods());
+        var productionOperation = Assert.Single(typeof(MutagenPluginOverlayReader).GetMethods(
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.DeclaredOnly));
+        var contractParameter = Assert.Single(contractOperation.GetParameters());
+        var productionParameter = Assert.Single(productionOperation.GetParameters());
 
-        Assert.Equal(nameof(IPluginOverlayReader.ReadOverlay), operation.Name);
-        Assert.Equal(typeof(SelectedPluginReady), parameter.ParameterType);
+        Assert.Equal(nameof(IPluginOverlayReader.ReadOverlay), contractOperation.Name);
+        Assert.Equal(nameof(IPluginOverlayReader.ReadOverlay), productionOperation.Name);
+        Assert.Equal(typeof(SelectedPluginReady), contractParameter.ParameterType);
+        Assert.Equal(typeof(SelectedPluginReady), productionParameter.ParameterType);
     }
 
     /// <summary>
     ///     Pins one cohesive lower environment seam and prevents the retired delegate-bundle substitution shape.
     /// </summary>
     [Fact]
-    public void GameLoadOrdersConstruction_LowerEnvironmentSeam_UsesNoDelegateBundle()
+    public void GameLoadOrdersConstruction_RetiredDelegateBundle_DoesNotReappear()
     {
         var moduleConstructors = typeof(GameLoadOrders).GetConstructors(
             BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-        var environmentConstructor = Assert.Single(
-            moduleConstructors,
-            constructor => constructor.GetParameters()
-                .Select(parameter => parameter.ParameterType)
-                .SequenceEqual([typeof(IGameLoadOrderEnvironment)]));
         var delegateParameters = moduleConstructors
             .Concat(typeof(GameLoadOrderEnvironment).GetConstructors(
                 BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
@@ -116,15 +119,77 @@ public sealed class GameLoadOrdersArchitectureTests
             .Where(parameter => typeof(Delegate).IsAssignableFrom(parameter.ParameterType))
             .ToArray();
 
-        Assert.NotNull(environmentConstructor);
         Assert.Empty(delegateParameters);
     }
 
     /// <summary>
-    ///     Keeps overlay opening, record enumeration, and FormID Record Store work outside the new module slice.
+    ///     Pins the production composition entry point that pairs the highest Game Load Orders seam with the production
+    ///     overlay adapter without exposing either dependency to Processing Run.
     /// </summary>
     [Fact]
-    public void GameLoadOrdersSources_PreparationOwnership_ContainsNoOverlayEnumerationOrStoreWork()
+    public void PluginIngestionProductionComposition_HighestGameLoadOrdersSeam_HasMatchedEntryPoint()
+    {
+        var constructors = typeof(PluginIngestion).GetConstructors(
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+
+        Assert.Contains(
+            constructors,
+            constructor => constructor.GetParameters()
+                .Select(parameter => parameter.ParameterType)
+                .SequenceEqual([typeof(IGameLoadOrders)]));
+    }
+
+    /// <summary>
+    ///     Prevents the retired provider, mixed snapshot, Boolean policy, and their test helpers from returning to
+    ///     active source while leaving historical ADR discussion intact.
+    /// </summary>
+    [Fact]
+    public void ActiveSources_FinalGameLoadOrdersArchitecture_ContainNoRetiredProtocols()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var activeSourceDirectories = new[]
+        {
+            Path.Combine(repositoryRoot, "FormID Database Manager.Core"),
+            Path.Combine(repositoryRoot, "FormID Database Manager.WinUI"),
+            Path.Combine(repositoryRoot, "FormID Database Manager.TestUtilities"),
+            Path.Combine(repositoryRoot, "FormID Database Manager.Tests")
+        };
+        var retiredProtocolNames = new[]
+        {
+            string.Concat("IGameLoadOrder", "Provider"),
+            string.Concat("GameLoadOrder", "Provider"),
+            string.Concat("GameLoadOrder", "Snapshot"),
+            string.Concat("GameLoadOrder", "Snapshot", "Factory"),
+            string.Concat("StaticGameLoadOrder", "Provider"),
+            string.Concat("PreparedGameLoad", "Orders"),
+            string.Concat("Build", "Snapshot"),
+            string.Concat("IPluginList", "Discovery"),
+            string.Concat("PluginList", "Discovery", "Progress"),
+            string.Concat("PluginList", "Discovery", "Result"),
+            string.Concat("PluginList", "Discovery", "Completed"),
+            string.Concat("PluginList", "Discovery", "Failed")
+        };
+        var retiredReferences = activeSourceDirectories
+            .SelectMany(directory => Directory.EnumerateFiles(directory, "*.cs", SearchOption.AllDirectories))
+            .Where(path => !IsBuildOutput(path))
+            .Select(path => new { Path = path, Source = File.ReadAllText(path) })
+            .Where(file => retiredProtocolNames.Any(retiredName => Regex.IsMatch(
+                file.Source,
+                $@"\b{Regex.Escape(retiredName)}\b",
+                RegexOptions.CultureInvariant)))
+            .Select(file => Path.GetRelativePath(repositoryRoot, file.Path))
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.Empty(retiredReferences);
+    }
+
+    /// <summary>
+    ///     Keeps overlay opening, record enumeration, and FormID Record Store boundary types outside Game Load Orders
+    ///     without pinning its private helpers or exact environment calls.
+    /// </summary>
+    [Fact]
+    public void GameLoadOrdersSources_PreparationOwnership_ReferencesNoOverlayEnumerationOrStoreBoundaries()
     {
         var servicesDirectory = Path.Combine(FindRepositoryRoot(), "FormID Database Manager.Core", "Services");
         var source = string.Join(
@@ -133,34 +198,63 @@ public sealed class GameLoadOrdersArchitectureTests
             File.ReadAllText(Path.Combine(servicesDirectory, "GameLoadOrderEnvironment.cs")));
 
         Assert.DoesNotContain("IPluginOverlayReader", source, StringComparison.Ordinal);
-        Assert.DoesNotContain("CreateOverlay", source, StringComparison.Ordinal);
-        Assert.DoesNotContain("EnumeratePluginRecords", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("IModDisposeGetter", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("IMajorRecordGetter", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("IFormIdRecordStoreSession", source, StringComparison.Ordinal);
         Assert.DoesNotContain("FormIdRecordStore", source, StringComparison.Ordinal);
     }
 
     /// <summary>
-    ///     Recursively expands generic, array, and by-reference wrappers so forbidden types cannot hide inside a role
-    ///     operation's public type shape.
+    ///     Expands wrappers, application-owned public result properties, and dynamically discovered result cases so a
+    ///     forbidden type cannot hide behind the highest seam without pinning those cases as records or classes.
     /// </summary>
-    /// <param name="type">The type shape to expand.</param>
-    /// <returns>The type and every nested type exposed through it.</returns>
-    private static IEnumerable<Type> FlattenType(Type type)
+    /// <param name="rootType">The role-operation type shape to expand.</param>
+    /// <param name="applicationAssembly">The assembly whose application-owned result surfaces are traversed.</param>
+    /// <returns>Every wrapper, result case, and public data type exposed through the role operation.</returns>
+    private static IEnumerable<Type> ExpandPublicContractTypes(Type rootType, Assembly applicationAssembly)
     {
-        yield return type;
+        var pending = new Stack<Type>();
+        var visited = new HashSet<Type>();
+        pending.Push(rootType);
 
-        if (type.HasElementType && type.GetElementType() is { } elementType)
+        while (pending.TryPop(out var type))
         {
-            foreach (var nestedType in FlattenType(elementType))
+            if (!visited.Add(type))
             {
-                yield return nestedType;
+                continue;
             }
-        }
 
-        foreach (var genericArgument in type.GetGenericArguments())
-        {
-            foreach (var nestedType in FlattenType(genericArgument))
+            yield return type;
+
+            if (type.HasElementType && type.GetElementType() is { } elementType)
             {
-                yield return nestedType;
+                pending.Push(elementType);
+            }
+
+            foreach (var genericArgument in type.GetGenericArguments())
+            {
+                pending.Push(genericArgument);
+            }
+
+            if (type.Assembly != applicationAssembly)
+            {
+                continue;
+            }
+
+            foreach (var property in type.GetProperties(BindingFlags.Instance | BindingFlags.Public))
+            {
+                pending.Push(property.PropertyType);
+            }
+
+            foreach (var field in type.GetFields(BindingFlags.Instance | BindingFlags.Public))
+            {
+                pending.Push(field.FieldType);
+            }
+
+            foreach (var resultCase in applicationAssembly.GetTypes()
+                         .Where(candidate => candidate != type && type.IsAssignableFrom(candidate)))
+            {
+                pending.Push(resultCase);
             }
         }
     }
@@ -182,5 +276,18 @@ public sealed class GameLoadOrdersArchitectureTests
         }
 
         throw new InvalidOperationException("Could not locate repository root from the test output directory.");
+    }
+
+    /// <summary>
+    ///     Identifies generated source under build-output directories so architecture scans cover authored code only.
+    /// </summary>
+    /// <param name="path">The candidate source path.</param>
+    /// <returns><see langword="true" /> when the path is under a bin or obj directory.</returns>
+    private static bool IsBuildOutput(string path)
+    {
+        return path.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}",
+                   StringComparison.OrdinalIgnoreCase)
+               || path.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}",
+                   StringComparison.OrdinalIgnoreCase);
     }
 }

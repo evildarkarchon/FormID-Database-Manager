@@ -54,7 +54,7 @@ public sealed class PluginIngestionTests : IDisposable
     ];
 
     /// <summary>
-    ///     Verifies that aggregate Plugin Ingestion prepares one shared snapshot and preserves selection order across every
+    ///     Verifies that Plugin Ingestion prepares the complete selection once and preserves its order across every
     ///     transient and authoritative observation.
     /// </summary>
     [Fact]

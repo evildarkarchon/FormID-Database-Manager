@@ -31,9 +31,9 @@ namespace FormID_Database_Manager.TestUtilities.Builders;
 ///     </para>
 ///     <para>
 ///         Every fixture declares its game's main master first, because that is what the Plugin format requires of
-///         every Plugin. The declared master does not have to exist on disk; a game with separated master load orders
-///         needs only a master-flags lookup that can resolve the ModKey, which fixture-side Plugin-read preparation
-///         supplies from <see cref="MasterStylesFor" />.
+///         every Plugin. The declared master does not have to exist while this builder writes the Plugin; the writer
+///         receives the independently defined lookup from <see cref="MasterStylesFor" />. Tests of production
+///         Plugin-read preparation write a separate main-master fixture when they need a resolvable happy path.
 ///     </para>
 ///     <para>
 ///         Fixtures are generated at test time and never committed, so a format change in a Mutagen upgrade surfaces
@@ -177,9 +177,10 @@ public static class PluginFixture
     /// <param name="release">The GameRelease whose fixtures are being read.</param>
     /// <returns>One entry, for the declared main master.</returns>
     /// <remarks>
-    ///     The master file itself is never written to disk: Mutagen only needs the ModKey's master style, so a
+    ///     The Plugin writer does not need the master file itself: Mutagen only needs the ModKey's master style, so a
     ///     <see cref="KeyedMasterStyle" /> is enough. Full is the correct style for a game's main master, which is
-    ///     neither a small nor a medium master.
+    ///     neither a small nor a medium master. A consuming fixture may still write that master separately when it
+    ///     exercises production Plugin-read preparation.
     /// </remarks>
     /// <exception cref="ArgumentOutOfRangeException">This builder has no recipe for <paramref name="release" />.</exception>
     public static IReadOnlyList<IModMasterStyledGetter> MasterStylesFor(GameRelease release)

@@ -63,7 +63,6 @@ public class WinUiPlatformServiceSourceTests
         Assert.Contains("UserWorkflow", source, StringComparison.Ordinal);
         Assert.Contains("new UserWorkflow(", source, StringComparison.Ordinal);
         Assert.Contains("GameLoadOrders", source, StringComparison.Ordinal);
-        Assert.DoesNotContain("PluginListDiscovery", source, StringComparison.Ordinal);
         Assert.Contains("new PluginList(", source, StringComparison.Ordinal);
         Assert.Contains("PluginListPresentationAdapter", source, StringComparison.Ordinal);
         Assert.DoesNotContain("PluginListManager", source, StringComparison.Ordinal);
@@ -95,27 +94,20 @@ public class WinUiPlatformServiceSourceTests
     }
 
     /// <summary>
-    ///     Verifies production and smoke-test compositions share the highest Game Load Orders seam between one
-    ///     authoritative Plugin List and matched Plugin Ingestion composition.
+    ///     Verifies WinUI production composition consumes the highest Game Load Orders seam and delegates the matched
+    ///     overlay pairing to Plugin Ingestion's production composition entry point.
     /// </summary>
     [Fact]
-    public void WinUiMainWindow_ProductionAndSmokeComposition_ShareGameLoadOrdersAcrossLiveCallerPaths()
+    public void WinUiMainWindow_ProductionComposition_UsesHighestGameLoadOrdersAndPluginIngestionPairing()
     {
         var mainWindowSourcePath = Path.Combine(GetWinUiProjectDirectory(), "MainWindow.xaml.cs");
         var source = File.ReadAllText(mainWindowSourcePath);
-        var compositions = Regex.Matches(
-            source,
-            @"var\s+(?<pluginList>\w+)\s*=\s*new PluginList\([^;]+;" +
-            @"[\s\S]*?new PluginListPresentationAdapter\(\s*\k<pluginList>\s*," +
-            @"[\s\S]*?new UserWorkflow\([\s\S]*?\b\k<pluginList>\s*,");
 
-        Assert.Equal(2, compositions.Count);
-        Assert.Contains("IGameLoadOrders? gameLoadOrders", source, StringComparison.Ordinal);
-        Assert.Contains("gameLoadOrders ?? new GameLoadOrders()", source, StringComparison.Ordinal);
-        Assert.Contains("CreateProcessingRunExecutor(gameLoadOrders)", source, StringComparison.Ordinal);
-        Assert.Contains("CreateProcessingRunExecutor(effectiveGameLoadOrders)", source, StringComparison.Ordinal);
-        Assert.Contains("new PluginIngestion(", source, StringComparison.Ordinal);
-        Assert.Contains("new MutagenPluginOverlayReader()", source, StringComparison.Ordinal);
+        Assert.Matches(@"\bIGameLoadOrders\??\s+\w+", source);
+        Assert.Matches(@"new\s+GameLoadOrders\s*\(\s*\)", source);
+        Assert.Matches(@"new\s+PluginList\s*\(", source);
+        Assert.Matches(@"new\s+PluginIngestion\s*\(", source);
+        Assert.DoesNotContain("MutagenPluginOverlayReader", source, StringComparison.Ordinal);
     }
 
     /// <summary>

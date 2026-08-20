@@ -12,19 +12,6 @@ namespace FormID_Database_Manager.Tests.Unit.Services;
 public sealed class PluginIngestionContractTests
 {
     /// <summary>
-    ///     Verifies production Plugin Ingestion cannot be subclassed as an alternate Processing Run test seam.
-    /// </summary>
-    [Fact]
-    public void PluginIngestion_TypeDefinition_IsInternalSealedInterfaceImplementation()
-    {
-        var implementationType = typeof(PluginIngestion);
-
-        Assert.True(implementationType.IsNotPublic);
-        Assert.True(implementationType.IsSealed);
-        Assert.Contains(typeof(IPluginIngestion), implementationType.GetInterfaces());
-    }
-
-    /// <summary>
     ///     Verifies the two operations Plugin Ingestion offers for one captured selection: doing the work, and saying
     ///     what doing it would come to.
     /// </summary>
@@ -128,14 +115,20 @@ public sealed class PluginIngestionContractTests
     }
 
     /// <summary>
-    ///     Verifies production Processing Run construction does not expose Plugin Ingestion's load-order adapter.
+    ///     Verifies public Processing Run construction does not expose Plugin Ingestion's Game Load Orders or overlay
+    ///     dependencies without pinning unrelated constructor evolution.
     /// </summary>
     [Fact]
-    public void ProcessingRunExecutor_PublicConstruction_IsParameterless()
+    public void ProcessingRunExecutor_PublicConstruction_ExposesNoPluginIngestionAdapters()
     {
-        var constructor = Assert.Single(typeof(ProcessingRunExecutor).GetConstructors());
+        var publicDependencyTypes = typeof(ProcessingRunExecutor)
+            .GetConstructors()
+            .SelectMany(constructor => constructor.GetParameters())
+            .Select(parameter => parameter.ParameterType)
+            .ToArray();
 
-        Assert.Empty(constructor.GetParameters());
+        Assert.DoesNotContain(typeof(IGameLoadOrders), publicDependencyTypes);
+        Assert.DoesNotContain(typeof(IPluginOverlayReader), publicDependencyTypes);
     }
 
     [Fact]

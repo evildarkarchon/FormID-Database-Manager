@@ -77,10 +77,7 @@ public sealed partial class MainWindow : Window, IDisposable
     /// <returns>A Processing Run executor whose Store lifecycle remains internally owned by each run.</returns>
     private static ProcessingRunExecutor CreateProcessingRunExecutor(IGameLoadOrders gameLoadOrders)
     {
-        var pluginIngestion = new PluginIngestion(
-            gameLoadOrders,
-            new MutagenPluginOverlayReader(),
-            new EntryExtraction());
+        var pluginIngestion = new PluginIngestion(gameLoadOrders);
         return new ProcessingRunExecutor(pluginIngestion, new FormIdRecordStoreSessionOpener());
     }
 

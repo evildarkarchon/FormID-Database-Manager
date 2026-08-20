@@ -1,6 +1,4 @@
 using System.Runtime.ExceptionServices;
-using Mutagen.Bethesda;
-using Mutagen.Bethesda.Plugins.Binary.Parameters;
 using Mutagen.Bethesda.Plugins.Exceptions;
 using Mutagen.Bethesda.Plugins.Records;
 
@@ -58,31 +56,14 @@ internal sealed class MutagenPluginOverlayReader : IPluginOverlayReader
 
         // Validate adapter ownership before delegating to any Supported GameRelease factory or filesystem work.
         var payload = readyPlugin.ReadCapability.RequirePayload<MutagenPluginReadCapabilityPayload>();
-        return ReadOverlay(readyPlugin.ResolvedPluginPath, payload.GameRelease, payload.ReadParameters);
-    }
-
-    /// <summary>
-    ///     Opens a Mutagen overlay and normalizes only known malformed or unreadable Plugin failures.
-    /// </summary>
-    /// <param name="pluginPath">The available selected Plugin path.</param>
-    /// <param name="gameRelease">The target GameRelease.</param>
-    /// <param name="readParameters">The shared load-order-aware binary read parameters.</param>
-    /// <returns>The disposable Mutagen overlay.</returns>
-    /// <exception cref="ArgumentOutOfRangeException"><paramref name="gameRelease" /> is not a Supported GameRelease.</exception>
-    /// <exception cref="PluginOverlayReadException">Mutagen or the filesystem reports unreadable Plugin data.</exception>
-    public IModDisposeGetter ReadOverlay(
-        string pluginPath,
-        GameRelease gameRelease,
-        BinaryReadParameters readParameters)
-    {
         // Resolved outside the try: an unsupported GameRelease is a programming error, and the ArgumentOutOfRangeException
         // it raises would otherwise be normalized into a Failed Plugin by the expected-failure check below, which
         // deliberately treats ArgumentException as a malformed-Plugin signal from Mutagen.
-        var createOverlay = SupportedGameReleases.ForRelease(gameRelease).CreateOverlay;
+        var createOverlay = SupportedGameReleases.ForRelease(payload.GameRelease).CreateOverlay;
 
         try
         {
-            return createOverlay(pluginPath, readParameters);
+            return createOverlay(readyPlugin.ResolvedPluginPath, payload.ReadParameters);
         }
         catch (Exception ex)
         {
