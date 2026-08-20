@@ -27,7 +27,7 @@ public class UserWorkflowTests
     private readonly GameInstallations _gameInstallations;
     private readonly InMemoryGameInstallationProbe _gameInstallationProbe = new();
     private readonly PluginList _pluginList;
-    private readonly RecordingPluginListDiscovery _pluginListDiscovery;
+    private readonly RecordingPluginListGameLoadOrders _pluginListGameLoadOrders;
     private readonly PluginListPresentationAdapter _pluginListPresentationAdapter;
     private readonly RecordingProcessingRunExecutor _processingRunExecutor;
     private readonly List<ProcessingRunRequest> _processingRuns = [];
@@ -40,8 +40,8 @@ public class UserWorkflowTests
         // Game Installation resolution has no interface to mock: the real detection and location members run against
         // whatever layout and install records a test declares on the probe.
         _gameInstallations = new GameInstallations(_gameInstallationProbe);
-        _pluginListDiscovery = new RecordingPluginListDiscovery(_refreshes);
-        _pluginList = new PluginList(_pluginListDiscovery);
+        _pluginListGameLoadOrders = new RecordingPluginListGameLoadOrders(_refreshes);
+        _pluginList = new PluginList(_pluginListGameLoadOrders);
         _pluginListPresentationAdapter = new PluginListPresentationAdapter(_pluginList, _viewModel, _dispatcher);
         _processingRunExecutor = new RecordingProcessingRunExecutor(_processingRuns);
     }
@@ -57,10 +57,10 @@ public class UserWorkflowTests
         _gameInstallationProbe
             .WithInstalledDirectories(GameRelease.SkyrimSE, @"C:\Old")
             .WithInstalledDirectories(GameRelease.Fallout4, @"C:\Games\Fallout4", @"D:\Games\Fallout4");
-        _pluginListDiscovery.PluginNames = ["Old.esp"];
+        _pluginListGameLoadOrders.PluginNames = ["Old.esp"];
         var sut = CreateSut();
         await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
-        _pluginListDiscovery.PluginNames = [];
+        _pluginListGameLoadOrders.PluginNames = [];
         _refreshes.Clear();
         GateInstalledLocationLookup(GameRelease.Fallout4, lookupStarted, allowLookupToFinish);
 
@@ -195,11 +195,11 @@ public class UserWorkflowTests
         const string manualDirectory = @"D:\Games\Skyrim";
         var lookupStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var allowLookupToFinish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var discoveryCompletion = new TaskCompletionSource<PluginListDiscoveryResult>(
+        var discoveryCompletion = new TaskCompletionSource<AvailablePluginsDiscoveryResult>(
             TaskCreationOptions.RunContinuationsAsynchronously);
         _gameInstallationProbe.WithInstalledDirectories(GameRelease.SkyrimSE, @"C:\Automatic\Skyrim");
         GateInstalledLocationLookup(GameRelease.SkyrimSE, lookupStarted, allowLookupToFinish);
-        _pluginListDiscovery.Handler = (_, _) => discoveryCompletion.Task;
+        _pluginListGameLoadOrders.Handler = (_, _) => discoveryCompletion.Task;
         var sut = CreateSut();
 
         var releaseSelection = sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
@@ -218,7 +218,8 @@ public class UserWorkflowTests
         Assert.Equal(manualDirectory, _viewModel.GameDirectory);
         Assert.Single(_refreshes);
 
-        discoveryCompletion.SetResult(PluginListDiscoveryResult.Failed("selected release does not match directory"));
+        discoveryCompletion.SetResult(
+            PluginListGameLoadOrdersStub.LocalAccessFailure("selected release does not match directory"));
         await directorySelection;
 
         Assert.Equal(GameRelease.SkyrimSE, _viewModel.SelectedGame);
@@ -618,13 +619,13 @@ public class UserWorkflowTests
     public async Task BrowseGameDirectoryAsync_SamePathDiscoveryFailure_RetriesAndClearsConfirmation()
     {
         _gameInstallationProbe.WithInstalledDirectories(GameRelease.SkyrimSE, GameDirectory, @"D:\Games\Skyrim");
-        _pluginListDiscovery.PluginNames = ["PreviouslyConfirmed.esp"];
+        _pluginListGameLoadOrders.PluginNames = ["PreviouslyConfirmed.esp"];
         var sut = CreateSut();
         await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
         Assert.NotNull(_pluginList.Current.Confirmed);
         _refreshes.Clear();
-        _pluginListDiscovery.Handler = (_, _) =>
-            Task.FromResult<PluginListDiscoveryResult>(PluginListDiscoveryResult.Failed("directory mismatch"));
+        _pluginListGameLoadOrders.Handler = (_, _) =>
+            Task.FromResult(PluginListGameLoadOrdersStub.LocalAccessFailure("directory mismatch"));
         _fileDialogService.Setup(x => x.SelectGameDirectory())
             .ReturnsAsync(FileDialogResult.Success(GameDirectory));
 
@@ -647,7 +648,7 @@ public class UserWorkflowTests
     [Fact]
     public async Task BrowseGameDirectoryAsync_SelectedDirectoryWithoutDetectableGame_RecordsWorkflowError()
     {
-        _pluginListDiscovery.PluginNames = ["PreviouslyConfirmed.esp"];
+        _pluginListGameLoadOrders.PluginNames = ["PreviouslyConfirmed.esp"];
         await _pluginList.RefreshAsync(
             GameRelease.SkyrimSE,
             GameDirectory,
@@ -846,7 +847,7 @@ public class UserWorkflowTests
         {
             FormIdListPath = FormIdListPath
         };
-        var pluginList = new PluginList(_pluginListDiscovery);
+        var pluginList = new PluginList(_pluginListGameLoadOrders);
         var processingRuns = new List<ProcessingRunRequest>();
         var executor = new RecordingProcessingRunExecutor(processingRuns);
         using var sut = new UserWorkflow(
@@ -915,15 +916,15 @@ public class UserWorkflowTests
         sut.SetPluginSelection(confirmed.MembershipVersion, "First.esp", true);
         sut.SetPluginSelection(confirmed.MembershipVersion, "Third.esp", true);
 
-        var refreshCompletion = new TaskCompletionSource<PluginListDiscoveryResult>(
+        var refreshCompletion = new TaskCompletionSource<AvailablePluginsDiscoveryResult>(
             TaskCreationOptions.RunContinuationsAsynchronously);
-        _pluginListDiscovery.Handler = (_, _) => refreshCompletion.Task;
+        _pluginListGameLoadOrders.Handler = (_, _) => refreshCompletion.Task;
         var refresh = sut.SetAdvancedModeAsync(AdvancedMode.On);
 
         await sut.ProcessFormIdsAsync();
         var run = Assert.IsType<PluginProcessingRunRequest>(Assert.Single(_processingRuns));
 
-        refreshCompletion.SetResult(PluginListDiscoveryResult.Completed(
+        refreshCompletion.SetResult(PluginListGameLoadOrdersStub.Discovered(
             ["Third.esp", "Second.esp", "First.esp", "New.esp"]));
         await refresh;
         var refreshed = Assert.IsType<ConfirmedPluginList>(_pluginList.Current.Confirmed);
@@ -944,9 +945,9 @@ public class UserWorkflowTests
         var confirmed = await ConfirmPluginListAsync(sut, ["Old.esp"]);
         sut.SetPluginSelection(confirmed.MembershipVersion, "Old.esp", true);
 
-        var refreshCompletion = new TaskCompletionSource<PluginListDiscoveryResult>(
+        var refreshCompletion = new TaskCompletionSource<AvailablePluginsDiscoveryResult>(
             TaskCreationOptions.RunContinuationsAsynchronously);
-        _pluginListDiscovery.Handler = (_, _) => refreshCompletion.Task;
+        _pluginListGameLoadOrders.Handler = (_, _) => refreshCompletion.Task;
         var transition = sut.SelectDetectedDirectoryAsync(@"D:\Games\Fallout4");
         Assert.Equal(GameRelease.SkyrimSE, _viewModel.SelectedGame);
         Assert.Equal(@"D:\Games\Fallout4", _viewModel.GameDirectory);
@@ -957,7 +958,7 @@ public class UserWorkflowTests
         Assert.Empty(_processingRuns);
         Assert.Contains("No plugins selected", _viewModel.ErrorMessages);
 
-        refreshCompletion.SetResult(PluginListDiscoveryResult.Completed(["New.esp"]));
+        refreshCompletion.SetResult(PluginListGameLoadOrdersStub.Discovered(["New.esp"]));
         await transition;
     }
 
@@ -1001,9 +1002,9 @@ public class UserWorkflowTests
         var confirmed = await ConfirmPluginListAsync(sut, ["Old.esp"]);
         sut.SetPluginSelection(confirmed.MembershipVersion, "Old.esp", true);
         _viewModel.DatabasePath = DatabasePath;
-        var refreshCompletion = new TaskCompletionSource<PluginListDiscoveryResult>(
+        var refreshCompletion = new TaskCompletionSource<AvailablePluginsDiscoveryResult>(
             TaskCreationOptions.RunContinuationsAsynchronously);
-        _pluginListDiscovery.Handler = (_, _) => refreshCompletion.Task;
+        _pluginListGameLoadOrders.Handler = (_, _) => refreshCompletion.Task;
         Task? reentrantRun = null;
         _viewModel.PropertyChanged += (_, args) =>
         {
@@ -1020,7 +1021,7 @@ public class UserWorkflowTests
         Assert.Empty(_processingRuns);
         Assert.Contains("No plugins selected", _viewModel.ErrorMessages);
 
-        refreshCompletion.SetResult(PluginListDiscoveryResult.Completed(["New.esp"]));
+        refreshCompletion.SetResult(PluginListGameLoadOrdersStub.Discovered(["New.esp"]));
         await transition;
     }
 
@@ -1652,9 +1653,9 @@ public class UserWorkflowTests
         var sut = CreateSut();
         await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
         _refreshes.Clear();
-        var refreshCompletion = new TaskCompletionSource<PluginListDiscoveryResult>(
+        var refreshCompletion = new TaskCompletionSource<AvailablePluginsDiscoveryResult>(
             TaskCreationOptions.RunContinuationsAsynchronously);
-        _pluginListDiscovery.Handler = (_, _) => refreshCompletion.Task;
+        _pluginListGameLoadOrders.Handler = (_, _) => refreshCompletion.Task;
 
         var refresh = sut.SetAdvancedModeAsync(AdvancedMode.On);
 
@@ -1663,7 +1664,7 @@ public class UserWorkflowTests
             PluginListSource.Create(GameRelease.SkyrimSE, GameDirectory),
             Assert.Single(_refreshes));
 
-        refreshCompletion.SetResult(PluginListDiscoveryResult.Completed([]));
+        refreshCompletion.SetResult(PluginListGameLoadOrdersStub.Discovered([]));
         await refresh;
 
         AssertSingleRefresh(GameDirectory, GameRelease.SkyrimSE, true);
@@ -1769,7 +1770,7 @@ public class UserWorkflowTests
         UserWorkflow sut,
         IReadOnlyList<string> pluginNames)
     {
-        _pluginListDiscovery.PluginNames = pluginNames;
+        _pluginListGameLoadOrders.PluginNames = pluginNames;
         _gameInstallationProbe.WithInstalledDirectories(GameRelease.SkyrimSE, GameDirectory);
 
         await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
@@ -1877,26 +1878,29 @@ public class UserWorkflowTests
         }
     }
 
-    private sealed class RecordingPluginListDiscovery(List<PluginListSource> refreshes) : IPluginListDiscovery
+    private sealed class RecordingPluginListGameLoadOrders(List<PluginListSource> refreshes)
+        : PluginListGameLoadOrdersStub
     {
-        public Func<PluginListSource, CancellationToken, Task<PluginListDiscoveryResult>>? Handler { get; set; }
+        public Func<PluginListSource, CancellationToken, Task<AvailablePluginsDiscoveryResult>>? Handler { get; set; }
 
         public IReadOnlyList<string> PluginNames { get; set; } = [];
 
         /// <inheritdoc />
-        public Task<PluginListDiscoveryResult> DiscoverAsync(
-            PluginListSource source,
-            IProgress<PluginListDiscoveryProgress>? progress = null,
+        public override Task<AvailablePluginsDiscoveryResult> DiscoverAvailablePluginsAsync(
+            GameRelease gameRelease,
+            string canonicalDataDirectory,
+            IProgress<GameLoadOrderDiscoveryProgress>? progress = null,
             CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            var source = PluginListSource.Create(gameRelease, canonicalDataDirectory);
             refreshes.Add(source);
             if (Handler is not null)
             {
                 return Handler(source, cancellationToken);
             }
 
-            return Task.FromResult(PluginListDiscoveryResult.Completed(PluginNames));
+            return Task.FromResult(Discovered(PluginNames));
         }
     }
 }

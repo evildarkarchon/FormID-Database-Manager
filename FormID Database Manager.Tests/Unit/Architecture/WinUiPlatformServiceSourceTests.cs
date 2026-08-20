@@ -62,7 +62,8 @@ public class WinUiPlatformServiceSourceTests
         Assert.Contains("WinUiFileDialogService", source, StringComparison.Ordinal);
         Assert.Contains("UserWorkflow", source, StringComparison.Ordinal);
         Assert.Contains("new UserWorkflow(", source, StringComparison.Ordinal);
-        Assert.Contains("PluginListDiscovery", source, StringComparison.Ordinal);
+        Assert.Contains("GameLoadOrders", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("PluginListDiscovery", source, StringComparison.Ordinal);
         Assert.Contains("new PluginList(", source, StringComparison.Ordinal);
         Assert.Contains("PluginListPresentationAdapter", source, StringComparison.Ordinal);
         Assert.DoesNotContain("PluginListManager", source, StringComparison.Ordinal);
@@ -94,10 +95,11 @@ public class WinUiPlatformServiceSourceTests
     }
 
     /// <summary>
-    ///     Verifies each production window composition shares one authoritative Plugin List with projection and workflow.
+    ///     Verifies production and smoke-test compositions inject the highest Game Load Orders seam into one authoritative
+    ///     Plugin List shared with projection and workflow.
     /// </summary>
     [Fact]
-    public void WinUiMainWindow_ProductionComposition_SharesAuthoritativePluginListWithProjectionAndWorkflow()
+    public void WinUiMainWindow_ProductionAndSmokeComposition_InjectGameLoadOrdersAndShareAuthoritativePluginList()
     {
         var mainWindowSourcePath = Path.Combine(GetWinUiProjectDirectory(), "MainWindow.xaml.cs");
         var source = File.ReadAllText(mainWindowSourcePath);
@@ -108,6 +110,8 @@ public class WinUiPlatformServiceSourceTests
             @"[\s\S]*?new UserWorkflow\([\s\S]*?\b\k<pluginList>\s*,");
 
         Assert.Equal(2, compositions.Count);
+        Assert.Contains("IGameLoadOrders? gameLoadOrders", source, StringComparison.Ordinal);
+        Assert.Contains("gameLoadOrders ?? new GameLoadOrders()", source, StringComparison.Ordinal);
     }
 
     /// <summary>

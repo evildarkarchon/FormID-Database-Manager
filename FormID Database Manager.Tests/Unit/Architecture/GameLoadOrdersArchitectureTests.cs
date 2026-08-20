@@ -52,19 +52,33 @@ public sealed class GameLoadOrdersArchitectureTests
     }
 
     /// <summary>
-    ///     Keeps this additive migration slice from changing live Plugin List or Plugin Ingestion callers early.
+    ///     Pins direct Plugin List use of the highest Game Load Orders seam and the complete absence of its retired
+    ///     forwarding discovery layer while Plugin Ingestion remains on the separately migrated provider path.
     /// </summary>
     [Fact]
-    public void ProductionCallers_ParallelModuleSlice_RemainOnLegacyProviderPath()
+    public void PluginList_GameLoadOrdersCutover_UsesHighestSeamWithoutForwardingDiscoveryLayer()
     {
         var servicesDirectory = Path.Combine(FindRepositoryRoot(), "FormID Database Manager.Core", "Services");
-        var discoverySource = File.ReadAllText(Path.Combine(servicesDirectory, "PluginListDiscovery.cs"));
+        var pluginListSource = File.ReadAllText(Path.Combine(servicesDirectory, "PluginList.cs"));
         var ingestionSource = File.ReadAllText(Path.Combine(servicesDirectory, "PluginIngestion.cs"));
+        var retiredTypeNames = new[]
+        {
+            "IPluginListDiscovery",
+            "PluginListDiscoveryProgress",
+            "PluginListDiscoveryResult",
+            "PluginListDiscoveryCompleted",
+            "PluginListDiscoveryFailed"
+        };
 
-        Assert.Contains("IGameLoadOrderProvider", discoverySource, StringComparison.Ordinal);
+        Assert.Contains("IGameLoadOrders", pluginListSource, StringComparison.Ordinal);
+        Assert.Contains("DiscoverAvailablePluginsAsync", pluginListSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("IGameLoadOrderProvider", pluginListSource, StringComparison.Ordinal);
         Assert.Contains("IGameLoadOrderProvider", ingestionSource, StringComparison.Ordinal);
-        Assert.DoesNotContain("IGameLoadOrders", discoverySource, StringComparison.Ordinal);
-        Assert.DoesNotContain("IGameLoadOrders", ingestionSource, StringComparison.Ordinal);
+        Assert.False(File.Exists(Path.Combine(servicesDirectory, "PluginListDiscovery.cs")));
+        Assert.All(
+            retiredTypeNames,
+            retiredTypeName => Assert.Null(typeof(IGameLoadOrders).Assembly.GetType(
+                $"{typeof(IGameLoadOrders).Namespace}.{retiredTypeName}")));
     }
 
     /// <summary>

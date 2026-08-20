@@ -254,21 +254,29 @@ public sealed class GameLoadOrdersTests
     }
 
     /// <summary>
-    ///     Verifies programming failures remain exceptions rather than ordinary discovery facts.
+    ///     Verifies programming and fatal failures remain exceptions rather than ordinary discovery facts.
     /// </summary>
-    [Fact]
-    public async Task DiscoverAvailablePluginsAsync_ProgrammingFailure_Propagates()
+    /// <param name="fatal">Whether the environment raises a fatal rather than programming failure.</param>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DiscoverAvailablePluginsAsync_ProgrammingOrFatalFailure_Propagates(bool fatal)
     {
+        Exception failure = fatal
+            ? new OutOfMemoryException("fatal adapter failure")
+            : new InvalidOperationException("broken adapter");
         var environment = new InMemoryGameLoadOrderEnvironment
         {
-            ReadFailure = new InvalidOperationException("broken adapter")
+            ReadFailure = failure
         };
         IGameLoadOrders sut = new GameLoadOrders(environment);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() => sut.DiscoverAvailablePluginsAsync(
+        var thrown = await Record.ExceptionAsync(() => sut.DiscoverAvailablePluginsAsync(
             GameRelease.SkyrimSE,
             DataDirectory,
             cancellationToken: TestContext.Current.CancellationToken));
+
+        Assert.Same(failure, thrown);
     }
 
     /// <summary>

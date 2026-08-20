@@ -8,7 +8,7 @@ namespace FormID_Database_Manager.Services;
 /// </summary>
 internal sealed class PluginList : IDisposable
 {
-    private readonly IPluginListDiscovery _discovery;
+    private readonly IGameLoadOrders _gameLoadOrders;
     private readonly object _gate = new();
     private RefreshOperation? _activeRefresh;
     private long _activityRevision;
@@ -19,17 +19,17 @@ internal sealed class PluginList : IDisposable
     private int _disposed;
 
     /// <summary>
-    ///     Creates a workflow-scoped Plugin List over the supplied discovery adapter.
+    ///     Creates a workflow-scoped Plugin List over the highest Game Load Orders seam.
     /// </summary>
-    /// <param name="discovery">The adapter that supplies ordered, available Plugin names.</param>
-    /// <exception cref="ArgumentNullException"><paramref name="discovery" /> is null.</exception>
+    /// <param name="gameLoadOrders">The module that supplies ordered, available Plugin names.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="gameLoadOrders" /> is null.</exception>
     /// <remarks>
     ///     Base Plugin rules are not a dependency: they come from the <see cref="SupportedGameReleases" /> constant
     ///     table, so a change to game detection cannot affect Plugin List membership (ADR-0002, ADR-0003).
     /// </remarks>
-    public PluginList(IPluginListDiscovery discovery)
+    public PluginList(IGameLoadOrders gameLoadOrders)
     {
-        _discovery = discovery ?? throw new ArgumentNullException(nameof(discovery));
+        _gameLoadOrders = gameLoadOrders ?? throw new ArgumentNullException(nameof(gameLoadOrders));
     }
 
     /// <summary>
@@ -91,8 +91,12 @@ internal sealed class PluginList : IDisposable
                 cancellationToken,
                 operation.RetirementToken);
             var progress = new DiscoveryProgress(this, operation);
-            var result = await _discovery
-                .DiscoverAsync(source, progress, linkedCancellation.Token)
+            var result = await _gameLoadOrders
+                .DiscoverAvailablePluginsAsync(
+                    source.GameRelease,
+                    source.DataDirectory,
+                    progress,
+                    linkedCancellation.Token)
                 .ConfigureAwait(false);
 
             cancellationToken.ThrowIfCancellationRequested();
@@ -104,11 +108,11 @@ internal sealed class PluginList : IDisposable
 
             switch (result)
             {
-                case PluginListDiscoveryCompleted completed:
+                case AvailablePluginsDiscovered completed:
                     PublishCompleted(operation, advancedMode, completed.PluginNames);
                     return;
 
-                case PluginListDiscoveryFailed failed:
+                case GameLoadOrderLocalAccessFailure failed:
                     PublishFailure(operation, failed.ErrorMessage);
                     return;
 
@@ -557,7 +561,7 @@ internal sealed class PluginList : IDisposable
     /// </summary>
     /// <param name="operation">The refresh generation whose discovery emitted the counts.</param>
     /// <param name="progress">The scanned and total count facts.</param>
-    private void PublishProgress(RefreshOperation operation, PluginListDiscoveryProgress progress)
+    private void PublishProgress(RefreshOperation operation, GameLoadOrderDiscoveryProgress progress)
     {
         EventHandler? changed;
         lock (_gate)
@@ -696,9 +700,9 @@ internal sealed class PluginList : IDisposable
     }
 
     private sealed class DiscoveryProgress(PluginList owner, RefreshOperation operation)
-        : IProgress<PluginListDiscoveryProgress>
+        : IProgress<GameLoadOrderDiscoveryProgress>
     {
-        public void Report(PluginListDiscoveryProgress value)
+        public void Report(GameLoadOrderDiscoveryProgress value)
         {
             owner.PublishProgress(operation, value);
         }

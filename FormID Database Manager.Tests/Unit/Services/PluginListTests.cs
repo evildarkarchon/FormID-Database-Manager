@@ -2,10 +2,12 @@
 
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using FormID_Database_Manager.Services;
+using FormID_Database_Manager.Tests.Fakes;
 using Mutagen.Bethesda;
 using Xunit;
 
@@ -22,7 +24,10 @@ public sealed class PluginListTests
         Assert.True(pluginListType.IsSealed);
         Assert.False(pluginListType.IsAbstract);
         Assert.Contains(typeof(IDisposable), pluginListType.GetInterfaces());
-        Assert.True(typeof(IPluginListDiscovery).IsNotPublic);
+        Assert.Equal(
+            [typeof(IGameLoadOrders)],
+            Assert.Single(pluginListType.GetConstructors()).GetParameters().Select(parameter => parameter.ParameterType));
+        Assert.Null(pluginListType.Assembly.GetType($"{pluginListType.Namespace}.IPluginListDiscovery"));
         Assert.DoesNotContain(
             pluginListType.Assembly.GetTypes(),
             type => type.Name == "IPluginList");
@@ -64,7 +69,7 @@ public sealed class PluginListTests
     [Fact]
     public async Task RefreshAsync_InitialDiscovery_PublishesImmutableConfirmedPluginListInPluginListOrder()
     {
-        var discovery = new DeterministicPluginListDiscovery(
+        var discovery = new DeterministicPluginListGameLoadOrders(
             "skyrim.ESM",
             "UserA.esp",
             "usera.ESP",
@@ -116,7 +121,7 @@ public sealed class PluginListTests
     [Fact]
     public async Task RefreshAsync_EqualProgressOccurrences_AdvanceStateAndActivityRevisions()
     {
-        var discovery = new ControlledPluginListDiscovery();
+        var discovery = new ControlledPluginListGameLoadOrders();
         var operation = discovery.Enqueue();
         using var sut = new PluginList(discovery);
 
@@ -156,10 +161,46 @@ public sealed class PluginListTests
         Assert.IsType<PluginListReadyState>(sut.Current);
     }
 
+    /// <summary>
+    ///     Verifies Plugin List passes its canonical source, raw observer, and linked caller/retirement lifetime directly
+    ///     through the highest Game Load Orders seam.
+    /// </summary>
+    [Fact]
+    public async Task RefreshAsync_Source_DelegatesCanonicalFactsAndLinkedCancellationToGameLoadOrders()
+    {
+        var gameLoadOrders = new ControlledPluginListGameLoadOrders();
+        var operation = gameLoadOrders.Enqueue();
+        var gameDirectory = CreateGameDirectory();
+        using var callerCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            TestContext.Current.CancellationToken);
+        using var sut = new PluginList(gameLoadOrders);
+
+        var refresh = sut.RefreshAsync(
+            GameRelease.SkyrimSE,
+            gameDirectory,
+            AdvancedMode.Off,
+            callerCancellation.Token);
+
+        Assert.Equal(GameRelease.SkyrimSE, operation.GameRelease);
+        Assert.Equal(
+            System.IO.Path.Combine(gameDirectory, "Data"),
+            operation.CanonicalDataDirectory,
+            ignoreCase: OperatingSystem.IsWindows());
+        Assert.NotNull(operation.Progress);
+        Assert.NotEqual(callerCancellation.Token, operation.CancellationToken);
+        Assert.False(operation.CancellationToken.IsCancellationRequested);
+
+        callerCancellation.Cancel();
+
+        Assert.True(operation.CancellationToken.IsCancellationRequested);
+        operation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => refresh);
+    }
+
     [Fact]
     public async Task RefreshAsync_AdvancedMode_IncludesBasePlugins()
     {
-        var discovery = new DeterministicPluginListDiscovery("skyrim.ESM", "UPDATE.ESM", "User.esp");
+        var discovery = new DeterministicPluginListGameLoadOrders("skyrim.ESM", "UPDATE.ESM", "User.esp");
         using var sut = new PluginList(discovery);
 
         await sut.RefreshAsync(
@@ -199,7 +240,7 @@ public sealed class PluginListTests
         string secondBasePlugin,
         string thirdBasePlugin)
     {
-        var discovery = new DeterministicPluginListDiscovery(
+        var discovery = new DeterministicPluginListGameLoadOrders(
             firstBasePlugin,
             "User.esp",
             secondBasePlugin,
@@ -224,7 +265,7 @@ public sealed class PluginListTests
     [Fact]
     public async Task RefreshAsync_UnsupportedRelease_IsRejected()
     {
-        var discovery = new DeterministicPluginListDiscovery("Oblivion.esm", "User.esp");
+        var discovery = new DeterministicPluginListGameLoadOrders("Oblivion.esm", "User.esp");
         using var sut = new PluginList(discovery);
 
         await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => sut.RefreshAsync(
@@ -242,7 +283,7 @@ public sealed class PluginListTests
     [Fact]
     public async Task Apply_CurrentIndividualIntent_PublishesCaseInsensitiveSelectionInPluginListOrder()
     {
-        var discovery = new DeterministicPluginListDiscovery("First.esp", "Second.esp");
+        var discovery = new DeterministicPluginListGameLoadOrders("First.esp", "Second.esp");
         using var sut = new PluginList(discovery);
         await sut.RefreshAsync(
             GameRelease.SkyrimSE,
@@ -276,7 +317,7 @@ public sealed class PluginListTests
     [Fact]
     public async Task Apply_CurrentWholeListIntent_SelectsCompleteConfirmedMembershipInOrder()
     {
-        var discovery = new DeterministicPluginListDiscovery("First.esp", "Second.esp", "Third.esp");
+        var discovery = new DeterministicPluginListGameLoadOrders("First.esp", "Second.esp", "Third.esp");
         using var sut = new PluginList(discovery);
         await sut.RefreshAsync(
             GameRelease.SkyrimSE,
@@ -298,7 +339,7 @@ public sealed class PluginListTests
     [Fact]
     public async Task Apply_WholeListDeselection_ClearsPartialSelection()
     {
-        var discovery = new DeterministicPluginListDiscovery("First.esp", "Second.esp");
+        var discovery = new DeterministicPluginListGameLoadOrders("First.esp", "Second.esp");
         using var sut = new PluginList(discovery);
         await sut.RefreshAsync(
             GameRelease.SkyrimSE,
@@ -323,7 +364,7 @@ public sealed class PluginListTests
     [InlineData(true)]
     public async Task Apply_WholeListIntent_EmptyMembershipDoesNotPublishRedundantState(bool isSelected)
     {
-        var discovery = new DeterministicPluginListDiscovery();
+        var discovery = new DeterministicPluginListGameLoadOrders();
         using var sut = new PluginList(discovery);
         await sut.RefreshAsync(
             GameRelease.SkyrimSE,
@@ -346,7 +387,7 @@ public sealed class PluginListTests
     [Fact]
     public async Task RefreshAsync_SameSource_ReconcilesSelectionWithNewMembershipOrderAndCasing()
     {
-        var discovery = new ControlledPluginListDiscovery();
+        var discovery = new ControlledPluginListGameLoadOrders();
         var initial = discovery.Enqueue();
         var refreshed = discovery.Enqueue();
         var reappeared = discovery.Enqueue();
@@ -393,7 +434,7 @@ public sealed class PluginListTests
     [Fact]
     public async Task Apply_RejectedAndAlreadySatisfiedIntent_DoesNotPublishRedundantState()
     {
-        var discovery = new DeterministicPluginListDiscovery("First.esp", "Second.esp");
+        var discovery = new DeterministicPluginListGameLoadOrders("First.esp", "Second.esp");
         using var sut = new PluginList(discovery);
         await sut.RefreshAsync(
             GameRelease.SkyrimSE,
@@ -434,7 +475,7 @@ public sealed class PluginListTests
     [Fact]
     public async Task Apply_LaterSelectionMutation_DoesNotChangeCapturedSnapshot()
     {
-        var discovery = new DeterministicPluginListDiscovery("First.esp", "Second.esp");
+        var discovery = new DeterministicPluginListGameLoadOrders("First.esp", "Second.esp");
         using var sut = new PluginList(discovery);
         await sut.RefreshAsync(
             GameRelease.SkyrimSE,
@@ -457,7 +498,7 @@ public sealed class PluginListTests
     [Fact]
     public async Task RefreshAsync_SelectionAppliedDuringSameSourceRefresh_ParticipatesInCommit()
     {
-        var discovery = new ControlledPluginListDiscovery();
+        var discovery = new ControlledPluginListGameLoadOrders();
         var initial = discovery.Enqueue();
         var refreshed = discovery.Enqueue();
         using var sut = new PluginList(discovery);
@@ -499,8 +540,8 @@ public sealed class PluginListTests
     [Fact]
     public async Task RefreshAsync_ExpectedDiscoveryFailure_PublishesUiNeutralFailureWithoutConfirmedList()
     {
-        var failure = PluginListDiscoveryResult.Failed("The local Plugin List could not be read.");
-        var discovery = new FixedPluginListDiscovery(failure);
+        var failure = PluginListGameLoadOrdersStub.LocalAccessFailure("The local Plugin List could not be read.");
+        var discovery = new FixedPluginListGameLoadOrders(failure);
         using var sut = new PluginList(discovery);
         var publishedStates = new List<PluginListState>();
         sut.Changed += (_, _) => publishedStates.Add(sut.Current);
@@ -534,7 +575,7 @@ public sealed class PluginListTests
     [Fact]
     public async Task RefreshAsync_DifferentSource_SynchronouslyInvalidatesConfirmedPluginList()
     {
-        var discovery = new ControlledPluginListDiscovery();
+        var discovery = new ControlledPluginListGameLoadOrders();
         var initial = discovery.Enqueue();
         var replacement = discovery.Enqueue();
         using var sut = new PluginList(discovery);
@@ -573,7 +614,7 @@ public sealed class PluginListTests
     [Fact]
     public async Task RefreshAsync_SameSource_RetainsConfirmedPluginListWhileDiscoveryRuns()
     {
-        var discovery = new ControlledPluginListDiscovery();
+        var discovery = new ControlledPluginListGameLoadOrders();
         var initial = discovery.Enqueue();
         var replacement = discovery.Enqueue();
         using var sut = new PluginList(discovery);
@@ -606,7 +647,7 @@ public sealed class PluginListTests
     [Fact]
     public async Task RefreshAsync_SameSourceExpectedFailure_RetainsConfirmedPluginList()
     {
-        var discovery = new ControlledPluginListDiscovery();
+        var discovery = new ControlledPluginListGameLoadOrders();
         var initial = discovery.Enqueue();
         var replacement = discovery.Enqueue();
         using var sut = new PluginList(discovery);
@@ -638,7 +679,7 @@ public sealed class PluginListTests
     [Fact]
     public async Task RefreshAsync_NewerRefreshOvertakesOlder_OnlyNewerResultCanPublish()
     {
-        var discovery = new ControlledPluginListDiscovery();
+        var discovery = new ControlledPluginListGameLoadOrders();
         var older = discovery.Enqueue();
         var newer = discovery.Enqueue();
         using var sut = new PluginList(discovery);
@@ -676,7 +717,7 @@ public sealed class PluginListTests
     [Fact]
     public async Task RefreshAsync_OlderFailureAfterNewerReady_DoesNotOverwriteNewerState()
     {
-        var discovery = new ControlledPluginListDiscovery();
+        var discovery = new ControlledPluginListGameLoadOrders();
         var older = discovery.Enqueue();
         var newer = discovery.Enqueue();
         using var sut = new PluginList(discovery);
@@ -710,7 +751,7 @@ public sealed class PluginListTests
     [Fact]
     public async Task RefreshAsync_CurrentCallerCancellation_PublishesCancelledAndPropagates()
     {
-        var discovery = new ControlledPluginListDiscovery();
+        var discovery = new ControlledPluginListGameLoadOrders();
         var operation = discovery.Enqueue();
         using var sut = new PluginList(discovery);
         using var callerCancellation = new CancellationTokenSource();
@@ -740,7 +781,7 @@ public sealed class PluginListTests
     [Fact]
     public async Task RefreshAsync_SameSourceCallerCancellation_RetainsConfirmedPluginList()
     {
-        var discovery = new ControlledPluginListDiscovery();
+        var discovery = new ControlledPluginListGameLoadOrders();
         var initial = discovery.Enqueue();
         var cancelling = discovery.Enqueue();
         using var sut = new PluginList(discovery);
@@ -773,7 +814,7 @@ public sealed class PluginListTests
     [Fact]
     public async Task RefreshAsync_SupersededThenCallerCancelled_PropagatesWithoutPublishingCancellation()
     {
-        var discovery = new ControlledPluginListDiscovery();
+        var discovery = new ControlledPluginListGameLoadOrders();
         var older = discovery.Enqueue();
         var newer = discovery.Enqueue();
         using var sut = new PluginList(discovery);
@@ -808,7 +849,7 @@ public sealed class PluginListTests
     [Fact]
     public async Task RefreshAsync_RetirementCallbackFailure_CleansUpReplacementAndAllowsRetry()
     {
-        var discovery = new ControlledPluginListDiscovery();
+        var discovery = new ControlledPluginListGameLoadOrders();
         var retired = discovery.Enqueue();
         var retry = discovery.Enqueue();
         using var sut = new PluginList(discovery);
@@ -868,7 +909,7 @@ public sealed class PluginListTests
     [Fact]
     public async Task Invalidate_ActiveRefresh_RetiresWorkAndSuppressesLatePublication()
     {
-        var discovery = new ControlledPluginListDiscovery();
+        var discovery = new ControlledPluginListGameLoadOrders();
         var operation = discovery.Enqueue();
         using var sut = new PluginList(discovery);
         var refresh = sut.RefreshAsync(
@@ -898,7 +939,7 @@ public sealed class PluginListTests
     [Fact]
     public async Task Invalidate_RetirementCallbackFailure_StillSignalsNoSourceState()
     {
-        var discovery = new ControlledPluginListDiscovery();
+        var discovery = new ControlledPluginListGameLoadOrders();
         var operation = discovery.Enqueue();
         using var sut = new PluginList(discovery);
         var refresh = sut.RefreshAsync(
@@ -927,7 +968,7 @@ public sealed class PluginListTests
     [Fact]
     public async Task Dispose_ActiveRefresh_IsIdempotentAndPreventsLaterPublication()
     {
-        var discovery = new ControlledPluginListDiscovery();
+        var discovery = new ControlledPluginListGameLoadOrders();
         var operation = discovery.Enqueue();
         var sut = new PluginList(discovery);
         var refresh = sut.RefreshAsync(
@@ -959,7 +1000,7 @@ public sealed class PluginListTests
     [Fact]
     public async Task RefreshAsync_InvalidArguments_DoNotRetireCurrentRefresh()
     {
-        var discovery = new ControlledPluginListDiscovery();
+        var discovery = new ControlledPluginListGameLoadOrders();
         var operation = discovery.Enqueue();
         using var sut = new PluginList(discovery);
         var validRefresh = sut.RefreshAsync(
@@ -987,7 +1028,7 @@ public sealed class PluginListTests
     [InlineData(true)]
     public async Task RefreshAsync_CurrentProgrammingAndFatalDiscoveryFailures_PublishFaultedAndPropagate(bool fatal)
     {
-        var discovery = new ControlledPluginListDiscovery();
+        var discovery = new ControlledPluginListGameLoadOrders();
         var initial = discovery.Enqueue();
         var faulting = discovery.Enqueue();
         using var sut = new PluginList(discovery);
@@ -1029,10 +1070,37 @@ public sealed class PluginListTests
         Assert.Equal(refreshingActivityRevision + 1, sut.Current.ActivityRevision);
     }
 
+    /// <summary>
+    ///     Verifies an exception from the synchronous raw progress observer becomes the current silent fault fact and
+    ///     remains the propagated primary failure.
+    /// </summary>
+    [Fact]
+    public async Task RefreshAsync_CurrentProgressObserverFailure_PublishesFaultedAndPropagates()
+    {
+        var observerFailure = new IOException("progress observer failed");
+        using var sut = new PluginList(new ProgressReportingPluginListGameLoadOrders());
+        sut.Changed += (_, _) =>
+        {
+            if (sut.Current is PluginListRefreshingState { ScannedCount: > 0 })
+            {
+                throw observerFailure;
+            }
+        };
+
+        var thrown = await Assert.ThrowsAsync<IOException>(() => sut.RefreshAsync(
+            GameRelease.SkyrimSE,
+            CreateGameDirectory(),
+            AdvancedMode.Off,
+            TestContext.Current.CancellationToken));
+
+        Assert.Same(observerFailure, thrown);
+        Assert.IsType<PluginListFaultedState>(sut.Current);
+    }
+
     [Fact]
     public async Task Invalidate_ConfirmedPluginList_PublishesNoSourceState()
     {
-        var discovery = new DeterministicPluginListDiscovery("User.esp");
+        var discovery = new DeterministicPluginListGameLoadOrders("User.esp");
         using var sut = new PluginList(discovery);
         await sut.RefreshAsync(
             GameRelease.SkyrimSE,
@@ -1050,35 +1118,55 @@ public sealed class PluginListTests
         Assert.Equal(confirmedActivityRevision + 1, sut.Current.ActivityRevision);
     }
 
-    private sealed class DeterministicPluginListDiscovery(params string[] pluginNames) : IPluginListDiscovery
+    private sealed class DeterministicPluginListGameLoadOrders(params string[] pluginNames) : PluginListGameLoadOrdersStub
     {
         public string GameDirectory { get; } =
             System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"deterministic-plugin-list-{Guid.NewGuid():N}");
 
         public string DataDirectory => System.IO.Path.Combine(GameDirectory, "Data");
 
-        public Task<PluginListDiscoveryResult> DiscoverAsync(
-            PluginListSource source,
-            IProgress<PluginListDiscoveryProgress>? progress = null,
+        /// <inheritdoc />
+        public override Task<AvailablePluginsDiscoveryResult> DiscoverAvailablePluginsAsync(
+            GameRelease gameRelease,
+            string canonicalDataDirectory,
+            IProgress<GameLoadOrderDiscoveryProgress>? progress = null,
             CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            return Task.FromResult(PluginListDiscoveryResult.Completed(pluginNames));
+            return Task.FromResult(Discovered(pluginNames));
         }
     }
 
-    private sealed class FixedPluginListDiscovery(PluginListDiscoveryResult result) : IPluginListDiscovery
+    private sealed class FixedPluginListGameLoadOrders(AvailablePluginsDiscoveryResult result) : PluginListGameLoadOrdersStub
     {
         public string GameDirectory { get; } =
             System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"fixed-plugin-list-{Guid.NewGuid():N}");
 
-        public Task<PluginListDiscoveryResult> DiscoverAsync(
-            PluginListSource source,
-            IProgress<PluginListDiscoveryProgress>? progress = null,
+        /// <inheritdoc />
+        public override Task<AvailablePluginsDiscoveryResult> DiscoverAvailablePluginsAsync(
+            GameRelease gameRelease,
+            string canonicalDataDirectory,
+            IProgress<GameLoadOrderDiscoveryProgress>? progress = null,
             CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
             return Task.FromResult(result);
+        }
+    }
+
+    private sealed class ProgressReportingPluginListGameLoadOrders : PluginListGameLoadOrdersStub
+    {
+        /// <inheritdoc />
+        public override async Task<AvailablePluginsDiscoveryResult> DiscoverAvailablePluginsAsync(
+            GameRelease gameRelease,
+            string canonicalDataDirectory,
+            IProgress<GameLoadOrderDiscoveryProgress>? progress = null,
+            CancellationToken cancellationToken = default)
+        {
+            await Task.Yield();
+            cancellationToken.ThrowIfCancellationRequested();
+            progress?.Report(new GameLoadOrderDiscoveryProgress(1, 1));
+            return Discovered([]);
         }
     }
 
@@ -1089,53 +1177,65 @@ public sealed class PluginListTests
             $"controlled-plugin-list-{Guid.NewGuid():N}");
     }
 
-    private sealed class ControlledPluginListDiscovery : IPluginListDiscovery
+    private sealed class ControlledPluginListGameLoadOrders : PluginListGameLoadOrdersStub
     {
-        private readonly Queue<DiscoveryStep> _steps = new();
+        private readonly Queue<GameLoadOrdersStep> _steps = new();
 
-        public DiscoveryStep Enqueue()
+        public GameLoadOrdersStep Enqueue()
         {
-            var step = new DiscoveryStep();
+            var step = new GameLoadOrdersStep();
             _steps.Enqueue(step);
             return step;
         }
 
-        public Task<PluginListDiscoveryResult> DiscoverAsync(
-            PluginListSource source,
-            IProgress<PluginListDiscoveryProgress>? progress = null,
+        /// <inheritdoc />
+        public override Task<AvailablePluginsDiscoveryResult> DiscoverAvailablePluginsAsync(
+            GameRelease gameRelease,
+            string canonicalDataDirectory,
+            IProgress<GameLoadOrderDiscoveryProgress>? progress = null,
             CancellationToken cancellationToken = default)
         {
             var step = _steps.Dequeue();
-            step.Start(progress, cancellationToken);
+            step.Start(gameRelease, canonicalDataDirectory, progress, cancellationToken);
             return step.Completion.Task;
         }
     }
 
-    private sealed class DiscoveryStep
+    private sealed class GameLoadOrdersStep
     {
-        private IProgress<PluginListDiscoveryProgress>? _progress;
+        private IProgress<GameLoadOrderDiscoveryProgress>? _progress;
 
-        public TaskCompletionSource<PluginListDiscoveryResult> Completion { get; } =
+        public TaskCompletionSource<AvailablePluginsDiscoveryResult> Completion { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public CancellationToken CancellationToken { get; private set; }
 
+        public string? CanonicalDataDirectory { get; private set; }
+
+        public GameRelease GameRelease { get; private set; }
+
+        public IProgress<GameLoadOrderDiscoveryProgress>? Progress => _progress;
+
         public void Start(
-            IProgress<PluginListDiscoveryProgress>? progress,
+            GameRelease gameRelease,
+            string canonicalDataDirectory,
+            IProgress<GameLoadOrderDiscoveryProgress>? progress,
             CancellationToken cancellationToken)
         {
+            GameRelease = gameRelease;
+            CanonicalDataDirectory = canonicalDataDirectory;
             _progress = progress;
             CancellationToken = cancellationToken;
         }
 
         public void Complete(params string[] pluginNames)
         {
-            Completion.SetResult(PluginListDiscoveryResult.Completed(pluginNames));
+            Completion.SetResult(PluginListGameLoadOrdersStub.Discovered(pluginNames));
         }
 
         public void Fail(string errorMessage)
         {
-            Completion.SetResult(PluginListDiscoveryResult.Failed(errorMessage));
+            Completion.SetResult(PluginListGameLoadOrdersStub.LocalAccessFailure(errorMessage));
         }
 
         public void Cancel()
@@ -1150,7 +1250,7 @@ public sealed class PluginListTests
 
         public void ReportProgress(int scannedCount, int totalCount)
         {
-            _progress?.Report(new PluginListDiscoveryProgress(scannedCount, totalCount));
+            _progress?.Report(new GameLoadOrderDiscoveryProgress(scannedCount, totalCount));
         }
     }
 }

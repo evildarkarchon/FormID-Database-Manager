@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using FormID_Database_Manager.Services;
 using FormID_Database_Manager.TestUtilities.Mocks;
+using FormID_Database_Manager.Tests.Fakes;
 using FormID_Database_Manager.ViewModels;
 using Mutagen.Bethesda;
 using Xunit;
@@ -36,9 +37,9 @@ public sealed class PluginListPresentationAdapterTests
     [Fact]
     public async Task Projection_FailedDifferentSource_ClearsItemsAndReportsErrors()
     {
-        var discovery = new SequencedPluginListDiscovery(
-            PluginListDiscoveryResult.Completed(["Old.esp"]),
-            PluginListDiscoveryResult.Failed("new source unavailable"));
+        var discovery = new SequencedPluginListGameLoadOrders(
+            PluginListGameLoadOrdersStub.Discovered(["Old.esp"]),
+            PluginListGameLoadOrdersStub.LocalAccessFailure("new source unavailable"));
         using var pluginList = new PluginList(discovery);
         var dispatcher = new SynchronousThreadDispatcher();
         var viewModel = new MainWindowViewModel(dispatcher);
@@ -68,7 +69,7 @@ public sealed class PluginListPresentationAdapterTests
     [Fact]
     public async Task Projection_QueuedOlderProgressAfterNewerReady_UsesLatestStateOnly()
     {
-        var discovery = new OvertakingPluginListDiscovery();
+        var discovery = new OvertakingPluginListGameLoadOrders();
         using var pluginList = new PluginList(discovery);
         var dispatcher = new RecordingThreadDispatcher();
         var viewModel = new MainWindowViewModel(dispatcher);
@@ -109,8 +110,8 @@ public sealed class PluginListPresentationAdapterTests
     [Fact]
     public async Task Dispose_QueuedAndSubsequentSignals_PreventsViewModelMutation()
     {
-        var discovery = new SequencedPluginListDiscovery(
-            PluginListDiscoveryResult.Completed(["Ignored.esp"]));
+        var discovery = new SequencedPluginListGameLoadOrders(
+            PluginListGameLoadOrdersStub.Discovered(["Ignored.esp"]));
         using var pluginList = new PluginList(discovery);
         var dispatcher = new RecordingThreadDispatcher();
         var viewModel = new MainWindowViewModel(dispatcher);
@@ -145,7 +146,7 @@ public sealed class PluginListPresentationAdapterTests
     [Fact]
     public async Task Projection_CurrentCallerCancellation_ClearsScanningWithoutTerminalMessage()
     {
-        var discovery = new ControlledPluginListDiscovery();
+        var discovery = new ControlledPluginListGameLoadOrders();
         using var pluginList = new PluginList(discovery);
         var dispatcher = new SynchronousThreadDispatcher();
         var viewModel = new MainWindowViewModel(dispatcher);
@@ -176,7 +177,7 @@ public sealed class PluginListPresentationAdapterTests
     [Fact]
     public async Task Projection_CurrentDiscoveryFault_ClearsScanningWithoutTerminalMessage()
     {
-        var discovery = new ControlledPluginListDiscovery();
+        var discovery = new ControlledPluginListGameLoadOrders();
         using var pluginList = new PluginList(discovery);
         var dispatcher = new SynchronousThreadDispatcher();
         var viewModel = new MainWindowViewModel(dispatcher);
@@ -208,9 +209,9 @@ public sealed class PluginListPresentationAdapterTests
     [Fact]
     public async Task Projection_FailedSameSource_RetainsItemsAndReportsErrorsOnce()
     {
-        var discovery = new SequencedPluginListDiscovery(
-            PluginListDiscoveryResult.Completed(["Selected.esp"]),
-            PluginListDiscoveryResult.Failed("load order failure"));
+        var discovery = new SequencedPluginListGameLoadOrders(
+            PluginListGameLoadOrdersStub.Discovered(["Selected.esp"]),
+            PluginListGameLoadOrdersStub.LocalAccessFailure("load order failure"));
         using var pluginList = new PluginList(discovery);
         var dispatcher = new SynchronousThreadDispatcher();
         var viewModel = new MainWindowViewModel(dispatcher);
@@ -248,8 +249,8 @@ public sealed class PluginListPresentationAdapterTests
     [Fact]
     public async Task Projection_StructurallyEqualFailures_PresentsEachActivityOccurrence()
     {
-        var failure = PluginListDiscoveryResult.Failed("load order failure");
-        var discovery = new SequencedPluginListDiscovery(failure, failure);
+        var failure = PluginListGameLoadOrdersStub.LocalAccessFailure("load order failure");
+        var discovery = new SequencedPluginListGameLoadOrders(failure, failure);
         using var pluginList = new PluginList(discovery);
         var dispatcher = new SynchronousThreadDispatcher();
         var viewModel = new MainWindowViewModel(dispatcher);
@@ -289,8 +290,8 @@ public sealed class PluginListPresentationAdapterTests
     [Fact]
     public async Task Projection_SelectionOnlyRevision_UpdatesItemsWithoutDuplicatingReadyMessage()
     {
-        var discovery = new SequencedPluginListDiscovery(
-            PluginListDiscoveryResult.Completed(["First.esp", "Second.esp"]));
+        var discovery = new SequencedPluginListGameLoadOrders(
+            PluginListGameLoadOrdersStub.Discovered(["First.esp", "Second.esp"]));
         using var pluginList = new PluginList(discovery);
         var dispatcher = new SynchronousThreadDispatcher();
         var viewModel = new MainWindowViewModel(dispatcher);
@@ -318,7 +319,7 @@ public sealed class PluginListPresentationAdapterTests
     [Fact]
     public async Task Projection_RefreshingState_MapsCountsAndReadyClearsProgress()
     {
-        var discovery = new ControlledPluginListDiscovery();
+        var discovery = new ControlledPluginListGameLoadOrders();
         using var pluginList = new PluginList(discovery);
         var dispatcher = new SynchronousThreadDispatcher();
         var viewModel = new MainWindowViewModel(dispatcher);
@@ -363,9 +364,9 @@ public sealed class PluginListPresentationAdapterTests
     [Fact]
     public async Task Changed_QueuedProjection_ReadsLatestCurrentStateWhenCallbackExecutes()
     {
-        var discovery = new SequencedPluginListDiscovery(
-            PluginListDiscoveryResult.Completed(["Older.esp"]),
-            PluginListDiscoveryResult.Completed(["Newer.esp"]));
+        var discovery = new SequencedPluginListGameLoadOrders(
+            PluginListGameLoadOrdersStub.Discovered(["Older.esp"]),
+            PluginListGameLoadOrdersStub.Discovered(["Newer.esp"]));
         using var pluginList = new PluginList(discovery);
         var dispatcher = new RecordingThreadDispatcher();
         var viewModel = new MainWindowViewModel(dispatcher);
@@ -397,18 +398,19 @@ public sealed class PluginListPresentationAdapterTests
         Assert.Equal("Loaded 1 non-base game plugins", viewModel.InformationMessages[0]);
     }
 
-    private sealed class SequencedPluginListDiscovery(params PluginListDiscoveryResult[] results)
-        : IPluginListDiscovery
+    private sealed class SequencedPluginListGameLoadOrders(params AvailablePluginsDiscoveryResult[] results)
+        : PluginListGameLoadOrdersStub
     {
-        private readonly Queue<PluginListDiscoveryResult> _results = new(results);
+        private readonly Queue<AvailablePluginsDiscoveryResult> _results = new(results);
 
         public string GameDirectory { get; } =
             Path.Combine(Path.GetTempPath(), $"plugin-list-presentation-{Guid.NewGuid():N}");
 
         /// <inheritdoc />
-        public Task<PluginListDiscoveryResult> DiscoverAsync(
-            PluginListSource source,
-            IProgress<PluginListDiscoveryProgress>? progress = null,
+        public override Task<AvailablePluginsDiscoveryResult> DiscoverAvailablePluginsAsync(
+            GameRelease gameRelease,
+            string canonicalDataDirectory,
+            IProgress<GameLoadOrderDiscoveryProgress>? progress = null,
             CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -416,10 +418,10 @@ public sealed class PluginListPresentationAdapterTests
         }
     }
 
-    private sealed class ControlledPluginListDiscovery : IPluginListDiscovery
+    private sealed class ControlledPluginListGameLoadOrders : PluginListGameLoadOrdersStub
     {
-        private IProgress<PluginListDiscoveryProgress>? _progress;
-        private readonly TaskCompletionSource<PluginListDiscoveryResult> _result =
+        private IProgress<GameLoadOrderDiscoveryProgress>? _progress;
+        private readonly TaskCompletionSource<AvailablePluginsDiscoveryResult> _result =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public string GameDirectory { get; } =
@@ -429,9 +431,10 @@ public sealed class PluginListPresentationAdapterTests
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         /// <inheritdoc />
-        public Task<PluginListDiscoveryResult> DiscoverAsync(
-            PluginListSource source,
-            IProgress<PluginListDiscoveryProgress>? progress = null,
+        public override Task<AvailablePluginsDiscoveryResult> DiscoverAvailablePluginsAsync(
+            GameRelease gameRelease,
+            string canonicalDataDirectory,
+            IProgress<GameLoadOrderDiscoveryProgress>? progress = null,
             CancellationToken cancellationToken = default)
         {
             _progress = progress;
@@ -441,12 +444,12 @@ public sealed class PluginListPresentationAdapterTests
 
         public void ReportProgress(int scannedCount, int totalCount)
         {
-            _progress?.Report(new PluginListDiscoveryProgress(scannedCount, totalCount));
+            _progress?.Report(new GameLoadOrderDiscoveryProgress(scannedCount, totalCount));
         }
 
         public void Complete(params string[] pluginNames)
         {
-            _result.SetResult(PluginListDiscoveryResult.Completed(pluginNames));
+            _result.SetResult(Discovered(pluginNames));
         }
 
         public void Fault(Exception exception)
@@ -455,12 +458,12 @@ public sealed class PluginListPresentationAdapterTests
         }
     }
 
-    private sealed class OvertakingPluginListDiscovery : IPluginListDiscovery
+    private sealed class OvertakingPluginListGameLoadOrders : PluginListGameLoadOrdersStub
     {
-        private readonly TaskCompletionSource<PluginListDiscoveryResult> _olderResult =
+        private readonly TaskCompletionSource<AvailablePluginsDiscoveryResult> _olderResult =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
         private int _callCount;
-        private IProgress<PluginListDiscoveryProgress>? _olderProgress;
+        private IProgress<GameLoadOrderDiscoveryProgress>? _olderProgress;
 
         public string GameDirectory { get; } =
             Path.Combine(Path.GetTempPath(), $"overtaking-plugin-list-presentation-{Guid.NewGuid():N}");
@@ -469,9 +472,10 @@ public sealed class PluginListPresentationAdapterTests
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         /// <inheritdoc />
-        public Task<PluginListDiscoveryResult> DiscoverAsync(
-            PluginListSource source,
-            IProgress<PluginListDiscoveryProgress>? progress = null,
+        public override Task<AvailablePluginsDiscoveryResult> DiscoverAvailablePluginsAsync(
+            GameRelease gameRelease,
+            string canonicalDataDirectory,
+            IProgress<GameLoadOrderDiscoveryProgress>? progress = null,
             CancellationToken cancellationToken = default)
         {
             if (Interlocked.Increment(ref _callCount) == 1)
@@ -482,17 +486,17 @@ public sealed class PluginListPresentationAdapterTests
                 return _olderResult.Task;
             }
 
-            return Task.FromResult(PluginListDiscoveryResult.Completed(["Newer.esp"]));
+            return Task.FromResult(Discovered(["Newer.esp"]));
         }
 
         public void ReportOlderProgress(int scannedCount, int totalCount)
         {
-            _olderProgress?.Report(new PluginListDiscoveryProgress(scannedCount, totalCount));
+            _olderProgress?.Report(new GameLoadOrderDiscoveryProgress(scannedCount, totalCount));
         }
 
         public void CompleteOlder(params string[] pluginNames)
         {
-            _olderResult.SetResult(PluginListDiscoveryResult.Completed(pluginNames));
+            _olderResult.SetResult(Discovered(pluginNames));
         }
     }
 

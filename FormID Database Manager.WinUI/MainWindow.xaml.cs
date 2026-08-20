@@ -21,8 +21,8 @@ public sealed partial class MainWindow : Window, IDisposable
         var dispatcher = new WinUiThreadDispatcher(DispatcherQueue);
         ViewModel = new MainWindowViewModel(dispatcher);
         var gameInstallations = new GameInstallations(new GameInstallationProbe());
-        var pluginListDiscovery = new PluginListDiscovery();
-        var pluginList = new PluginList(pluginListDiscovery);
+        var gameLoadOrders = new GameLoadOrders();
+        var pluginList = new PluginList(gameLoadOrders);
         var processingRunExecutor = new ProcessingRunExecutor();
 
         InitializeWindow();
@@ -43,20 +43,20 @@ public sealed partial class MainWindow : Window, IDisposable
     /// <param name="gameInstallations">
     /// The module used to detect a game from a browsed directory and to locate its installs.
     /// </param>
-    /// <param name="pluginListDiscovery">The deterministic or production adapter used to discover Plugins.</param>
+    /// <param name="gameLoadOrders">The deterministic or production Game Load Orders module used by Plugin List.</param>
     /// <param name="processingRunExecutor">The owned Processing Run executor canceled during window close.</param>
     internal MainWindow(
         MainWindowViewModel viewModel,
         IFileDialogService? fileDialogService,
         GameInstallations? gameInstallations,
-        IPluginListDiscovery? pluginListDiscovery,
+        IGameLoadOrders? gameLoadOrders,
         ProcessingRunExecutor? processingRunExecutor)
     {
         ViewModel = viewModel ?? throw new ArgumentNullException(nameof(viewModel));
         var dispatcher = new WinUiThreadDispatcher(DispatcherQueue);
         var effectiveGameInstallations = gameInstallations ?? new GameInstallations(new GameInstallationProbe());
-        var effectivePluginListDiscovery = pluginListDiscovery ?? new PluginListDiscovery();
-        var pluginList = new PluginList(effectivePluginListDiscovery);
+        var effectiveGameLoadOrders = gameLoadOrders ?? new GameLoadOrders();
+        var pluginList = new PluginList(effectiveGameLoadOrders);
         var effectiveProcessingRun = processingRunExecutor ?? new ProcessingRunExecutor();
 
         InitializeWindow();
