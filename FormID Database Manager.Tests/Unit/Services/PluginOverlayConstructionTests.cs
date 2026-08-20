@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using FormID_Database_Manager.Services;
 using FormID_Database_Manager.TestUtilities.Builders;
+using FormID_Database_Manager.Tests.Fakes;
 using Mutagen.Bethesda;
 using Mutagen.Bethesda.Fallout4;
 using Mutagen.Bethesda.Oblivion;
@@ -133,6 +134,82 @@ public sealed class PluginOverlayConstructionTests : IDisposable
             expectedFamily.IsInstanceOfType(overlay),
             $"{release} produced a {overlay.GetType().Name}, which is not a {expectedFamily.Name}. Its row in " +
             $"{nameof(SupportedGameReleases)} is wired to the wrong Mutagen overlay type.");
+    }
+
+    /// <summary>
+    ///     Verifies a ready case carrying production-prepared state reaches the Supported GameRelease overlay row
+    ///     identified by that opaque capability.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(SupportedReleases))]
+    public void ReadOverlay_ProductionReadyPluginForEachRow_ReportsCapabilitiesGameRelease(GameRelease release)
+    {
+        var readyPlugin = CreateProductionReadyPlugin(release, "Capability.esp");
+
+        using var overlay = _reader.ReadOverlay(readyPlugin);
+
+        Assert.Equal(release, overlay.GameRelease);
+    }
+
+    /// <summary>
+    ///     Verifies an in-memory capability is rejected as a composition failure before the missing Plugin path can
+    ///     reach Mutagen or the filesystem.
+    /// </summary>
+    [Fact]
+    public void ReadOverlay_InMemoryReadyPlugin_RejectsCapabilityBeforeOverlayConstruction()
+    {
+        const string pluginName = "InMemoryOnly.esp";
+        var environment = new InMemoryGameLoadOrderEnvironment()
+            .WithLoadOrder(GameRelease.SkyrimSE, _testDirectory, pluginName)
+            .WithAvailablePlugin(_testDirectory, pluginName);
+        var preparedPlugin = Assert.Single(
+            new GameLoadOrders(environment).PrepareSelectedPlugins(
+                GameRelease.SkyrimSE,
+                _testDirectory,
+                [pluginName],
+                TestContext.Current.CancellationToken));
+        var readyPlugin = Assert.IsType<SelectedPluginReady>(preparedPlugin);
+
+        var exception = Assert.Throws<InvalidOperationException>(() => _reader.ReadOverlay(readyPlugin));
+
+        Assert.Equal("The Plugin-read capability belongs to a different adapter.", exception.Message);
+        Assert.False(File.Exists(readyPlugin.ResolvedPluginPath));
+    }
+
+    /// <summary>
+    ///     Verifies the production capability path retains the existing narrow normalization for malformed Plugin
+    ///     bytes rather than treating the opaque state as a new failure boundary.
+    /// </summary>
+    [Fact]
+    public void ReadOverlay_ProductionReadyPluginWithMalformedBytes_ThrowsPluginReadFailure()
+    {
+        const string pluginName = "CapabilityMalformed.esp";
+        var pluginPath = Path.Combine(_testDirectory, pluginName);
+        File.WriteAllBytes(pluginPath, [0x01, 0x02, 0x03, 0x04]);
+        var capability = new GameLoadOrderEnvironment().PreparePluginReads(GameRelease.SkyrimSE, []);
+        var readyPlugin = new SelectedPluginReady(pluginName, pluginPath, capability);
+
+        var exception = Assert.Throws<PluginOverlayReadException>(() => _reader.ReadOverlay(readyPlugin));
+
+        Assert.IsType<MalformedDataException>(exception.InnerException);
+    }
+
+    /// <summary>
+    ///     Verifies a production capability with a present but empty separated-master lookup preserves Mutagen's
+    ///     master-resolution failure for Plugin Ingestion to classify.
+    /// </summary>
+    [Fact]
+    public void ReadOverlay_ProductionReadyPluginWithUnresolvableMaster_EscapesWithoutPluginReadFailure()
+    {
+        const string pluginName = "CapabilityMissingMaster.esp";
+        var pluginPath = PluginFixture.Write(GameRelease.Starfield, _testDirectory, pluginName);
+        var capability = new GameLoadOrderEnvironment().PreparePluginReads(GameRelease.Starfield, []);
+        var readyPlugin = new SelectedPluginReady(pluginName, pluginPath, capability);
+
+        var exception = Record.Exception(() => _reader.ReadOverlay(readyPlugin));
+
+        Assert.IsNotType<PluginOverlayReadException>(exception);
+        Assert.IsType<MissingModException>(exception);
     }
 
     // ---------------------------------------------------------------------------------------------------------
@@ -273,5 +350,24 @@ public sealed class PluginOverlayConstructionTests : IDisposable
     private static BinaryReadParameters ReadParametersFor(GameRelease release, string pluginName)
     {
         return GameLoadOrderSnapshotFactory.CreateFixtureSnapshot(release, pluginName).ReadParameters;
+    }
+
+    /// <summary>
+    ///     Creates a generated Plugin and the production adapter capability required to open it.
+    /// </summary>
+    /// <param name="release">The Supported GameRelease that owns both the Plugin and capability.</param>
+    /// <param name="pluginName">The generated selected Plugin filename.</param>
+    /// <returns>A ready selected-Plugin case carrying production-prepared read state.</returns>
+    private SelectedPluginReady CreateProductionReadyPlugin(GameRelease release, string pluginName)
+    {
+        var pluginPath = PluginFixture.Write(release, _testDirectory, pluginName);
+        var mainMasterName = PluginFixture.MainMasterFor(release);
+        var mainMasterPath = PluginFixture.Write(release, _testDirectory, mainMasterName);
+        var environment = new GameLoadOrderEnvironment();
+        var capability = environment.PreparePluginReads(
+            release,
+            [new PluginFileObservation(mainMasterName, mainMasterPath, IsAvailable: true)]);
+
+        return new SelectedPluginReady(pluginName, pluginPath, capability);
     }
 }

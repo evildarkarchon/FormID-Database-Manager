@@ -34,6 +34,32 @@ internal sealed class PluginOverlayReadException(string message, Exception inner
 internal sealed class MutagenPluginOverlayReader : IPluginOverlayReader
 {
     /// <summary>
+    ///     Opens one ready selected Plugin using the production read state hidden in its opaque capability.
+    /// </summary>
+    /// <param name="readyPlugin">The selected Plugin path and capability prepared by production Game Load Orders.</param>
+    /// <returns>The disposable Mutagen overlay for the capability's Supported GameRelease.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="readyPlugin" /> is null.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">
+    ///     The capability identifies a GameRelease this application does not support.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">The capability belongs to an incompatible adapter.</exception>
+    /// <exception cref="PluginOverlayReadException">Mutagen or the filesystem reports unreadable Plugin data.</exception>
+    /// <exception cref="MissingModException">
+    ///     The prepared lookup cannot resolve a declared master; Plugin Ingestion classifies this under ADR-0006.
+    /// </exception>
+    /// <exception cref="MissingModMappingException">
+    ///     No prepared lookup maps a declared master; Plugin Ingestion classifies this under ADR-0006.
+    /// </exception>
+    public IModDisposeGetter ReadOverlay(SelectedPluginReady readyPlugin)
+    {
+        ArgumentNullException.ThrowIfNull(readyPlugin);
+
+        // Validate adapter ownership before delegating to any Supported GameRelease factory or filesystem work.
+        var payload = readyPlugin.ReadCapability.RequirePayload<MutagenPluginReadCapabilityPayload>();
+        return ReadOverlay(readyPlugin.ResolvedPluginPath, payload.GameRelease, payload.ReadParameters);
+    }
+
+    /// <summary>
     ///     Opens a Mutagen overlay and normalizes only known malformed or unreadable Plugin failures.
     /// </summary>
     /// <param name="pluginPath">The available selected Plugin path.</param>
