@@ -17,7 +17,7 @@ internal sealed class GameLoadOrderEnvironment : IGameLoadOrderEnvironment
     {
         // Materialize here so deferred Mutagen I/O stays inside discovery's external-work failure boundary.
         var listings = LoadOrder
-            .GetLoadOrderListings(gameRelease, canonicalDataDirectory, throwOnMissingMods: false)
+            .GetLoadOrderListings(gameRelease, canonicalDataDirectory, false)
             .ToList();
         return TranslateGameLoadOrder(gameRelease, listings);
     }

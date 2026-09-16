@@ -85,7 +85,7 @@ internal sealed class MutagenPluginOverlayReader : IPluginOverlayReader
     /// <returns><see langword="true" /> only for expected malformed or unreadable Plugin failures.</returns>
     private static bool IsExpectedPluginOverlayFailure(Exception exception)
     {
-        for (Exception? current = exception; current is not null; current = current.InnerException)
+        for (var current = exception; current is not null; current = current.InnerException)
         {
             if (current is MalformedDataException
                 or RecordException
@@ -124,7 +124,7 @@ internal sealed class MutagenPluginOverlayReader : IPluginOverlayReader
     /// <exception cref="OperationCanceledException">The exception chain contains cancellation.</exception>
     private static void RethrowNestedCancellation(Exception exception)
     {
-        for (Exception? current = exception; current is not null; current = current.InnerException)
+        for (var current = exception; current is not null; current = current.InnerException)
         {
             if (current is OperationCanceledException cancellation)
             {

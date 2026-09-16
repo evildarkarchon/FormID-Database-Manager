@@ -1,7 +1,7 @@
 namespace FormID_Database_Manager.Services;
 
 /// <summary>
-/// Adapts a UI queue with access checks and fire-and-forget enqueueing to the shared dispatcher contract.
+///     Adapts a UI queue with access checks and fire-and-forget enqueueing to the shared dispatcher contract.
 /// </summary>
 internal sealed class QueuedThreadDispatcher : IThreadDispatcher
 {
@@ -10,7 +10,7 @@ internal sealed class QueuedThreadDispatcher : IThreadDispatcher
     private readonly Func<Action, bool> _tryEnqueue;
 
     /// <summary>
-    /// Creates a dispatcher around queue primitives supplied by a UI platform adapter.
+    ///     Creates a dispatcher around queue primitives supplied by a UI platform adapter.
     /// </summary>
     /// <param name="checkAccess">Returns whether the caller owns the target UI queue.</param>
     /// <param name="tryEnqueue">Attempts to queue work on the target UI queue and reports rejection.</param>
@@ -28,7 +28,7 @@ internal sealed class QueuedThreadDispatcher : IThreadDispatcher
     }
 
     /// <summary>
-    /// Queues fire-and-forget work on the target UI queue.
+    ///     Queues fire-and-forget work on the target UI queue.
     /// </summary>
     /// <param name="action">The work to queue.</param>
     /// <exception cref="InvalidOperationException">Thrown when the queue rejects the work.</exception>
@@ -44,9 +44,9 @@ internal sealed class QueuedThreadDispatcher : IThreadDispatcher
     }
 
     /// <summary>
-    /// Returns whether the caller owns the target UI queue.
+    ///     Returns whether the caller owns the target UI queue.
     /// </summary>
-    /// <returns><see langword="true"/> when work can run directly on the current thread.</returns>
+    /// <returns><see langword="true" /> when work can run directly on the current thread.</returns>
     public bool CheckAccess()
     {
         return _checkAccess();

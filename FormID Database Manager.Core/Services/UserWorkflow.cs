@@ -6,7 +6,8 @@ using Mutagen.Bethesda;
 namespace FormID_Database_Manager.Services;
 
 /// <summary>
-/// Owns authoritative Game Context, the UI-neutral user workflow, Plugin List lifetime, and Processing Run coordination.
+///     Owns authoritative Game Context, the UI-neutral user workflow, Plugin List lifetime, and Processing Run
+///     coordination.
 /// </summary>
 public sealed class UserWorkflow : IDisposable
 {
@@ -14,31 +15,32 @@ public sealed class UserWorkflow : IDisposable
     private readonly GameInstallations _gameInstallations;
     private readonly PluginList _pluginList;
     private readonly IProcessingRunExecutor _processingRunExecutor;
-    private readonly MainWindowViewModel _viewModel;
 
     /// <summary>
-    /// Guards the run activity this workflow holds as its state of record, because a Processing Run reports its
-    /// progress from whatever thread the executor is on while the UI thread reads it to decide what a button press means.
+    ///     Guards the run activity this workflow holds as its state of record, because a Processing Run reports its
+    ///     progress from whatever thread the executor is on while the UI thread reads it to decide what a button press means.
     /// </summary>
     private readonly Lock _runActivityLock = new();
 
-    private GameContextSnapshot _gameContext;
+    private readonly MainWindowViewModel _viewModel;
     private bool _disposed;
+
+    private GameContextSnapshot _gameContext;
     private int _gameContextVersion;
 
     /// <summary>
-    /// The Processing Run's Workflow Activity, owned here rather than read back off the ViewModel.
+    ///     The Processing Run's Workflow Activity, owned here rather than read back off the ViewModel.
     /// </summary>
     /// <remarks>
-    /// This has to be the source of truth: validation, Confirmed Plugin List resolution and database-path defaulting
-    /// all happen before the executor is handed the run, so there is a window in which this workflow is committed to a
-    /// run while the executor's cancellation source does not yet exist. Owning the fact closes that window, so a
-    /// second button press inside it cancels instead of starting a second run.
+    ///     This has to be the source of truth: validation, Confirmed Plugin List resolution and database-path defaulting
+    ///     all happen before the executor is handed the run, so there is a window in which this workflow is committed to a
+    ///     run while the executor's cancellation source does not yet exist. Owning the fact closes that window, so a
+    ///     second button press inside it cancels instead of starting a second run.
     /// </remarks>
     private ActivityProjection _runActivity = ActivityProjection.None;
 
     /// <summary>
-    /// Creates a workflow module that coordinates existing Core modules behind one UI-neutral interface.
+    ///     Creates a workflow module that coordinates existing Core modules behind one UI-neutral interface.
     /// </summary>
     /// <param name="viewModel">The binding-state projection updated by workflow transitions.</param>
     /// <param name="fileDialogService">The platform picker adapter.</param>
@@ -66,7 +68,38 @@ public sealed class UserWorkflow : IDisposable
     }
 
     /// <summary>
-    /// Makes an explicit GameRelease selection authoritative before resolving its installed locations.
+    ///     Cancels processing and releases processing resources owned by the workflow.
+    /// </summary>
+    /// <remarks>
+    ///     Every owned collaborator is retired even when an earlier step fails. Cleanup after a failure is best-effort,
+    ///     matching Plugin ingestion overlay cleanup: the first failure keeps its identity, and a standalone cleanup
+    ///     failure still propagates because no other path reports it.
+    /// </remarks>
+    /// <exception cref="AggregateException">A registered Processing Run cancellation callback throws.</exception>
+    public void Dispose()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
+        // Retire resolution before disposing collaborators so late lookup or picker work cannot publish into torn-down state.
+        Interlocked.Increment(ref _gameContextVersion);
+
+        Exception? primaryException = null;
+        RetireCollaborator(_processingRunExecutor.Cancel, ref primaryException);
+        RetireCollaborator(_processingRunExecutor.Dispose, ref primaryException);
+        RetireCollaborator(_pluginList.Dispose, ref primaryException);
+        if (primaryException is not null)
+        {
+            // Rethrow through the dispatch info so the caller still sees the original throw site.
+            ExceptionDispatchInfo.Throw(primaryException);
+        }
+    }
+
+    /// <summary>
+    ///     Makes an explicit GameRelease selection authoritative before resolving its installed locations.
     /// </summary>
     /// <param name="selectedGameRelease">The selected GameRelease, or null when the selection is cleared.</param>
     /// <returns>A task that completes after current installed-location resolution and Plugin List refresh finish.</returns>
@@ -98,7 +131,7 @@ public sealed class UserWorkflow : IDisposable
     }
 
     /// <summary>
-    /// Makes an explicit detected-directory selection authoritative before refreshing the Plugin List.
+    ///     Makes an explicit detected-directory selection authoritative before refreshing the Plugin List.
     /// </summary>
     /// <param name="selectedDirectory">The selected directory, or null when the selection is cleared.</param>
     /// <returns>A task that completes after current Plugin List discovery finishes.</returns>
@@ -125,20 +158,20 @@ public sealed class UserWorkflow : IDisposable
     }
 
     /// <summary>
-    /// Makes an explicit Advanced Mode value authoritative and refreshes the current Plugin List source.
+    ///     Makes an explicit Advanced Mode value authoritative and refreshes the current Plugin List source.
     /// </summary>
     /// <param name="advancedMode">The Advanced Mode value selected by the user.</param>
     /// <returns>A task that completes after applicable Plugin List discovery finishes.</returns>
     /// <exception cref="ArgumentException">The complete Game Context contains an invalid directory.</exception>
     /// <exception cref="ArgumentOutOfRangeException">
-    /// The Advanced Mode or authoritative GameRelease is unsupported, or discovery returns an unsupported result.
+    ///     The Advanced Mode or authoritative GameRelease is unsupported, or discovery returns an unsupported result.
     /// </exception>
     /// <exception cref="OperationCanceledException">Current Plugin discovery propagates an unexpected cancellation.</exception>
     /// <exception cref="AggregateException">A registered Plugin List refresh cancellation callback throws.</exception>
     /// <exception cref="ObjectDisposedException">The workflow-owned Plugin List has been disposed.</exception>
     /// <remarks>
-    /// The authoritative snapshot is projected before discovery starts. Programming and fatal discovery failures propagate
-    /// unchanged, and Plugin List discovery may continue off the caller thread.
+    ///     The authoritative snapshot is projected before discovery starts. Programming and fatal discovery failures propagate
+    ///     unchanged, and Plugin List discovery may continue off the caller thread.
     /// </remarks>
     internal Task SetAdvancedModeAsync(AdvancedMode advancedMode)
     {
@@ -163,7 +196,8 @@ public sealed class UserWorkflow : IDisposable
     }
 
     /// <summary>
-    /// Opens the game-directory picker as a latest-intent operation, detects a missing GameRelease, and refreshes the Plugin List.
+    ///     Opens the game-directory picker as a latest-intent operation, detects a missing GameRelease, and refreshes the
+    ///     Plugin List.
     /// </summary>
     /// <returns>A task that completes after picker handling and plugin refresh finish.</returns>
     /// <exception cref="ObjectDisposedException">The workflow-owned Plugin List has been disposed.</exception>
@@ -188,7 +222,7 @@ public sealed class UserWorkflow : IDisposable
     }
 
     /// <summary>
-    /// Selects a database path without overwriting state when the picker is cancelled.
+    ///     Selects a database path without overwriting state when the picker is cancelled.
     /// </summary>
     /// <returns>A task that completes after picker handling finishes.</returns>
     public async Task SelectDatabaseAsync()
@@ -201,7 +235,7 @@ public sealed class UserWorkflow : IDisposable
     }
 
     /// <summary>
-    /// Selects an optional FormID text file without overwriting state when the picker is cancelled.
+    ///     Selects an optional FormID text file without overwriting state when the picker is cancelled.
     /// </summary>
     /// <returns>A task that completes after picker handling finishes.</returns>
     public async Task SelectFormIdListAsync()
@@ -214,7 +248,7 @@ public sealed class UserWorkflow : IDisposable
     }
 
     /// <summary>
-    /// Selects every currently loaded plugin.
+    ///     Selects every currently loaded plugin.
     /// </summary>
     /// <exception cref="ObjectDisposedException">The workflow-owned Plugin List has been disposed.</exception>
     public void SelectAllPlugins()
@@ -223,7 +257,7 @@ public sealed class UserWorkflow : IDisposable
     }
 
     /// <summary>
-    /// Clears selection for every currently loaded plugin.
+    ///     Clears selection for every currently loaded plugin.
     /// </summary>
     /// <exception cref="ObjectDisposedException">The workflow-owned Plugin List has been disposed.</exception>
     public void SelectNoPlugins()
@@ -232,7 +266,7 @@ public sealed class UserWorkflow : IDisposable
     }
 
     /// <summary>
-    /// Submits one user-activated, versioned Plugin selection change to the authoritative Plugin List.
+    ///     Submits one user-activated, versioned Plugin selection change to the authoritative Plugin List.
     /// </summary>
     /// <param name="membershipVersion">The confirmed membership version displayed when the user acted.</param>
     /// <param name="pluginName">The projected Plugin name the user activated.</param>
@@ -246,12 +280,12 @@ public sealed class UserWorkflow : IDisposable
     }
 
     /// <summary>
-    /// Starts processing or requests cancellation for the active processing run.
+    ///     Starts processing or requests cancellation for the active processing run.
     /// </summary>
     /// <returns>A task that completes after processing starts, finishes, fails, or observes cancellation.</returns>
     /// <remarks>
-    /// How the run ended — cancelled or failed — is reported to the message lists, never to the progress channel,
-    /// because this method's own cleanup hands that channel back as soon as the run ends.
+    ///     How the run ended — cancelled or failed — is reported to the message lists, never to the progress channel,
+    ///     because this method's own cleanup hands that channel back as soon as the run ends.
     /// </remarks>
     public async Task ProcessFormIdsAsync()
     {
@@ -324,9 +358,12 @@ public sealed class UserWorkflow : IDisposable
     }
 
     /// <summary>
-    /// Makes this workflow the owner of an active Processing Run, unless one is already active.
+    ///     Makes this workflow the owner of an active Processing Run, unless one is already active.
     /// </summary>
-    /// <returns><see langword="true" /> when the caller now owns a new run, <see langword="false" /> when one is already active.</returns>
+    /// <returns>
+    ///     <see langword="true" /> when the caller now owns a new run, <see langword="false" /> when one is already
+    ///     active.
+    /// </returns>
     private bool TryBeginRunActivity()
     {
         lock (_runActivityLock)
@@ -342,7 +379,7 @@ public sealed class UserWorkflow : IDisposable
     }
 
     /// <summary>
-    /// Makes one complete run report authoritative and projects it.
+    ///     Makes one complete run report authoritative and projects it.
     /// </summary>
     /// <param name="runActivity">The complete run report to publish.</param>
     private void ProjectRunActivity(ActivityProjection runActivity)
@@ -354,13 +391,13 @@ public sealed class UserWorkflow : IDisposable
     }
 
     /// <summary>
-    /// Publishes new run activity, carrying the last reported progress value forward when the report omits one.
+    ///     Publishes new run activity, carrying the last reported progress value forward when the report omits one.
     /// </summary>
     /// <param name="status">The already-rendered status text for the run.</param>
     /// <param name="value">The reported progress percentage, or null to keep the value already on screen.</param>
     /// <remarks>
-    /// Whether the run is active is never changed here: a report arriving after the run has ended stays inactive and
-    /// therefore stays off the channel.
+    ///     Whether the run is active is never changed here: a report arriving after the run has ended stays inactive and
+    ///     therefore stays off the channel.
     /// </remarks>
     private void ReportRunActivity(string status, double? value)
     {
@@ -371,16 +408,16 @@ public sealed class UserWorkflow : IDisposable
     }
 
     /// <summary>
-    /// Stores one run report and projects it, with the caller already holding <see cref="_runActivityLock" />.
+    ///     Stores one run report and projects it, with the caller already holding <see cref="_runActivityLock" />.
     /// </summary>
     /// <param name="runActivity">The complete run report that becomes authoritative.</param>
     /// <remarks>
-    /// The projection happens under the lock on purpose. Releasing first would let two reports racing from the UI
-    /// thread and the executor thread reach the ViewModel in the opposite order to which they were sequenced here,
-    /// leaving a stale status on the channel. Holding it across the call is safe because a projection either posts to
-    /// the dispatcher without running anything else, or runs on the dispatcher and raises notifications whose handlers
-    /// may re-enter this workflow — and the lock is reentrant, so a handler pressing the process button still sees the
-    /// run it is nested inside as active.
+    ///     The projection happens under the lock on purpose. Releasing first would let two reports racing from the UI
+    ///     thread and the executor thread reach the ViewModel in the opposite order to which they were sequenced here,
+    ///     leaving a stale status on the channel. Holding it across the call is safe because a projection either posts to
+    ///     the dispatcher without running anything else, or runs on the dispatcher and raises notifications whose handlers
+    ///     may re-enter this workflow — and the lock is reentrant, so a handler pressing the process button still sees the
+    ///     run it is nested inside as active.
     /// </remarks>
     private void ProjectRunActivityLocked(ActivityProjection runActivity)
     {
@@ -389,42 +426,11 @@ public sealed class UserWorkflow : IDisposable
     }
 
     /// <summary>
-    /// Cancels processing and releases processing resources owned by the workflow.
-    /// </summary>
-    /// <remarks>
-    /// Every owned collaborator is retired even when an earlier step fails. Cleanup after a failure is best-effort,
-    /// matching Plugin ingestion overlay cleanup: the first failure keeps its identity, and a standalone cleanup
-    /// failure still propagates because no other path reports it.
-    /// </remarks>
-    /// <exception cref="AggregateException">A registered Processing Run cancellation callback throws.</exception>
-    public void Dispose()
-    {
-        if (_disposed)
-        {
-            return;
-        }
-
-        _disposed = true;
-        // Retire resolution before disposing collaborators so late lookup or picker work cannot publish into torn-down state.
-        Interlocked.Increment(ref _gameContextVersion);
-
-        Exception? primaryException = null;
-        RetireCollaborator(_processingRunExecutor.Cancel, ref primaryException);
-        RetireCollaborator(_processingRunExecutor.Dispose, ref primaryException);
-        RetireCollaborator(_pluginList.Dispose, ref primaryException);
-        if (primaryException is not null)
-        {
-            // Rethrow through the dispatch info so the caller still sees the original throw site.
-            ExceptionDispatchInfo.Throw(primaryException);
-        }
-    }
-
-    /// <summary>
-    /// Runs one disposal step, keeping the first failure as the exception the caller finally observes.
+    ///     Runs one disposal step, keeping the first failure as the exception the caller finally observes.
     /// </summary>
     /// <param name="step">The cleanup action to run.</param>
     /// <param name="primaryException">
-    /// The failure already in flight, replaced only when <paramref name="step" /> raises the first one.
+    ///     The failure already in flight, replaced only when <paramref name="step" /> raises the first one.
     /// </param>
     private static void RetireCollaborator(Action step, ref Exception? primaryException)
     {
@@ -444,7 +450,7 @@ public sealed class UserWorkflow : IDisposable
     }
 
     /// <summary>
-    /// Resolves installed locations without blocking the UI and publishes only while the initiating intent is current.
+    ///     Resolves installed locations without blocking the UI and publishes only while the initiating intent is current.
     /// </summary>
     /// <param name="selectedGame">The GameRelease whose installed locations are requested.</param>
     /// <param name="gameContextVersion">The resolution generation that owns any resulting state or messages.</param>
@@ -481,7 +487,7 @@ public sealed class UserWorkflow : IDisposable
     }
 
     /// <summary>
-    /// Applies one current Browse result while preserving an explicit release and treating suggestions as non-binding.
+    ///     Applies one current Browse result while preserving an explicit release and treating suggestions as non-binding.
     /// </summary>
     /// <param name="path">The user-selected game root or Data directory.</param>
     /// <param name="gameContextVersion">The Browse resolution generation allowed to publish resulting state.</param>
@@ -490,8 +496,8 @@ public sealed class UserWorkflow : IDisposable
     /// <exception cref="ObjectDisposedException">The workflow-owned Plugin List has been disposed.</exception>
     /// <exception cref="AggregateException">A registered Plugin List refresh cancellation callback throws.</exception>
     /// <remarks>
-    /// A path detection cannot use at all is presented as an error describing that failure; other current unexpected
-    /// detection and fatal discovery failures propagate unchanged.
+    ///     A path detection cannot use at all is presented as an error describing that failure; other current unexpected
+    ///     detection and fatal discovery failures propagate unchanged.
     /// </remarks>
     private async Task ApplyBrowsedDirectorySelectedAsync(string path, int gameContextVersion)
     {
@@ -556,7 +562,7 @@ public sealed class UserWorkflow : IDisposable
     }
 
     /// <summary>
-    /// Refreshes the exact complete Game Context or explicitly invalidates the authoritative Plugin List.
+    ///     Refreshes the exact complete Game Context or explicitly invalidates the authoritative Plugin List.
     /// </summary>
     /// <param name="expectedGameContextVersion">An optional directory-transition generation that must still be current.</param>
     /// <returns>A task that completes when applicable Plugin discovery finishes.</returns>
@@ -617,21 +623,17 @@ public sealed class UserWorkflow : IDisposable
     }
 
     /// <summary>
-    /// Publishes a non-empty installed-location result as the complete ordered available-directory snapshot.
+    ///     Publishes a non-empty installed-location result as the complete ordered available-directory snapshot.
     /// </summary>
     /// <param name="folders">The installed locations in record order.</param>
     private void ApplyDetectedFolders(ImmutableArray<string> folders)
     {
-        _gameContext = _gameContext with
-        {
-            SelectedGameDirectory = folders[0],
-            AvailableDirectories = folders
-        };
+        _gameContext = _gameContext with { SelectedGameDirectory = folders[0], AvailableDirectories = folders };
         ProjectGameContext();
     }
 
     /// <summary>
-    /// Publishes the complete authoritative Game Context through the ViewModel's one restricted projection seam.
+    ///     Publishes the complete authoritative Game Context through the ViewModel's one restricted projection seam.
     /// </summary>
     private void ProjectGameContext()
     {
@@ -643,7 +645,7 @@ public sealed class UserWorkflow : IDisposable
     }
 
     /// <summary>
-    /// Converts the presentation value to the nullable directory used by the domain snapshot.
+    ///     Converts the presentation value to the nullable directory used by the domain snapshot.
     /// </summary>
     /// <param name="directory">The existing presentation directory value.</param>
     /// <returns>The domain directory, or null when the presentation value represents absence.</returns>
@@ -653,7 +655,7 @@ public sealed class UserWorkflow : IDisposable
     }
 
     /// <summary>
-    /// Submits a versioned whole-list selection intent against one captured confirmed membership.
+    ///     Submits a versioned whole-list selection intent against one captured confirmed membership.
     /// </summary>
     /// <param name="isSelected">Whether every confirmed Plugin should be selected.</param>
     private void ApplyWholeListSelection(bool isSelected)
@@ -668,12 +670,12 @@ public sealed class UserWorkflow : IDisposable
     }
 
     /// <summary>
-    /// Captures confirmation only when it belongs to the authoritative Plugin List Source for this Processing Run.
+    ///     Captures confirmation only when it belongs to the authoritative Plugin List Source for this Processing Run.
     /// </summary>
     /// <param name="gameContext">The one authoritative Game Context captured for run creation.</param>
     /// <returns>
-    /// The matching immutable confirmation, or null when the context is incomplete or confirmation does not match its
-    /// Plugin List Source.
+    ///     The matching immutable confirmation, or null when the context is incomplete or confirmation does not match its
+    ///     Plugin List Source.
     /// </returns>
     /// <exception cref="ArgumentException">The captured directory cannot identify a normalized Plugin List Source.</exception>
     /// <exception cref="ArgumentOutOfRangeException">The captured GameRelease is unsupported.</exception>
@@ -692,7 +694,7 @@ public sealed class UserWorkflow : IDisposable
     }
 
     /// <summary>
-    /// Creates one immutable Processing Run request, using a single confirmed Plugin List snapshot for Plugin runs.
+    ///     Creates one immutable Processing Run request, using a single confirmed Plugin List snapshot for Plugin runs.
     /// </summary>
     /// <param name="gameContext">The one authoritative Game Context captured for run creation.</param>
     /// <param name="formIdListPath">The captured optional FormID text-file path.</param>
@@ -747,15 +749,15 @@ public sealed class UserWorkflow : IDisposable
     }
 
     /// <summary>
-    /// Renders how the run ended and performs every ViewModel write that outcome implies.
+    ///     Renders how the run ended and performs every ViewModel write that outcome implies.
     /// </summary>
     /// <param name="outcome">The outcome returned by the Processing Run this workflow started.</param>
     /// <remarks>
-    /// <see cref="ProcessingRunPresentation" /> is a pure renderer, so the order the run's terminal facts reach the
-    /// user is decided here: the message lists first and the transient status last, matching the order the executor
-    /// reported them in before it stopped doing its own wording. An inactive projection means the outcome has nothing
-    /// to say on that channel — a cancelled run's acknowledgement is a terminal fact, and writing it here would only
-    /// have it erased by this method's caller as it hands the channel back (#60).
+    ///     <see cref="ProcessingRunPresentation" /> is a pure renderer, so the order the run's terminal facts reach the
+    ///     user is decided here: the message lists first and the transient status last, matching the order the executor
+    ///     reported them in before it stopped doing its own wording. An inactive projection means the outcome has nothing
+    ///     to say on that channel — a cancelled run's acknowledgement is a terminal fact, and writing it here would only
+    ///     have it erased by this method's caller as it hands the channel back (#60).
     /// </remarks>
     private void ApplyProcessingRunOutcome(ProcessingRunOutcome outcome)
     {
@@ -783,13 +785,13 @@ public sealed class UserWorkflow : IDisposable
     }
 
     /// <summary>
-    /// Renders one transient report from the run's progress channel and applies it.
+    ///     Renders one transient report from the run's progress channel and applies it.
     /// </summary>
     /// <param name="runProgress">What the run said it is doing.</param>
     /// <remarks>
-    /// A run reports transient progress here and nothing else: how it ended is rendered from the outcome it returns.
-    /// Applying the render through <see cref="ReportRunActivity" /> is what keeps a report arriving after the run has
-    /// ended off the channel, and what carries the last percentage forward for a report that implies no new one.
+    ///     A run reports transient progress here and nothing else: how it ended is rendered from the outcome it returns.
+    ///     Applying the render through <see cref="ReportRunActivity" /> is what keeps a report arriving after the run has
+    ///     ended off the channel, and what carries the last percentage forward for a report that implies no new one.
     /// </remarks>
     private void ApplyProcessingRunProgress(ProcessingRunProgress runProgress)
     {
@@ -798,7 +800,7 @@ public sealed class UserWorkflow : IDisposable
     }
 
     /// <summary>
-    /// Retains the complete User Workflow-owned Game Context as one immutable value.
+    ///     Retains the complete User Workflow-owned Game Context as one immutable value.
     /// </summary>
     /// <param name="SelectedGameRelease">The selected GameRelease, when one has been accepted.</param>
     /// <param name="SelectedGameDirectory">The selected domain directory, or null while the context is incomplete.</param>

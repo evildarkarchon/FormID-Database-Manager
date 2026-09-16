@@ -136,16 +136,18 @@ internal static class ProcessingRunPresentation
         var skippedPlugins = report.Outcomes.OfType<SkippedPlugin>().Count();
         var failedPlugins = failedDetails.Count;
 
-        ImmutableArray<string> warningMessages = warningDetails.Count == 0
+        var warningMessages = warningDetails.Count == 0
             ? ImmutableArray<string>.Empty
-            : [
+            :
+            [
                 FormatOutcomeDetails(
                     $"{warningDetails.Count} processing warning{(warningDetails.Count == 1 ? string.Empty : "s")}.",
                     warningDetails)
             ];
-        ImmutableArray<string> errorMessages = failedDetails.Count == 0
+        var errorMessages = failedDetails.Count == 0
             ? ImmutableArray<string>.Empty
-            : [
+            :
+            [
                 FormatOutcomeDetails(
                     $"{failedPlugins} failed plugin{(failedPlugins == 1 ? string.Empty : "s")}.",
                     failedDetails)
@@ -153,9 +155,11 @@ internal static class ProcessingRunPresentation
 
         // Failures outrank warnings in the completion status, because the count line has to name the worse of the two.
         var completionStatus = failedPlugins > 0
-            ? FormatCompletionStatus("Processing completed with failures", ingestedPlugins, skippedPlugins, failedPlugins)
+            ? FormatCompletionStatus("Processing completed with failures", ingestedPlugins, skippedPlugins,
+                failedPlugins)
             : warningDetails.Count > 0
-                ? FormatCompletionStatus("Processing completed with warnings", ingestedPlugins, skippedPlugins, failedPlugins)
+                ? FormatCompletionStatus("Processing completed with warnings", ingestedPlugins, skippedPlugins,
+                    failedPlugins)
                 : "Processing completed successfully!";
 
         return new RenderedRunReport(

@@ -1,5 +1,4 @@
 using System.Runtime.ExceptionServices;
-using Mutagen.Bethesda;
 using Mutagen.Bethesda.Plugins.Exceptions;
 using Mutagen.Bethesda.Plugins.Records;
 
@@ -506,7 +505,7 @@ internal sealed class PluginIngestion : IPluginIngestion
     /// <exception cref="OperationCanceledException">The exception chain contains cancellation.</exception>
     private static void RethrowNestedCancellation(Exception exception)
     {
-        for (Exception? current = exception; current is not null; current = current.InnerException)
+        for (var current = exception; current is not null; current = current.InnerException)
         {
             if (current is OperationCanceledException cancellation)
             {

@@ -106,74 +106,14 @@ public sealed class FormIdRecordStore : IFormIdRecordStoreSession
     private const string StagingTableName = "temp_formid_record_staging";
 
     private readonly SqliteConnection _connection;
-    private readonly string _tableName;
     private readonly List<(string PluginName, string FormId, string Entry)> _stagingBatch = new(TextStagingBatchSize);
+    private readonly string _tableName;
     private SqliteCommand? _stagingInsertCommand;
 
     private FormIdRecordStore(SqliteConnection connection, string tableName)
     {
         _connection = connection;
         _tableName = tableName;
-    }
-
-    /// <summary>
-    ///     Opens a ready run-scoped SQLite FormID Record Store for the specified database and GameRelease.
-    /// </summary>
-    /// <param name="databasePath">The SQLite database path.</param>
-    /// <param name="gameRelease">The GameRelease whose FormID table will be used.</param>
-    /// <param name="cancellationToken">Token to monitor for cancellation.</param>
-    /// <returns>
-    ///     A FormID Record Store whose owned connection, persisted schema, and temporary staging resources are ready
-    ///     for immediate use. The Store must be disposed after the processing run.
-    /// </returns>
-    /// <exception cref="ArgumentException">Thrown when <paramref name="databasePath"/> is blank.</exception>
-    /// <exception cref="ArgumentOutOfRangeException">
-    ///     Thrown when <paramref name="gameRelease"/> is not a Supported GameRelease.
-    /// </exception>
-    /// <exception cref="OperationCanceledException">Thrown when opening or preparation is cancelled.</exception>
-    /// <exception cref="SqliteException">Thrown when SQLite cannot configure or prepare the Store.</exception>
-    public static async Task<FormIdRecordStore> OpenAsync(
-        string databasePath,
-        GameRelease gameRelease,
-        CancellationToken cancellationToken = default)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(databasePath);
-
-        // Resolve the table name before opening a connection so unsupported releases fail through the whitelist seam.
-        var tableName = SupportedGameReleases.ForRelease(gameRelease).TableName;
-        var connection = new SqliteConnection(CreateConnectionString(databasePath));
-        FormIdRecordStore? store = null;
-
-        try
-        {
-            await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
-            await ConfigureConnectionAsync(connection, cancellationToken).ConfigureAwait(false);
-
-            store = new FormIdRecordStore(connection, tableName);
-            await PreparePersistedSchemaAsync(connection, tableName, cancellationToken).ConfigureAwait(false);
-            await store.CreateStagingTableAsync(cancellationToken).ConfigureAwait(false);
-            return store;
-        }
-        catch
-        {
-            try
-            {
-                if (store is not null)
-                {
-                    await store.DisposeAsync().ConfigureAwait(false);
-                }
-                else
-                {
-                    await connection.DisposeAsync().ConfigureAwait(false);
-                }
-            }
-            catch
-            {
-                // Failed-open cleanup must not replace the exception that explains why the Store could not open.
-            }
-
-            throw;
-        }
     }
 
     /// <summary>
@@ -287,6 +227,115 @@ public sealed class FormIdRecordStore : IFormIdRecordStoreSession
         // The completed import is reported as counts rather than a final progress message, so the caller that renders
         // the run's status decides how a finished import is worded.
         return new FormIdTextFileImportResult(processedPlugins.Count, recordCount);
+    }
+
+    /// <summary>
+    ///     Checkpoints the write-ahead log and updates SQLite query-planner statistics on the Store-owned connection.
+    /// </summary>
+    /// <param name="cancellationToken">Token to monitor for cancellation.</param>
+    /// <returns>A task that completes when checkpointing and optimization finish.</returns>
+    /// <exception cref="OperationCanceledException">Thrown when optimization is cancelled.</exception>
+    /// <exception cref="SqliteException">Thrown when SQLite cannot checkpoint or optimize the Store.</exception>
+    public async Task OptimizeAsync(CancellationToken cancellationToken = default)
+    {
+        await using var command = _connection.CreateCommand();
+        command.CommandText = "PRAGMA wal_checkpoint(TRUNCATE); PRAGMA optimize;";
+        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    ///     Releases the run-scoped SQLite connection and temporary staging resources on a best-effort basis without
+    ///     optimizing.
+    /// </summary>
+    /// <remarks>
+    ///     Cleanup failures are intentionally suppressed so disposal cannot replace the Processing Run outcome.
+    /// </remarks>
+    public async ValueTask DisposeAsync()
+    {
+        await DropStagingTableBestEffortAsync().ConfigureAwait(false);
+
+        if (_stagingInsertCommand is not null)
+        {
+            try
+            {
+                await _stagingInsertCommand.DisposeAsync().ConfigureAwait(false);
+            }
+            catch
+            {
+                // Temporary-command cleanup must not prevent the Store-owned connection from being released.
+            }
+
+            _stagingInsertCommand = null;
+        }
+
+        try
+        {
+            await _connection.DisposeAsync().ConfigureAwait(false);
+        }
+        catch
+        {
+            // Connection disposal is best-effort cleanup and must not replace the Processing Run outcome.
+        }
+    }
+
+    /// <summary>
+    ///     Opens a ready run-scoped SQLite FormID Record Store for the specified database and GameRelease.
+    /// </summary>
+    /// <param name="databasePath">The SQLite database path.</param>
+    /// <param name="gameRelease">The GameRelease whose FormID table will be used.</param>
+    /// <param name="cancellationToken">Token to monitor for cancellation.</param>
+    /// <returns>
+    ///     A FormID Record Store whose owned connection, persisted schema, and temporary staging resources are ready
+    ///     for immediate use. The Store must be disposed after the processing run.
+    /// </returns>
+    /// <exception cref="ArgumentException">Thrown when <paramref name="databasePath" /> is blank.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">
+    ///     Thrown when <paramref name="gameRelease" /> is not a Supported GameRelease.
+    /// </exception>
+    /// <exception cref="OperationCanceledException">Thrown when opening or preparation is cancelled.</exception>
+    /// <exception cref="SqliteException">Thrown when SQLite cannot configure or prepare the Store.</exception>
+    public static async Task<FormIdRecordStore> OpenAsync(
+        string databasePath,
+        GameRelease gameRelease,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(databasePath);
+
+        // Resolve the table name before opening a connection so unsupported releases fail through the whitelist seam.
+        var tableName = SupportedGameReleases.ForRelease(gameRelease).TableName;
+        var connection = new SqliteConnection(CreateConnectionString(databasePath));
+        FormIdRecordStore? store = null;
+
+        try
+        {
+            await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+            await ConfigureConnectionAsync(connection, cancellationToken).ConfigureAwait(false);
+
+            store = new FormIdRecordStore(connection, tableName);
+            await PreparePersistedSchemaAsync(connection, tableName, cancellationToken).ConfigureAwait(false);
+            await store.CreateStagingTableAsync(cancellationToken).ConfigureAwait(false);
+            return store;
+        }
+        catch
+        {
+            try
+            {
+                if (store is not null)
+                {
+                    await store.DisposeAsync().ConfigureAwait(false);
+                }
+                else
+                {
+                    await connection.DisposeAsync().ConfigureAwait(false);
+                }
+            }
+            catch
+            {
+                // Failed-open cleanup must not replace the exception that explains why the Store could not open.
+            }
+
+            throw;
+        }
     }
 
     /// <summary>
@@ -472,54 +521,6 @@ public sealed class FormIdRecordStore : IFormIdRecordStoreSession
         {
             _stagingBatch.Clear();
             await ClearStagingTableBestEffortAsync().ConfigureAwait(false);
-        }
-    }
-
-    /// <summary>
-    ///     Checkpoints the write-ahead log and updates SQLite query-planner statistics on the Store-owned connection.
-    /// </summary>
-    /// <param name="cancellationToken">Token to monitor for cancellation.</param>
-    /// <returns>A task that completes when checkpointing and optimization finish.</returns>
-    /// <exception cref="OperationCanceledException">Thrown when optimization is cancelled.</exception>
-    /// <exception cref="SqliteException">Thrown when SQLite cannot checkpoint or optimize the Store.</exception>
-    public async Task OptimizeAsync(CancellationToken cancellationToken = default)
-    {
-        await using var command = _connection.CreateCommand();
-        command.CommandText = "PRAGMA wal_checkpoint(TRUNCATE); PRAGMA optimize;";
-        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-    }
-
-    /// <summary>
-    ///     Releases the run-scoped SQLite connection and temporary staging resources on a best-effort basis without optimizing.
-    /// </summary>
-    /// <remarks>
-    ///     Cleanup failures are intentionally suppressed so disposal cannot replace the Processing Run outcome.
-    /// </remarks>
-    public async ValueTask DisposeAsync()
-    {
-        await DropStagingTableBestEffortAsync().ConfigureAwait(false);
-
-        if (_stagingInsertCommand is not null)
-        {
-            try
-            {
-                await _stagingInsertCommand.DisposeAsync().ConfigureAwait(false);
-            }
-            catch
-            {
-                // Temporary-command cleanup must not prevent the Store-owned connection from being released.
-            }
-
-            _stagingInsertCommand = null;
-        }
-
-        try
-        {
-            await _connection.DisposeAsync().ConfigureAwait(false);
-        }
-        catch
-        {
-            // Connection disposal is best-effort cleanup and must not replace the Processing Run outcome.
         }
     }
 

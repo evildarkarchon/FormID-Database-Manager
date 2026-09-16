@@ -9,37 +9,39 @@ namespace FormID_Database_Manager.ViewModels;
 
 public partial class MainWindowViewModel : ObservableObject
 {
+    private readonly ObservableCollection<string> _detectedDirectories = [];
     private readonly IThreadDispatcher _dispatcher;
-    private readonly Lock _messagesLock = new();
-    private bool _isApplyingGameContextProjection;
 
-    private bool _advancedMode;
+    private readonly ObservableCollection<PluginListItem> _filteredPlugins = [];
+    private readonly Lock _messagesLock = new();
+
+    private readonly ObservableCollection<PluginListItem> _plugins = [];
 
     [ObservableProperty] private string _databasePath = string.Empty;
 
-    private readonly ObservableCollection<string> _detectedDirectories = [];
+    /// <summary>
+    ///     Whether the next Processing Run should report what it would do instead of doing it.
+    /// </summary>
+    /// <remarks>
+    ///     Editable by the user like <see cref="UpdateMode" /> rather than projected like the Game Context values: it is
+    ///     an input to the next run, not a fact the User Workflow publishes about the current one.
+    /// </remarks>
+    [ObservableProperty] private bool _dryRun;
 
     [ObservableProperty] [NotifyPropertyChangedFor(nameof(HasErrorMessages))]
     private ObservableCollection<string> _errorMessages = [];
 
-    private readonly ObservableCollection<PluginListItem> _filteredPlugins = [];
+    private bool _filterSuspended;
 
     [ObservableProperty] private string _formIdListPath = string.Empty;
-
-    private string _gameDirectory = string.Empty;
 
     [ObservableProperty] [NotifyPropertyChangedFor(nameof(HasInformationMessages))]
     private ObservableCollection<string> _informationMessages = [];
 
-    [ObservableProperty] [NotifyPropertyChangedFor(nameof(HasWarningMessages))]
-    private ObservableCollection<string> _warningMessages = [];
-
-    private bool _filterSuspended;
     private int _isApplyingFilter;
+    private bool _isApplyingGameContextProjection;
 
     [ObservableProperty] private string _pluginFilter = string.Empty;
-
-    private readonly ObservableCollection<PluginListItem> _plugins = [];
 
     /// <summary>The Processing Run's Workflow Activity, written only by the User Workflow.</summary>
     private ActivityProjection _runActivity = ActivityProjection.None;
@@ -47,25 +49,17 @@ public partial class MainWindowViewModel : ObservableObject
     /// <summary>The Plugin List refresh's Workflow Activity, written only by the Plugin List Presentation Adapter.</summary>
     private ActivityProjection _scanActivity = ActivityProjection.None;
 
-    private GameRelease? _selectedGame;
-
     [ObservableProperty] private bool _updateMode;
 
-    /// <summary>
-    /// Whether the next Processing Run should report what it would do instead of doing it.
-    /// </summary>
-    /// <remarks>
-    /// Editable by the user like <see cref="UpdateMode" /> rather than projected like the Game Context values: it is
-    /// an input to the next run, not a fact the User Workflow publishes about the current one.
-    /// </remarks>
-    [ObservableProperty] private bool _dryRun;
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(HasWarningMessages))]
+    private ObservableCollection<string> _warningMessages = [];
 
     /// <summary>
-    /// Initializes the ViewModel around the dispatcher that owns every projection it publishes.
+    ///     Initializes the ViewModel around the dispatcher that owns every projection it publishes.
     /// </summary>
     /// <param name="dispatcher">
-    /// The dispatcher every projection marshals through. Required: a caller that could omit it would silently opt out
-    /// of the UI-thread marshalling invariant the projections depend on.
+    ///     The dispatcher every projection marshals through. Required: a caller that could omit it would silently opt out
+    ///     of the UI-thread marshalling invariant the projections depend on.
     /// </param>
     /// <exception cref="ArgumentNullException"><paramref name="dispatcher" /> is null.</exception>
     public MainWindowViewModel(IThreadDispatcher dispatcher)
@@ -96,33 +90,28 @@ public partial class MainWindowViewModel : ObservableObject
         _warningMessages.CollectionChanged += OnWarningMessagesCollectionChanged;
     }
 
-    private void OnPluginsCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
-    {
-        ApplyFilter();
-    }
-
     public IReadOnlyList<GameRelease> AvailableGames { get; }
 
     /// <summary>
-    /// Gets the read-only ordered projection of directories available for the current Game Context.
+    ///     Gets the read-only ordered projection of directories available for the current Game Context.
     /// </summary>
     /// <remarks>The observable collection identity is stable for the lifetime of this ViewModel.</remarks>
     public ReadOnlyObservableCollection<string> DetectedDirectories { get; }
 
     /// <summary>
-    /// Gets the projected Advanced Mode value.
+    ///     Gets the projected Advanced Mode value.
     /// </summary>
-    public bool AdvancedMode => _advancedMode;
+    public bool AdvancedMode { get; private set; }
 
     /// <summary>
-    /// Gets the projected game-directory presentation value.
+    ///     Gets the projected game-directory presentation value.
     /// </summary>
-    public string GameDirectory => _gameDirectory;
+    public string GameDirectory { get; private set; } = string.Empty;
 
     /// <summary>
-    /// Gets the projected GameRelease.
+    ///     Gets the projected GameRelease.
     /// </summary>
-    public GameRelease? SelectedGame => _selectedGame;
+    public GameRelease? SelectedGame { get; private set; }
 
     public bool IsGameSelected => SelectedGame.HasValue;
 
@@ -135,13 +124,13 @@ public partial class MainWindowViewModel : ObservableObject
     public bool HasWarningMessages => WarningMessages.Count > 0;
 
     /// <summary>
-    /// Gets the Workflow Activity that currently owns the progress channel.
+    ///     Gets the Workflow Activity that currently owns the progress channel.
     /// </summary>
     /// <remarks>
-    /// This is the precedence rule, and the only place it is stated: run activity owns the channel while it is active,
-    /// scan activity shows otherwise, and neither active shows nothing. Everything the channel presents is derived
-    /// from here, so changing which activity wins is one edit. The end-of-run fallback needs no special case — a run
-    /// clearing its activity simply stops winning, and a still-scanning refresh takes the channel back.
+    ///     This is the precedence rule, and the only place it is stated: run activity owns the channel while it is active,
+    ///     scan activity shows otherwise, and neither active shows nothing. Everything the channel presents is derived
+    ///     from here, so changing which activity wins is one edit. The end-of-run fallback needs no special case — a run
+    ///     clearing its activity simply stops winning, and a still-scanning refresh takes the channel back.
     /// </remarks>
     private ActivityProjection CurrentActivity => _runActivity.IsActive
         ? _runActivity
@@ -150,31 +139,47 @@ public partial class MainWindowViewModel : ObservableObject
             : ActivityProjection.None;
 
     /// <summary>
-    /// Gets the status text of the Workflow Activity that owns the progress channel.
+    ///     Gets the status text of the Workflow Activity that owns the progress channel.
     /// </summary>
     public string ProgressStatus => CurrentActivity.Status;
 
     /// <summary>
-    /// Gets the progress percentage of the Workflow Activity that owns the progress channel.
+    ///     Gets the progress percentage of the Workflow Activity that owns the progress channel.
     /// </summary>
     public double ProgressValue => CurrentActivity.Value;
 
     /// <summary>
-    /// Gets whether any Workflow Activity is currently reporting, so the progress row has something to show.
+    ///     Gets whether any Workflow Activity is currently reporting, so the progress row has something to show.
     /// </summary>
     public bool IsProgressVisible => CurrentActivity.IsActive;
 
     /// <summary>
-    /// Gets the process button caption for what pressing it will do.
+    ///     Gets the process button caption for what pressing it will do.
     /// </summary>
     /// <remarks>
-    /// Derived here rather than rendered by the reporting module because it comes from a single boolean. Status text
-    /// encodes domain detail such as phase and Plugin counts, which is why that stays with the module reporting it.
+    ///     Derived here rather than rendered by the reporting module because it comes from a single boolean. Status text
+    ///     encodes domain detail such as phase and Plugin counts, which is why that stays with the module reporting it.
     /// </remarks>
     public string ProcessButtonText => _runActivity.IsActive ? "Cancel Processing" : "Process FormIDs";
 
     /// <summary>
-    /// Projects the Processing Run's Workflow Activity through the dispatcher that owns this ViewModel.
+    ///     Gets the read-only Main Window projection published by the Plugin List presentation adapter.
+    /// </summary>
+    /// <remarks>The observable collection identity is stable for the lifetime of this ViewModel.</remarks>
+    public ReadOnlyObservableCollection<PluginListItem> Plugins { get; }
+
+    /// <summary>
+    ///     Gets the read-only filtered view of the current Plugin List projection.
+    /// </summary>
+    public ReadOnlyObservableCollection<PluginListItem> FilteredPlugins { get; }
+
+    private void OnPluginsCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        ApplyFilter();
+    }
+
+    /// <summary>
+    ///     Projects the Processing Run's Workflow Activity through the dispatcher that owns this ViewModel.
     /// </summary>
     /// <param name="runActivity">The User Workflow's complete already-rendered run report.</param>
     /// <remarks>The User Workflow is the only writer of this fact; nothing else may call this.</remarks>
@@ -192,7 +197,7 @@ public partial class MainWindowViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Projects the Plugin List refresh's Workflow Activity through the dispatcher that owns this ViewModel.
+    ///     Projects the Plugin List refresh's Workflow Activity through the dispatcher that owns this ViewModel.
     /// </summary>
     /// <param name="scanActivity">The Plugin List Presentation Adapter's complete already-rendered scan report.</param>
     /// <remarks>The Plugin List Presentation Adapter is the only writer of this fact; nothing else may call this.</remarks>
@@ -208,7 +213,7 @@ public partial class MainWindowViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Applies one run report and raises notifications only after the backing fact is current.
+    ///     Applies one run report and raises notifications only after the backing fact is current.
     /// </summary>
     /// <param name="runActivity">The complete run report to make authoritative.</param>
     private void ApplyRunActivityProjectionCore(ActivityProjection runActivity)
@@ -227,7 +232,7 @@ public partial class MainWindowViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Applies one scan report and raises notifications only after the backing fact is current.
+    ///     Applies one scan report and raises notifications only after the backing fact is current.
     /// </summary>
     /// <param name="scanActivity">The complete scan report to make authoritative.</param>
     private void ApplyScanActivityProjectionCore(ActivityProjection scanActivity)
@@ -241,12 +246,12 @@ public partial class MainWindowViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Raises a notification for each channel value the precedence rule now resolves differently.
+    ///     Raises a notification for each channel value the precedence rule now resolves differently.
     /// </summary>
     /// <param name="previousChannel">The activity that owned the channel before the applied projection.</param>
     /// <remarks>
-    /// Comparing resolved channel values rather than the projected fact is what makes the losing activity silent:
-    /// a refresh reporting underneath an active run changes no bound value, so no notification is raised at all.
+    ///     Comparing resolved channel values rather than the projected fact is what makes the losing activity silent:
+    ///     a refresh reporting underneath an active run changes no bound value, so no notification is raised at all.
     /// </remarks>
     private void RaiseChannelNotifications(ActivityProjection previousChannel)
     {
@@ -271,7 +276,7 @@ public partial class MainWindowViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Projects one complete Game Context through the dispatcher that owns this ViewModel.
+    ///     Projects one complete Game Context through the dispatcher that owns this ViewModel.
     /// </summary>
     /// <param name="selectedGame">The selected GameRelease, or null when no release is selected.</param>
     /// <param name="gameDirectory">The selected domain directory, or null when the context is incomplete.</param>
@@ -302,7 +307,7 @@ public partial class MainWindowViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Applies a materialized Game Context snapshot and raises notifications only after every field is current.
+    ///     Applies a materialized Game Context snapshot and raises notifications only after every field is current.
     /// </summary>
     /// <param name="selectedGame">The selected GameRelease, or null when no release is selected.</param>
     /// <param name="gameDirectory">The selected domain directory, or null when the context is incomplete.</param>
@@ -315,16 +320,16 @@ public partial class MainWindowViewModel : ObservableObject
         AdvancedMode advancedMode)
     {
         var presentationDirectory = gameDirectory ?? string.Empty;
-        var presentationAdvancedMode = advancedMode == FormID_Database_Manager.Services.AdvancedMode.On;
-        var selectedGameChanged = _selectedGame != selectedGame;
-        var gameDirectoryChanged = !string.Equals(_gameDirectory, presentationDirectory, StringComparison.Ordinal);
+        var presentationAdvancedMode = advancedMode == Services.AdvancedMode.On;
+        var selectedGameChanged = SelectedGame != selectedGame;
+        var gameDirectoryChanged = !string.Equals(GameDirectory, presentationDirectory, StringComparison.Ordinal);
         var availableDirectoriesChanged = !_detectedDirectories.SequenceEqual(availableDirectories);
-        var advancedModeChanged = _advancedMode != presentationAdvancedMode;
+        var advancedModeChanged = AdvancedMode != presentationAdvancedMode;
 
         // Update every backing value before notifications so observers always read one complete snapshot.
-        _selectedGame = selectedGame;
-        _gameDirectory = presentationDirectory;
-        _advancedMode = presentationAdvancedMode;
+        SelectedGame = selectedGame;
+        GameDirectory = presentationDirectory;
+        AdvancedMode = presentationAdvancedMode;
 
         if (availableDirectoriesChanged)
         {
@@ -361,17 +366,6 @@ public partial class MainWindowViewModel : ObservableObject
             OnPropertyChanged(nameof(AdvancedMode));
         }
     }
-
-    /// <summary>
-    ///     Gets the read-only Main Window projection published by the Plugin List presentation adapter.
-    /// </summary>
-    /// <remarks>The observable collection identity is stable for the lifetime of this ViewModel.</remarks>
-    public ReadOnlyObservableCollection<PluginListItem> Plugins { get; }
-
-    /// <summary>
-    ///     Gets the read-only filtered view of the current Plugin List projection.
-    /// </summary>
-    public ReadOnlyObservableCollection<PluginListItem> FilteredPlugins { get; }
 
     /// <summary>
     ///     Replaces projected Plugin items as one UI-dispatched membership update, then reapplies the current text filter.
@@ -599,5 +593,4 @@ public partial class MainWindowViewModel : ObservableObject
             }
         }
     }
-
 }

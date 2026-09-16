@@ -7,14 +7,14 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
-    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.10" />
-    <PackageReference Include="Mutagen.Bethesda" Version="0.53.1" />
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2"/>
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.10"/>
+    <PackageReference Include="Mutagen.Bethesda" Version="0.53.1"/>
   </ItemGroup>
 
   <ItemGroup>
-    <InternalsVisibleTo Include="FormID Database Manager.Tests" />
-    <InternalsVisibleTo Include="FormID Database Manager.WinUI" />
+    <InternalsVisibleTo Include="FormID Database Manager.Tests"/>
+    <InternalsVisibleTo Include="FormID Database Manager.WinUI"/>
   </ItemGroup>
 
 </Project>

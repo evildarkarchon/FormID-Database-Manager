@@ -132,6 +132,26 @@ internal sealed record PluginIngestionProgress
     }
 
     /// <summary>
+    ///     The active Plugin Ingestion stage.
+    /// </summary>
+    public PluginIngestionProgressStage Stage { get; }
+
+    /// <summary>
+    ///     The current selected Plugin, or <see langword="null" /> during preparation.
+    /// </summary>
+    public string? PluginName { get; }
+
+    /// <summary>
+    ///     The one-based selection position, or <see langword="null" /> during preparation.
+    /// </summary>
+    public int? PluginPosition { get; }
+
+    /// <summary>
+    ///     The total selected Plugin count.
+    /// </summary>
+    public int TotalPluginCount { get; }
+
+    /// <summary>
     ///     Creates load-order preparation progress for the captured selection.
     /// </summary>
     /// <param name="totalPluginCount">The positive selected Plugin count.</param>
@@ -178,26 +198,6 @@ internal sealed record PluginIngestionProgress
             pluginPosition,
             totalPluginCount);
     }
-
-    /// <summary>
-    ///     The active Plugin Ingestion stage.
-    /// </summary>
-    public PluginIngestionProgressStage Stage { get; }
-
-    /// <summary>
-    ///     The current selected Plugin, or <see langword="null" /> during preparation.
-    /// </summary>
-    public string? PluginName { get; }
-
-    /// <summary>
-    ///     The one-based selection position, or <see langword="null" /> during preparation.
-    /// </summary>
-    public int? PluginPosition { get; }
-
-    /// <summary>
-    ///     The total selected Plugin count.
-    /// </summary>
-    public int TotalPluginCount { get; }
 
     private static void EnsurePositiveTotal(int totalPluginCount)
     {
@@ -359,7 +359,8 @@ internal sealed record IngestedPlugin : PluginIngestionOutcome
     {
         if (formIdCount <= 0)
         {
-            throw new ArgumentOutOfRangeException(nameof(formIdCount), "An Ingested Plugin must store at least one FormID record.");
+            throw new ArgumentOutOfRangeException(nameof(formIdCount),
+                "An Ingested Plugin must store at least one FormID record.");
         }
 
         FormIdCount = formIdCount;
@@ -744,7 +745,8 @@ internal sealed record ProcessingWarning
     {
         if (totalIssueCount <= 0)
         {
-            throw new ArgumentOutOfRangeException(nameof(totalIssueCount), "A Processing Warning must represent at least one issue.");
+            throw new ArgumentOutOfRangeException(nameof(totalIssueCount),
+                "A Processing Warning must represent at least one issue.");
         }
 
         ArgumentNullException.ThrowIfNull(diagnosticDetails);
@@ -756,7 +758,8 @@ internal sealed record ProcessingWarning
 
         if (detailSnapshot.Length > totalIssueCount)
         {
-            throw new ArgumentException("Diagnostic detail count cannot exceed the total issue count.", nameof(diagnosticDetails));
+            throw new ArgumentException("Diagnostic detail count cannot exceed the total issue count.",
+                nameof(diagnosticDetails));
         }
 
         TotalIssueCount = totalIssueCount;

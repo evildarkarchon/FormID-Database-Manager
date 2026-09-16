@@ -1,40 +1,32 @@
-# Issue tracker: GitHub
+# Issue tracker: Local Markdown
 
-Issues and PRDs for this repo live as GitHub issues. Use the `gh` CLI for all operations.
-
-## Repository
-
-Primary tracker repository: `evildarkarchon/FormID-Database-Manager`.
-
-Infer the repo from `git remote -v` when running inside this clone; `gh` normally does this automatically.
+Issues, PRDs, and specs for this repo live as Markdown files in `.scratch/`.
+Local files are the request surface; external pull requests are not a triage surface.
 
 ## Conventions
 
-- **Create an issue**: `gh issue create --title "..." --body "..."`. Use a heredoc for multi-line bodies.
-- **Read an issue**: `gh issue view <number> --comments`, filtering comments by `jq` and also fetching labels when needed.
-- **List issues**: `gh issue list --state open --json number,title,body,labels,comments --jq '[.[] | {number, title, body, labels: [.labels[].name], comments: [.comments[].body]}]'` with appropriate `--label` and `--state` filters.
-- **Comment on an issue**: `gh issue comment <number> --body "..."`
-- **Apply or remove labels**: `gh issue edit <number> --add-label "..."` or `gh issue edit <number> --remove-label "..."`
-- **Close an issue**: `gh issue close <number> --comment "..."`
-
-## Pull requests as a triage surface
-
-**PRs as a request surface: no.**
-
-Do not pull external PRs into the `/triage` queue. Triage GitHub Issues only unless this file is updated.
-
-If this is changed to `yes` later, PRs should run through the same labels and states as issues, using the `gh pr` equivalents:
-
-- **Read a PR**: `gh pr view <number> --comments` and `gh pr diff <number>` for the diff.
-- **List external PRs for triage**: `gh pr list --state open --json number,title,body,labels,author,authorAssociation,comments`, then keep only `authorAssociation` values of `CONTRIBUTOR`, `FIRST_TIME_CONTRIBUTOR`, or `NONE`.
-- **Comment, label, or close**: `gh pr comment`, `gh pr edit --add-label` or `gh pr edit --remove-label`, and `gh pr close`.
-
-GitHub shares one number space across issues and PRs, so a bare `#42` may be either. Resolve with `gh pr view 42` and fall back to `gh issue view 42`.
+- One feature per directory: `.scratch/<feature-slug>/`
+- The spec is `.scratch/<feature-slug>/spec.md`
+- Implementation issues are one file per ticket at `.scratch/<feature-slug>/issues/<NN>-<slug>.md`, numbered from `01`, never a single combined tickets file
+- New implementation issues start with `Status: needs-triage`. Completed issues use `Status: resolved`; retain the file and append the completion note.
+- Triage state is recorded as a `Status:` line near the top of each issue file (see `triage-labels.md` for the role strings)
+- Comments and conversation history append to the bottom of the file under a `## Comments` heading
 
 ## When a skill says "publish to the issue tracker"
 
-Create a GitHub issue.
+Create `spec.md` for a PRD or spec, or a separate `issues/<NN>-<slug>.md` file for each implementation ticket under `.scratch/<feature-slug>/`, creating directories as needed.
 
 ## When a skill says "fetch the relevant ticket"
 
-Run `gh issue view <number> --comments`.
+Read the file at the referenced path, including its comments. Numbers are scoped to a feature directory; use the feature and number together, or the full path. If a bare number matches multiple features, ask which feature the user means.
+
+## Wayfinding operations
+
+Used by `/wayfinder`. The **map** is a file with one **child** file per ticket.
+
+- **Map**: `.scratch/<effort>/map.md` (the Notes / Decisions-so-far / Fog body).
+- **Child ticket**: `.scratch/<effort>/issues/NN-<slug>.md`, numbered from `01`, with the question in the body. A `Type:` line records the ticket type (`research`/`prototype`/`grilling`/`task`); a `Status:` line records `open`/`claimed`/`resolved`. New wayfinding tickets start as `open`; these exploration states are separate from implementation triage roles.
+- **Blocking**: a `Blocked by: NN, NN` line near the top. A ticket is unblocked when every file it lists is `resolved`.
+- **Frontier**: scan `.scratch/<effort>/issues/` for files that are open, unblocked, and unclaimed; first by number wins.
+- **Claim**: set `Status: claimed` and save before any work.
+- **Resolve**: append the answer under an `## Answer` heading, set `Status: resolved`, then append a context pointer (gist + link) to the map's Decisions-so-far in `map.md`.

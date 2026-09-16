@@ -201,7 +201,7 @@ internal sealed class EntryExtraction
     /// <exception cref="OperationCanceledException">The exception chain contains cancellation.</exception>
     private static void RethrowNestedCancellation(Exception exception)
     {
-        for (Exception? current = exception; current is not null; current = current.InnerException)
+        for (var current = exception; current is not null; current = current.InnerException)
         {
             if (current is OperationCanceledException cancellation)
             {

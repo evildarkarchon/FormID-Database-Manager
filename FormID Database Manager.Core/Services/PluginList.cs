@@ -13,10 +13,10 @@ internal sealed class PluginList : IDisposable
     private RefreshOperation? _activeRefresh;
     private long _activityRevision;
     private PluginListState _current = new PluginListNoSourceState(0, 0);
+    private int _disposed;
     private long _membershipVersion;
     private long _refreshGeneration;
     private long _stateRevision;
-    private int _disposed;
 
     /// <summary>
     ///     Creates a workflow-scoped Plugin List over the highest Game Load Orders seam.
@@ -33,15 +33,40 @@ internal sealed class PluginList : IDisposable
     }
 
     /// <summary>
+    ///     Gets the latest immutable Plugin List state.
+    /// </summary>
+    public PluginListState Current => Volatile.Read(ref _current);
+
+    /// <summary>
+    ///     Releases this workflow-scoped Plugin List. Disposal is idempotent.
+    /// </summary>
+    /// <exception cref="AggregateException">A registered refresh cancellation callback throws.</exception>
+    /// <remarks>Disposal prevents subsequent state publication but does not block waiting for synchronous discovery work.</remarks>
+    public void Dispose()
+    {
+        RefreshOperation? retired;
+        lock (_gate)
+        {
+            if (Volatile.Read(ref _disposed) != 0)
+            {
+                return;
+            }
+
+            Volatile.Write(ref _disposed, 1);
+            retired = _activeRefresh;
+            _activeRefresh = null;
+            _refreshGeneration++;
+        }
+
+        // Disposal only retires work; it deliberately does not publish another state during workflow shutdown.
+        retired?.Retire();
+    }
+
+    /// <summary>
     ///     Signals that consumers should read <see cref="Current" /> again.
     /// </summary>
     /// <remarks>Handlers run synchronously on the thread that publishes state; the event carries no state snapshot.</remarks>
     public event EventHandler? Changed;
-
-    /// <summary>
-    ///     Gets the latest immutable Plugin List state.
-    /// </summary>
-    public PluginListState Current => Volatile.Read(ref _current);
 
     /// <summary>
     ///     Loads and confirms a Plugin List from a normalized source.
@@ -79,7 +104,8 @@ internal sealed class PluginList : IDisposable
         ThrowIfDisposed();
         if (!Enum.IsDefined(advancedMode))
         {
-            throw new ArgumentOutOfRangeException(nameof(advancedMode), advancedMode, "Unsupported Advanced Mode value.");
+            throw new ArgumentOutOfRangeException(nameof(advancedMode), advancedMode,
+                "Unsupported Advanced Mode value.");
         }
 
         var source = PluginListSource.Create(gameRelease, gameDirectory);
@@ -174,9 +200,8 @@ internal sealed class PluginList : IDisposable
             retired = _activeRefresh;
             _activeRefresh = null;
             _refreshGeneration++;
-            changed = PublishActivityLocked(
-                (stateRevision, activityRevision) =>
-                    new PluginListNoSourceState(stateRevision, activityRevision));
+            changed = PublishActivityLocked((stateRevision, activityRevision) =>
+                new PluginListNoSourceState(stateRevision, activityRevision));
         }
 
         try
@@ -271,7 +296,8 @@ internal sealed class PluginList : IDisposable
                     return;
                 }
 
-                var selectedNames = new HashSet<string>(confirmed.SelectedPluginNames, StringComparer.OrdinalIgnoreCase);
+                var selectedNames =
+                    new HashSet<string>(confirmed.SelectedPluginNames, StringComparer.OrdinalIgnoreCase);
                 if (selectedNames.Contains(confirmedName) == intent.IsSelected)
                 {
                     return;
@@ -302,31 +328,6 @@ internal sealed class PluginList : IDisposable
     }
 
     /// <summary>
-    ///     Releases this workflow-scoped Plugin List. Disposal is idempotent.
-    /// </summary>
-    /// <exception cref="AggregateException">A registered refresh cancellation callback throws.</exception>
-    /// <remarks>Disposal prevents subsequent state publication but does not block waiting for synchronous discovery work.</remarks>
-    public void Dispose()
-    {
-        RefreshOperation? retired;
-        lock (_gate)
-        {
-            if (Volatile.Read(ref _disposed) != 0)
-            {
-                return;
-            }
-
-            Volatile.Write(ref _disposed, 1);
-            retired = _activeRefresh;
-            _activeRefresh = null;
-            _refreshGeneration++;
-        }
-
-        // Disposal only retires work; it deliberately does not publish another state during workflow shutdown.
-        retired?.Retire();
-    }
-
-    /// <summary>
     ///     Installs the next refresh generation and synchronously exposes its source-aware refreshing state.
     /// </summary>
     /// <param name="source">The normalized Plugin List Source being refreshed.</param>
@@ -346,15 +347,14 @@ internal sealed class PluginList : IDisposable
             var currentConfirmed = _current.Confirmed;
             // The last confirmed membership remains coherent only when the normalized Plugin List Source is unchanged.
             var retainedConfirmed = currentConfirmed?.Source == source ? currentConfirmed : null;
-            changed = PublishActivityLocked(
-                (stateRevision, activityRevision) =>
-                    new PluginListRefreshingState(
-                        stateRevision,
-                        activityRevision,
-                        source,
-                        retainedConfirmed,
-                        0,
-                        0));
+            changed = PublishActivityLocked((stateRevision, activityRevision) =>
+                new PluginListRefreshingState(
+                    stateRevision,
+                    activityRevision,
+                    source,
+                    retainedConfirmed,
+                    0,
+                    0));
         }
 
         try
@@ -449,9 +449,8 @@ internal sealed class PluginList : IDisposable
                 confirmedEntries,
                 selectedNames);
             _activeRefresh = null;
-            changed = PublishActivityLocked(
-                (stateRevision, activityRevision) =>
-                    new PluginListReadyState(stateRevision, activityRevision, confirmed));
+            changed = PublishActivityLocked((stateRevision, activityRevision) =>
+                new PluginListReadyState(stateRevision, activityRevision, confirmed));
         }
 
         changed?.Invoke(this, EventArgs.Empty);
@@ -548,9 +547,8 @@ internal sealed class PluginList : IDisposable
 
             var retainedConfirmed = _current.Confirmed?.Source == operation.Source ? _current.Confirmed : null;
             _activeRefresh = null;
-            changed = PublishActivityLocked(
-                (stateRevision, activityRevision) =>
-                    createState(stateRevision, activityRevision, retainedConfirmed));
+            changed = PublishActivityLocked((stateRevision, activityRevision) =>
+                createState(stateRevision, activityRevision, retainedConfirmed));
         }
 
         changed?.Invoke(this, EventArgs.Empty);
@@ -572,15 +570,14 @@ internal sealed class PluginList : IDisposable
             }
 
             var retainedConfirmed = _current.Confirmed;
-            changed = PublishActivityLocked(
-                (stateRevision, activityRevision) =>
-                    new PluginListRefreshingState(
-                        stateRevision,
-                        activityRevision,
-                        operation.Source,
-                        retainedConfirmed,
-                        progress.ScannedCount,
-                        progress.TotalCount));
+            changed = PublishActivityLocked((stateRevision, activityRevision) =>
+                new PluginListRefreshingState(
+                    stateRevision,
+                    activityRevision,
+                    operation.Source,
+                    retainedConfirmed,
+                    progress.ScannedCount,
+                    progress.TotalCount));
         }
 
         changed?.Invoke(this, EventArgs.Empty);
@@ -723,6 +720,31 @@ internal sealed class PluginList : IDisposable
         public CancellationToken RetirementToken => _retirement.Token;
 
         /// <summary>
+        ///     Releases the retirement source immediately or defers release until in-progress cancellation returns.
+        /// </summary>
+        public void Dispose()
+        {
+            lock (_lifetimeGate)
+            {
+                if (_lifetimeState == RefreshLifetimeState.Disposed)
+                {
+                    return;
+                }
+
+                if (_lifetimeState is RefreshLifetimeState.Retiring or RefreshLifetimeState.DisposeRequested)
+                {
+                    // Cancellation can run task continuations inline, so disposal must wait until Cancel has unwound.
+                    _lifetimeState = RefreshLifetimeState.DisposeRequested;
+                    return;
+                }
+
+                _lifetimeState = RefreshLifetimeState.Disposed;
+            }
+
+            _retirement.Dispose();
+        }
+
+        /// <summary>
         ///     Requests cooperative retirement while coordinating with completion that can dispose concurrently.
         /// </summary>
         /// <exception cref="AggregateException">One or more registered cancellation callbacks throw.</exception>
@@ -763,31 +785,6 @@ internal sealed class PluginList : IDisposable
                     _retirement.Dispose();
                 }
             }
-        }
-
-        /// <summary>
-        ///     Releases the retirement source immediately or defers release until in-progress cancellation returns.
-        /// </summary>
-        public void Dispose()
-        {
-            lock (_lifetimeGate)
-            {
-                if (_lifetimeState == RefreshLifetimeState.Disposed)
-                {
-                    return;
-                }
-
-                if (_lifetimeState is RefreshLifetimeState.Retiring or RefreshLifetimeState.DisposeRequested)
-                {
-                    // Cancellation can run task continuations inline, so disposal must wait until Cancel has unwound.
-                    _lifetimeState = RefreshLifetimeState.DisposeRequested;
-                    return;
-                }
-
-                _lifetimeState = RefreshLifetimeState.Disposed;
-            }
-
-            _retirement.Dispose();
         }
 
         private enum RefreshLifetimeState

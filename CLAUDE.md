@@ -129,6 +129,17 @@ a mixed working tree is not a problem worth fixing.
   submodule is read-only reference material; the app references Mutagen via NuGet, not the submodule.
 - **Domain model and decisions**: `CONTEXT.md` is the root of the single-context layout; architectural
   decisions live under `docs/adr/`. See `docs/agents/domain.md`.
-- **Issue tracking**: work and PRDs are GitHub Issues in `evildarkarchon/FormID-Database-Manager`. External
-  pull requests are not a triage surface. See `docs/agents/issue-tracker.md` and
-  `docs/agents/triage-labels.md` for the canonical triage labels.
+
+## Agent skills
+
+### Issue tracker
+
+For issue and PRD work, use local Markdown under `.scratch/<feature>/`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+For triage, use the five canonical roles as local ticket status values. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Before domain work, read the single-context `CONTEXT.md` and relevant `docs/adr/` files. See `docs/agents/domain.md`.

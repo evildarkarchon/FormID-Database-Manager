@@ -8,7 +8,7 @@ internal static class DefaultDatabasePathProvider
     private const string DatabaseDirectoryName = "Databases";
 
     /// <summary>
-    /// Creates the default database path under the current user's local application data directory.
+    ///     Creates the default database path under the current user's local application data directory.
     /// </summary>
     /// <param name="gameRelease">The selected game release used to choose the safe database filename.</param>
     /// <returns>The full path to a generated database file whose containing directory already exists.</returns>
@@ -27,7 +27,7 @@ internal static class DefaultDatabasePathProvider
     }
 
     /// <summary>
-    /// Creates the default database path under the supplied local application data root.
+    ///     Creates the default database path under the supplied local application data root.
     /// </summary>
     /// <param name="gameRelease">The selected game release used to choose the safe database filename.</param>
     /// <param name="localApplicationDataRoot">The user-writable local application data root to contain generated databases.</param>
