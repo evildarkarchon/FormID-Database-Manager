@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Diagnostics.CodeAnalysis;
 using System.Runtime.ExceptionServices;
 using FormID_Database_Manager.ViewModels;
 using Mutagen.Bethesda;
@@ -284,6 +285,7 @@ public sealed class UserWorkflow : IDisposable
     /// </summary>
     /// <returns>A task that completes after processing starts, finishes, fails, or observes cancellation.</returns>
     /// <remarks>
+    ///     Inputs are fixed when this workflow accepts the run, before any startup notification can edit them.
     ///     How the run ended — cancelled or failed — is reported to the message lists, never to the progress channel,
     ///     because this method's own cleanup hands that channel back as soon as the run ends.
     /// </remarks>
@@ -291,7 +293,7 @@ public sealed class UserWorkflow : IDisposable
     {
         // The run-active check and the transition into an active run happen together, so a second press arriving
         // before validation finishes cancels the run in flight rather than starting another one.
-        if (!TryBeginRunActivity())
+        if (!TryBeginRunActivity(out var inputs))
         {
             // "Cancelling..." is what the run is doing now, not how it ended, so it belongs on the transient channel:
             // it is deliberately not the acknowledgement, which the cancellation handler below writes instead (#60).
@@ -305,35 +307,7 @@ public sealed class UserWorkflow : IDisposable
 
         try
         {
-            // Projection notifications are reentrant, so every validation and source check for this run must use
-            // the same authoritative Game Context even if a new user intent is accepted before request creation ends.
-            var gameContext = _gameContext;
-            if (gameContext.SelectedGameRelease is not { } gameRelease)
-            {
-                _viewModel.AddErrorMessage("Please select a game from the dropdown first.");
-                return;
-            }
-
-            var formIdListPath = _viewModel.FormIdListPath;
-            var confirmedPluginList = string.IsNullOrWhiteSpace(formIdListPath)
-                ? GetConfirmedPluginListFor(gameContext)
-                : null;
-            var databasePath = _viewModel.DatabasePath;
-
-            // A dry run opens no FormID Record Store, so it neither needs a database path nor gets to choose one on
-            // the user's behalf: defaulting here would leave a path they never picked in the box after a run that
-            // deliberately wrote nothing.
-            if (string.IsNullOrEmpty(databasePath) && !_viewModel.DryRun)
-            {
-                databasePath = DefaultDatabasePathProvider.CreateDefaultDatabasePath(gameRelease);
-                _viewModel.DatabasePath = databasePath;
-            }
-
-            var request = CreateProcessingRunRequest(
-                gameContext,
-                formIdListPath,
-                databasePath,
-                confirmedPluginList);
+            var request = CreateProcessingRunRequest(inputs);
             var progress = new ProcessingRunProgressAdapter(ApplyProcessingRunProgress);
 
             var outcome = await _processingRunExecutor.ExecuteAsync(request, progress);
@@ -358,21 +332,34 @@ public sealed class UserWorkflow : IDisposable
     }
 
     /// <summary>
-    ///     Makes this workflow the owner of an active Processing Run, unless one is already active.
+    ///     Accepts a Processing Run and captures its inputs before publishing activity, unless one is already active.
     /// </summary>
+    /// <param name="inputs">The immutable accepted inputs, or null when the press requests cancellation instead.</param>
     /// <returns>
     ///     <see langword="true" /> when the caller now owns a new run, <see langword="false" /> when one is already
     ///     active.
     /// </returns>
-    private bool TryBeginRunActivity()
+    /// <remarks>Capture and activity publication share the run gate; validation remains with request creation.</remarks>
+    private bool TryBeginRunActivity([NotNullWhen(true)] out ProcessingRunInputs? inputs)
     {
         lock (_runActivityLock)
         {
             if (_runActivity.IsActive)
             {
+                inputs = null;
                 return false;
             }
 
+            // Both activity and message-list notifications can re-enter the workflow. Capture every input before
+            // either is published so later edits belong to the next run, including changes to the Plugin List source.
+            // Capture raw confirmation here; source normalization can throw and belongs in request validation.
+            inputs = new ProcessingRunInputs(
+                _gameContext,
+                _pluginList.Current.Confirmed,
+                _viewModel.FormIdListPath,
+                _viewModel.DatabasePath,
+                _viewModel.UpdateMode ? UpdateMode.ReplacePluginRecords : UpdateMode.Append,
+                _viewModel.DryRun);
             ProjectRunActivityLocked(new ActivityProjection(true, "Initializing...", 0));
             return true;
         }
@@ -670,16 +657,19 @@ public sealed class UserWorkflow : IDisposable
     }
 
     /// <summary>
-    ///     Captures confirmation only when it belongs to the authoritative Plugin List Source for this Processing Run.
+    ///     Accepts captured confirmation only when it belongs to the captured Plugin List Source for this Processing Run.
     /// </summary>
     /// <param name="gameContext">The one authoritative Game Context captured for run creation.</param>
+    /// <param name="confirmedPluginList">The immutable confirmation captured with that Game Context.</param>
     /// <returns>
     ///     The matching immutable confirmation, or null when the context is incomplete or confirmation does not match its
     ///     Plugin List Source.
     /// </returns>
     /// <exception cref="ArgumentException">The captured directory cannot identify a normalized Plugin List Source.</exception>
     /// <exception cref="ArgumentOutOfRangeException">The captured GameRelease is unsupported.</exception>
-    private ConfirmedPluginList? GetConfirmedPluginListFor(GameContextSnapshot gameContext)
+    private static ConfirmedPluginList? GetConfirmedPluginListFor(
+        GameContextSnapshot gameContext,
+        ConfirmedPluginList? confirmedPluginList)
     {
         if (gameContext.SelectedGameRelease is not { } gameRelease ||
             gameContext.SelectedGameDirectory is not { } gameDirectory ||
@@ -689,31 +679,42 @@ public sealed class UserWorkflow : IDisposable
         }
 
         var expectedSource = PluginListSource.Create(gameRelease, gameDirectory);
-        var confirmedPluginList = _pluginList.Current.Confirmed;
         return confirmedPluginList?.Source == expectedSource ? confirmedPluginList : null;
     }
 
     /// <summary>
-    ///     Creates one immutable Processing Run request, using a single confirmed Plugin List snapshot for Plugin runs.
+    ///     Resolves defaults and validates one Processing Run request solely from the inputs accepted at run start.
     /// </summary>
-    /// <param name="gameContext">The one authoritative Game Context captured for run creation.</param>
-    /// <param name="formIdListPath">The captured optional FormID text-file path.</param>
-    /// <param name="databasePath">The resolved Store path for the run.</param>
-    /// <param name="confirmedPluginList">The one captured confirmation for a Plugin run, when available.</param>
+    /// <param name="inputs">The immutable capture taken before startup notifications.</param>
     /// <returns>A validated immutable Processing Run request.</returns>
-    /// <exception cref="InvalidOperationException">The captured Game Context has no selected GameRelease.</exception>
     /// <exception cref="ProcessingRunValidationException">The captured request facts do not define a valid Processing Run.</exception>
-    private ProcessingRunRequest CreateProcessingRunRequest(
-        GameContextSnapshot gameContext,
-        string formIdListPath,
-        string databasePath,
-        ConfirmedPluginList? confirmedPluginList)
+    /// <remarks>Publishes a default path before request validation only when no newer path edit would be overwritten.</remarks>
+    private ProcessingRunRequest CreateProcessingRunRequest(ProcessingRunInputs inputs)
     {
+        var gameContext = inputs.GameContext;
         var selectedGameRelease = gameContext.SelectedGameRelease ??
-                                  throw new InvalidOperationException(
-                                      "Processing Run creation requires an authoritative GameRelease.");
-        var updateMode = _viewModel.UpdateMode ? UpdateMode.ReplacePluginRecords : UpdateMode.Append;
-        var dryRun = _viewModel.DryRun;
+                                  throw new ProcessingRunValidationException(
+                                      "Please select a game from the dropdown first.");
+        var formIdListPath = inputs.FormIdListPath;
+        var confirmedPluginList = string.IsNullOrWhiteSpace(formIdListPath)
+            ? GetConfirmedPluginListFor(gameContext, inputs.ConfirmedPluginList)
+            : null;
+        var databasePath = inputs.DatabasePath;
+        var updateMode = inputs.UpdateMode;
+        var dryRun = inputs.DryRun;
+
+        // A dry run opens no FormID Record Store, so it neither needs a database path nor gets to choose one on
+        // the user's behalf: defaulting here would leave a path they never picked in the box after a run that
+        // deliberately wrote nothing.
+        if (string.IsNullOrEmpty(databasePath) && !dryRun)
+        {
+            databasePath = DefaultDatabasePathProvider.CreateDefaultDatabasePath(selectedGameRelease);
+            // The accepted run still uses its default, but a reentrant edit must survive for the next run.
+            if (string.Equals(_viewModel.DatabasePath, inputs.DatabasePath, StringComparison.Ordinal))
+            {
+                _viewModel.DatabasePath = databasePath;
+            }
+        }
 
         if (!string.IsNullOrWhiteSpace(formIdListPath))
         {
@@ -811,6 +812,23 @@ public sealed class UserWorkflow : IDisposable
         string? SelectedGameDirectory,
         ImmutableArray<string> AvailableDirectories,
         AdvancedMode AdvancedMode);
+
+    /// <summary>
+    ///     Retains unvalidated inputs for one accepted run independently of subsequent presentation notifications.
+    /// </summary>
+    /// <param name="GameContext">The authoritative Game Context at acceptance.</param>
+    /// <param name="ConfirmedPluginList">The immutable confirmation to match against that context during validation.</param>
+    /// <param name="FormIdListPath">The optional FormID text path, which selects the request kind.</param>
+    /// <param name="DatabasePath">The chosen Store path before default resolution.</param>
+    /// <param name="UpdateMode">The accepted Store update behavior.</param>
+    /// <param name="DryRun">Whether the accepted run only produces a plan.</param>
+    private sealed record ProcessingRunInputs(
+        GameContextSnapshot GameContext,
+        ConfirmedPluginList? ConfirmedPluginList,
+        string FormIdListPath,
+        string DatabasePath,
+        UpdateMode UpdateMode,
+        bool DryRun);
 
     private sealed class ProcessingRunProgressAdapter(Action<ProcessingRunProgress> handler)
         : IProgress<ProcessingRunProgress>

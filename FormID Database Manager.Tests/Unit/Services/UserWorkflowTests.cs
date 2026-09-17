@@ -1054,6 +1054,205 @@ public class UserWorkflowTests
         Assert.Equal(["User.esp"], run.PluginNames);
     }
 
+    /// <summary>
+    /// Verifies that startup notifications cannot change the accepted run, but edits remain available to the next run.
+    /// </summary>
+    /// <param name="notification">The startup notification that edits the run inputs.</param>
+    [Theory]
+    [InlineData("Initializing")]
+    [InlineData("Errors")]
+    [InlineData("Warnings")]
+    public async Task ProcessFormIdsAsync_StartupNotificationEditsInputs_UsesCapturedInputsUntilNextRun(
+        string notification)
+    {
+        var sut = CreateSut();
+        await ConfigureValidPluginProcessingRunAsync(sut);
+        var edited = false;
+
+        void EditInputs()
+        {
+            if (edited)
+            {
+                return;
+            }
+
+            edited = true;
+            sut.SelectNoPlugins();
+            _viewModel.FormIdListPath = FormIdListPath;
+            _viewModel.DatabasePath = @"C:\Databases\next.db";
+            _viewModel.UpdateMode = true;
+            _viewModel.DryRun = true;
+        }
+
+        if (notification == "Initializing")
+        {
+            OnRunStatus("Initializing...", EditInputs);
+        }
+        else if (notification == "Errors")
+        {
+            _viewModel.ErrorMessages.CollectionChanged += (_, _) => EditInputs();
+        }
+        else
+        {
+            _viewModel.WarningMessages.CollectionChanged += (_, _) => EditInputs();
+        }
+
+        await sut.ProcessFormIdsAsync();
+
+        Assert.True(edited);
+        var first = Assert.IsType<PluginProcessingRunRequest>(Assert.Single(_processingRuns));
+        Assert.Equal(["User.esp"], first.PluginNames);
+        Assert.Equal(DatabasePath, first.DatabasePath);
+        Assert.Equal(UpdateMode.Append, first.UpdateMode);
+        Assert.False(first.DryRun);
+
+        await sut.ProcessFormIdsAsync();
+
+        Assert.Equal(2, _processingRuns.Count);
+        var next = Assert.IsType<FormIdTextProcessingRunRequest>(_processingRuns[1]);
+        Assert.Equal(FormIdListPath, next.FormIdListPath);
+        Assert.Equal(@"C:\Databases\next.db", next.DatabasePath);
+        Assert.Equal(UpdateMode.ReplacePluginRecords, next.UpdateMode);
+        Assert.True(next.DryRun);
+    }
+
+    /// <summary>
+    /// Verifies that a release change during initialization cannot invalidate the selection already accepted for a run.
+    /// </summary>
+    [Fact]
+    public async Task ProcessFormIdsAsync_InitializingChangesGameContext_UsesCapturedSourceAndSelection()
+    {
+        var sut = CreateSut();
+        await ConfigureValidPluginProcessingRunAsync(sut);
+        OnRunStatus("Initializing...", () => sut.SelectGameReleaseAsync(null).GetAwaiter().GetResult());
+
+        await sut.ProcessFormIdsAsync();
+
+        var run = Assert.IsType<PluginProcessingRunRequest>(Assert.Single(_processingRuns));
+        Assert.Equal(GameRelease.SkyrimSE, run.GameRelease);
+        Assert.Equal(Path.Combine(GameDirectory, "Data"), run.GameDirectory);
+        Assert.Equal(["User.esp"], run.PluginNames);
+        Assert.Null(_viewModel.SelectedGame);
+        Assert.Empty(_viewModel.ErrorMessages);
+    }
+
+    /// <summary>
+    /// Verifies that text-run input capture preserves both its path and Dry Run decision across initialization.
+    /// </summary>
+    [Fact]
+    public async Task ProcessFormIdsAsync_InitializingEditsTextDryRun_UsesCapturedPathWithoutDefaulting()
+    {
+        var sut = CreateSut();
+        await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
+        _viewModel.FormIdListPath = FormIdListPath;
+        _viewModel.DryRun = true;
+        OnRunStatus("Initializing...", () =>
+        {
+            _viewModel.FormIdListPath = @"C:\Lists\next.txt";
+            _viewModel.DryRun = false;
+        });
+
+        await sut.ProcessFormIdsAsync();
+
+        var run = Assert.IsType<FormIdTextProcessingRunRequest>(Assert.Single(_processingRuns));
+        Assert.Equal(FormIdListPath, run.FormIdListPath);
+        Assert.True(run.DryRun);
+        Assert.Empty(run.DatabasePath);
+        Assert.Empty(_viewModel.DatabasePath);
+    }
+
+    /// <summary>
+    /// Verifies that default-path publication cannot alter the modes used to create either kind of accepted request.
+    /// </summary>
+    /// <param name="textRun">Whether the accepted run imports a FormID text file.</param>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ProcessFormIdsAsync_DefaultPathNotificationEditsModes_UsesCapturedModes(bool textRun)
+    {
+        var sut = CreateSut();
+        await ConfigureValidPluginProcessingRunAsync(sut);
+        _viewModel.DatabasePath = string.Empty;
+        _viewModel.FormIdListPath = textRun ? FormIdListPath : string.Empty;
+        _viewModel.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(MainWindowViewModel.DatabasePath))
+            {
+                _viewModel.UpdateMode = true;
+                _viewModel.DryRun = true;
+            }
+        };
+
+        await sut.ProcessFormIdsAsync();
+
+        var run = Assert.Single(_processingRuns);
+        Assert.Equal(textRun, run is FormIdTextProcessingRunRequest);
+        Assert.Equal(UpdateMode.Append, run.UpdateMode);
+        Assert.False(run.DryRun);
+        Assert.Equal("SkyrimSE.db", Path.GetFileName(run.DatabasePath));
+        Assert.Equal(run.DatabasePath, _viewModel.DatabasePath);
+    }
+
+    /// <summary>
+    /// Verifies that a default chosen for the accepted run does not overwrite a later database-path edit.
+    /// </summary>
+    /// <param name="hasSelection">Whether request validation will accept the captured Plugin selection.</param>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ProcessFormIdsAsync_InitializingEditsEmptyDatabasePath_PreservesEdit(bool hasSelection)
+    {
+        var sut = CreateSut();
+        var confirmed = await ConfirmPluginListAsync(sut, ["User.esp"]);
+        sut.SetPluginSelection(confirmed.MembershipVersion, "User.esp", hasSelection);
+        OnRunStatus("Initializing...", () => _viewModel.DatabasePath = DatabasePath);
+
+        await sut.ProcessFormIdsAsync();
+
+        Assert.Equal(DatabasePath, _viewModel.DatabasePath);
+        if (hasSelection)
+        {
+            Assert.Equal("SkyrimSE.db", Path.GetFileName(Assert.Single(_processingRuns).DatabasePath));
+        }
+        else
+        {
+            Assert.Empty(_processingRuns);
+            Assert.Contains("No plugins selected", _viewModel.ErrorMessages);
+        }
+    }
+
+    /// <summary>
+    /// Verifies that an invalid selection still displays the default database path before reporting validation failure.
+    /// </summary>
+    [Fact]
+    public async Task ProcessFormIdsAsync_EmptySelectionAndDatabasePath_DisplaysDefaultBeforeValidationFailure()
+    {
+        var sut = CreateSut();
+        await ConfirmPluginListAsync(sut, ["User.esp"]);
+
+        await sut.ProcessFormIdsAsync();
+
+        Assert.Empty(_processingRuns);
+        Assert.Equal("SkyrimSE.db", Path.GetFileName(_viewModel.DatabasePath));
+        Assert.Contains("No plugins selected", _viewModel.ErrorMessages);
+    }
+
+    /// <summary>
+    /// Verifies that a second press during the first startup notification requests cancellation without accepting another run.
+    /// </summary>
+    [Fact]
+    public async Task ProcessFormIdsAsync_PressedDuringInitializing_RequestsCancellationWithoutSecondRun()
+    {
+        var sut = CreateSut();
+        await ConfigureValidPluginProcessingRunAsync(sut);
+        OnRunStatus("Initializing...", () => sut.ProcessFormIdsAsync().GetAwaiter().GetResult());
+
+        await sut.ProcessFormIdsAsync();
+
+        Assert.Single(_processingRuns);
+        Assert.Equal(1, _processingRunExecutor.CancelCallCount);
+    }
+
     [Fact]
     public async Task ProcessFormIdsAsync_UpdateModeOn_CreatesReplaceModeRunRequest()
     {
