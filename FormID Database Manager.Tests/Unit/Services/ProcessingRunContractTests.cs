@@ -30,6 +30,79 @@ public sealed class ProcessingRunContractTests
     private const string DatabasePath = @"C:\Databases\formids.db";
 
     /// <summary>
+    ///     Pins the first reported failure when paths and selections contain competing invalid inputs.
+    /// </summary>
+    [Theory]
+    [InlineData("", "", false, null, "Database path must be specified")]
+    [InlineData("", "", true, null, "Game directory must be specified when processing plugins")]
+    [InlineData("", DatabasePath, false, new string[0], "Game directory must be specified when processing plugins")]
+    [InlineData(GameDirectory, DatabasePath, false, new[] { "Same.esp", "SAME.ESP", " " }, "Plugin name must be specified")]
+    public void PluginProcessingRunRequest_MultipleInvalidInputs_PreservesValidationPrecedence(
+        string gameDirectory, string databasePath, bool dryRun, string[]? pluginNames, string expectedMessage)
+    {
+        var exception = Assert.Throws<ProcessingRunValidationException>(() =>
+            new PluginProcessingRunRequest(gameDirectory, databasePath, GameRelease.SkyrimSE,
+                pluginNames!, UpdateMode.Append, dryRun));
+
+        Assert.Equal(expectedMessage, exception.Message);
+    }
+
+    /// <summary>
+    ///     Keeps a null selection distinct from a malformed selection after valid paths have been checked.
+    /// </summary>
+    [Fact]
+    public void PluginProcessingRunRequest_NullSelection_ThrowsArgumentNullException()
+    {
+        var exception = Assert.Throws<ArgumentNullException>(() =>
+            new PluginProcessingRunRequest(GameDirectory, DatabasePath, GameRelease.SkyrimSE,
+                null!, UpdateMode.Append));
+
+        Assert.Equal("pluginNames", exception.ParamName);
+    }
+
+    /// <summary>
+    ///     Allows explicit Dry Run facts without a Store path or a Confirmed Plugin List.
+    /// </summary>
+    [Fact]
+    public void PluginProcessingRunRequest_DryRunWithoutStorePath_PreservesExplicitFacts()
+    {
+        var request = new PluginProcessingRunRequest(GameDirectory, "", GameRelease.SkyrimSE,
+            ["SECOND.esp", "first.ESP"], UpdateMode.ReplacePluginRecords, dryRun: true);
+
+        Assert.Equal(GameDirectory, request.GameDirectory);
+        Assert.Equal("", request.DatabasePath);
+        Assert.Equal(GameRelease.SkyrimSE, request.GameRelease);
+        Assert.Equal(UpdateMode.ReplacePluginRecords, request.UpdateMode);
+        Assert.True(request.DryRun);
+        Assert.Equal(["SECOND.esp", "first.ESP"], request.PluginNames);
+    }
+
+    /// <summary>
+    ///     Prevents deferred enumeration or writable collection exposure from changing an accepted selection.
+    /// </summary>
+    [Fact]
+    public void PluginProcessingRunRequest_LazySelection_CapturesOnceAndRejectsMutation()
+    {
+        var enumerationCount = 0;
+        var request = new PluginProcessingRunRequest(GameDirectory, DatabasePath, GameRelease.SkyrimSE,
+            EnumerateNames(), UpdateMode.Append);
+
+        Assert.Equal(1, enumerationCount);
+        var names = Assert.IsAssignableFrom<IList<string>>(request.PluginNames);
+        Assert.Throws<NotSupportedException>(() => names[0] = "Changed.esp");
+        Assert.Equal(["SECOND.esp", "first.ESP"], request.PluginNames);
+        Assert.Equal(1, enumerationCount);
+
+        // The count exposes any second traversal of the caller-owned sequence.
+        IEnumerable<string> EnumerateNames()
+        {
+            enumerationCount++;
+            yield return "SECOND.esp";
+            yield return "first.ESP";
+        }
+    }
+
+    /// <summary>
     ///     Verifies the validation message a Plugin request raises when it is given no game directory.
     /// </summary>
     [Fact]

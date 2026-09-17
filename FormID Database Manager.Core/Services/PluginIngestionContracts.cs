@@ -1,5 +1,4 @@
 using System.Collections.Immutable;
-using Mutagen.Bethesda;
 
 namespace FormID_Database_Manager.Services;
 
@@ -208,58 +207,6 @@ internal sealed record PluginIngestionProgress
                 "Plugin Ingestion progress requires at least one selected Plugin.");
         }
     }
-}
-
-/// <summary>
-///     Captures the complete selected-Plugin input for one Plugin Ingestion operation.
-/// </summary>
-internal sealed record SelectedPluginIngestionRequest
-{
-    /// <summary>
-    ///     Creates an immutable snapshot of the selected Plugins and their execution order.
-    /// </summary>
-    /// <param name="gameDirectory">The selected game root or Data directory.</param>
-    /// <param name="gameRelease">The GameRelease whose Plugin rules apply.</param>
-    /// <param name="pluginNames">The selected Plugin names in execution order.</param>
-    /// <param name="updateMode">The Store update behavior for Ingested Plugins.</param>
-    /// <exception cref="ArgumentNullException"><paramref name="pluginNames" /> is <see langword="null" />.</exception>
-    /// <exception cref="ArgumentException">
-    ///     The game directory or a Plugin name is blank, the selection is empty, or Plugin names are duplicated.
-    /// </exception>
-    public SelectedPluginIngestionRequest(
-        string gameDirectory,
-        GameRelease gameRelease,
-        IEnumerable<string> pluginNames,
-        UpdateMode updateMode)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(gameDirectory);
-        ArgumentNullException.ThrowIfNull(pluginNames);
-
-        GameDirectory = gameDirectory;
-        GameRelease = gameRelease;
-        PluginNames = PluginSelectionSnapshot.Capture(pluginNames);
-        UpdateMode = updateMode;
-    }
-
-    /// <summary>
-    ///     The selected game root or Data directory.
-    /// </summary>
-    public string GameDirectory { get; }
-
-    /// <summary>
-    ///     The GameRelease whose Plugin rules apply.
-    /// </summary>
-    public GameRelease GameRelease { get; }
-
-    /// <summary>
-    ///     The immutable selected Plugin names in execution order.
-    /// </summary>
-    public ImmutableArray<string> PluginNames { get; }
-
-    /// <summary>
-    ///     The Store update behavior for Ingested Plugins.
-    /// </summary>
-    public UpdateMode UpdateMode { get; }
 }
 
 /// <summary>
@@ -794,41 +741,4 @@ internal sealed record ProcessingWarning
     ///     The number of issues not represented by retained diagnostic details.
     /// </summary>
     public int OmittedDetailCount => TotalIssueCount - DiagnosticDetails.Length;
-}
-
-/// <summary>
-///     Captures and validates the Plugin selection shared by public Processing Run and internal ingestion requests.
-/// </summary>
-internal static class PluginSelectionSnapshot
-{
-    /// <summary>
-    ///     Copies Plugin names while enforcing the selection invariants required before Store opening.
-    /// </summary>
-    /// <param name="pluginNames">The selected Plugin names in execution order.</param>
-    /// <returns>An immutable selection snapshot.</returns>
-    /// <exception cref="ArgumentNullException"><paramref name="pluginNames" /> is <see langword="null" />.</exception>
-    /// <exception cref="ArgumentException">The selection is empty, contains a blank name, or contains a duplicate.</exception>
-    internal static ImmutableArray<string> Capture(IEnumerable<string> pluginNames)
-    {
-        ArgumentNullException.ThrowIfNull(pluginNames);
-
-        var snapshot = ImmutableArray.CreateRange(pluginNames);
-        if (snapshot.IsEmpty)
-        {
-            throw new ArgumentException("No plugins selected");
-        }
-
-        if (snapshot.Any(string.IsNullOrWhiteSpace))
-        {
-            throw new ArgumentException("Plugin name must be specified");
-        }
-
-        // Plugin selection identity is case-insensitive so casing variants cannot write the same Plugin twice.
-        if (snapshot.Distinct(StringComparer.OrdinalIgnoreCase).Count() != snapshot.Length)
-        {
-            throw new ArgumentException("Plugin names must be unique");
-        }
-
-        return snapshot;
-    }
 }

@@ -245,52 +245,6 @@ public sealed class PluginIngestionContractTests
     }
 
     [Fact]
-    public void SelectionRequest_CallerMutatesSource_PreservesCapturedOrder()
-    {
-        var pluginNames = new List<string> { "First.esp", "Second.esp" };
-        var request = new SelectedPluginIngestionRequest(
-            @"C:\Games\Skyrim",
-            GameRelease.SkyrimSE,
-            pluginNames,
-            UpdateMode.Append);
-
-        pluginNames[0] = "Changed.esp";
-        pluginNames.Reverse();
-
-        Assert.Equal(["First.esp", "Second.esp"], request.PluginNames);
-    }
-
-    [Fact]
-    public void SelectionRequest_EmptySelection_ThrowsArgumentException()
-    {
-        Assert.Throws<ArgumentException>(() => new SelectedPluginIngestionRequest(
-            @"C:\Games\Skyrim",
-            GameRelease.SkyrimSE,
-            [],
-            UpdateMode.Append));
-    }
-
-    [Fact]
-    public void SelectionRequest_BlankPluginName_ThrowsArgumentException()
-    {
-        Assert.Throws<ArgumentException>(() => new SelectedPluginIngestionRequest(
-            @"C:\Games\Skyrim",
-            GameRelease.SkyrimSE,
-            ["First.esp", " "],
-            UpdateMode.Append));
-    }
-
-    [Fact]
-    public void SelectionRequest_CaseInsensitiveDuplicateNames_ThrowsArgumentException()
-    {
-        Assert.Throws<ArgumentException>(() => new SelectedPluginIngestionRequest(
-            @"C:\Games\Skyrim",
-            GameRelease.SkyrimSE,
-            ["Duplicate.esp", "DUPLICATE.ESP"],
-            UpdateMode.Append));
-    }
-
-    [Fact]
     public void PluginOutcomes_ValidFacts_PreserveTypedClassificationAndBoundedDiagnostics()
     {
         var diagnosticDetails = new List<string>

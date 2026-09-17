@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using Mutagen.Bethesda;
 
 namespace FormID_Database_Manager.Services;
@@ -160,11 +161,11 @@ public sealed record PluginProcessingRunRequest : ProcessingRunRequest
 
         try
         {
-            PluginNames = PluginSelectionSnapshot.Capture(pluginNames);
+            PluginNames = CapturePluginNames(pluginNames);
         }
         catch (ArgumentException ex)
         {
-            // Public requests translate internal selection invariants into the Processing Run validation contract.
+            // Keep selection and enumeration argument failures on the Processing Run validation contract.
             throw new ProcessingRunValidationException(ex.Message);
         }
 
@@ -180,6 +181,37 @@ public sealed record PluginProcessingRunRequest : ProcessingRunRequest
     ///     The selected Plugin names captured at run start.
     /// </summary>
     public IReadOnlyList<string> PluginNames { get; }
+
+    /// <summary>
+    ///     Copies Plugin names while enforcing the selection invariants required before Store opening.
+    /// </summary>
+    /// <param name="pluginNames">The selected Plugin names in execution order.</param>
+    /// <returns>An immutable selection snapshot.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="pluginNames" /> is <see langword="null" />.</exception>
+    /// <exception cref="ArgumentException">The selection is empty, contains a blank name, or contains a duplicate.</exception>
+    private static ImmutableArray<string> CapturePluginNames(IEnumerable<string> pluginNames)
+    {
+        ArgumentNullException.ThrowIfNull(pluginNames);
+
+        var snapshot = ImmutableArray.CreateRange(pluginNames);
+        if (snapshot.IsEmpty)
+        {
+            throw new ArgumentException("No plugins selected");
+        }
+
+        if (snapshot.Any(string.IsNullOrWhiteSpace))
+        {
+            throw new ArgumentException("Plugin name must be specified");
+        }
+
+        // Plugin selection identity is case-insensitive so casing variants cannot write the same Plugin twice.
+        if (snapshot.Distinct(StringComparer.OrdinalIgnoreCase).Count() != snapshot.Length)
+        {
+            throw new ArgumentException("Plugin names must be unique");
+        }
+
+        return snapshot;
+    }
 }
 
 /// <summary>

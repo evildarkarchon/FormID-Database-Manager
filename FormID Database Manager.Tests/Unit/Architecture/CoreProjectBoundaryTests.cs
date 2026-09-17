@@ -366,6 +366,31 @@ public class CoreProjectBoundaryTests
     }
 
     /// <summary>
+    ///     Prevents a second selected-Plugin authority or standalone capture module from returning.
+    /// </summary>
+    [Theory]
+    [InlineData("SelectedPluginIngestionRequest")]
+    [InlineData("PluginSelectionSnapshot")]
+    public void CoreAssembly_SelectedPluginAuthority_ContainsNoRetiredType(string retiredTypeName)
+    {
+        Assert.DoesNotContain(typeof(PluginProcessingRunRequest).Assembly.GetTypes(),
+            type => type.Name == retiredTypeName);
+    }
+
+    /// <summary>
+    ///     Keeps both ingestion operations on the public request and prevents the retired executor mapper returning.
+    /// </summary>
+    [Fact]
+    public void ProcessingRunExecutor_SelectedPluginAuthority_HasNoRequestMapper()
+    {
+        Assert.All(typeof(IPluginIngestion).GetMethods(), method =>
+            Assert.Equal(typeof(PluginProcessingRunRequest), method.GetParameters()[0].ParameterType));
+        Assert.DoesNotContain(typeof(ProcessingRunExecutor).GetMethods(
+                BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic),
+            method => method.Name == "CreateIngestionRequest");
+    }
+
+    /// <summary>
     ///     Verifies production exposes one authoritative Plugin List path and only a read-only presentation projection.
     /// </summary>
     [Fact]
