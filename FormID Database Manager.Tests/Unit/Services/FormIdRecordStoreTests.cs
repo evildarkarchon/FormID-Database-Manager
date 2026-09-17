@@ -687,15 +687,18 @@ public sealed class FormIdRecordStoreTests : IDisposable
         Assert.Equal(new FormIdTextFileImportResult(1, totalRecords), result);
 
         // The opening report counts nothing and names no Plugin; every report carries the file's total size.
-        Assert.Equal(new FormIdStoreProgress(0, 0, totalBytes, null), progressReports[0]);
+        Assert.Equal(new FormIdStoreCounterUpdate(0, 0, totalBytes), progressReports[0]);
         Assert.All(progressReports, report => Assert.Equal(totalBytes, report.TotalBytes));
 
         // One report for the first record's newly seen Plugin, then one for every thousandth record.
         Assert.Equal(
             [0L, 1L, 1000L, 2000L],
             progressReports.Select(report => report.RecordCount).ToArray());
-        List<string?> expectedPlugins = [null, "Plugin.esp", "Plugin.esp", "Plugin.esp"];
-        Assert.Equal(expectedPlugins, progressReports.Select(report => report.MostRecentPlugin).ToList());
+        Assert.Collection(progressReports,
+            report => Assert.IsType<FormIdStoreCounterUpdate>(report),
+            report => Assert.Equal("Plugin.esp", Assert.IsType<FormIdStorePluginFirstEncountered>(report).PluginName),
+            report => Assert.IsType<FormIdStoreCounterUpdate>(report),
+            report => Assert.IsType<FormIdStoreCounterUpdate>(report));
 
         var byteCounts = progressReports.Select(report => report.BytesRead).ToArray();
         Assert.All(byteCounts, value => Assert.InRange(value, 0L, totalBytes));
@@ -816,8 +819,9 @@ public sealed class FormIdRecordStoreTests : IDisposable
             "most_recent_plugin.txt",
             [
                 "First.esp|000001|FirstEntry",
-                "First.esp|000002|SecondEntry",
-                "Second.esp|000003|ThirdEntry"
+                "FIRST.ESP|000002|SecondEntry",
+                "Second.esp|000003|ThirdEntry",
+                "first.esp|000004|FourthEntry"
             ]);
         var progressReports = new List<FormIdStoreProgress>();
         var progress = new SynchronousProgress<FormIdStoreProgress>(progressReports.Add);
@@ -829,9 +833,11 @@ public sealed class FormIdRecordStoreTests : IDisposable
             progress,
             TestContext.Current.CancellationToken);
 
-        Assert.Equal(new FormIdTextFileImportResult(2, 3), result);
-        List<string?> expectedPlugins = [null, "First.esp", "Second.esp"];
-        Assert.Equal(expectedPlugins, progressReports.Select(report => report.MostRecentPlugin).ToList());
+        Assert.Equal(new FormIdTextFileImportResult(2, 4), result);
+        Assert.Collection(progressReports,
+            report => Assert.IsType<FormIdStoreCounterUpdate>(report),
+            report => Assert.Equal("First.esp", Assert.IsType<FormIdStorePluginFirstEncountered>(report).PluginName),
+            report => Assert.Equal("Second.esp", Assert.IsType<FormIdStorePluginFirstEncountered>(report).PluginName));
         Assert.Equal(
             [0L, 1L, 3L],
             progressReports.Select(report => report.RecordCount).ToArray());
@@ -839,13 +845,11 @@ public sealed class FormIdRecordStoreTests : IDisposable
 
     /// <summary>
     ///     Verifies that when a Plugin's first row lands exactly on a progress interval, the Store reports the interval
-    ///     under the Plugin it was still reading, and only then reports the newly seen one.
+    ///     as a counter update, and only then reports the newly seen Plugin.
     /// </summary>
     /// <remarks>
-    ///     This pins an ordering contract a caller depends on to tell the two kinds of report apart: because the most
-    ///     recently seen Plugin advances only after the interval report is out, a changed name always means "newly
-    ///     seen" and never an interval report that happens to be the first row of the next Plugin. Swapping the two
-    ///     reports would reorder what the user sees on this one collision, which no other test exercises.
+    ///     The two facts have identical counters but distinct meanings. Swapping or collapsing them would change
+    ///     what the user sees on this collision, even though callers no longer infer meaning from prior reports.
     /// </remarks>
     [Fact]
     public async Task ImportFormIdTextFileAsync_NewPluginOnAProgressInterval_ReportsTheIntervalBeforeThePlugin()
@@ -871,8 +875,13 @@ public sealed class FormIdRecordStoreTests : IDisposable
         Assert.Equal(
             [0L, 1L, intervalRecord, intervalRecord],
             progressReports.Select(report => report.RecordCount).ToArray());
-        List<string?> expectedPlugins = [null, "First.esp", "First.esp", "Second.esp"];
-        Assert.Equal(expectedPlugins, progressReports.Select(report => report.MostRecentPlugin).ToList());
+        Assert.Collection(progressReports,
+            report => Assert.IsType<FormIdStoreCounterUpdate>(report),
+            report => Assert.Equal("First.esp", Assert.IsType<FormIdStorePluginFirstEncountered>(report).PluginName),
+            report => Assert.IsType<FormIdStoreCounterUpdate>(report),
+            report => Assert.Equal("Second.esp", Assert.IsType<FormIdStorePluginFirstEncountered>(report).PluginName));
+        Assert.Equal(progressReports[2].BytesRead, progressReports[3].BytesRead);
+        Assert.Equal(progressReports[2].TotalBytes, progressReports[3].TotalBytes);
     }
 
     /// <summary>

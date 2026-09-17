@@ -33,12 +33,28 @@ cancelled — because the report a Plugin run carries is what distinguishes the 
 Transient progress is `ProcessingRunProgress`, a vocabulary the run defines for itself rather than one borrowed from a
 collaborator: Plugin Ingestion's stage enum and the FormID Record Store's counters are both translated into it, so the
 run says what it is doing in terms of its own work rather than in terms of whichever collaborator happens to be doing
-it. `FormIdStoreProgress` was retyped to counters and a most-recently-seen Plugin for the same reason, so the Store
-stops making presentation decisions.
+it. `FormIdStoreProgress` reports Store facts without making presentation decisions.
 
 `ProcessingRunPresentation` is the one module that turns either of those into wording. It is `internal static`, is
 called rather than subscribed to, and holds no state. `ProcessingRun.cs` now contains no user-facing sentence at all,
 which an architecture test enforces by pinning the retired ones by name.
+
+### FormID text file progress representation (2026-09-16)
+
+The original counters-and-most-recently-seen-Plugin representation required the Processing Run to remember and compare
+Plugin names to reconstruct what the Store meant. Replace it directly with a public abstract record whose derivation
+is closed to the assembly and whose two cases are internal: `FormIdStoreCounterUpdate` and
+`FormIdStorePluginFirstEncountered`. Both carry `RecordCount`, `BytesRead`, and `TotalBytes`; the first-encounter case
+also carries `PluginName`. No compatibility adapter retains the ambiguous representation.
+
+The Store owns case-insensitive Plugin identity and reports the first encounter before staging that Plugin's first
+record. It emits a counter update initially with zero records and at the existing periodic intervals. If a periodic
+counter update and a first encounter coincide, the counter update comes first. These facts preserve the existing
+report timing and ordering; a first encounter does not claim that a Plugin's records have been committed.
+
+The Processing Run translates each report independently, with no remembered Plugin name. It retains the Update Mode
+policy: first-encounter reports name Plugins in Update Mode and are suppressed in append mode. Counter updates are
+translated in both modes. Processing Run Presentation remains unchanged, preserving the existing wording.
 
 ## Cancellation is a value; failure is not
 

@@ -356,7 +356,7 @@ public sealed class ProcessingRunExecutor : IProcessingRunExecutor
     {
         return progress is null
             ? null
-            : new ProjectedProgress<FormIdStoreProgress>(progress, CreateFormIdTextImportProjection(updateMode));
+            : new ProjectedProgress<FormIdStoreProgress>(progress, value => ProjectFormIdTextImport(value, updateMode));
     }
 
     /// <summary>
@@ -403,44 +403,31 @@ public sealed class ProcessingRunExecutor : IProcessingRunExecutor
     }
 
     /// <summary>
-    ///     Creates the projection that restates one import's Store counters as the run's own progress.
+    ///     Restates one Store fact as the run's own progress without remembering previous reports.
     /// </summary>
+    /// <param name="value">The counter update or Plugin first-encounter fact supplied by the Store.</param>
     /// <param name="updateMode">The run's update mode, which decides whether a newly seen Plugin is named.</param>
-    /// <returns>A projection that returns null for the reports this run chooses not to show at all.</returns>
-    /// <remarks>
-    ///     The projection is stateful, and has to be: the Store's percentage reports and its newly seen Plugin reports
-    ///     are the same shape, and only the remembered previous name tells them apart. It needs no synchronization
-    ///     under its contract — one projection serves one import, whose single reading loop is its only caller — and a
-    ///     caller that fanned reports out across threads would break the ordering this reads meaning from anyway.
-    /// </remarks>
-    private static Func<FormIdStoreProgress, ProcessingRunProgress?> CreateFormIdTextImportProjection(
+    /// <returns>The run report, or null for a Plugin announcement suppressed in append mode.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="value" /> is null.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">The Store report case is unsupported.</exception>
+    private static ProcessingRunProgress? ProjectFormIdTextImport(
+        FormIdStoreProgress value,
         UpdateMode updateMode)
     {
-        string? mostRecentPlugin = null;
+        ArgumentNullException.ThrowIfNull(value);
 
-        return value =>
+        return value switch
         {
             // There is deliberately no case for the report that opens an import: a Store report of no records that
             // names no new Plugin already *is* that report, and saying so is the renderer's decision to make. Adding
             // a branch here that produced the same value would only let the two disagree about what opens an import.
-
-            // The Store advances the most recently seen Plugin only on a Plugin's first row, so a changed name is
-            // exactly a newly seen Plugin and never a record-count report that happens to carry the same name. The
-            // comparison matches the Store's own case-insensitive Plugin identity, because this reconstructs the
-            // decision the Store already made: the two must not disagree about what counts as the same Plugin.
-            if (value.MostRecentPlugin is { } pluginName &&
-                !string.Equals(pluginName, mostRecentPlugin, StringComparison.OrdinalIgnoreCase))
-            {
-                mostRecentPlugin = pluginName;
-
-                // Naming a Plugin is the run's decision, not the Store's. An appending run has never named one, so it
-                // drops the report entirely rather than gaining status updates it does not show today.
-                return updateMode == UpdateMode.ReplacePluginRecords
-                    ? new ImportingFormIdText(value.RecordCount, value.BytesRead, value.TotalBytes, pluginName)
-                    : null;
-            }
-
-            return new ImportingFormIdText(value.RecordCount, value.BytesRead, value.TotalBytes, null);
+            FormIdStoreCounterUpdate => new ImportingFormIdText(value.RecordCount, value.BytesRead, value.TotalBytes, null),
+            // Naming a Plugin is the run's decision, not the Store's. An appending run has never named one, so it
+            // drops the report entirely rather than gaining status updates it does not show today.
+            FormIdStorePluginFirstEncountered plugin => updateMode == UpdateMode.ReplacePluginRecords
+                ? new ImportingFormIdText(value.RecordCount, value.BytesRead, value.TotalBytes, plugin.PluginName)
+                : null,
+            _ => throw new ArgumentOutOfRangeException(nameof(value), value, "Unsupported Store progress case.")
         };
     }
 

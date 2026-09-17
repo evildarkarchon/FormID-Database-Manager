@@ -58,25 +58,62 @@ public sealed record FormIdRecordQuery
 }
 
 /// <summary>
-///     Progress reported while importing a FormID text file, as counters and the Plugin most recently seen.
+///     A counter update or a Plugin first-encounter fact reported while importing a FormID text file.
 /// </summary>
 /// <remarks>
 ///     The Store reports facts and never words: there is no message and no percentage here, because how far along a
 ///     percentage makes the run look, and whether the Plugin is worth naming at all, are presentation decisions that
 ///     belong to whoever renders these counters.
+///     Derivation is closed to this assembly; the base is public because the Store's import operation is public.
 /// </remarks>
+public abstract record FormIdStoreProgress
+{
+    /// <summary>
+    ///     Captures the import counters shared by both report cases; they describe reading, not committed records.
+    /// </summary>
+    /// <param name="recordCount">The number of valid FormID text rows counted so far.</param>
+    /// <param name="bytesRead">How far into the file the reader has pulled, in bytes.</param>
+    /// <param name="totalBytes">The total size of the FormID text file, in bytes.</param>
+    private protected FormIdStoreProgress(long recordCount, long bytesRead, long totalBytes)
+    {
+        RecordCount = recordCount;
+        BytesRead = bytesRead;
+        TotalBytes = totalBytes;
+    }
+
+    /// <summary>The number of valid FormID text rows counted so far.</summary>
+    public long RecordCount { get; init; }
+
+    /// <summary>How far into the file the reader has pulled, in bytes.</summary>
+    public long BytesRead { get; init; }
+
+    /// <summary>The total size of the FormID text file, in bytes.</summary>
+    public long TotalBytes { get; init; }
+}
+
+/// <summary>
+///     The initial zero-count report or a periodic counter update, without a Plugin announcement.
+/// </summary>
 /// <param name="RecordCount">The number of valid FormID text rows counted so far.</param>
 /// <param name="BytesRead">How far into the file the reader has pulled, in bytes.</param>
 /// <param name="TotalBytes">The total size of the FormID text file, in bytes.</param>
-/// <param name="MostRecentPlugin">
-///     The Plugin most recently encountered for the first time, or <see langword="null" /> before the import has seen
-///     any Plugin at all.
-/// </param>
-public readonly record struct FormIdStoreProgress(
+internal sealed record FormIdStoreCounterUpdate(
+    long RecordCount,
+    long BytesRead,
+    long TotalBytes) : FormIdStoreProgress(RecordCount, BytesRead, TotalBytes);
+
+/// <summary>
+///     A Plugin's first valid row, matched case-insensitively and reported before that row is staged.
+/// </summary>
+/// <param name="RecordCount">The number of valid FormID text rows counted so far.</param>
+/// <param name="BytesRead">How far into the file the reader has pulled, in bytes.</param>
+/// <param name="TotalBytes">The total size of the FormID text file, in bytes.</param>
+/// <param name="PluginName">The Plugin name with the casing of its first valid row.</param>
+internal sealed record FormIdStorePluginFirstEncountered(
     long RecordCount,
     long BytesRead,
     long TotalBytes,
-    string? MostRecentPlugin);
+    string PluginName) : FormIdStoreProgress(RecordCount, BytesRead, TotalBytes);
 
 /// <summary>
 ///     Result of importing a FormID text file into the store.
@@ -143,7 +180,7 @@ public sealed class FormIdRecordStore : IFormIdRecordStoreSession
     /// <param name="formIdTextFilePath">The FormID text file to import.</param>
     /// <param name="updateMode">Controls whether rows are appended or replace existing rows for each encountered Plugin.</param>
     /// <param name="progress">
-    ///     Optional reporter for import counters and the most recently seen Plugin. The Store reports every Plugin the
+    ///     Optional reporter for counter updates and Plugin first-encounter facts. The Store reports every Plugin the
     ///     first time it sees it; whether that Plugin should be shown to the user is the caller's decision.
     /// </param>
     /// <param name="cancellationToken">Token to monitor for cancellation.</param>
@@ -158,13 +195,12 @@ public sealed class FormIdRecordStore : IFormIdRecordStoreSession
 
         var processedPlugins = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var recordCount = 0;
-        string? mostRecentPlugin = null;
 
         // Use stream position for progress tracking; it avoids per-line UTF-8 byte counting on large files.
         var fileInfo = new FileInfo(formIdTextFilePath);
         var totalBytes = fileInfo.Length;
 
-        progress?.Report(new FormIdStoreProgress(0, 0, totalBytes, mostRecentPlugin));
+        progress?.Report(new FormIdStoreCounterUpdate(0, 0, totalBytes));
 
         await using var stream =
             new FileStream(formIdTextFilePath, FileMode.Open, FileAccess.Read, FileShare.Read, 81920);
@@ -198,16 +234,14 @@ public sealed class FormIdRecordStore : IFormIdRecordStoreSession
 
                 if (recordCount % TextProgressInterval == 0)
                 {
-                    progress?.Report(new FormIdStoreProgress(recordCount, bytesRead, totalBytes, mostRecentPlugin));
+                    // A coincident first encounter follows this report, preserving the order the user sees.
+                    progress?.Report(new FormIdStoreCounterUpdate(recordCount, bytesRead, totalBytes));
                 }
 
                 if (processedPlugins.Add(pluginName))
                 {
-                    // The most recently seen Plugin advances only here, on a Plugin's first row, so a caller can read
-                    // a changed name as "newly seen" without the Store having to say so. There is deliberately no
-                    // update-mode branch: whether a newly seen Plugin is worth showing is not the Store's decision.
-                    mostRecentPlugin = pluginName;
-                    progress?.Report(new FormIdStoreProgress(recordCount, bytesRead, totalBytes, mostRecentPlugin));
+                    // Report the fact in both modes: whether to show a Plugin announcement belongs to the run.
+                    progress?.Report(new FormIdStorePluginFirstEncountered(recordCount, bytesRead, totalBytes, pluginName));
                 }
 
                 await StageTextRecordAsync(pluginName, formId, entry, cancellationToken).ConfigureAwait(false);

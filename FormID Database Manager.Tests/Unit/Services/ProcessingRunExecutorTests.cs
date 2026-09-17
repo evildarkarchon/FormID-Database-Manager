@@ -290,28 +290,38 @@ public sealed class ProcessingRunExecutorTests : IDisposable
     }
 
     /// <summary>
-    ///     Verifies that a Plugin the Store reports twice is named once: the second report is a record count that
-    ///     happens to carry the same name, not a newly seen Plugin.
+    ///     Verifies that a counter update following a first-encounter fact reports file progress without naming a Plugin.
     /// </summary>
-    [Fact]
-    public async Task ExecuteAsync_FormIdTextRunSeeingTheSamePluginTwice_NamesItOnlyOnTheFirstReport()
+    /// <param name="updateMode">The mode controlling whether the preceding Plugin announcement is shown.</param>
+    [Theory]
+    [InlineData(UpdateMode.Append)]
+    [InlineData(UpdateMode.ReplacePluginRecords)]
+    public async Task ExecuteAsync_FormIdTextRunCounterAfterFirstEncounter_ReportsCountersWithoutNamingAPlugin(
+        UpdateMode updateMode)
     {
         var reports = await ExecuteTextRunWithStoreProgressAsync(
-            UpdateMode.ReplacePluginRecords,
+            updateMode,
             [
-                new FormIdStoreProgress(0, 0, 64, null),
-                new FormIdStoreProgress(1, 16, 64, "PluginA.esp"),
-                new FormIdStoreProgress(500, 32, 64, "PluginA.esp")
+                new FormIdStoreCounterUpdate(0, 0, 64),
+                new FormIdStorePluginFirstEncountered(1, 16, 64, "PluginA.esp"),
+                new FormIdStoreCounterUpdate(500, 32, 64)
             ]);
 
-        Assert.Equal(
+        ProcessingRunProgress[] expected = updateMode == UpdateMode.Append
+            ?
+            [
+                new ImportingFormIdText(0, 0, 64, null),
+                new ImportingFormIdText(500, 32, 64, null),
+                new ImportedFormIdText(new FormIdTextFileImportResult(2, 2))
+            ]
+            :
             [
                 new ImportingFormIdText(0, 0, 64, null),
                 new ImportingFormIdText(1, 16, 64, "PluginA.esp"),
                 new ImportingFormIdText(500, 32, 64, null),
                 new ImportedFormIdText(new FormIdTextFileImportResult(2, 2))
-            ],
-            reports);
+            ];
+        Assert.Equal(expected, reports);
     }
 
     /// <summary>
@@ -333,9 +343,9 @@ public sealed class ProcessingRunExecutorTests : IDisposable
             TextFileImportResult = new FormIdTextFileImportResult(2, 2),
             TextFileProgressReports = storeProgressReports ??
             [
-                new FormIdStoreProgress(0, 0, 64, null),
-                new FormIdStoreProgress(1, 16, 64, "PluginA.esp"),
-                new FormIdStoreProgress(2, 32, 64, "PluginB.esp")
+                new FormIdStoreCounterUpdate(0, 0, 64),
+                new FormIdStorePluginFirstEncountered(1, 16, 64, "PluginA.esp"),
+                new FormIdStorePluginFirstEncountered(2, 32, 64, "PluginB.esp")
             ]
         };
         var opener = new RecordingRecordStoreSessionOpener(recordStore);
