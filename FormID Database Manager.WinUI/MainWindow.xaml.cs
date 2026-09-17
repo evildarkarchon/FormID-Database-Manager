@@ -14,7 +14,7 @@ public sealed partial class MainWindow : Window, IDisposable
     private bool _disposed;
 
     /// <summary>
-    /// Initializes the WinUI main window with production platform services.
+    ///     Initializes the WinUI main window with production platform services.
     /// </summary>
     public MainWindow()
     {
@@ -36,12 +36,12 @@ public sealed partial class MainWindow : Window, IDisposable
     }
 
     /// <summary>
-    /// Initializes the WinUI main window with supplied services for migration smoke tests.
+    ///     Initializes the WinUI main window with supplied services for migration smoke tests.
     /// </summary>
     /// <param name="viewModel">The UI-neutral state object shared with the migration core.</param>
     /// <param name="fileDialogService">The picker service used by browse and file-selection handlers.</param>
     /// <param name="gameInstallations">
-    /// The module used to detect a game from a browsed directory and to locate its installs.
+    ///     The module used to detect a game from a browsed directory and to locate its installs.
     /// </param>
     /// <param name="gameLoadOrders">The deterministic or production Game Load Orders module used by Plugin List.</param>
     /// <param name="processingRunExecutor">The owned Processing Run executor canceled during window close.</param>
@@ -69,36 +69,14 @@ public sealed partial class MainWindow : Window, IDisposable
             effectiveProcessingRun);
     }
 
-    /// <summary>
-    ///     Composes selected-Plugin processing from the same highest Game Load Orders seam used by Plugin List and the
-    ///     matched production overlay adapter.
-    /// </summary>
-    /// <param name="gameLoadOrders">The Game Load Orders module shared by the window's two caller paths.</param>
-    /// <returns>A Processing Run executor whose Store lifecycle remains internally owned by each run.</returns>
-    private static ProcessingRunExecutor CreateProcessingRunExecutor(IGameLoadOrders gameLoadOrders)
-    {
-        var pluginIngestion = new PluginIngestion(gameLoadOrders);
-        return new ProcessingRunExecutor(pluginIngestion, new FormIdRecordStoreSessionOpener());
-    }
-
-    /// <summary>
-    /// Initializes XAML, assigns the root ViewModel, and attaches close-time cleanup.
-    /// </summary>
-    private void InitializeWindow()
-    {
-        InitializeComponent();
-        Root.DataContext = ViewModel;
-        Closed += MainWindow_Closed;
-    }
-
     public MainWindowViewModel ViewModel { get; }
 
     /// <summary>
-    /// Cancels in-flight processing and releases services owned by this window.
+    ///     Cancels in-flight processing and releases services owned by this window.
     /// </summary>
     /// <remarks>
-    /// Workflow disposal can surface a cancellation callback failure from the run being cancelled, so every
-    /// window-owned service is retired regardless and the first failure keeps its identity.
+    ///     Workflow disposal can surface a cancellation callback failure from the run being cancelled, so every
+    ///     window-owned service is retired regardless and the first failure keeps its identity.
     /// </remarks>
     public void Dispose()
     {
@@ -122,11 +100,33 @@ public sealed partial class MainWindow : Window, IDisposable
     }
 
     /// <summary>
-    /// Runs one window-owned disposal step, keeping the first failure as the exception the caller observes.
+    ///     Composes selected-Plugin processing from the same highest Game Load Orders seam used by Plugin List and the
+    ///     matched production overlay adapter.
+    /// </summary>
+    /// <param name="gameLoadOrders">The Game Load Orders module shared by the window's two caller paths.</param>
+    /// <returns>A Processing Run executor whose Store lifecycle remains internally owned by each run.</returns>
+    private static ProcessingRunExecutor CreateProcessingRunExecutor(IGameLoadOrders gameLoadOrders)
+    {
+        var pluginIngestion = new PluginIngestion(gameLoadOrders);
+        return new ProcessingRunExecutor(pluginIngestion, new FormIdRecordStoreSessionOpener());
+    }
+
+    /// <summary>
+    ///     Initializes XAML, assigns the root ViewModel, and attaches close-time cleanup.
+    /// </summary>
+    private void InitializeWindow()
+    {
+        InitializeComponent();
+        Root.DataContext = ViewModel;
+        Closed += MainWindow_Closed;
+    }
+
+    /// <summary>
+    ///     Runs one window-owned disposal step, keeping the first failure as the exception the caller observes.
     /// </summary>
     /// <param name="step">The cleanup action to run.</param>
     /// <param name="primaryException">
-    /// The failure already in flight, replaced only when <paramref name="step" /> raises the first one.
+    ///     The failure already in flight, replaced only when <paramref name="step" /> raises the first one.
     /// </param>
     private static void RetireService(Action step, ref Exception? primaryException)
     {
@@ -151,7 +151,7 @@ public sealed partial class MainWindow : Window, IDisposable
     }
 
     /// <summary>
-    /// Forwards the explicit GameRelease selection to the authoritative User Workflow.
+    ///     Forwards the explicit GameRelease selection to the authoritative User Workflow.
     /// </summary>
     /// <param name="sender">The ComboBox whose typed selected value is forwarded.</param>
     /// <param name="e">The selection-change event details.</param>
@@ -171,7 +171,7 @@ public sealed partial class MainWindow : Window, IDisposable
     }
 
     /// <summary>
-    /// Forwards detected-directory control changes to the authoritative User Workflow boundary.
+    ///     Forwards detected-directory control changes to the authoritative User Workflow boundary.
     /// </summary>
     /// <param name="sender">The ComboBox whose selected directory value is forwarded.</param>
     /// <param name="e">The selection-change event details.</param>
@@ -193,7 +193,7 @@ public sealed partial class MainWindow : Window, IDisposable
     }
 
     /// <summary>
-    /// Forwards the explicit Advanced Mode value to the authoritative User Workflow.
+    ///     Forwards the explicit Advanced Mode value to the authoritative User Workflow.
     /// </summary>
     /// <param name="sender">The CheckBox whose selected mode is forwarded.</param>
     /// <param name="e">The click event details.</param>
@@ -216,7 +216,7 @@ public sealed partial class MainWindow : Window, IDisposable
     }
 
     /// <summary>
-    /// Handles Browse button clicks through the WinUI folder picker.
+    ///     Handles Browse button clicks through the WinUI folder picker.
     /// </summary>
     private async void BrowseDirectory_Click(object sender, RoutedEventArgs e)
     {
@@ -231,7 +231,7 @@ public sealed partial class MainWindow : Window, IDisposable
     }
 
     /// <summary>
-    /// Handles database picker button clicks.
+    ///     Handles database picker button clicks.
     /// </summary>
     private async void OnSelectDatabase_Click(object sender, RoutedEventArgs e)
     {
@@ -246,7 +246,7 @@ public sealed partial class MainWindow : Window, IDisposable
     }
 
     /// <summary>
-    /// Handles FormID list picker button clicks.
+    ///     Handles FormID list picker button clicks.
     /// </summary>
     private async void OnSelectFormIdList_Click(object sender, RoutedEventArgs e)
     {
@@ -261,7 +261,7 @@ public sealed partial class MainWindow : Window, IDisposable
     }
 
     /// <summary>
-    /// Selects every currently loaded plugin.
+    ///     Selects every currently loaded plugin.
     /// </summary>
     private void SelectAll_Click(object sender, RoutedEventArgs e)
     {
@@ -269,7 +269,7 @@ public sealed partial class MainWindow : Window, IDisposable
     }
 
     /// <summary>
-    /// Clears selection for every currently loaded plugin.
+    ///     Clears selection for every currently loaded plugin.
     /// </summary>
     private void SelectNone_Click(object sender, RoutedEventArgs e)
     {
@@ -277,7 +277,7 @@ public sealed partial class MainWindow : Window, IDisposable
     }
 
     /// <summary>
-    /// Sends checkbox intent only for user activation, using the membership identity projected with the item.
+    ///     Sends checkbox intent only for user activation, using the membership identity projected with the item.
     /// </summary>
     private void PluginCheckBox_Click(object sender, RoutedEventArgs e)
     {
@@ -293,7 +293,7 @@ public sealed partial class MainWindow : Window, IDisposable
     }
 
     /// <summary>
-    /// Handles process button clicks by starting processing or cancelling the active run.
+    ///     Handles process button clicks by starting processing or cancelling the active run.
     /// </summary>
     private async void ProcessFormIds_Click(object sender, RoutedEventArgs e)
     {

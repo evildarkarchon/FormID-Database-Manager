@@ -241,7 +241,8 @@ public sealed class FormIdRecordStore : IFormIdRecordStoreSession
                 if (processedPlugins.Add(pluginName))
                 {
                     // Report the fact in both modes: whether to show a Plugin announcement belongs to the run.
-                    progress?.Report(new FormIdStorePluginFirstEncountered(recordCount, bytesRead, totalBytes, pluginName));
+                    progress?.Report(
+                        new FormIdStorePluginFirstEncountered(recordCount, bytesRead, totalBytes, pluginName));
                 }
 
                 await StageTextRecordAsync(pluginName, formId, entry, cancellationToken).ConfigureAwait(false);

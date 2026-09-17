@@ -1,4 +1,5 @@
-<?xml version="1.0" encoding="UTF-8" ?>
+<?xml version="1.0" encoding="UTF-8"?>
+
 <Application
     x:Class="FormID_Database_Manager.WinUI.App"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -41,7 +42,8 @@
                 <Setter Property="Padding" Value="12,6" />
             </Style>
 
-            <Style x:Key="PrimaryWorkflowButtonStyle" TargetType="Button" BasedOn="{StaticResource WorkflowButtonStyle}">
+            <Style x:Key="PrimaryWorkflowButtonStyle" TargetType="Button"
+                   BasedOn="{StaticResource WorkflowButtonStyle}">
                 <Setter Property="MinWidth" Value="148" />
             </Style>
 

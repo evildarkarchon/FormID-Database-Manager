@@ -421,7 +421,8 @@ public sealed class ProcessingRunExecutor : IProcessingRunExecutor
             // There is deliberately no case for the report that opens an import: a Store report of no records that
             // names no new Plugin already *is* that report, and saying so is the renderer's decision to make. Adding
             // a branch here that produced the same value would only let the two disagree about what opens an import.
-            FormIdStoreCounterUpdate => new ImportingFormIdText(value.RecordCount, value.BytesRead, value.TotalBytes, null),
+            FormIdStoreCounterUpdate => new ImportingFormIdText(value.RecordCount, value.BytesRead, value.TotalBytes,
+                null),
             // Naming a Plugin is the run's decision, not the Store's. An appending run has never named one, so it
             // drops the report entirely rather than gaining status updates it does not show today.
             FormIdStorePluginFirstEncountered plugin => updateMode == UpdateMode.ReplacePluginRecords
