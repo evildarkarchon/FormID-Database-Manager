@@ -450,8 +450,8 @@ public sealed class ProcessingRunExecutorTests : IDisposable
         var recordStore = new RecordingRecordStoreSession();
         var ingestion = new RecordingReportPluginIngestion((request, _, progress, _) =>
         {
-            progress?.Report(PluginIngestionProgress.PreparingLoadOrder(request.PluginNames.Length));
-            progress?.Report(PluginIngestionProgress.IngestingPlugin("Second.esp", 2, request.PluginNames.Length));
+            progress?.Report(PluginIngestionProgress.PreparingLoadOrder(request.PluginNames.Count));
+            progress?.Report(PluginIngestionProgress.IngestingPlugin("Second.esp", 2, request.PluginNames.Count));
             return Task.FromResult(new PluginIngestionReport(
                 request,
                 [new IngestedPlugin("First.esp", 2), new IngestedPlugin("Second.esp", 3)]));
@@ -471,6 +471,7 @@ public sealed class ProcessingRunExecutorTests : IDisposable
         var outcome = await sut.ExecuteAsync(request, progress);
 
         var call = Assert.Single(ingestion.Calls);
+        Assert.Same(request, call.Request);
         Assert.Equal(gameDirectory, call.Request.GameDirectory);
         Assert.Equal(GameRelease.SkyrimSE, call.Request.GameRelease);
         Assert.Equal(["First.esp", "Second.esp"], call.Request.PluginNames);
@@ -1066,21 +1067,21 @@ public sealed class ProcessingRunExecutorTests : IDisposable
 
     private sealed class RecordingReportPluginIngestion(
         Func<
-            SelectedPluginIngestionRequest,
+            PluginProcessingRunRequest,
             IPluginFormIdRecordWriter,
             IProgress<PluginIngestionProgress>?,
             CancellationToken,
             Task<PluginIngestionReport>> response) : IPluginIngestion
     {
         public List<(
-            SelectedPluginIngestionRequest Request,
+            PluginProcessingRunRequest Request,
             IPluginFormIdRecordWriter RecordStore,
             IProgress<PluginIngestionProgress>? Progress,
             CancellationToken CancellationToken)> Calls { get; } = [];
 
         /// <inheritdoc />
         public Task<PluginIngestionReport> IngestAsync(
-            SelectedPluginIngestionRequest request,
+            PluginProcessingRunRequest request,
             IPluginFormIdRecordWriter recordStore,
             IProgress<PluginIngestionProgress>? progress = null,
             CancellationToken cancellationToken = default)
@@ -1105,7 +1106,7 @@ public sealed class ProcessingRunExecutorTests : IDisposable
 
         /// <inheritdoc />
         public Task<PluginIngestionReport> IngestAsync(
-            SelectedPluginIngestionRequest request,
+            PluginProcessingRunRequest request,
             IPluginFormIdRecordWriter recordStore,
             IProgress<PluginIngestionProgress>? progress = null,
             CancellationToken cancellationToken = default)
@@ -1144,7 +1145,7 @@ public sealed class ProcessingRunExecutorTests : IDisposable
 
         /// <inheritdoc />
         public Task<PluginIngestionReport> IngestAsync(
-            SelectedPluginIngestionRequest request,
+            PluginProcessingRunRequest request,
             IPluginFormIdRecordWriter recordStore,
             IProgress<PluginIngestionProgress>? progress = null,
             CancellationToken cancellationToken = default)
@@ -1177,7 +1178,7 @@ public sealed class ProcessingRunExecutorTests : IDisposable
 
         /// <inheritdoc />
         public Task<PluginIngestionReport> IngestAsync(
-            SelectedPluginIngestionRequest request,
+            PluginProcessingRunRequest request,
             IPluginFormIdRecordWriter recordStore,
             IProgress<PluginIngestionProgress>? progress = null,
             CancellationToken cancellationToken = default)
@@ -1310,7 +1311,7 @@ public sealed class ProcessingRunExecutorTests : IDisposable
 
         /// <inheritdoc />
         public async Task<PluginIngestionReport> IngestAsync(
-            SelectedPluginIngestionRequest request,
+            PluginProcessingRunRequest request,
             IPluginFormIdRecordWriter recordStore,
             IProgress<PluginIngestionProgress>? progress = null,
             CancellationToken cancellationToken = default)

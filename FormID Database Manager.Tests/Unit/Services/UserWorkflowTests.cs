@@ -1796,8 +1796,8 @@ public class UserWorkflowTests
     /// </remarks>
     private static PluginRunOutcome CreatePluginRunOutcome(params PluginIngestionOutcome[] outcomes)
     {
-        var request = new SelectedPluginIngestionRequest(
-            GameDirectory,
+        var request = new PluginProcessingRunRequest(
+            GameDirectory, "ingestion.db",
             GameRelease.SkyrimSE,
             outcomes.Select(static outcome => outcome.PluginName),
             UpdateMode.Append);

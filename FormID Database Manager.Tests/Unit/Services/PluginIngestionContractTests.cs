@@ -12,6 +12,16 @@ namespace FormID_Database_Manager.Tests.Unit.Services;
 public sealed class PluginIngestionContractTests
 {
     /// <summary>
+    ///     Requires reports to validate against the same public request accepted by Processing Run.
+    /// </summary>
+    [Fact]
+    public void Report_Constructor_RequiresAuthoritativeProcessingRunRequest()
+    {
+        var constructor = Assert.Single(typeof(PluginIngestionReport).GetConstructors());
+        Assert.Equal(typeof(PluginProcessingRunRequest), constructor.GetParameters()[0].ParameterType);
+    }
+
+    /// <summary>
     ///     Verifies the two operations Plugin Ingestion offers for one captured selection: doing the work, and saying
     ///     what doing it would come to.
     /// </summary>
@@ -34,7 +44,7 @@ public sealed class PluginIngestionContractTests
         Assert.Equal(typeof(Task<PluginIngestionReport>), ingestion.ReturnType);
         Assert.Collection(
             ingestion.GetParameters(),
-            parameter => Assert.Equal(typeof(SelectedPluginIngestionRequest), parameter.ParameterType),
+            parameter => Assert.Equal(typeof(PluginProcessingRunRequest), parameter.ParameterType),
             parameter => Assert.Equal(pluginWriterType, parameter.ParameterType),
             parameter =>
             {
@@ -428,10 +438,62 @@ public sealed class PluginIngestionContractTests
             ]));
     }
 
-    private static SelectedPluginIngestionRequest CreateSelectionRequest(params string[] pluginNames)
+    /// <summary>
+    ///     Rejects names that could otherwise silently change the authoritative selection, including casing alone.
+    /// </summary>
+    [Theory]
+    [InlineData("Renamed.esp")]
+    [InlineData("FIRST.ESP")]
+    public void Report_OutcomeNameDiffersFromRequest_ThrowsArgumentException(string outcomeName)
     {
-        return new SelectedPluginIngestionRequest(
-            @"C:\Games\Skyrim",
+        Assert.Throws<ArgumentException>(() => new PluginIngestionReport(
+            CreateSelectionRequest("First.esp"), [new IngestedPlugin(outcomeName, 1)]));
+    }
+
+    /// <summary>
+    ///     Rejects extra outcomes instead of silently extending the accepted selection.
+    /// </summary>
+    [Fact]
+    public void Report_ExtraOutcome_ThrowsArgumentException()
+    {
+        Assert.Throws<ArgumentException>(() => new PluginIngestionReport(
+            CreateSelectionRequest("First.esp"),
+            [new IngestedPlugin("First.esp", 1), new IngestedPlugin("Extra.esp", 1)]));
+    }
+
+    /// <summary>
+    ///     Requires an authoritative request and a non-null outcome for every selected Plugin.
+    /// </summary>
+    [Fact]
+    public void Report_NullInputs_ThrowsArgumentExceptions()
+    {
+        var request = CreateSelectionRequest("First.esp");
+        Assert.Throws<ArgumentNullException>(() => new PluginIngestionReport(null!, []));
+        Assert.Throws<ArgumentNullException>(() => new PluginIngestionReport(request, null!));
+        Assert.Throws<ArgumentException>(() => new PluginIngestionReport(request, [null!]));
+    }
+
+    /// <summary>
+    ///     Keeps completed reports limited to their outcomes instead of retaining unrelated Processing Run facts.
+    /// </summary>
+    [Fact]
+    public void Report_TypeDefinition_RetainsOnlyOutcomeSnapshot()
+    {
+        var property = Assert.Single(typeof(PluginIngestionReport).GetProperties());
+        Assert.Equal(nameof(PluginIngestionReport.Outcomes), property.Name);
+        var field = Assert.Single(typeof(PluginIngestionReport).GetFields(
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic |
+            System.Reflection.BindingFlags.Public));
+        Assert.Equal(typeof(System.Collections.Immutable.ImmutableArray<PluginIngestionOutcome>), field.FieldType);
+    }
+
+    /// <summary>
+    ///     Creates the authoritative real-run selection used to correlate report outcomes.
+    /// </summary>
+    private static PluginProcessingRunRequest CreateSelectionRequest(params string[] pluginNames)
+    {
+        return new PluginProcessingRunRequest(
+            @"C:\Games\Skyrim", "report.db",
             GameRelease.SkyrimSE,
             pluginNames,
             UpdateMode.Append);

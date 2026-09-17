@@ -63,7 +63,7 @@ internal interface IPluginIngestion
     ///     one Plugin (ADR-0006).
     /// </exception>
     Task<PluginIngestionReport> IngestAsync(
-        SelectedPluginIngestionRequest request,
+        PluginProcessingRunRequest request,
         IPluginFormIdRecordWriter recordStore,
         IProgress<PluginIngestionProgress>? progress = null,
         CancellationToken cancellationToken = default);
@@ -277,7 +277,7 @@ internal sealed record PluginIngestionReport
     ///     Outcomes contain a null entry or disagree with the request cardinality, names, or order.
     /// </exception>
     public PluginIngestionReport(
-        SelectedPluginIngestionRequest request,
+        PluginProcessingRunRequest request,
         IEnumerable<PluginIngestionOutcome> outcomes)
     {
         ArgumentNullException.ThrowIfNull(request);
@@ -289,7 +289,7 @@ internal sealed record PluginIngestionReport
             throw new ArgumentException("Plugin Ingestion outcomes must not contain null entries.", nameof(outcomes));
         }
 
-        if (outcomeSnapshot.Length != request.PluginNames.Length)
+        if (outcomeSnapshot.Length != request.PluginNames.Count)
         {
             throw new ArgumentException(
                 "Plugin Ingestion must report exactly one outcome for every selected Plugin.",

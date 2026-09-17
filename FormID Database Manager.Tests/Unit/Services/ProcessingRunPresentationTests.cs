@@ -625,8 +625,8 @@ public sealed class ProcessingRunPresentationTests
     /// </remarks>
     private static RenderedRunReport RenderPluginRun(params PluginIngestionOutcome[] outcomes)
     {
-        var request = new SelectedPluginIngestionRequest(
-            GameDirectory,
+        var request = new PluginProcessingRunRequest(
+            GameDirectory, "ingestion.db",
             GameRelease.SkyrimSE,
             outcomes.Select(static outcome => outcome.PluginName),
             UpdateMode.Append);

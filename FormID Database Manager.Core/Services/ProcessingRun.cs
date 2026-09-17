@@ -328,7 +328,7 @@ public sealed class ProcessingRunExecutor : IProcessingRunExecutor
         CancellationToken cancellationToken)
     {
         var report = await _pluginIngestion.IngestAsync(
-                CreateIngestionRequest(request),
+                request,
                 recordStore,
                 CreatePluginIngestionProgress(progress),
                 cancellationToken)
@@ -342,24 +342,6 @@ public sealed class ProcessingRunExecutor : IProcessingRunExecutor
         // Returning the report is likewise delayed until maintenance succeeds, so a failed optimization has no summary.
         cancellationToken.ThrowIfCancellationRequested();
         return new PluginRunOutcome(report);
-    }
-
-    /// <summary>
-    ///     Restates one selected-Plugin domain request as the selection Plugin Ingestion works from.
-    /// </summary>
-    /// <param name="request">The validated immutable selected-Plugin request.</param>
-    /// <returns>The equivalent Plugin Ingestion request.</returns>
-    /// <remarks>
-    ///     Both halves of Plugin Ingestion take the same selection, so planning a run and performing it must ask for it
-    ///     the same way: a second copy of this restatement could drift into planning one thing and running another.
-    /// </remarks>
-    private static SelectedPluginIngestionRequest CreateIngestionRequest(PluginProcessingRunRequest request)
-    {
-        return new SelectedPluginIngestionRequest(
-            request.GameDirectory,
-            request.GameRelease,
-            request.PluginNames,
-            request.UpdateMode);
     }
 
     /// <summary>

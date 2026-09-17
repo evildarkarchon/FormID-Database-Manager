@@ -68,7 +68,7 @@ internal sealed class PluginIngestion : IPluginIngestion
     ///     selected set stops there because every remaining Plugin would fail the same way (ADR-0006).
     /// </exception>
     public async Task<PluginIngestionReport> IngestAsync(
-        SelectedPluginIngestionRequest request,
+        PluginProcessingRunRequest request,
         IPluginFormIdRecordWriter recordStore,
         IProgress<PluginIngestionProgress>? progress = null,
         CancellationToken cancellationToken = default)
@@ -79,7 +79,7 @@ internal sealed class PluginIngestion : IPluginIngestion
         // A pre-cancelled selection must not announce preparation or consult any external adapter.
         cancellationToken.ThrowIfCancellationRequested();
 
-        var totalPluginCount = request.PluginNames.Length;
+        var totalPluginCount = request.PluginNames.Count;
         var dataPath = GameInstallations.CanonicalizeDataDirectory(request.GameDirectory);
         progress?.Report(PluginIngestionProgress.PreparingLoadOrder(totalPluginCount));
         // Synchronous progress callbacks can request cancellation before load-order initialization begins.
