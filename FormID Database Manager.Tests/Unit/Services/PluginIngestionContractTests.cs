@@ -51,7 +51,7 @@ public sealed class PluginIngestionContractTests
         Assert.Equal(typeof(Task<PluginIngestionPlan>), planning.ReturnType);
         Assert.Collection(
             planning.GetParameters(),
-            parameter => Assert.Equal(typeof(SelectedPluginIngestionRequest), parameter.ParameterType),
+            parameter => Assert.Equal(typeof(PluginProcessingRunRequest), parameter.ParameterType),
             parameter =>
             {
                 Assert.Equal(typeof(CancellationToken), parameter.ParameterType);
@@ -141,13 +141,64 @@ public sealed class PluginIngestionContractTests
             new PlannedPluginSkip("Absent.esp", PlannedSkipReason.NotPresentInLoadOrder)
         };
 
-        var plan = new PluginIngestionPlan(planned);
+        var plan = new PluginIngestionPlan(CreatePlanRequest("First.esp", "Absent.esp"), planned);
         planned.Reverse();
 
         Assert.Collection(
             plan.Plugins,
             entry => Assert.Equal("First.esp", entry.PluginName),
             entry => Assert.Equal("Absent.esp", entry.PluginName));
+    }
+
+    /// <summary>
+    ///     Rejects plans that lose, add, rename, recase, or reorder the authoritative selection.
+    /// </summary>
+    [Theory]
+    [InlineData()]
+    [InlineData("First.esp")]
+    [InlineData("First.esp", "Second.ESP", "Extra.esp")]
+    [InlineData("Renamed.esp", "Second.ESP")]
+    [InlineData("first.esp", "Second.ESP")]
+    [InlineData("Second.ESP", "First.esp")]
+    public void PluginIngestionPlan_EntriesDifferFromSelection_RejectsPlan(params string[] names)
+    {
+        var planned = names.Select(name => new PlannedPluginIngestion(name));
+
+        var exception = Assert.Throws<ArgumentException>(() =>
+            new PluginIngestionPlan(CreatePlanRequest("First.esp", "Second.ESP"), planned));
+
+        Assert.Equal("plugins", exception.ParamName);
+    }
+
+    /// <summary>
+    ///     Requires both the authoritative request and a non-null planned entry for each selection.
+    /// </summary>
+    [Fact]
+    public void PluginIngestionPlan_NullInputs_RejectsMissingRequestCollectionOrEntry()
+    {
+        var request = CreatePlanRequest("First.esp");
+
+        Assert.Equal("request", Assert.Throws<ArgumentNullException>(() =>
+            new PluginIngestionPlan(null!, [new PlannedPluginIngestion("First.esp")])).ParamName);
+        Assert.Equal("plugins", Assert.Throws<ArgumentNullException>(() =>
+            new PluginIngestionPlan(request, null!)).ParamName);
+        Assert.Equal("plugins", Assert.Throws<ArgumentException>(() =>
+            new PluginIngestionPlan(request, [null!])).ParamName);
+    }
+
+    /// <summary>
+    ///     Keeps only ordered planned entries after validation, so Store paths and other run facts cannot leak into a plan.
+    /// </summary>
+    [Fact]
+    public void PluginIngestionPlan_TypeDefinition_RetainsAndExposesOnlyPlannedEntries()
+    {
+        var type = typeof(PluginIngestionPlan);
+        var fields = type.GetFields(System.Reflection.BindingFlags.Instance |
+                                    System.Reflection.BindingFlags.Public |
+                                    System.Reflection.BindingFlags.NonPublic);
+
+        Assert.Equal(typeof(System.Collections.Immutable.ImmutableArray<PlannedPlugin>), Assert.Single(fields).FieldType);
+        Assert.Equal(nameof(PluginIngestionPlan.Plugins), Assert.Single(type.GetProperties()).Name);
     }
 
     /// <summary>
@@ -385,4 +436,13 @@ public sealed class PluginIngestionContractTests
             pluginNames,
             UpdateMode.Append);
     }
+    /// <summary>
+    ///     Creates an authoritative dry-run selection without requiring a Store path.
+    /// </summary>
+    private static PluginProcessingRunRequest CreatePlanRequest(params string[] names)
+    {
+        return new PluginProcessingRunRequest(
+            @"C:\Games\Skyrim", string.Empty, GameRelease.SkyrimSE, names, UpdateMode.Append, dryRun: true);
+    }
+
 }

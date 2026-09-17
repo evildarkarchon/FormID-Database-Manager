@@ -242,7 +242,7 @@ public sealed class ProcessingRunExecutor : IProcessingRunExecutor
 
             case PluginProcessingRunRequest pluginRequest:
                 var plan = await _pluginIngestion
-                    .PlanAsync(CreateIngestionRequest(pluginRequest), cancellationToken)
+                    .PlanAsync(pluginRequest, cancellationToken)
                     .ConfigureAwait(false);
                 return new PluginRunPlan(plan);
 

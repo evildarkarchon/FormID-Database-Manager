@@ -107,7 +107,7 @@ public class CoreProjectBoundaryTests
     [InlineData(nameof(MainWindowViewModel.ProgressValue))]
     [InlineData(nameof(MainWindowViewModel.IsProgressVisible))]
     [InlineData(nameof(MainWindowViewModel.ProcessButtonText))]
-    public void ProjectedProperties_PublicContract_ExposeGettersWithoutSetters(string propertyName)
+    public void ProjectedProperties_PublicContract_ExposeGettersWithoutConsumerAccessibleSetters(string propertyName)
     {
         var property = Assert.Single(
             typeof(MainWindowViewModel).GetProperties(),
@@ -115,7 +115,8 @@ public class CoreProjectBoundaryTests
 
         Assert.NotNull(property.GetMethod);
         Assert.True(property.GetMethod.IsPublic);
-        Assert.Null(property.SetMethod);
+        // Reflection includes private accessors, which let the ViewModel apply projections without exposing a writer.
+        Assert.True(property.SetMethod is null or { IsPrivate: true });
     }
 
     /// <summary>

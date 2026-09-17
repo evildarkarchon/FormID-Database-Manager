@@ -439,13 +439,15 @@ public sealed class PluginIngestionPlanTests : IDisposable
         }
     }
 
-    private static SelectedPluginIngestionRequest CreateRequest(string gameDirectory, params string[] pluginNames)
+    private static PluginProcessingRunRequest CreateRequest(string gameDirectory, params string[] pluginNames)
     {
-        return new SelectedPluginIngestionRequest(
+        return new PluginProcessingRunRequest(
             gameDirectory,
+            string.Empty,
             GameRelease.SkyrimSE,
             pluginNames,
-            UpdateMode.Append);
+            UpdateMode.Append,
+            dryRun: true);
     }
 
     private string CreateGameDirectory()

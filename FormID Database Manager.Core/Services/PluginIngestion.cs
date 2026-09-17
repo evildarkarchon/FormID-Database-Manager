@@ -150,7 +150,7 @@ internal sealed class PluginIngestion : IPluginIngestion
     ///     plan stops there because every remaining Plugin would fail the same way (ADR-0006).
     /// </exception>
     public Task<PluginIngestionPlan> PlanAsync(
-        SelectedPluginIngestionRequest request,
+        PluginProcessingRunRequest request,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
@@ -164,7 +164,7 @@ internal sealed class PluginIngestion : IPluginIngestion
             dataPath,
             request.PluginNames,
             cancellationToken);
-        var planned = new List<PlannedPlugin>(request.PluginNames.Length);
+        var planned = new List<PlannedPlugin>(request.PluginNames.Count);
 
         foreach (var preparedPlugin in preparedPlugins)
         {
@@ -176,7 +176,7 @@ internal sealed class PluginIngestion : IPluginIngestion
 
         // Close the final race so cancellation cannot produce a plan that looks complete.
         cancellationToken.ThrowIfCancellationRequested();
-        return Task.FromResult(new PluginIngestionPlan(planned));
+        return Task.FromResult(new PluginIngestionPlan(request, planned));
     }
 
     /// <summary>

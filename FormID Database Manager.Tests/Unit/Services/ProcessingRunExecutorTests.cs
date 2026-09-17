@@ -155,10 +155,7 @@ public sealed class ProcessingRunExecutorTests : IDisposable
         Assert.Equal(0, ingestion.IngestCallCount);
         Assert.Empty(reports);
         var planCall = Assert.Single(ingestion.PlanCalls);
-        Assert.Equal(@"C:\Games\Skyrim", planCall.Request.GameDirectory);
-        Assert.Equal(GameRelease.SkyrimSE, planCall.Request.GameRelease);
-        Assert.Equal(["PluginA.esp", "PluginB.esp"], planCall.Request.PluginNames);
-        Assert.Equal(UpdateMode.Append, planCall.Request.UpdateMode);
+        Assert.Same(request, planCall.Request);
         Assert.True(planCall.CancellationToken.CanBeCanceled);
         Assert.Equal(["PluginA.esp", "PluginB.esp"], AssertPlannedPluginNames(outcome));
     }
@@ -1094,7 +1091,7 @@ public sealed class ProcessingRunExecutorTests : IDisposable
 
         /// <inheritdoc />
         public Task<PluginIngestionPlan> PlanAsync(
-            SelectedPluginIngestionRequest request,
+            PluginProcessingRunRequest request,
             CancellationToken cancellationToken = default)
         {
             return Task.FromException<PluginIngestionPlan>(
@@ -1120,7 +1117,7 @@ public sealed class ProcessingRunExecutorTests : IDisposable
 
         /// <inheritdoc />
         public Task<PluginIngestionPlan> PlanAsync(
-            SelectedPluginIngestionRequest request,
+            PluginProcessingRunRequest request,
             CancellationToken cancellationToken = default)
         {
             CallCount++;
@@ -1135,7 +1132,7 @@ public sealed class ProcessingRunExecutorTests : IDisposable
     /// </summary>
     private sealed class PlanningPluginIngestion : IPluginIngestion
     {
-        public List<(SelectedPluginIngestionRequest Request, CancellationToken CancellationToken)> PlanCalls { get; } =
+        public List<(PluginProcessingRunRequest Request, CancellationToken CancellationToken)> PlanCalls { get; } =
             [];
 
         public int IngestCallCount { get; private set; }
@@ -1159,7 +1156,7 @@ public sealed class ProcessingRunExecutorTests : IDisposable
 
         /// <inheritdoc />
         public Task<PluginIngestionPlan> PlanAsync(
-            SelectedPluginIngestionRequest request,
+            PluginProcessingRunRequest request,
             CancellationToken cancellationToken = default)
         {
             PlanCalls.Add((request, cancellationToken));
@@ -1169,6 +1166,7 @@ public sealed class ProcessingRunExecutorTests : IDisposable
             }
 
             return Task.FromResult(new PluginIngestionPlan(
+                request,
                 request.PluginNames.Select(pluginName => new PlannedPluginIngestion(pluginName))));
         }
     }
@@ -1190,7 +1188,7 @@ public sealed class ProcessingRunExecutorTests : IDisposable
 
         /// <inheritdoc />
         public Task<PluginIngestionPlan> PlanAsync(
-            SelectedPluginIngestionRequest request,
+            PluginProcessingRunRequest request,
             CancellationToken cancellationToken = default)
         {
             CallCount++;
@@ -1324,7 +1322,7 @@ public sealed class ProcessingRunExecutorTests : IDisposable
 
         /// <inheritdoc />
         public Task<PluginIngestionPlan> PlanAsync(
-            SelectedPluginIngestionRequest request,
+            PluginProcessingRunRequest request,
             CancellationToken cancellationToken = default)
         {
             return Task.FromException<PluginIngestionPlan>(

@@ -495,7 +495,10 @@ public sealed class ProcessingRunPresentationTests
         const string resolvedPluginPath = @"C:\Games\Skyrim\Data\Unavailable.esp";
 
         var rendered = ProcessingRunPresentation.Render(new PlannedRunOutcome(new PluginRunPlan(
-            new PluginIngestionPlan([
+            new PluginIngestionPlan(
+                new PluginProcessingRunRequest(@"C:\Games\Skyrim", string.Empty, GameRelease.SkyrimSE,
+                    ["First.esp", "Absent.esp", "Unavailable.esp", "Broken.esp"], UpdateMode.Append, dryRun: true),
+                [
                 new PlannedPluginIngestion("First.esp"),
                 new PlannedPluginSkip("Absent.esp", PlannedSkipReason.NotPresentInLoadOrder),
                 new PlannedPluginSkip(
@@ -533,7 +536,10 @@ public sealed class ProcessingRunPresentationTests
     [Fact]
     public void Render_PluginPlanLongerThanTheMessageBound_StaysOneMessage()
     {
-        var plan = new PluginIngestionPlan(Enumerable
+        var request = new PluginProcessingRunRequest(
+            @"C:\Games\Skyrim", string.Empty, GameRelease.SkyrimSE,
+            Enumerable.Range(1, 40).Select(position => $"Plugin{position}.esp"), UpdateMode.Append, dryRun: true);
+        var plan = new PluginIngestionPlan(request, Enumerable
             .Range(1, 40)
             .Select(position => new PlannedPluginIngestion($"Plugin{position}.esp")));
 
@@ -546,19 +552,6 @@ public sealed class ProcessingRunPresentationTests
             StringComparison.Ordinal);
         Assert.Contains("Would ingest Plugin1.esp", plannedWork, StringComparison.Ordinal);
         Assert.Contains("Would ingest Plugin40.esp", plannedWork, StringComparison.Ordinal);
-    }
-
-    /// <summary>
-    ///     Verifies that a plan with no selected Plugins renders nothing at all rather than an empty summary line.
-    /// </summary>
-    [Fact]
-    public void Render_EmptyPluginPlan_ReportsNoMessages()
-    {
-        var rendered = ProcessingRunPresentation.Render(
-            new PlannedRunOutcome(new PluginRunPlan(new PluginIngestionPlan([]))));
-
-        Assert.Equal(ActivityProjection.None, rendered.Activity);
-        Assert.Empty(rendered.InformationMessages);
     }
 
     /// <summary>

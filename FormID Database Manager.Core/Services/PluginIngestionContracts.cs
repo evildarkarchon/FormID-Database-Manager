@@ -94,7 +94,7 @@ internal interface IPluginIngestion
     ///     one Plugin (ADR-0006).
     /// </exception>
     Task<PluginIngestionPlan> PlanAsync(
-        SelectedPluginIngestionRequest request,
+        PluginProcessingRunRequest request,
         CancellationToken cancellationToken = default);
 }
 
@@ -556,19 +556,32 @@ internal sealed record FailedPlugin : PluginIngestionOutcome
 internal sealed record PluginIngestionPlan
 {
     /// <summary>
-    ///     Creates a plan from one planned outcome per selected Plugin.
+    ///     Creates a plan validated against the authoritative selection without retaining the request.
     /// </summary>
-    /// <param name="plugins">The planned outcomes in selected-Plugin order.</param>
-    /// <exception cref="ArgumentNullException"><paramref name="plugins" /> is <see langword="null" />.</exception>
-    /// <exception cref="ArgumentException">The planned outcomes contain a null entry.</exception>
-    public PluginIngestionPlan(IEnumerable<PlannedPlugin> plugins)
+    /// <param name="request">The accepted Processing Run request whose selection the plan must match exactly.</param>
+    /// <param name="plugins">The planned outcomes in selected-Plugin order, copied into an immutable snapshot.</param>
+    /// <exception cref="ArgumentNullException">The request or planned outcomes are null.</exception>
+    /// <exception cref="ArgumentException">
+    ///     The outcomes contain a null entry or differ from the selection in count, name, casing, or order.
+    /// </exception>
+    public PluginIngestionPlan(PluginProcessingRunRequest request, IEnumerable<PlannedPlugin> plugins)
     {
+        ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(plugins);
 
         var snapshot = ImmutableArray.CreateRange(plugins);
         if (snapshot.Any(static planned => planned is null))
         {
             throw new ArgumentException("A Plugin Ingestion plan must not contain null entries.", nameof(plugins));
+        }
+
+        // Membership is case-insensitive, but a plan must preserve the exact accepted selection for presentation.
+        if (!snapshot.Select(static planned => planned.PluginName)
+                .SequenceEqual(request.PluginNames, StringComparer.Ordinal))
+        {
+            throw new ArgumentException(
+                "Planned entries must match the selected Plugins exactly in count, name, casing, and order.",
+                nameof(plugins));
         }
 
         Plugins = snapshot;

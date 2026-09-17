@@ -1131,7 +1131,10 @@ public class UserWorkflowTests
         var sut = CreateSut();
         await ConfigureValidPluginProcessingRunAsync(sut);
         _viewModel.DryRun = true;
-        _processingRunExecutor.Outcome = new PlannedRunOutcome(new PluginRunPlan(new PluginIngestionPlan([
+        _processingRunExecutor.Outcome = new PlannedRunOutcome(new PluginRunPlan(new PluginIngestionPlan(
+            new PluginProcessingRunRequest(@"C:\Games\Skyrim", string.Empty, GameRelease.SkyrimSE,
+                ["User.esp", "Absent.esp"], UpdateMode.Append, dryRun: true),
+            [
             new PlannedPluginIngestion("User.esp"),
             new PlannedPluginSkip("Absent.esp", PlannedSkipReason.NotPresentInLoadOrder)
         ])));
@@ -1434,6 +1437,10 @@ public class UserWorkflowTests
         _fileDialogService.Setup(x => x.SelectGameDirectory())
             .ReturnsAsync(FileDialogResult.Success(GameDirectory));
         _processingRunExecutor.ProgressToReport.Add(new IngestingPlugin("User.esp", 2, 5));
+        _processingRunExecutor.Outcome = new PlannedRunOutcome(new PluginRunPlan(new PluginIngestionPlan(
+            new PluginProcessingRunRequest(GameDirectory, string.Empty, GameRelease.SkyrimSE,
+                ["User.esp"], UpdateMode.Append, dryRun: true),
+            [new PlannedPluginIngestion("User.esp")])));
         var projectedStatuses = RecordProjectedStatuses();
         var statusAfterRefresh = string.Empty;
         var valueAfterRefresh = 0d;
@@ -1836,11 +1843,11 @@ public class UserWorkflowTests
         ///     How the run ends when it does not fail.
         /// </summary>
         /// <remarks>
-        ///     The default is a dry run of nothing, which renders no message and no status at all, so a test that is
-        ///     not about how a run ended sees only the reports it scripted for itself.
+        ///     The default is an empty text import, which adds no messages. Plans now require a non-empty
+        ///     authoritative selection, so an empty plan cannot stand in for an uneventful outcome.
         /// </remarks>
         public ProcessingRunOutcome Outcome { get; set; } =
-            new PlannedRunOutcome(new PluginRunPlan(new PluginIngestionPlan([])));
+            new FormIdTextRunOutcome(new FormIdTextFileImportResult(0, 0));
 
         public List<ProcessingRunProgress> ProgressToReport { get; } = [];
 
