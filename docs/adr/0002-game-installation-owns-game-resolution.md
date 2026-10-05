@@ -28,13 +28,13 @@ and `GameLoadOrderProvider` as an interface plus an internal four-delegate const
 whole `GameDetectionService` as a dependency to call one method on it, and that method returned a private mutable
 `HashSet` by reference.
 
-`CONTEXT.md` named Game Context but had no term for the thing on disk, which is why one concept could occupy six homes
+`GLOSSARY.md` named Game Context but had no term for the thing on disk, which is why one concept could occupy six homes
 without the gap being obvious.
 
 ## Decision
 
 A `GameInstallations` module owns Game Installation resolution: Data-directory canonicalization, detection of a
-GameRelease from a directory, and location of install directories for a GameRelease. `CONTEXT.md` defines
+GameRelease from a directory, and location of install directories for a GameRelease. `GLOSSARY.md` defines
 **Game Installation** as the resolved on-disk facts, distinct from **Game Context**, which remains the User Workflow's
 selection state and stays inside `UserWorkflow`.
 
