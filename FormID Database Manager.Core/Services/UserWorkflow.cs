@@ -74,7 +74,7 @@ public sealed class UserWorkflow : IDisposable
         IProcessingRunExecutor processingRunExecutor)
     {
         _viewModel = viewModel ?? throw new ArgumentNullException(nameof(viewModel));
-        ArgumentNullException.ThrowIfNull(dispatcher);
+        var checkedDispatcher = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
         _fileDialogService = fileDialogService ?? throw new ArgumentNullException(nameof(fileDialogService));
         _gameInstallations = gameInstallations ?? throw new ArgumentNullException(nameof(gameInstallations));
         _pluginList = pluginList ?? throw new ArgumentNullException(nameof(pluginList));
@@ -85,7 +85,7 @@ public sealed class UserWorkflow : IDisposable
             null,
             ImmutableArray<string>.Empty,
             AdvancedMode.Off);
-        _pluginListPresentationAdapter = new PluginListPresentationAdapter(_pluginList, _viewModel, dispatcher);
+        _pluginListPresentationAdapter = new PluginListPresentationAdapter(_pluginList, _viewModel, checkedDispatcher);
     }
 
     /// <summary>
@@ -130,14 +130,43 @@ public sealed class UserWorkflow : IDisposable
         var processingRunExecutor = new ProcessingRunExecutor(
             new PluginIngestion(gameLoadOrders),
             new FormIdRecordStoreSessionOpener());
+        var pluginList = new PluginList(gameLoadOrders);
 
-        return new UserWorkflow(
-            viewModel,
-            dispatcher,
-            fileDialogService,
-            new GameInstallations(new GameInstallationProbe()),
-            new PluginList(gameLoadOrders),
-            processingRunExecutor);
+        try
+        {
+            return new UserWorkflow(
+                viewModel,
+                dispatcher,
+                fileDialogService,
+                new GameInstallations(new GameInstallationProbe()),
+                pluginList,
+                processingRunExecutor);
+        }
+        catch
+        {
+            // Ownership only transfers once the constructor returns, so a constructor failure would otherwise leak the
+            // disposables built above. Cleanup is best-effort and must not replace the constructor's exception.
+            DisposeIgnoringFailure(processingRunExecutor);
+            DisposeIgnoringFailure(pluginList);
+            throw;
+        }
+    }
+
+    /// <summary>
+    ///     Disposes a collaborator while unwinding a failed composition, discarding any cleanup failure.
+    /// </summary>
+    /// <param name="disposable">The collaborator built by <see cref="Create" /> whose ownership never transferred.</param>
+    private static void DisposeIgnoringFailure(IDisposable disposable)
+    {
+        try
+        {
+            disposable.Dispose();
+        }
+        catch
+        {
+            // Swallowed on purpose: the caller is already rethrowing the composition failure, which is the one worth
+            // reporting, and a cleanup failure here has no other observer.
+        }
     }
 
     /// <summary>
@@ -167,7 +196,8 @@ public sealed class UserWorkflow : IDisposable
         // publishing from another thread could queue a new one. Disposing the Plugin List itself publishes no state,
         // so these queued-projection and cross-thread publisher windows are the only ones this ordering guards.
         RetireCollaborator(_pluginListPresentationAdapter.Dispose, ref primaryException);
-        // Retire resolution before disposing collaborators so late lookup or picker work cannot publish into torn-down state.
+        // Retire resolution before cancelling and disposing the executor and Plugin List so late lookup or picker work
+        // cannot publish into torn-down state.
         RetireCollaborator(() => Interlocked.Increment(ref _gameContextVersion), ref primaryException);
         RetireCollaborator(_processingRunExecutor.Cancel, ref primaryException);
         RetireCollaborator(_processingRunExecutor.Dispose, ref primaryException);
