@@ -14,57 +14,21 @@ public sealed partial class MainWindow : Window, IDisposable
     /// <summary>
     ///     Initializes the WinUI main window with production platform services.
     /// </summary>
+    /// <remarks>
+    ///     The shell supplies only platform pieces — the dispatcher, the ViewModel, and the file dialog adapter — and
+    ///     the User Workflow factory builds every Core collaborator. The window is initialized first so the file dialog
+    ///     adapter is built after the window exists.
+    /// </remarks>
     public MainWindow()
     {
         var dispatcher = new WinUiThreadDispatcher(DispatcherQueue);
         ViewModel = new MainWindowViewModel(dispatcher);
-        var gameInstallations = new GameInstallations(new GameInstallationProbe());
-        var gameLoadOrders = new GameLoadOrders();
-        var pluginList = new PluginList(gameLoadOrders);
-        var processingRunExecutor = CreateProcessingRunExecutor(gameLoadOrders);
 
         InitializeWindow();
-        _userWorkflow = new UserWorkflow(
+        _userWorkflow = UserWorkflow.Create(
             ViewModel,
             dispatcher,
-            new WinUiFileDialogService(AppWindow),
-            gameInstallations,
-            pluginList,
-            processingRunExecutor);
-    }
-
-    /// <summary>
-    ///     Initializes the WinUI main window with supplied services for migration smoke tests.
-    /// </summary>
-    /// <param name="viewModel">The UI-neutral state object shared with the migration core.</param>
-    /// <param name="fileDialogService">The picker service used by browse and file-selection handlers.</param>
-    /// <param name="gameInstallations">
-    ///     The module used to detect a game from a browsed directory and to locate its installs.
-    /// </param>
-    /// <param name="gameLoadOrders">The deterministic or production Game Load Orders module used by Plugin List.</param>
-    /// <param name="processingRunExecutor">The owned Processing Run executor canceled during window close.</param>
-    internal MainWindow(
-        MainWindowViewModel viewModel,
-        IFileDialogService? fileDialogService,
-        GameInstallations? gameInstallations,
-        IGameLoadOrders? gameLoadOrders,
-        ProcessingRunExecutor? processingRunExecutor)
-    {
-        ViewModel = viewModel ?? throw new ArgumentNullException(nameof(viewModel));
-        var dispatcher = new WinUiThreadDispatcher(DispatcherQueue);
-        var effectiveGameInstallations = gameInstallations ?? new GameInstallations(new GameInstallationProbe());
-        var effectiveGameLoadOrders = gameLoadOrders ?? new GameLoadOrders();
-        var pluginList = new PluginList(effectiveGameLoadOrders);
-        var effectiveProcessingRun = processingRunExecutor ?? CreateProcessingRunExecutor(effectiveGameLoadOrders);
-
-        InitializeWindow();
-        _userWorkflow = new UserWorkflow(
-            ViewModel,
-            dispatcher,
-            fileDialogService ?? new WinUiFileDialogService(AppWindow),
-            effectiveGameInstallations,
-            pluginList,
-            effectiveProcessingRun);
+            new WinUiFileDialogService(AppWindow));
     }
 
     public MainWindowViewModel ViewModel { get; }
@@ -90,18 +54,6 @@ public sealed partial class MainWindow : Window, IDisposable
     }
 
     /// <summary>
-    ///     Composes selected-Plugin processing from the same highest Game Load Orders seam used by Plugin List and the
-    ///     matched production overlay adapter.
-    /// </summary>
-    /// <param name="gameLoadOrders">The Game Load Orders module shared by the window's two caller paths.</param>
-    /// <returns>A Processing Run executor whose Store lifecycle remains internally owned by each run.</returns>
-    private static ProcessingRunExecutor CreateProcessingRunExecutor(IGameLoadOrders gameLoadOrders)
-    {
-        var pluginIngestion = new PluginIngestion(gameLoadOrders);
-        return new ProcessingRunExecutor(pluginIngestion, new FormIdRecordStoreSessionOpener());
-    }
-
-    /// <summary>
     ///     Initializes XAML, assigns the root ViewModel, and attaches close-time cleanup.
     /// </summary>
     private void InitializeWindow()
@@ -109,30 +61,6 @@ public sealed partial class MainWindow : Window, IDisposable
         InitializeComponent();
         Root.DataContext = ViewModel;
         Closed += MainWindow_Closed;
-    }
-
-    /// <summary>
-    ///     Runs one window-owned disposal step, keeping the first failure as the exception the caller observes.
-    /// </summary>
-    /// <param name="step">The cleanup action to run.</param>
-    /// <param name="primaryException">
-    ///     The failure already in flight, replaced only when <paramref name="step" /> raises the first one.
-    /// </param>
-    private static void RetireService(Action step, ref Exception? primaryException)
-    {
-        try
-        {
-            step();
-        }
-        catch (Exception ex) when (primaryException is null)
-        {
-            // The first failure becomes the primary exception, but later steps still run so nothing is left live.
-            primaryException = ex;
-        }
-        catch
-        {
-            // A later cleanup failure cannot replace the primary exception's identity.
-        }
     }
 
     private void MainWindow_Closed(object sender, WindowEventArgs args)

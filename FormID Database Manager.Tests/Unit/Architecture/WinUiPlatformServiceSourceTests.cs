@@ -60,11 +60,7 @@ public class WinUiPlatformServiceSourceTests
         Assert.Contains("WinUiThreadDispatcher", source, StringComparison.Ordinal);
         Assert.Contains("WinUiFileDialogService", source, StringComparison.Ordinal);
         Assert.Contains("UserWorkflow", source, StringComparison.Ordinal);
-        Assert.Contains("new UserWorkflow(", source, StringComparison.Ordinal);
-        Assert.Contains("GameLoadOrders", source, StringComparison.Ordinal);
-        Assert.Contains("new PluginList(", source, StringComparison.Ordinal);
         Assert.DoesNotContain("PluginListManager", source, StringComparison.Ordinal);
-        Assert.Contains("ProcessingRunExecutor", source, StringComparison.Ordinal);
         Assert.Contains("DirectoryComboBox_SelectionChanged", source, StringComparison.Ordinal);
 
         var xaml = File.ReadAllText(mainWindowXamlPath);
@@ -73,20 +69,32 @@ public class WinUiPlatformServiceSourceTests
     }
 
     /// <summary>
-    ///     Verifies WinUI production composition consumes the highest Game Load Orders seam and delegates the matched
-    ///     overlay pairing to Plugin Ingestion's production composition entry point.
+    ///     Verifies the shell obtains its User Workflow from the production factory and constructs no Core
+    ///     collaborator itself, so composition cannot drift back into code-behind no test can construct.
     /// </summary>
-    [Fact]
-    public void WinUiMainWindow_ProductionComposition_UsesHighestGameLoadOrdersAndPluginIngestionPairing()
+    /// <param name="coreTypeName">A Core collaborator the User Workflow factory builds and the shell must not.</param>
+    /// <remarks>
+    ///     The factory's own wiring is covered behaviourally by the User Workflow's factory smoke test; the Tests
+    ///     project cannot reference the WinUI assembly, so source text is the only guard on the shell's side.
+    /// </remarks>
+    [Theory]
+    [InlineData("PluginList")]
+    [InlineData("PluginListPresentationAdapter")]
+    [InlineData("GameLoadOrders")]
+    [InlineData("PluginIngestion")]
+    [InlineData("ProcessingRunExecutor")]
+    [InlineData("GameInstallations")]
+    [InlineData("GameInstallationProbe")]
+    [InlineData("FormIdRecordStoreSessionOpener")]
+    [InlineData("MutagenPluginOverlayReader")]
+    [InlineData("UserWorkflow")]
+    public void WinUiMainWindow_Composition_ConstructsNoCoreCollaborator(string coreTypeName)
     {
         var mainWindowSourcePath = Path.Combine(GetWinUiProjectDirectory(), "MainWindow.xaml.cs");
         var source = File.ReadAllText(mainWindowSourcePath);
 
-        Assert.Matches(@"\bIGameLoadOrders\??\s+\w+", source);
-        Assert.Matches(@"new\s+GameLoadOrders\s*\(\s*\)", source);
-        Assert.Matches(@"new\s+PluginList\s*\(", source);
-        Assert.Matches(@"new\s+PluginIngestion\s*\(", source);
-        Assert.DoesNotContain("MutagenPluginOverlayReader", source, StringComparison.Ordinal);
+        Assert.Contains("UserWorkflow.Create(", source, StringComparison.Ordinal);
+        Assert.DoesNotMatch($@"\bnew\s+{coreTypeName}\s*\(", source);
     }
 
     /// <summary>
@@ -102,13 +110,12 @@ public class WinUiPlatformServiceSourceTests
         var source = File.ReadAllText(mainWindowSourcePath);
         var xaml = File.ReadAllText(mainWindowXamlPath);
 
-        Assert.Contains("IFileDialogService? fileDialogService", source, StringComparison.Ordinal);
         Assert.Contains("new WinUiFileDialogService(AppWindow)", source, StringComparison.Ordinal);
-        Assert.Contains("fileDialogService ?? new WinUiFileDialogService(AppWindow)", source, StringComparison.Ordinal);
+        var initializeWindowIndex = source.IndexOf("InitializeWindow();", StringComparison.Ordinal);
+        var workflowFactoryIndex = source.IndexOf("UserWorkflow.Create(", StringComparison.Ordinal);
         Assert.True(
-            source.IndexOf("InitializeWindow();", StringComparison.Ordinal) <
-            source.IndexOf("new UserWorkflow(", StringComparison.Ordinal),
-            "The production workflow should be constructed after InitializeComponent creates the WinUI window.");
+            initializeWindowIndex >= 0 && initializeWindowIndex < workflowFactoryIndex,
+            "The production workflow should be created after InitializeComponent creates the WinUI window.");
 
         Assert.Contains("await _userWorkflow.BrowseGameDirectoryAsync()", source, StringComparison.Ordinal);
         Assert.Contains("await _userWorkflow.SelectDatabaseAsync()", source, StringComparison.Ordinal);

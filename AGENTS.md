@@ -39,6 +39,9 @@ renaming Core members or changing project boundaries. In particular:
 - `ProcessingRun.cs` contains no user-facing wording. A run reports typed `ProcessingRunProgress` and returns a typed
   `ProcessingRunOutcome`; `ProcessingRunPresentation` renders both (ADR-0007). The retired sentences are pinned by
   name, and `"Would process"` must not reappear anywhere in Core.
+- `UserWorkflow.Create` is the only production composition. The WinUI shell supplies the ViewModel, thread
+  dispatcher, and file dialog adapter and constructs no Core collaborator. `UserWorkflow` owns the
+  `PluginListPresentationAdapter`'s lifetime and detaches it first on dispose.
 - Projected `MainWindowViewModel` state is read-only to consumers, and retired APIs must not be reintroduced.
 
 ## Engineering conventions

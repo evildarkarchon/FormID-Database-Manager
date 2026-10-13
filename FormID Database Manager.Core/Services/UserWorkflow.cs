@@ -89,6 +89,58 @@ public sealed class UserWorkflow : IDisposable
     }
 
     /// <summary>
+    ///     Builds the production User Workflow and the main window's Core object graph from the platform-supplied pieces.
+    /// </summary>
+    /// <param name="viewModel">The binding-state projection updated by workflow transitions.</param>
+    /// <param name="dispatcher">The dispatcher that owns <paramref name="viewModel" />.</param>
+    /// <param name="fileDialogService">The platform picker adapter.</param>
+    /// <returns>
+    ///     A workflow that owns every collaborator built here, including the Plugin List presentation adapter, and
+    ///     retires them all in its own <see cref="Dispose" />.
+    /// </returns>
+    /// <exception cref="ArgumentNullException">Any argument is null.</exception>
+    /// <remarks>
+    ///     <para>
+    ///         This is the only production composition. It wires Game Installation resolution over the production
+    ///         installation probe, one Game Load Orders instance shared by the Plugin List and Plugin Ingestion
+    ///         (ADR-0008), and the Processing Run executor over Plugin Ingestion and the production FormID Record Store
+    ///         session opener, which keeps Store opening and disposal per-run inside the executor (ADR-0001). Every
+    ///         constructor involved only stores its dependencies, so building the graph reads no game installation,
+    ///         load order, or file.
+    ///     </para>
+    ///     <para>
+    ///         Composition lives here rather than in a separate composition module because such a module fails the
+    ///         deletion test: it would hold three references and make three dispose calls, which is shallow. This
+    ///         workflow already owns the Plugin List's lifetime, so owning the rest of the graph concentrates the
+    ///         concept instead of spreading it across a pass-through.
+    ///     </para>
+    /// </remarks>
+    public static UserWorkflow Create(
+        MainWindowViewModel viewModel,
+        IThreadDispatcher dispatcher,
+        IFileDialogService fileDialogService)
+    {
+        ArgumentNullException.ThrowIfNull(viewModel);
+        ArgumentNullException.ThrowIfNull(dispatcher);
+        ArgumentNullException.ThrowIfNull(fileDialogService);
+
+        // One Game Load Orders instance serves both caller roles. Sharing it is economy rather than a correctness
+        // rule: Plugin Ingestion's own constructor already pairs it with the matched production overlay reader.
+        var gameLoadOrders = new GameLoadOrders();
+        var processingRunExecutor = new ProcessingRunExecutor(
+            new PluginIngestion(gameLoadOrders),
+            new FormIdRecordStoreSessionOpener());
+
+        return new UserWorkflow(
+            viewModel,
+            dispatcher,
+            fileDialogService,
+            new GameInstallations(new GameInstallationProbe()),
+            new PluginList(gameLoadOrders),
+            processingRunExecutor);
+    }
+
+    /// <summary>
     ///     Detaches Plugin List presentation, cancels processing, and releases resources owned by the workflow.
     /// </summary>
     /// <remarks>

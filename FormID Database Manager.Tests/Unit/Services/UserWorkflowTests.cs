@@ -1886,6 +1886,40 @@ public class UserWorkflowTests
     }
 
     /// <summary>
+    /// Verifies that the production factory wires the whole Core graph without touching an installed game, the file
+    /// system, or the platform picker, and that the workflow it returns tears that graph down cleanly.
+    /// </summary>
+    /// <remarks>
+    /// This deliberately calls nothing that would read a load order or installation records: the production probe and
+    /// Game Load Orders would then reach the real machine. A wiring mistake such as a null collaborator, a throwing
+    /// constructor, or a disposal failure still surfaces here without a WinUI host.
+    /// </remarks>
+    [Fact]
+    public void Create_ProductionComposition_ConstructsWithoutIoAndDisposesCleanly()
+    {
+        var dispatcher = new SynchronousThreadDispatcher();
+        var viewModel = new MainWindowViewModel(dispatcher);
+        // Strict, so any picker call during construction or disposal fails the test instead of returning a default.
+        var fileDialogService = new Mock<IFileDialogService>(MockBehavior.Strict);
+
+        var sut = UserWorkflow.Create(viewModel, dispatcher, fileDialogService.Object);
+
+        Assert.NotNull(sut);
+        Assert.Null(viewModel.SelectedGame);
+        Assert.Empty(viewModel.GameDirectory);
+        Assert.Empty(viewModel.DetectedDirectories);
+        Assert.Empty(viewModel.Plugins);
+        Assert.Empty(viewModel.ErrorMessages);
+        Assert.Empty(viewModel.WarningMessages);
+
+        var disposalFailure = Record.Exception(sut.Dispose);
+
+        Assert.Null(disposalFailure);
+        Assert.Empty(viewModel.ErrorMessages);
+        fileDialogService.VerifyNoOtherCalls();
+    }
+
+    /// <summary>
     /// Verifies that a changed Advanced Mode value is projected before same-source Plugin List refresh completes.
     /// </summary>
     [Fact]
