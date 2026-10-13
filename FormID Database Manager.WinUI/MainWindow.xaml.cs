@@ -1,4 +1,3 @@
-using System.Runtime.ExceptionServices;
 using FormID_Database_Manager.Models;
 using FormID_Database_Manager.Services;
 using FormID_Database_Manager.ViewModels;
@@ -9,7 +8,6 @@ namespace FormID_Database_Manager.WinUI;
 
 public sealed partial class MainWindow : Window, IDisposable
 {
-    private readonly PluginListPresentationAdapter _pluginListPresentationAdapter;
     private readonly UserWorkflow _userWorkflow;
     private bool _disposed;
 
@@ -26,9 +24,9 @@ public sealed partial class MainWindow : Window, IDisposable
         var processingRunExecutor = CreateProcessingRunExecutor(gameLoadOrders);
 
         InitializeWindow();
-        _pluginListPresentationAdapter = new PluginListPresentationAdapter(pluginList, ViewModel, dispatcher);
         _userWorkflow = new UserWorkflow(
             ViewModel,
+            dispatcher,
             new WinUiFileDialogService(AppWindow),
             gameInstallations,
             pluginList,
@@ -60,9 +58,9 @@ public sealed partial class MainWindow : Window, IDisposable
         var effectiveProcessingRun = processingRunExecutor ?? CreateProcessingRunExecutor(effectiveGameLoadOrders);
 
         InitializeWindow();
-        _pluginListPresentationAdapter = new PluginListPresentationAdapter(pluginList, ViewModel, dispatcher);
         _userWorkflow = new UserWorkflow(
             ViewModel,
+            dispatcher,
             fileDialogService ?? new WinUiFileDialogService(AppWindow),
             effectiveGameInstallations,
             pluginList,
@@ -75,8 +73,9 @@ public sealed partial class MainWindow : Window, IDisposable
     ///     Cancels in-flight processing and releases services owned by this window.
     /// </summary>
     /// <remarks>
-    ///     Workflow disposal can surface a cancellation callback failure from the run being cancelled, so every
-    ///     window-owned service is retired regardless and the first failure keeps its identity.
+    ///     The User Workflow owns the teardown order of every Core collaborator, including detaching Plugin List
+    ///     presentation first, and retires all of them even when one step fails. A failure it surfaces, such as a
+    ///     cancellation callback failure from the run being cancelled, propagates unchanged.
     /// </remarks>
     public void Dispose()
     {
@@ -87,16 +86,7 @@ public sealed partial class MainWindow : Window, IDisposable
 
         _disposed = true;
         Closed -= MainWindow_Closed;
-
-        Exception? primaryException = null;
-        // Detach presentation before the workflow retires its authoritative Plugin List.
-        RetireService(_pluginListPresentationAdapter.Dispose, ref primaryException);
-        RetireService(_userWorkflow.Dispose, ref primaryException);
-        if (primaryException is not null)
-        {
-            // Rethrow through the dispatch info so the caller still sees the original throw site.
-            ExceptionDispatchInfo.Throw(primaryException);
-        }
+        _userWorkflow.Dispose();
     }
 
     /// <summary>

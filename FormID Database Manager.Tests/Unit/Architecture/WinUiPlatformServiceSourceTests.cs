@@ -1,7 +1,6 @@
 using System;
 using System.IO;
 using System.Linq;
-using System.Text.RegularExpressions;
 using System.Xml.Linq;
 using Xunit;
 
@@ -64,29 +63,9 @@ public class WinUiPlatformServiceSourceTests
         Assert.Contains("new UserWorkflow(", source, StringComparison.Ordinal);
         Assert.Contains("GameLoadOrders", source, StringComparison.Ordinal);
         Assert.Contains("new PluginList(", source, StringComparison.Ordinal);
-        Assert.Contains("PluginListPresentationAdapter", source, StringComparison.Ordinal);
         Assert.DoesNotContain("PluginListManager", source, StringComparison.Ordinal);
         Assert.Contains("ProcessingRunExecutor", source, StringComparison.Ordinal);
         Assert.Contains("DirectoryComboBox_SelectionChanged", source, StringComparison.Ordinal);
-
-        var adapterField = Regex.Match(
-            source,
-            @"private readonly PluginListPresentationAdapter\s+(?<field>_\w+);").Groups["field"].Value;
-        var workflowField = Regex.Match(
-            source,
-            @"private readonly UserWorkflow\s+(?<field>_\w+);").Groups["field"].Value;
-        Assert.NotEmpty(adapterField);
-        Assert.NotEmpty(workflowField);
-        // Window cleanup passes each step to a retire helper as a method group, so match the reference rather than
-        // a direct invocation; the ordering requirement below is what this assertion actually protects.
-        var adapterDispose = $"{adapterField}.Dispose";
-        var workflowDispose = $"{workflowField}.Dispose";
-        Assert.Contains(adapterDispose, source, StringComparison.Ordinal);
-        Assert.Contains(workflowDispose, source, StringComparison.Ordinal);
-        Assert.True(
-            source.IndexOf(adapterDispose, StringComparison.Ordinal) <
-            source.IndexOf(workflowDispose, StringComparison.Ordinal),
-            "The projection adapter must detach before User Workflow disposal retires the Plugin List.");
 
         var xaml = File.ReadAllText(mainWindowXamlPath);
         Assert.Contains("AutomationProperties.AutomationId=\"DirectoryComboBox\"", xaml, StringComparison.Ordinal);

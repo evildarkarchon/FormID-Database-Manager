@@ -15,6 +15,13 @@ public sealed class UserWorkflow : IDisposable
     private readonly IFileDialogService _fileDialogService;
     private readonly GameInstallations _gameInstallations;
     private readonly PluginList _pluginList;
+
+    /// <summary>
+    ///     Projects <see cref="_pluginList" /> into the ViewModel; built and owned here because this workflow owns the
+    ///     Plugin List it observes, so the two lifetimes end together in <see cref="Dispose" />.
+    /// </summary>
+    private readonly PluginListPresentationAdapter _pluginListPresentationAdapter;
+
     private readonly IProcessingRunExecutor _processingRunExecutor;
 
     /// <summary>
@@ -44,18 +51,30 @@ public sealed class UserWorkflow : IDisposable
     ///     Creates a workflow module that coordinates existing Core modules behind one UI-neutral interface.
     /// </summary>
     /// <param name="viewModel">The binding-state projection updated by workflow transitions.</param>
+    /// <param name="dispatcher">
+    ///     The dispatcher that owns <paramref name="viewModel" />, used by the Plugin List presentation adapter this
+    ///     workflow builds and owns.
+    /// </param>
     /// <param name="fileDialogService">The platform picker adapter.</param>
     /// <param name="gameInstallations">The Game Installation resolution module, used for detection and location.</param>
     /// <param name="pluginList">The authoritative Plugin List whose lifetime transfers to this workflow.</param>
     /// <param name="processingRunExecutor">The owned Processing Run executor.</param>
+    /// <exception cref="ArgumentNullException">Any dependency is null.</exception>
+    /// <remarks>
+    ///     The Plugin List stays a parameter rather than being built here because tests observe it directly through its
+    ///     own public interface. The presentation adapter subscribes to it, and queues its first projection, as the last
+    ///     construction step, so a failed argument check never leaves a subscribed adapter behind.
+    /// </remarks>
     internal UserWorkflow(
         MainWindowViewModel viewModel,
+        IThreadDispatcher dispatcher,
         IFileDialogService fileDialogService,
         GameInstallations gameInstallations,
         PluginList pluginList,
         IProcessingRunExecutor processingRunExecutor)
     {
         _viewModel = viewModel ?? throw new ArgumentNullException(nameof(viewModel));
+        ArgumentNullException.ThrowIfNull(dispatcher);
         _fileDialogService = fileDialogService ?? throw new ArgumentNullException(nameof(fileDialogService));
         _gameInstallations = gameInstallations ?? throw new ArgumentNullException(nameof(gameInstallations));
         _pluginList = pluginList ?? throw new ArgumentNullException(nameof(pluginList));
@@ -66,15 +85,18 @@ public sealed class UserWorkflow : IDisposable
             null,
             ImmutableArray<string>.Empty,
             AdvancedMode.Off);
+        _pluginListPresentationAdapter = new PluginListPresentationAdapter(_pluginList, _viewModel, dispatcher);
     }
 
     /// <summary>
-    ///     Cancels processing and releases processing resources owned by the workflow.
+    ///     Detaches Plugin List presentation, cancels processing, and releases resources owned by the workflow.
     /// </summary>
     /// <remarks>
-    ///     Every owned collaborator is retired even when an earlier step fails. Cleanup after a failure is best-effort,
-    ///     matching Plugin ingestion overlay cleanup: the first failure keeps its identity, and a standalone cleanup
-    ///     failure still propagates because no other path reports it.
+    ///     The steps run in a fixed order: detach the Plugin List presentation adapter, retire Game Context resolution,
+    ///     cancel the Processing Run executor, dispose the executor, then dispose the Plugin List. Every owned
+    ///     collaborator is retired even when an earlier step fails. Cleanup after a failure is best-effort, matching
+    ///     Plugin ingestion overlay cleanup: the first failure keeps its identity, and a standalone cleanup failure still
+    ///     propagates because no other path reports it.
     /// </remarks>
     /// <exception cref="AggregateException">A registered Processing Run cancellation callback throws.</exception>
     public void Dispose()
@@ -85,10 +107,16 @@ public sealed class UserWorkflow : IDisposable
         }
 
         _disposed = true;
-        // Retire resolution before disposing collaborators so late lookup or picker work cannot publish into torn-down state.
-        Interlocked.Increment(ref _gameContextVersion);
 
         Exception? primaryException = null;
+        // Detach presentation before anything else, and in particular before the workflow retires its authoritative
+        // Plugin List. A projection already queued on the dispatcher would otherwise still write to the ViewModel
+        // during teardown — for example when cancelling the executor lets the dispatcher run — and a refresh
+        // publishing from another thread could queue a new one. Disposing the Plugin List itself publishes no state,
+        // so these queued-projection and cross-thread publisher windows are the only ones this ordering guards.
+        RetireCollaborator(_pluginListPresentationAdapter.Dispose, ref primaryException);
+        // Retire resolution before disposing collaborators so late lookup or picker work cannot publish into torn-down state.
+        RetireCollaborator(() => Interlocked.Increment(ref _gameContextVersion), ref primaryException);
         RetireCollaborator(_processingRunExecutor.Cancel, ref primaryException);
         RetireCollaborator(_processingRunExecutor.Dispose, ref primaryException);
         RetireCollaborator(_pluginList.Dispose, ref primaryException);
