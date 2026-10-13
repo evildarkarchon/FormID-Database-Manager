@@ -1,6 +1,7 @@
 #nullable enable
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -28,7 +29,6 @@ public class UserWorkflowTests
     private readonly InMemoryGameInstallationProbe _gameInstallationProbe = new();
     private readonly PluginList _pluginList;
     private readonly RecordingPluginListGameLoadOrders _pluginListGameLoadOrders;
-    private readonly PluginListPresentationAdapter _pluginListPresentationAdapter;
     private readonly RecordingProcessingRunExecutor _processingRunExecutor;
     private readonly List<ProcessingRunRequest> _processingRuns = [];
     private readonly List<PluginListSource> _refreshes = [];
@@ -42,7 +42,6 @@ public class UserWorkflowTests
         _gameInstallations = new GameInstallations(_gameInstallationProbe);
         _pluginListGameLoadOrders = new RecordingPluginListGameLoadOrders(_refreshes);
         _pluginList = new PluginList(_pluginListGameLoadOrders);
-        _pluginListPresentationAdapter = new PluginListPresentationAdapter(_pluginList, _viewModel, _dispatcher);
         _processingRunExecutor = new RecordingProcessingRunExecutor(_processingRuns);
     }
 
@@ -852,6 +851,7 @@ public class UserWorkflowTests
         var executor = new RecordingProcessingRunExecutor(processingRuns);
         using var sut = new UserWorkflow(
             viewModel,
+            dispatcher,
             _fileDialogService.Object,
             _gameInstallations,
             pluginList,
@@ -1747,7 +1747,6 @@ public class UserWorkflowTests
     {
         var sut = CreateSut();
 
-        _pluginListPresentationAdapter.Dispose();
         sut.Dispose();
         sut.Dispose();
 
@@ -1768,7 +1767,6 @@ public class UserWorkflowTests
         _processingRunExecutor.DisposeFailure = new InvalidOperationException("executor cleanup failed");
         var sut = CreateSut();
 
-        _pluginListPresentationAdapter.Dispose();
         var thrown = Assert.Throws<AggregateException>(() => sut.Dispose());
 
         Assert.Same(callbackFailure, Assert.Single(thrown.InnerExceptions));
@@ -1788,7 +1786,6 @@ public class UserWorkflowTests
         _processingRunExecutor.DisposeFailure = disposalFailure;
         var sut = CreateSut();
 
-        _pluginListPresentationAdapter.Dispose();
         var thrown = Assert.Throws<InvalidOperationException>(() => sut.Dispose());
 
         Assert.Same(disposalFailure, thrown);
@@ -1810,7 +1807,6 @@ public class UserWorkflowTests
         var selection = sut.SelectGameReleaseAsync(GameRelease.Fallout4);
         await lookupStarted.Task;
 
-        _pluginListPresentationAdapter.Dispose();
         sut.Dispose();
         allowLookupToFinish.SetResult();
         await selection;
@@ -1840,13 +1836,87 @@ public class UserWorkflowTests
         var browse = sut.BrowseGameDirectoryAsync();
         await pickerStarted.Task;
 
-        _pluginListPresentationAdapter.Dispose();
         sut.Dispose();
         allowPickerToFinish.SetResult(FileDialogResult.Failure("picker unavailable"));
         await browse;
 
         Assert.Empty(_viewModel.ErrorMessages);
         Assert.Empty(_refreshes);
+    }
+
+    /// <summary>
+    /// Verifies that disposal detaches Plugin List presentation before any other teardown step, so a projection already
+    /// queued on the dispatcher cannot write to the ViewModel when cancelling the executor lets that dispatcher run.
+    /// </summary>
+    [Fact]
+    public async Task Dispose_QueuedPluginListProjection_DetachesPresentationBeforeCancellingExecutor()
+    {
+        var dispatcher = new RecordingThreadDispatcher();
+        var viewModel = new MainWindowViewModel(dispatcher);
+        // Standing scan activity from before the workflow existed, so a projection surviving disposal would clear it.
+        viewModel.ApplyScanActivityProjection(new ActivityProjection(true, "Unchanged", 42));
+        dispatcher.Drain();
+        var executor = new RecordingProcessingRunExecutor([]) { OnCancel = dispatcher.Drain };
+        _pluginListGameLoadOrders.PluginNames = ["User.esp"];
+        _gameInstallationProbe.WithInstalledDirectories(GameRelease.SkyrimSE, GameDirectory);
+        var sut = new UserWorkflow(
+            viewModel,
+            dispatcher,
+            _fileDialogService.Object,
+            _gameInstallations,
+            _pluginList,
+            executor);
+        await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
+        // The Plugin List is confirmed, but its projection is still waiting on the dispatcher.
+        Assert.NotNull(_pluginList.Current.Confirmed);
+        Assert.NotEqual(0, dispatcher.PendingCount);
+        Assert.Empty(viewModel.Plugins);
+        var postCountBeforeDispose = dispatcher.PostCount;
+
+        sut.Dispose();
+        dispatcher.Drain();
+
+        Assert.Equal(1, executor.CancelCallCount);
+        Assert.Empty(viewModel.Plugins);
+        Assert.True(viewModel.IsProgressVisible);
+        Assert.Equal("Unchanged", viewModel.ProgressStatus);
+        Assert.Equal(42, viewModel.ProgressValue);
+        Assert.Empty(viewModel.InformationMessages);
+        Assert.Equal(postCountBeforeDispose, dispatcher.PostCount);
+    }
+
+    /// <summary>
+    /// Verifies that the production factory wires the whole Core graph without touching an installed game, the file
+    /// system, or the platform picker, and that the workflow it returns tears that graph down cleanly.
+    /// </summary>
+    /// <remarks>
+    /// This deliberately calls nothing that would read a load order or installation records: the production probe and
+    /// Game Load Orders would then reach the real machine. A wiring mistake such as a null collaborator, a throwing
+    /// constructor, or a disposal failure still surfaces here without a WinUI host.
+    /// </remarks>
+    [Fact]
+    public void Create_ProductionComposition_ConstructsWithoutIoAndDisposesCleanly()
+    {
+        var dispatcher = new SynchronousThreadDispatcher();
+        var viewModel = new MainWindowViewModel(dispatcher);
+        // Strict, so any picker call during construction or disposal fails the test instead of returning a default.
+        var fileDialogService = new Mock<IFileDialogService>(MockBehavior.Strict);
+
+        var sut = UserWorkflow.Create(viewModel, dispatcher, fileDialogService.Object);
+
+        Assert.NotNull(sut);
+        Assert.Null(viewModel.SelectedGame);
+        Assert.Empty(viewModel.GameDirectory);
+        Assert.Empty(viewModel.DetectedDirectories);
+        Assert.Empty(viewModel.Plugins);
+        Assert.Empty(viewModel.ErrorMessages);
+        Assert.Empty(viewModel.WarningMessages);
+
+        var disposalFailure = Record.Exception(sut.Dispose);
+
+        Assert.Null(disposalFailure);
+        Assert.Empty(viewModel.ErrorMessages);
+        fileDialogService.VerifyNoOtherCalls();
     }
 
     /// <summary>
@@ -1918,6 +1988,7 @@ public class UserWorkflowTests
     {
         return new UserWorkflow(
             _viewModel,
+            _dispatcher,
             _fileDialogService.Object,
             _gameInstallations,
             _pluginList,
@@ -2028,6 +2099,12 @@ public class UserWorkflowTests
         public Exception? CancelFailure { get; set; }
 
         /// <summary>
+        ///     Work run inside <see cref="Cancel" /> before any configured failure, standing in for cancellation
+        ///     callbacks that let the UI dispatcher run queued work while the workflow is being torn down.
+        /// </summary>
+        public Action? OnCancel { get; set; }
+
+        /// <summary>
         ///     The failure raised by <see cref="Dispose" />, standing in for an executor whose own cleanup fails.
         /// </summary>
         public Exception? DisposeFailure { get; set; }
@@ -2068,6 +2145,7 @@ public class UserWorkflowTests
         public void Cancel()
         {
             CancelCallCount++;
+            OnCancel?.Invoke();
             if (CancelFailure is { } failure)
             {
                 throw failure;
@@ -2080,6 +2158,50 @@ public class UserWorkflowTests
             if (DisposeFailure is { } failure)
             {
                 throw failure;
+            }
+        }
+    }
+
+    /// <summary>
+    ///     Holds posted work until a test drains it, reporting UI-thread access only while that work runs.
+    /// </summary>
+    private sealed class RecordingThreadDispatcher : IThreadDispatcher
+    {
+        private readonly ConcurrentQueue<Action> _postedActions = new();
+        private bool _hasAccess;
+        private int _postCount;
+
+        public int PendingCount => _postedActions.Count;
+
+        public int PostCount => Volatile.Read(ref _postCount);
+
+        public void Post(Action action)
+        {
+            Interlocked.Increment(ref _postCount);
+            _postedActions.Enqueue(action);
+        }
+
+        public bool CheckAccess()
+        {
+            return _hasAccess;
+        }
+
+        /// <summary>
+        ///     Runs queued work, including anything that work posts, until the queue is empty.
+        /// </summary>
+        public void Drain()
+        {
+            while (_postedActions.TryDequeue(out var action))
+            {
+                _hasAccess = true;
+                try
+                {
+                    action();
+                }
+                finally
+                {
+                    _hasAccess = false;
+                }
             }
         }
     }
