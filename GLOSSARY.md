@@ -36,7 +36,7 @@ The GameRelease and game directory from which a Plugin List is loaded. Advanced 
 _Avoid_: List context, scan target.
 
 **Confirmed Plugin List**:
-The most recently loaded Plugin List that still matches its Plugin List Source and can supply selected Plugins to a Processing Run. It remains valid while that same source is refreshed, but changing the source invalidates it immediately.
+The most recently loaded Plugin List that still matches its Plugin List Source and can supply selected Plugins to a Processing Run. It remains valid while that same source is refreshed, but changing the source invalidates it immediately (ADR-0009).
 _Avoid_: Cached Plugin List, stale Plugin List.
 
 **Plugin Ingestion**:
