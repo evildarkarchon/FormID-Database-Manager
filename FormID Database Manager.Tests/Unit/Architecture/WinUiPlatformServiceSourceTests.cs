@@ -423,6 +423,27 @@ public class WinUiPlatformServiceSourceTests
     }
 
     /// <summary>
+    /// Verifies that the bulk-selection buttons say they reach Plugins the text filter hides, because Select All
+    /// and Select None apply to the complete Confirmed Plugin List rather than the filtered view.
+    /// </summary>
+    [Theory]
+    [InlineData("SelectAllButton", "Select every plugin, including plugins hidden by the filter.")]
+    [InlineData("SelectNoneButton", "Clear every plugin selection, including plugins hidden by the filter.")]
+    public void WinUiMainWindow_BulkSelectionButton_StatesThatItIncludesFilteredOutPlugins(
+        string automationId, string expectedDescription)
+    {
+        var mainWindowXamlPath = Path.Combine(GetWinUiProjectDirectory(), "MainWindow.xaml");
+        var xaml = XDocument.Load(mainWindowXamlPath);
+
+        // Attached properties are plain un-namespaced attributes to XML, so they are addressed by their dotted name.
+        var button = Assert.Single(xaml.Descendants(),
+            element => (string?)element.Attribute("AutomationProperties.AutomationId") == automationId);
+
+        Assert.Equal(expectedDescription, (string?)button.Attribute("AutomationProperties.HelpText"));
+        Assert.Equal(expectedDescription, (string?)button.Attribute("ToolTipService.ToolTip"));
+    }
+
+    /// <summary>
     /// Verifies that Phase 10 keeps primary commands reachable through access keys and workflow tab order.
     /// </summary>
     [Fact]

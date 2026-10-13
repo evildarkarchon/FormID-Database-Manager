@@ -188,20 +188,29 @@
                         Grid.Column="1"
                         Orientation="Horizontal"
                         Spacing="8">
+                        <!--
+                            Select All and Select None act on the whole plugin list, including plugins the filter
+                            hides, so both buttons say so in a tooltip and to screen readers. Otherwise a filtered
+                            Select All could queue plugins the user never saw selected.
+                        -->
                         <Button
                             AutomationProperties.AutomationId="SelectAllButton"
                             AccessKey="A"
+                            AutomationProperties.HelpText="Select every plugin, including plugins hidden by the filter."
                             Click="SelectAll_Click"
                             Content="Select All"
                             Style="{StaticResource WorkflowButtonStyle}"
-                            TabIndex="10" />
+                            TabIndex="10"
+                            ToolTipService.ToolTip="Select every plugin, including plugins hidden by the filter." />
                         <Button
                             AutomationProperties.AutomationId="SelectNoneButton"
                             AccessKey="N"
+                            AutomationProperties.HelpText="Clear every plugin selection, including plugins hidden by the filter."
                             Click="SelectNone_Click"
                             Content="Select None"
                             Style="{StaticResource WorkflowButtonStyle}"
-                            TabIndex="11" />
+                            TabIndex="11"
+                            ToolTipService.ToolTip="Clear every plugin selection, including plugins hidden by the filter." />
                     </StackPanel>
                 </Grid>
 

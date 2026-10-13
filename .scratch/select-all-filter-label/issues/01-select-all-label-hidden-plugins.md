@@ -1,6 +1,6 @@
 # Say that Select All includes Plugins hidden by the text filter
 
-Status: needs-triage
+Status: resolved
 
 ## Problem
 
@@ -22,3 +22,11 @@ Presentation wording only. The bulk-selection behavior itself is not in question
 
 Architecture review of 2026-10-13 (Plugin List candidate), while checking whether bulk selection ignoring the filter was
 a defect. It is not; only its labelling is.
+
+## Completion
+
+Select All and Select None now carry matching `ToolTipService.ToolTip` and `AutomationProperties.HelpText` in
+`MainWindow.xaml`: "Select every plugin, including plugins hidden by the filter." and "Clear every plugin selection,
+including plugins hidden by the filter." The visible button labels and the filter's help text are unchanged.
+`WinUiPlatformServiceSourceTests.WinUiMainWindow_BulkSelectionButton_StatesThatItIncludesFilteredOutPlugins` pins both
+attributes on each button.
