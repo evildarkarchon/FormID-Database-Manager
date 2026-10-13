@@ -90,15 +90,24 @@ public class CoreProjectBoundaryTests
     }
 
     /// <summary>
-    /// Verifies that WinUI can only read the complete Game Context projection and its stable directory collection.
+    /// Verifies that WinUI can only read the complete Game Context projection, its stable directory collection, and
+    /// the Workflow Activity channel derived from the two projected activity facts.
     /// </summary>
-    /// <param name="propertyName">The projected Game Context property whose public shape is verified.</param>
+    /// <param name="propertyName">The projected property whose public shape is verified.</param>
+    /// <remarks>
+    /// The progress properties are pinned here for the same reason the Game Context ones are: a public setter would
+    /// let a third writer back onto the progress channel and reintroduce the collision the precedence rule removes.
+    /// </remarks>
     [Theory]
     [InlineData(nameof(MainWindowViewModel.SelectedGame))]
     [InlineData(nameof(MainWindowViewModel.GameDirectory))]
     [InlineData(nameof(MainWindowViewModel.AdvancedMode))]
     [InlineData(nameof(MainWindowViewModel.DetectedDirectories))]
-    public void GameContextProjectionProperties_PublicContract_ExposeGettersWithoutSetters(string propertyName)
+    [InlineData(nameof(MainWindowViewModel.ProgressStatus))]
+    [InlineData(nameof(MainWindowViewModel.ProgressValue))]
+    [InlineData(nameof(MainWindowViewModel.IsProgressVisible))]
+    [InlineData(nameof(MainWindowViewModel.ProcessButtonText))]
+    public void ProjectedProperties_PublicContract_ExposeGettersWithoutConsumerAccessibleSetters(string propertyName)
     {
         var property = Assert.Single(
             typeof(MainWindowViewModel).GetProperties(),
@@ -106,7 +115,27 @@ public class CoreProjectBoundaryTests
 
         Assert.NotNull(property.GetMethod);
         Assert.True(property.GetMethod.IsPublic);
-        Assert.Null(property.SetMethod);
+        // Reflection includes private accessors, which let the ViewModel apply projections without exposing a writer.
+        Assert.True(property.SetMethod is null or { IsPrivate: true });
+    }
+
+    /// <summary>
+    /// Verifies that the progress surface a caller could write directly is gone, leaving the two activity projections
+    /// as the only way onto the progress channel.
+    /// </summary>
+    /// <param name="memberName">The retired member name that must not reappear in any form.</param>
+    [Theory]
+    [InlineData("UpdateProgress")]
+    [InlineData("ResetProgress")]
+    [InlineData("IsScanning")]
+    [InlineData("IsProcessing")]
+    public void RetiredProgressMembers_ViewModelSurface_NoLongerExist(string memberName)
+    {
+        var members = typeof(MainWindowViewModel).GetMember(
+            memberName,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+
+        Assert.Empty(members);
     }
 
     /// <summary>
@@ -160,8 +189,105 @@ public class CoreProjectBoundaryTests
     }
 
     /// <summary>
-    ///     Verifies the final selected-Plugin dependency direction: Processing Run owns the Store lifecycle, while the
-    ///     sealed aggregate Plugin Ingestion owns load-order, Data-path, and overlay adapters behind its interface.
+    ///     Verifies that the wording the FormID Record Store used to write onto its progress path has not come back,
+    ///     leaving both the words and the decision to name a Plugin to whoever renders the counters it reports.
+    /// </summary>
+    /// <remarks>
+    ///     This pins the three retired sentences by name rather than proving the absence of prose in general, which no
+    ///     source-text guard can do. What the app does say is pinned by <c>ProcessingRunPresentationTests</c>, not here.
+    /// </remarks>
+    [Fact]
+    public void FormIdRecordStore_TextImportProgress_DoesNotContainTheRetiredProgressWording()
+    {
+        var storeSource = File.ReadAllText(
+            Path.Combine(GetCoreProjectDirectory(), "Services", "FormIdRecordStore.cs"));
+
+        Assert.DoesNotContain("Starting processing", storeSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("Processing plugin", storeSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("Completed processing", storeSource, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    ///     Verifies that every string a Processing Run once wrote has left the run, and that the event type those
+    ///     strings travelled on is gone from every source area rather than reshaped.
+    /// </summary>
+    /// <remarks>
+    ///     Issue #66, under parent #61. A run now reports typed progress and returns a typed outcome, so the executor
+    ///     holds no user-facing wording at all. Like the Store guard above this pins the retired sentences by name
+    ///     rather than proving the absence of prose in general, which no source-text guard can do; what the run does
+    ///     say is pinned by <c>ProcessingRunPresentationTests</c> instead.
+    /// </remarks>
+    [Fact]
+    public void ProcessingRunExecutor_AfterTypedProgress_ContainsNoUserFacingWordingAndNoRetiredEventType()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var processingRunSource = File.ReadAllText(
+            Path.Combine(GetCoreProjectDirectory(), "Services", "ProcessingRun.cs"));
+
+        foreach (var retiredWording in new[]
+                 {
+                     "Starting processing",
+                     "Processing plugin",
+                     "Processing: ",
+                     "Initializing plugin ingestion",
+                     // The space is what keeps this off the IngestingPlugin progress case, which is a type name the
+                     // run legitimately mentions rather than wording it writes.
+                     "Ingesting plugin",
+                     "Completed processing",
+                     "Processing completed",
+                     "Error during processing",
+                     "Would process"
+                 })
+        {
+            Assert.DoesNotContain(retiredWording, processingRunSource, StringComparison.Ordinal);
+        }
+
+        // Split so this guard does not trip over its own spelling of the name it forbids.
+        var retiredEventTypeName = string.Concat("ProcessingRun", "Event");
+        var retiredEventReferences = new[]
+            {
+                GetCoreProjectDirectory(),
+                Path.Combine(repositoryRoot, "FormID Database Manager.WinUI"),
+                Path.Combine(repositoryRoot, "FormID Database Manager.TestUtilities"),
+                Path.Combine(repositoryRoot, "FormID Database Manager.Tests")
+            }
+            .SelectMany(directory => Directory.EnumerateFiles(directory, "*.cs", SearchOption.AllDirectories))
+            .Where(path => !IsBuildOutput(path))
+            .Where(path => File.ReadAllText(path).Contains(retiredEventTypeName, StringComparison.Ordinal))
+            .Select(path => Path.GetRelativePath(repositoryRoot, path))
+            .OrderBy(static path => path, StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.Empty(retiredEventReferences);
+    }
+
+    /// <summary>
+    ///     Verifies that the dry-run wording a substantive plan replaced has not come back anywhere in Core.
+    /// </summary>
+    /// <remarks>
+    ///     Issue #67, under parent #61. A dry run used to echo the names the user had just selected — "Would process X"
+    ///     — which told them nothing they had not typed. It now reports would-ingest and would-skip per Plugin, and a
+    ///     text dry run reports the file's presence and size. Like the guards above this pins the retired sentence by
+    ///     name; the wording that replaced it is pinned by <c>ProcessingRunPresentationTests</c> instead.
+    /// </remarks>
+    [Fact]
+    public void CoreSources_AfterTheSubstantiveDryRun_DoNotContainTheRetiredPlanWording()
+    {
+        var retiredPlanWording = string.Concat("Would ", "process");
+        var retiredPlanWordingOwners = Directory
+            .EnumerateFiles(GetCoreProjectDirectory(), "*.cs", SearchOption.AllDirectories)
+            .Where(path => !IsBuildOutput(path))
+            .Where(path => File.ReadAllText(path).Contains(retiredPlanWording, StringComparison.Ordinal))
+            .Select(path => Path.GetRelativePath(FindRepositoryRoot(), path))
+            .OrderBy(static path => path, StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.Empty(retiredPlanWordingOwners);
+    }
+
+    /// <summary>
+    ///     Verifies the final selected-Plugin dependency direction: Processing Run owns the complete Store session,
+    ///     while Plugin Ingestion borrows only Plugin-write behavior and owns its read-side adapters.
     /// </summary>
     [Fact]
     public void CoreServices_SelectedPluginOwnership_KeepsAdaptersAndStoreLifecycleOnTheirOwningSides()
@@ -169,13 +295,22 @@ public class CoreProjectBoundaryTests
         var servicesDirectory = Path.Combine(GetCoreProjectDirectory(), "Services");
         var processingRunSource = File.ReadAllText(Path.Combine(servicesDirectory, "ProcessingRun.cs"));
         var pluginIngestionSource = File.ReadAllText(Path.Combine(servicesDirectory, "PluginIngestion.cs"));
+        var ingestionOperation = Assert.Single(
+            typeof(IPluginIngestion).GetMethods(),
+            method => method.Name == nameof(IPluginIngestion.IngestAsync));
+        var planningOperation = Assert.Single(
+            typeof(IPluginIngestion).GetMethods(),
+            method => method.Name == nameof(IPluginIngestion.PlanAsync));
+        var pluginWriterType = typeof(IPluginFormIdRecordWriter);
 
         Assert.Contains("IPluginIngestion", processingRunSource, StringComparison.Ordinal);
-        Assert.Contains("_recordStoreOpener.OpenAsync", processingRunSource, StringComparison.Ordinal);
-        Assert.Contains("recordStore.OptimizeAsync", processingRunSource, StringComparison.Ordinal);
-        Assert.Contains("recordStore.DisposeAsync", processingRunSource, StringComparison.Ordinal);
-        Assert.DoesNotContain("IGameLoadOrderProvider", processingRunSource, StringComparison.Ordinal);
-        Assert.DoesNotContain("GameLoadOrderProvider", processingRunSource, StringComparison.Ordinal);
+        Assert.Contains("IFormIdRecordStoreSession recordStore", processingRunSource, StringComparison.Ordinal);
+        Assert.Contains("IFormIdRecordStoreSessionOpener", processingRunSource, StringComparison.Ordinal);
+        Assert.Contains("OpenAsync(", processingRunSource, StringComparison.Ordinal);
+        Assert.Contains("OptimizeAsync(", processingRunSource, StringComparison.Ordinal);
+        Assert.Contains("DisposeAsync(", processingRunSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("IGameLoadOrders", processingRunSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("GameLoadOrders", processingRunSource, StringComparison.Ordinal);
         Assert.DoesNotContain("IPluginOverlayReader", processingRunSource, StringComparison.Ordinal);
         Assert.DoesNotContain("MutagenPluginOverlayReader", processingRunSource, StringComparison.Ordinal);
         Assert.DoesNotContain(
@@ -183,13 +318,24 @@ public class CoreProjectBoundaryTests
             processingRunSource,
             StringComparison.Ordinal);
 
-        Assert.Contains("IGameLoadOrderProvider", pluginIngestionSource, StringComparison.Ordinal);
+        Assert.Contains("IGameLoadOrders", pluginIngestionSource, StringComparison.Ordinal);
+        Assert.Contains("PrepareSelectedPlugins", pluginIngestionSource, StringComparison.Ordinal);
         Assert.Contains("IPluginOverlayReader", pluginIngestionSource, StringComparison.Ordinal);
         Assert.Contains("GameInstallations.CanonicalizeDataDirectory", pluginIngestionSource, StringComparison.Ordinal);
-        Assert.Contains("IFormIdRecordStoreSession recordStore", pluginIngestionSource, StringComparison.Ordinal);
+        Assert.Contains(
+            ingestionOperation.GetParameters(),
+            parameter => parameter.ParameterType == pluginWriterType);
+        Assert.DoesNotContain(
+            ingestionOperation.GetParameters(),
+            parameter => parameter.ParameterType == typeof(IFormIdRecordStoreSession));
+        Assert.DoesNotContain(
+            planningOperation.GetParameters(),
+            parameter => parameter.ParameterType == typeof(IFormIdRecordStoreSession));
+        Assert.DoesNotContain("BinaryReadParameters", pluginIngestionSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("File.Exists", pluginIngestionSource, StringComparison.Ordinal);
         Assert.DoesNotContain("FormIdRecordStore.OpenAsync", pluginIngestionSource, StringComparison.Ordinal);
-        Assert.DoesNotContain("recordStore.OptimizeAsync", pluginIngestionSource, StringComparison.Ordinal);
-        Assert.DoesNotContain("recordStore.DisposeAsync", pluginIngestionSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("OptimizeAsync(", pluginIngestionSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("DisposeAsync(", pluginIngestionSource, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -220,6 +366,31 @@ public class CoreProjectBoundaryTests
     }
 
     /// <summary>
+    ///     Prevents a second selected-Plugin authority or standalone capture module from returning.
+    /// </summary>
+    [Theory]
+    [InlineData("SelectedPluginIngestionRequest")]
+    [InlineData("PluginSelectionSnapshot")]
+    public void CoreAssembly_SelectedPluginAuthority_ContainsNoRetiredType(string retiredTypeName)
+    {
+        Assert.DoesNotContain(typeof(PluginProcessingRunRequest).Assembly.GetTypes(),
+            type => type.Name == retiredTypeName);
+    }
+
+    /// <summary>
+    ///     Keeps both ingestion operations on the public request and prevents the retired executor mapper returning.
+    /// </summary>
+    [Fact]
+    public void ProcessingRunExecutor_SelectedPluginAuthority_HasNoRequestMapper()
+    {
+        Assert.All(typeof(IPluginIngestion).GetMethods(), method =>
+            Assert.Equal(typeof(PluginProcessingRunRequest), method.GetParameters()[0].ParameterType));
+        Assert.DoesNotContain(typeof(ProcessingRunExecutor).GetMethods(
+                BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic),
+            method => method.Name == "CreateIngestionRequest");
+    }
+
+    /// <summary>
     ///     Verifies production exposes one authoritative Plugin List path and only a read-only presentation projection.
     /// </summary>
     [Fact]
@@ -235,7 +406,14 @@ public class CoreProjectBoundaryTests
             string.Concat("PluginListRefresh", "Request"),
             string.Concat("PluginListRefresh", "Status"),
             string.Concat("PluginListRefresh", "Progress"),
-            string.Concat("PluginListRefresh", "Result")
+            string.Concat("PluginListRefresh", "Result"),
+            string.Concat("PluginList", "Activity"),
+            string.Concat("PluginListNoSource", "Activity"),
+            string.Concat("PluginListRefreshing", "Activity"),
+            string.Concat("PluginListReady", "Activity"),
+            string.Concat("PluginListFailed", "Activity"),
+            string.Concat("PluginListCancelled", "Activity"),
+            string.Concat("PluginListFaulted", "Activity")
         };
 
         Assert.All(retiredTypeNames, typeName =>

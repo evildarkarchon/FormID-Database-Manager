@@ -7,6 +7,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using FormID_Database_Manager.Services;
 using FormID_Database_Manager.TestUtilities;
+using FormID_Database_Manager.TestUtilities.Mocks;
 using FormID_Database_Manager.ViewModels;
 using Microsoft.Data.Sqlite;
 using Mutagen.Bethesda;
@@ -64,16 +65,19 @@ public class StressTests : IDisposable
                 GameRelease.SkyrimSE,
                 [pluginNames[i]],
                 UpdateMode.Append);
-            var progress = new CancelOnFirstStatusProgress(processingRunExecutor);
+            var progress = new CancelOnFirstProgressReport(processingRunExecutor);
 
             try
             {
-                await processingRunExecutor.ExecuteAsync(request, progress);
-                completedCount++;
-            }
-            catch (OperationCanceledException)
-            {
-                cancelledCount++;
+                var outcome = await processingRunExecutor.ExecuteAsync(request, progress);
+                if (outcome is CancelledRunOutcome)
+                {
+                    cancelledCount++;
+                }
+                else
+                {
+                    completedCount++;
+                }
             }
             catch (Exception ex)
             {
@@ -203,7 +207,7 @@ public class StressTests : IDisposable
         // Arrange
         const int updateCount = 10000;
         const int threadCount = 5;
-        using var viewModel = new MainWindowViewModel();
+        var viewModel = new MainWindowViewModel(new SynchronousThreadDispatcher());
         var errors = new List<Exception>();
         var updateTimes = new List<long>();
         var updateLock = new object();
@@ -222,8 +226,10 @@ public class StressTests : IDisposable
                         var stopwatch = Stopwatch.StartNew();
 
                         // Rapid UI updates from multiple threads
-                        viewModel.ProgressValue = Random.Shared.Next(0, 101);
-                        viewModel.ProgressStatus = $"Thread {threadId} - Update {i}";
+                        viewModel.ApplyRunActivityProjection(new ActivityProjection(
+                            true,
+                            $"Thread {threadId} - Update {i}",
+                            Random.Shared.Next(0, 101)));
 
                         if (i % 10 == 0)
                         {
@@ -368,14 +374,16 @@ public class StressTests : IDisposable
             $"Search too slow: {searchStopwatch.ElapsedMilliseconds} ms");
     }
 
-    private sealed class CancelOnFirstStatusProgress(ProcessingRunExecutor executor)
-        : IProgress<ProcessingRunEvent>
+    private sealed class CancelOnFirstProgressReport(ProcessingRunExecutor executor)
+        : IProgress<ProcessingRunProgress>
     {
         private bool _cancellationRequested;
 
-        public void Report(ProcessingRunEvent value)
+        public void Report(ProcessingRunProgress value)
         {
-            if (!_cancellationRequested && value.Kind == ProcessingRunEventKind.Status)
+            // Every report a run makes is transient progress now, so the first one of any kind is the mid-run moment
+            // this stress test wants to cancel from.
+            if (!_cancellationRequested)
             {
                 _cancellationRequested = true;
                 executor.Cancel();

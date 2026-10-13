@@ -13,7 +13,7 @@ internal sealed class PluginListPresentationAdapter : IDisposable
     private readonly PluginList _pluginList;
     private readonly MainWindowViewModel _viewModel;
     private bool _disposed;
-    private PluginListActivity? _lastPresentedActivity;
+    private long _lastPresentedActivityRevision = -1;
     private long _lastPresentedStateRevision = -1;
 
     /// <summary>
@@ -93,15 +93,19 @@ internal sealed class PluginListPresentationAdapter : IDisposable
                 return;
             }
 
+            var hasNewActivity = state.ActivityRevision > _lastPresentedActivityRevision;
+            // Membership must be visible before its activity, and revisions commit only after every projection succeeds.
             ProjectPlugins(state.Confirmed);
-            // Selection-only revisions reuse their activity instance, so reference identity suppresses terminal echoes.
-            if (!ReferenceEquals(state.Activity, _lastPresentedActivity))
+            if (hasNewActivity)
             {
                 ProjectActivity(state);
-                _lastPresentedActivity = state.Activity;
             }
 
             _lastPresentedStateRevision = state.StateRevision;
+            if (hasNewActivity)
+            {
+                _lastPresentedActivityRevision = state.ActivityRevision;
+            }
         }
     }
 
@@ -168,44 +172,49 @@ internal sealed class PluginListPresentationAdapter : IDisposable
     }
 
     /// <summary>
-    ///     Maps one new UI-neutral activity instance to existing Main Window progress and terminal presentation.
+    ///     Maps one new concrete Plugin List state occurrence to existing Main Window progress and terminal presentation.
     /// </summary>
-    /// <param name="state">The current Plugin List state containing the activity and optional confirmation.</param>
+    /// <param name="state">The concrete activity occurrence and its optional confirmation.</param>
+    /// <remarks>
+    ///     Scan activity is the one Workflow Activity fact this module writes, and it is the only module that writes it.
+    ///     A Processing Run's activity is projected separately by the User Workflow, so a scan report can no longer
+    ///     overwrite a run's progress; the ViewModel's precedence rule decides which of the two the user sees.
+    /// </remarks>
     private void ProjectActivity(PluginListState state)
     {
-        switch (state.Activity)
+        switch (state)
         {
-            case PluginListNoSourceActivity:
-            case PluginListCancelledActivity:
-            case PluginListFaultedActivity:
+            case PluginListNoSourceState:
+            case PluginListCancelledState:
+            case PluginListFaultedState:
                 // Callers report unexpected exceptions; these message-free terminal facts only clear transient scanning UI.
                 ClearScanningState();
                 return;
 
-            case PluginListRefreshingActivity refreshing:
-                _viewModel.IsScanning = true;
+            case PluginListRefreshingState refreshing:
+                // This module renders its own scanning wording: the counts and their phrasing are Plugin List
+                // detail that nothing outside here knows how to say.
                 if (refreshing.ScannedCount == 0 || refreshing.TotalCount == 0)
                 {
-                    _viewModel.UpdateProgress("Scanning plugins...", 0);
+                    _viewModel.ApplyScanActivityProjection(new ActivityProjection(true, "Scanning plugins...", 0));
                     return;
                 }
 
-                _viewModel.UpdateProgress(
+                _viewModel.ApplyScanActivityProjection(new ActivityProjection(
+                    true,
                     $"Scanning plugins... ({refreshing.ScannedCount}/{refreshing.TotalCount})",
-                    (double)refreshing.ScannedCount / refreshing.TotalCount * 100);
+                    (double)refreshing.ScannedCount / refreshing.TotalCount * 100));
                 return;
 
-            case PluginListReadyActivity:
+            case PluginListReadyState ready:
                 ClearScanningState();
-                var confirmed = state.Confirmed ??
-                                throw new InvalidOperationException("Ready Plugin List state requires confirmed membership.");
-                var pluginLabel = confirmed.AdvancedMode == AdvancedMode.On
+                var pluginLabel = ready.Confirmed.AdvancedMode == AdvancedMode.On
                     ? "plugins"
                     : "non-base game plugins";
-                _viewModel.AddInformationMessage($"Loaded {confirmed.Entries.Length} {pluginLabel}");
+                _viewModel.AddInformationMessage($"Loaded {ready.Confirmed.Entries.Length} {pluginLabel}");
                 return;
 
-            case PluginListFailedActivity failed:
+            case PluginListFailedState failed:
                 ClearScanningState();
                 var message = string.IsNullOrWhiteSpace(failed.ErrorMessage)
                     ? "Unknown error"
@@ -217,15 +226,13 @@ internal sealed class PluginListPresentationAdapter : IDisposable
             default:
                 throw new ArgumentOutOfRangeException(
                     nameof(state),
-                    state.Activity,
-                    "Unsupported Plugin List presentation activity.");
+                    state,
+                    "Unsupported Plugin List presentation state.");
         }
     }
 
     private void ClearScanningState()
     {
-        _viewModel.IsScanning = false;
-        _viewModel.ProgressValue = 0;
-        _viewModel.ProgressStatus = string.Empty;
+        _viewModel.ApplyScanActivityProjection(ActivityProjection.None);
     }
 }

@@ -1,39 +1,38 @@
 using Microsoft.UI.Windowing;
 
-namespace FormID_Database_Manager.WinUI
+namespace FormID_Database_Manager.WinUI;
+
+/// <summary>
+///     Provides application-specific behavior to supplement the default Application class.
+/// </summary>
+public partial class App : Application
 {
+    private Window? window;
+
     /// <summary>
-    /// Provides application-specific behavior to supplement the default Application class.
+    ///     Initializes the singleton application object.  This is the first line of authored code
+    ///     executed, and as such is the logical equivalent of main() or WinMain().
     /// </summary>
-    public partial class App : Application
+    public App()
     {
-        private Window? window;
+        InitializeComponent();
+    }
 
-        /// <summary>
-        /// Initializes the singleton application object.  This is the first line of authored code
-        /// executed, and as such is the logical equivalent of main() or WinMain().
-        /// </summary>
-        public App()
+    /// <summary>
+    ///     Invoked when the application is launched normally by the end user.  Other entry points
+    ///     will be used such as when the application is launched to open a specific file.
+    /// </summary>
+    /// <param name="e">Details about the launch request and process.</param>
+    protected override void OnLaunched(LaunchActivatedEventArgs e)
+    {
+        window = new MainWindow();
+        window.ExtendsContentIntoTitleBar = false;
+
+        if (window.AppWindow.Presenter is OverlappedPresenter presenter)
         {
-            this.InitializeComponent();
+            presenter.Maximize();
         }
 
-        /// <summary>
-        /// Invoked when the application is launched normally by the end user.  Other entry points
-        /// will be used such as when the application is launched to open a specific file.
-        /// </summary>
-        /// <param name="e">Details about the launch request and process.</param>
-        protected override void OnLaunched(LaunchActivatedEventArgs e)
-        {
-            window = new MainWindow();
-            window.ExtendsContentIntoTitleBar = false;
-
-            if (window.AppWindow.Presenter is OverlappedPresenter presenter)
-            {
-                presenter.Maximize();
-            }
-
-            window.Activate();
-        }
+        window.Activate();
     }
 }

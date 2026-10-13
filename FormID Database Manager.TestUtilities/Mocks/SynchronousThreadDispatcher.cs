@@ -1,5 +1,4 @@
 using System;
-using System.Threading.Tasks;
 using FormID_Database_Manager.Services;
 
 namespace FormID_Database_Manager.TestUtilities.Mocks;
@@ -10,13 +9,6 @@ namespace FormID_Database_Manager.TestUtilities.Mocks;
 /// </summary>
 public class SynchronousThreadDispatcher : IThreadDispatcher
 {
-    /// <inheritdoc />
-    public Task InvokeAsync(Action action)
-    {
-        action();
-        return Task.CompletedTask;
-    }
-
     /// <inheritdoc />
     public void Post(Action action)
     {

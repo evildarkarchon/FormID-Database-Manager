@@ -1,16 +1,17 @@
 using System;
+using System.Collections.Immutable;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using FormID_Database_Manager.Services;
+using FormID_Database_Manager.Tests.Fakes;
 using FormID_Database_Manager.TestUtilities.Builders;
 using FormID_Database_Manager.TestUtilities.Mocks;
 using Moq;
 using Mutagen.Bethesda;
 using Mutagen.Bethesda.Plugins;
-using Mutagen.Bethesda.Plugins.Binary.Parameters;
 using Mutagen.Bethesda.Plugins.Exceptions;
 using Mutagen.Bethesda.Plugins.Records;
 using Mutagen.Bethesda.Skyrim;
@@ -53,7 +54,7 @@ public sealed class PluginIngestionTests : IDisposable
     ];
 
     /// <summary>
-    ///     Verifies that aggregate Plugin Ingestion prepares one shared snapshot and preserves selection order across every
+    ///     Verifies that Plugin Ingestion prepares the complete selection once and preserves its order across every
     ///     transient and authoritative observation.
     /// </summary>
     [Fact]
@@ -63,18 +64,11 @@ public sealed class PluginIngestionTests : IDisposable
         await CreatePluginFileAsync(gameDirectory, "First.esp");
         await CreatePluginFileAsync(gameDirectory, "Second.esp");
         var events = new List<string>();
-        var loadOrderProvider = new RecordingLoadOrderProvider(
-            new GameLoadOrderSnapshot(
-                ["First.esp", "Second.esp"],
-                [
-                    new KeyedMasterStyle(ModKey.FromNameAndExtension("First.esp"), MasterStyle.Full),
-                    new KeyedMasterStyle(ModKey.FromNameAndExtension("Second.esp"), MasterStyle.Full)
-                ]),
-            events);
-        var recordStore = new RecordingRecordStoreSession(events);
+        var gameLoadOrders = new RecordingGameLoadOrders(["First.esp", "Second.esp"], events);
+        var recordStore = new RecordingPluginRecordWriter(events);
         var overlayReader = new RecordingOverlayReader(events);
         IPluginIngestion sut = new PluginIngestion(
-            loadOrderProvider,
+            gameLoadOrders,
             overlayReader,
             new EntryExtraction());
         var progress = new SynchronousProgress<PluginIngestionProgress>(report =>
@@ -83,8 +77,8 @@ public sealed class PluginIngestionTests : IDisposable
                 : $"progress:{report.PluginPosition}/{report.TotalPluginCount}:{report.PluginName}"));
 
         var report = await sut.IngestAsync(
-            new SelectedPluginIngestionRequest(
-                gameDirectory,
+            new PluginProcessingRunRequest(
+                gameDirectory, "ingestion.db",
                 GameRelease.Starfield,
                 ["First.esp", "Second.esp"],
                 UpdateMode.Append),
@@ -92,13 +86,10 @@ public sealed class PluginIngestionTests : IDisposable
             progress,
             TestContext.Current.CancellationToken);
 
-        Assert.Equal(Path.Combine(gameDirectory, "Data"), loadOrderProvider.CapturedDataPath);
-        Assert.Equal(GameRelease.Starfield, loadOrderProvider.CapturedGameRelease);
-        Assert.True(loadOrderProvider.CapturedIncludeMasterFlagsLookup);
-        Assert.Equal(1, loadOrderProvider.BuildSnapshotCallCount);
-        Assert.Equal(0, recordStore.OptimizeCallCount);
-        Assert.Equal(0, recordStore.DisposeCallCount);
-        Assert.All(overlayReader.CapturedReadParameters, parameters => Assert.NotNull(parameters.MasterFlagsLookup));
+        Assert.Equal(Path.Combine(gameDirectory, "Data"), gameLoadOrders.CapturedCanonicalDataDirectory);
+        Assert.Equal(GameRelease.Starfield, gameLoadOrders.CapturedGameRelease);
+        Assert.Equal(["First.esp", "Second.esp"], gameLoadOrders.CapturedSelection);
+        Assert.Equal(1, gameLoadOrders.PrepareCallCount);
         Assert.Equal(
             [
                 "progress:preparing",
@@ -128,6 +119,61 @@ public sealed class PluginIngestionTests : IDisposable
     }
 
     /// <summary>
+    ///     Verifies that prepared cases are authoritative: Plugin Ingestion neither rechecks membership or file
+    ///     availability nor reconstructs a ready case before passing it to the overlay seam.
+    /// </summary>
+    [Fact]
+    public async Task IngestAsync_PreparedCases_MapsSkipsAndPassesReadyCaseIntactWithoutRecheckingFiles()
+    {
+        var gameDirectory = CreateGameDirectory();
+        var dataDirectory = Path.Combine(gameDirectory, "Data");
+        await CreatePluginFileAsync(gameDirectory, "NotListed.esp");
+        var unavailablePath = Path.Combine(dataDirectory, "Prepared-Unavailable.esp");
+        await File.WriteAllBytesAsync(
+            unavailablePath,
+            [0x00],
+            TestContext.Current.CancellationToken);
+        var ready = new SelectedPluginReady(
+            "READY.esp",
+            Path.Combine(gameDirectory, "prepared", "Resolved-Ready.esp"),
+            new PluginReadCapability(new object()));
+        var gameLoadOrders = new RecordingPreparedGameLoadOrders(
+        [
+            new SelectedPluginNotListed("NotListed.esp"),
+            new SelectedPluginFileUnavailable("Unavailable.ESP", unavailablePath),
+            ready
+        ]);
+        var overlayReader = new PreparedCaseOverlayReader();
+        IPluginIngestion sut = new PluginIngestion(gameLoadOrders, overlayReader, new EntryExtraction());
+
+        var report = await sut.IngestAsync(
+            new PluginProcessingRunRequest(
+                gameDirectory, "ingestion.db",
+                GameRelease.SkyrimSE,
+                ["NotListed.esp", "Unavailable.ESP", "READY.esp"],
+                UpdateMode.Append),
+            new RecordingPluginRecordWriter([]),
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, gameLoadOrders.PrepareCallCount);
+        Assert.Equal(dataDirectory, gameLoadOrders.CapturedCanonicalDataDirectory);
+        Assert.Equal(["NotListed.esp", "Unavailable.ESP", "READY.esp"], gameLoadOrders.CapturedSelection);
+        Assert.Same(ready, Assert.Single(overlayReader.OpenedPlugins));
+        Assert.Collection(
+            report.Outcomes,
+            outcome => Assert.Equal(
+                SkippedPluginReason.NotPresentInLoadOrder,
+                Assert.IsType<SkippedPlugin>(outcome).Reason),
+            outcome =>
+            {
+                var skipped = Assert.IsType<SkippedPlugin>(outcome);
+                Assert.Equal(SkippedPluginReason.PluginFileUnavailable, skipped.Reason);
+                Assert.Equal(unavailablePath, skipped.ResolvedPluginPath);
+            },
+            outcome => Assert.Equal("READY.esp", Assert.IsType<IngestedPlugin>(outcome).PluginName));
+    }
+
+    /// <summary>
     ///     Verifies that a selected game directory ending in a separator ingests from the same canonical Data directory
     ///     as the plain form, so a pasted trailing separator cannot send a Processing Run looking in the wrong place.
     /// </summary>
@@ -137,27 +183,23 @@ public sealed class PluginIngestionTests : IDisposable
         var gameDirectory = CreateGameDirectory();
         await CreatePluginFileAsync(gameDirectory, "First.esp");
         var events = new List<string>();
-        var loadOrderProvider = new RecordingLoadOrderProvider(
-            new GameLoadOrderSnapshot(
-                ["First.esp"],
-                [new KeyedMasterStyle(ModKey.FromNameAndExtension("First.esp"), MasterStyle.Full)]),
-            events);
+        var gameLoadOrders = new RecordingGameLoadOrders(["First.esp"], events);
         IPluginIngestion sut = new PluginIngestion(
-            loadOrderProvider,
+            gameLoadOrders,
             new RecordingOverlayReader(events),
             new EntryExtraction());
 
         var report = await sut.IngestAsync(
-            new SelectedPluginIngestionRequest(
-                gameDirectory + Path.DirectorySeparatorChar,
+            new PluginProcessingRunRequest(
+                gameDirectory + Path.DirectorySeparatorChar, "ingestion.db",
                 GameRelease.SkyrimSE,
                 ["First.esp"],
                 UpdateMode.Append),
-            new RecordingRecordStoreSession(events),
+            new RecordingPluginRecordWriter(events),
             progress: null,
             TestContext.Current.CancellationToken);
 
-        Assert.Equal(Path.Combine(gameDirectory, "Data"), loadOrderProvider.CapturedDataPath);
+        Assert.Equal(Path.Combine(gameDirectory, "Data"), gameLoadOrders.CapturedCanonicalDataDirectory);
         // A Plugin found under the canonical Data directory must be ingested, not reported missing.
         var outcome = Assert.Single(report.Outcomes);
         Assert.IsType<IngestedPlugin>(outcome);
@@ -172,28 +214,26 @@ public sealed class PluginIngestionTests : IDisposable
     {
         var gameDirectory = CreateGameDirectory();
         var events = new List<string>();
-        var loadOrderProvider = new RecordingLoadOrderProvider(
-            new GameLoadOrderSnapshot(["Never.esp"]),
-            events);
+        var gameLoadOrders = new RecordingGameLoadOrders(["Never.esp"], events);
         IPluginIngestion sut = new PluginIngestion(
-            loadOrderProvider,
+            gameLoadOrders,
             new RecordingOverlayReader(events),
             new EntryExtraction());
         using var cancellationTokenSource = new CancellationTokenSource();
         await cancellationTokenSource.CancelAsync();
 
         var thrown = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sut.IngestAsync(
-            new SelectedPluginIngestionRequest(
-                gameDirectory,
+            new PluginProcessingRunRequest(
+                gameDirectory, "ingestion.db",
                 GameRelease.SkyrimSE,
                 ["Never.esp"],
                 UpdateMode.Append),
-            new RecordingRecordStoreSession(events),
+            new RecordingPluginRecordWriter(events),
             new SynchronousProgress<PluginIngestionProgress>(_ => events.Add("progress")),
             cancellationTokenSource.Token));
 
         Assert.Equal(cancellationTokenSource.Token, thrown.CancellationToken);
-        Assert.Equal(0, loadOrderProvider.BuildSnapshotCallCount);
+        Assert.Equal(0, gameLoadOrders.PrepareCallCount);
         Assert.Empty(events);
     }
 
@@ -206,28 +246,26 @@ public sealed class PluginIngestionTests : IDisposable
     {
         var gameDirectory = CreateGameDirectory();
         var events = new List<string>();
-        var loadOrderProvider = new RecordingLoadOrderProvider(
-            new GameLoadOrderSnapshot(["Never.esp"]),
-            events);
+        var gameLoadOrders = new RecordingGameLoadOrders(["Never.esp"], events);
         IPluginIngestion sut = new PluginIngestion(
-            loadOrderProvider,
+            gameLoadOrders,
             new RecordingOverlayReader(events),
             new EntryExtraction());
         using var cancellationTokenSource = new CancellationTokenSource();
         var progress = new SynchronousProgress<PluginIngestionProgress>(_ => cancellationTokenSource.Cancel());
 
         var thrown = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sut.IngestAsync(
-            new SelectedPluginIngestionRequest(
-                gameDirectory,
+            new PluginProcessingRunRequest(
+                gameDirectory, "ingestion.db",
                 GameRelease.SkyrimSE,
                 ["Never.esp"],
                 UpdateMode.Append),
-            new RecordingRecordStoreSession(events),
+            new RecordingPluginRecordWriter(events),
             progress,
             cancellationTokenSource.Token));
 
         Assert.Equal(cancellationTokenSource.Token, thrown.CancellationToken);
-        Assert.Equal(0, loadOrderProvider.BuildSnapshotCallCount);
+        Assert.Equal(0, gameLoadOrders.PrepareCallCount);
         Assert.Empty(events);
     }
 
@@ -241,24 +279,24 @@ public sealed class PluginIngestionTests : IDisposable
         var gameDirectory = CreateGameDirectory();
         var events = new List<string>();
         var failure = new IOException("Load-order initialization failed.");
-        var loadOrderProvider = new ThrowingLoadOrderProvider(failure);
+        var gameLoadOrders = new ThrowingGameLoadOrders(failure);
         IPluginIngestion sut = new PluginIngestion(
-            loadOrderProvider,
+            gameLoadOrders,
             new RecordingOverlayReader(events),
             new EntryExtraction());
 
         var thrown = await Assert.ThrowsAsync<IOException>(() => sut.IngestAsync(
-            new SelectedPluginIngestionRequest(
-                gameDirectory,
+            new PluginProcessingRunRequest(
+                gameDirectory, "ingestion.db",
                 GameRelease.SkyrimSE,
                 ["Never.esp"],
                 UpdateMode.Append),
-            new RecordingRecordStoreSession(events),
+            new RecordingPluginRecordWriter(events),
             new SynchronousProgress<PluginIngestionProgress>(_ => events.Add("progress:preparing")),
             TestContext.Current.CancellationToken));
 
         Assert.Same(failure, thrown);
-        Assert.Equal(1, loadOrderProvider.BuildSnapshotCallCount);
+        Assert.Equal(1, gameLoadOrders.PrepareCallCount);
         Assert.Equal(["progress:preparing"], events);
     }
 
@@ -282,19 +320,17 @@ public sealed class PluginIngestionTests : IDisposable
             }
         });
         IPluginIngestion sut = new PluginIngestion(
-            new RecordingLoadOrderProvider(
-                new GameLoadOrderSnapshot(["First.esp", "Never.esp"]),
-                []),
+            new RecordingGameLoadOrders(["First.esp", "Never.esp"], []),
             new RecordingOverlayReader(events),
             new EntryExtraction());
 
         var thrown = await Assert.ThrowsAsync<InvalidOperationException>(() => sut.IngestAsync(
-            new SelectedPluginIngestionRequest(
-                gameDirectory,
+            new PluginProcessingRunRequest(
+                gameDirectory, "ingestion.db",
                 GameRelease.SkyrimSE,
                 ["First.esp", "Never.esp"],
                 UpdateMode.Append),
-            new RecordingRecordStoreSession(events),
+            new RecordingPluginRecordWriter(events),
             progress,
             TestContext.Current.CancellationToken));
 
@@ -320,17 +356,17 @@ public sealed class PluginIngestionTests : IDisposable
             }
         });
         IPluginIngestion sut = new PluginIngestion(
-            new RecordingLoadOrderProvider(new GameLoadOrderSnapshot([]), events),
+            new RecordingGameLoadOrders([], events),
             new RecordingOverlayReader(events),
             new EntryExtraction());
 
         var thrown = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sut.IngestAsync(
-            new SelectedPluginIngestionRequest(
-                gameDirectory,
+            new PluginProcessingRunRequest(
+                gameDirectory, "ingestion.db",
                 GameRelease.SkyrimSE,
                 ["Never.esp"],
                 UpdateMode.Append),
-            new RecordingRecordStoreSession(events),
+            new RecordingPluginRecordWriter(events),
             progress,
             cancellationTokenSource.Token));
 
@@ -349,24 +385,22 @@ public sealed class PluginIngestionTests : IDisposable
         await CreatePluginFileAsync(gameDirectory, "Bad.esp");
         await CreatePluginFileAsync(gameDirectory, "Good.esp");
         var storeEvents = new List<string>();
-        var loadOrderProvider = new RecordingLoadOrderProvider(
-            new GameLoadOrderSnapshot(["Bad.esp", "Good.esp"]),
-            []);
+        var gameLoadOrders = new RecordingGameLoadOrders(["Bad.esp", "Good.esp"], []);
         var overlayReader = new OpeningFailureOverlayReader(
             "Bad.esp",
             CreatePluginOverlayReadException("Invalid plugin header."));
         IPluginIngestion sut = new PluginIngestion(
-            loadOrderProvider,
+            gameLoadOrders,
             overlayReader,
             new EntryExtraction());
 
         var report = await sut.IngestAsync(
-            new SelectedPluginIngestionRequest(
-                gameDirectory,
+            new PluginProcessingRunRequest(
+                gameDirectory, "ingestion.db",
                 GameRelease.SkyrimSE,
                 ["Bad.esp", "Good.esp"],
                 UpdateMode.Append),
-            new RecordingRecordStoreSession(storeEvents),
+            new RecordingPluginRecordWriter(storeEvents),
             cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Collection(
@@ -400,19 +434,17 @@ public sealed class PluginIngestionTests : IDisposable
             edid: null,
             message: "Invalid record data.");
         IPluginIngestion sut = new PluginIngestion(
-            new RecordingLoadOrderProvider(
-                new GameLoadOrderSnapshot(["BadRecords.esp", "Good.esp"]),
-                []),
+            new RecordingGameLoadOrders(["BadRecords.esp", "Good.esp"], []),
             new RecordReadingFailureOverlayReader("BadRecords.esp", failure),
             new EntryExtraction());
 
         var report = await sut.IngestAsync(
-            new SelectedPluginIngestionRequest(
-                gameDirectory,
+            new PluginProcessingRunRequest(
+                gameDirectory, "ingestion.db",
                 GameRelease.SkyrimSE,
                 ["BadRecords.esp", "Good.esp"],
                 UpdateMode.Append),
-            new RecordingRecordStoreSession(storeEvents),
+            new RecordingPluginRecordWriter(storeEvents),
             cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Collection(
@@ -429,6 +461,46 @@ public sealed class PluginIngestionTests : IDisposable
     }
 
     /// <summary>
+    ///     Verifies that cleanup cannot replace an expected record-enumeration failure that has already determined the
+    ///     Plugin's Failed Plugin outcome.
+    /// </summary>
+    [Fact]
+    public async Task IngestAsync_RecordReadingAndOverlayDisposalFail_PreservesRecordFailureOutcome()
+    {
+        var gameDirectory = CreateGameDirectory();
+        await CreatePluginFileAsync(gameDirectory, "BadRecords.esp");
+        var recordFailure = new RecordException(
+            formKey: null,
+            recordType: null,
+            modKey: ModKey.FromNameAndExtension("BadRecords.esp"),
+            edid: null,
+            message: "Invalid record data.");
+        var disposalFailure = new InvalidOperationException("Overlay disposal failed.");
+        var overlayReader = new RecordReadingFailureOverlayReader(
+            "BadRecords.esp",
+            recordFailure,
+            disposalFailure);
+        IPluginIngestion sut = new PluginIngestion(
+            new RecordingGameLoadOrders(["BadRecords.esp"], []),
+            overlayReader,
+            new EntryExtraction());
+
+        var report = await sut.IngestAsync(
+            new PluginProcessingRunRequest(
+                gameDirectory, "ingestion.db",
+                GameRelease.SkyrimSE,
+                ["BadRecords.esp"],
+                UpdateMode.Append),
+            new RecordingPluginRecordWriter([]),
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        var failed = Assert.IsType<FailedPlugin>(Assert.Single(report.Outcomes));
+        Assert.Equal(PluginReadPhase.ReadingRecords, failed.Diagnostic.Phase);
+        Assert.Equal("Invalid record data.", failed.Diagnostic.Message);
+        Assert.Equal(1, overlayReader.DisposeCallCount);
+    }
+
+    /// <summary>
     ///     Verifies that an unexpected overlay-adapter failure remains an infrastructure failure rather than being
     ///     downgraded to a completed Plugin report.
     /// </summary>
@@ -442,19 +514,17 @@ public sealed class PluginIngestionTests : IDisposable
         var failure = new IOException("Overlay adapter is unavailable.");
         var overlayReader = new OpeningFailureOverlayReader("Broken.esp", failure);
         IPluginIngestion sut = new PluginIngestion(
-            new RecordingLoadOrderProvider(
-                new GameLoadOrderSnapshot(["Broken.esp", "Never.esp"]),
-                []),
+            new RecordingGameLoadOrders(["Broken.esp", "Never.esp"], []),
             overlayReader,
             new EntryExtraction());
 
         var thrown = await Assert.ThrowsAsync<IOException>(() => sut.IngestAsync(
-            new SelectedPluginIngestionRequest(
-                gameDirectory,
+            new PluginProcessingRunRequest(
+                gameDirectory, "ingestion.db",
                 GameRelease.SkyrimSE,
                 ["Broken.esp", "Never.esp"],
                 UpdateMode.Append),
-            new RecordingRecordStoreSession(storeEvents),
+            new RecordingPluginRecordWriter(storeEvents),
             cancellationToken: TestContext.Current.CancellationToken));
 
         Assert.Same(failure, thrown);
@@ -463,7 +533,7 @@ public sealed class PluginIngestionTests : IDisposable
     }
 
     /// <summary>
-    ///     Verifies that a master a selected Plugin declares but the load-order snapshot cannot resolve fails the whole
+    ///     Verifies that a master a selected Plugin declares but its prepared read capability cannot resolve fails the whole
     ///     Processing Run, naming that master, rather than becoming one Failed Plugin.
     /// </summary>
     /// <remarks>
@@ -485,19 +555,17 @@ public sealed class PluginIngestionTests : IDisposable
             "Mod was missing from load order when constructing the separate mod lists needed for FormID translation.");
         var overlayReader = new OpeningFailureOverlayReader("Patch.esp", failure);
         IPluginIngestion sut = new PluginIngestion(
-            new RecordingLoadOrderProvider(
-                GameLoadOrderSnapshotFactory.CreateSnapshotWithoutAnyMasterOnDisk("Patch.esp", "Never.esp"),
-                []),
+            new RecordingGameLoadOrders(["Patch.esp", "Never.esp"], []),
             overlayReader,
             new EntryExtraction());
 
         var thrown = await Assert.ThrowsAsync<UnresolvableMasterException>(() => sut.IngestAsync(
-            new SelectedPluginIngestionRequest(
-                gameDirectory,
+            new PluginProcessingRunRequest(
+                gameDirectory, "ingestion.db",
                 GameRelease.Starfield,
                 ["Patch.esp", "Never.esp"],
                 UpdateMode.Append),
-            new RecordingRecordStoreSession(storeEvents),
+            new RecordingPluginRecordWriter(storeEvents),
             cancellationToken: TestContext.Current.CancellationToken));
 
         Assert.Equal("Patch.esp", thrown.PluginName);
@@ -509,13 +577,13 @@ public sealed class PluginIngestionTests : IDisposable
     }
 
     /// <summary>
-    ///     Verifies the same run-level failure for a load-order snapshot that supplied no master-flags lookup at all,
+    ///     Verifies the same run-level failure for a prepared capability that supplied no master-flags lookup at all,
     ///     which names no master because Mutagen reports only that the lookup was absent.
     /// </summary>
     /// <remarks>
-    ///     Production's <c>GameLoadOrderProvider</c> now always supplies a lookup for a game that needs one, so this
-    ///     arrives only from another <c>IGameLoadOrderProvider</c> implementation. It is covered anyway because the
-    ///     provider is a seam, and an unnamed master is still a stopped run rather than an unhandled abort.
+    ///     Production Game Load Orders always supplies a lookup for a game that needs one, so this arrives only from
+    ///     another prepared capability. It remains covered because an unnamed master is still a stopped run rather
+    ///     than an unhandled abort.
     /// </remarks>
     [Fact]
     public async Task IngestAsync_NoMasterFlagsLookupAtAll_FailsTheRunWithoutNamingAMaster()
@@ -526,17 +594,17 @@ public sealed class PluginIngestionTests : IDisposable
         var failure = new MissingModMappingException("Master flag lookup was not provided.");
         var overlayReader = new OpeningFailureOverlayReader("Patch.esp", failure);
         IPluginIngestion sut = new PluginIngestion(
-            new RecordingLoadOrderProvider(new GameLoadOrderSnapshot(["Patch.esp"]), []),
+            new RecordingGameLoadOrders(["Patch.esp"], []),
             overlayReader,
             new EntryExtraction());
 
         var thrown = await Assert.ThrowsAsync<UnresolvableMasterException>(() => sut.IngestAsync(
-            new SelectedPluginIngestionRequest(
-                gameDirectory,
+            new PluginProcessingRunRequest(
+                gameDirectory, "ingestion.db",
                 GameRelease.Starfield,
                 ["Patch.esp"],
                 UpdateMode.Append),
-            new RecordingRecordStoreSession(storeEvents),
+            new RecordingPluginRecordWriter(storeEvents),
             cancellationToken: TestContext.Current.CancellationToken));
 
         Assert.Equal("Patch.esp", thrown.PluginName);
@@ -560,19 +628,17 @@ public sealed class PluginIngestionTests : IDisposable
         var failure = new IOException("Record enumeration infrastructure failed.");
         var overlayReader = new RecordReadingFailureOverlayReader("BrokenRecords.esp", failure);
         IPluginIngestion sut = new PluginIngestion(
-            new RecordingLoadOrderProvider(
-                new GameLoadOrderSnapshot(["BrokenRecords.esp", "Never.esp"]),
-                []),
+            new RecordingGameLoadOrders(["BrokenRecords.esp", "Never.esp"], []),
             overlayReader,
             new EntryExtraction());
 
         var thrown = await Assert.ThrowsAsync<IOException>(() => sut.IngestAsync(
-            new SelectedPluginIngestionRequest(
-                gameDirectory,
+            new PluginProcessingRunRequest(
+                gameDirectory, "ingestion.db",
                 GameRelease.SkyrimSE,
                 ["BrokenRecords.esp", "Never.esp"],
                 UpdateMode.Append),
-            new RecordingRecordStoreSession(storeEvents),
+            new RecordingPluginRecordWriter(storeEvents),
             cancellationToken: TestContext.Current.CancellationToken));
 
         Assert.Same(failure, thrown);
@@ -591,17 +657,17 @@ public sealed class PluginIngestionTests : IDisposable
         await CreatePluginFileAsync(gameDirectory, "Cancelled.esp");
         var cancellation = new OperationCanceledException("Plugin read cancelled.");
         IPluginIngestion sut = new PluginIngestion(
-            new RecordingLoadOrderProvider(new GameLoadOrderSnapshot(["Cancelled.esp"]), []),
+            new RecordingGameLoadOrders(["Cancelled.esp"], []),
             new OpeningFailureOverlayReader("Cancelled.esp", cancellation),
             new EntryExtraction());
 
         var thrown = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sut.IngestAsync(
-            new SelectedPluginIngestionRequest(
-                gameDirectory,
+            new PluginProcessingRunRequest(
+                gameDirectory, "ingestion.db",
                 GameRelease.SkyrimSE,
                 ["Cancelled.esp"],
                 UpdateMode.Append),
-            new RecordingRecordStoreSession([]),
+            new RecordingPluginRecordWriter([]),
             cancellationToken: TestContext.Current.CancellationToken));
 
         Assert.Same(cancellation, thrown);
@@ -627,19 +693,17 @@ public sealed class PluginIngestionTests : IDisposable
             innerException: cancellation);
         var overlayReader = new RecordReadingFailureOverlayReader("CancelledRecords.esp", wrappedCancellation);
         IPluginIngestion sut = new PluginIngestion(
-            new RecordingLoadOrderProvider(
-                new GameLoadOrderSnapshot(["CancelledRecords.esp", "Never.esp"]),
-                []),
+            new RecordingGameLoadOrders(["CancelledRecords.esp", "Never.esp"], []),
             overlayReader,
             new EntryExtraction());
 
         var thrown = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sut.IngestAsync(
-            new SelectedPluginIngestionRequest(
-                gameDirectory,
+            new PluginProcessingRunRequest(
+                gameDirectory, "ingestion.db",
                 GameRelease.SkyrimSE,
                 ["CancelledRecords.esp", "Never.esp"],
                 UpdateMode.Append),
-            new RecordingRecordStoreSession(storeEvents),
+            new RecordingPluginRecordWriter(storeEvents),
             cancellationToken: TestContext.Current.CancellationToken));
 
         Assert.Same(cancellation, thrown);
@@ -657,15 +721,15 @@ public sealed class PluginIngestionTests : IDisposable
         var gameDirectory = CreateGameDirectory();
         await CreatePluginFileAsync(gameDirectory, "Cancelled.esp");
         using var cancellationTokenSource = new CancellationTokenSource();
-        var recordStore = new CancellingRecordStoreSession(cancellationTokenSource);
+        var recordStore = new CancellingPluginRecordWriter(cancellationTokenSource);
         IPluginIngestion sut = new PluginIngestion(
-            new RecordingLoadOrderProvider(new GameLoadOrderSnapshot(["Cancelled.esp"]), []),
+            new RecordingGameLoadOrders(["Cancelled.esp"], []),
             new RecordingOverlayReader([]),
             new EntryExtraction());
 
         var thrown = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sut.IngestAsync(
-            new SelectedPluginIngestionRequest(
-                gameDirectory,
+            new PluginProcessingRunRequest(
+                gameDirectory, "ingestion.db",
                 GameRelease.SkyrimSE,
                 ["Cancelled.esp"],
                 UpdateMode.Append),
@@ -688,17 +752,15 @@ public sealed class PluginIngestionTests : IDisposable
         await CreatePluginFileAsync(gameDirectory, "Never.esp");
         var events = new List<string>();
         var cancellation = new OperationCanceledException("FormID Record Store write cancelled.");
-        var recordStore = new ThrowingRecordStoreSession(cancellation);
+        var recordStore = new ThrowingPluginRecordWriter(cancellation);
         IPluginIngestion sut = new PluginIngestion(
-            new RecordingLoadOrderProvider(
-                new GameLoadOrderSnapshot(["First.esp", "Never.esp"]),
-                []),
+            new RecordingGameLoadOrders(["First.esp", "Never.esp"], []),
             new RecordingOverlayReader(events),
             new EntryExtraction());
 
         var thrown = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sut.IngestAsync(
-            new SelectedPluginIngestionRequest(
-                gameDirectory,
+            new PluginProcessingRunRequest(
+                gameDirectory, "ingestion.db",
                 GameRelease.SkyrimSE,
                 ["First.esp", "Never.esp"],
                 UpdateMode.Append),
@@ -723,25 +785,55 @@ public sealed class PluginIngestionTests : IDisposable
         using var cancellationTokenSource = new CancellationTokenSource();
         var events = new List<string>();
         IPluginIngestion sut = new PluginIngestion(
-            new RecordingLoadOrderProvider(
-                new GameLoadOrderSnapshot(["First.esp", "Never.esp"]),
-                events),
+            new RecordingGameLoadOrders(["First.esp", "Never.esp"], events),
             new CancellingOnDisposeOverlayReader("First.esp", cancellationTokenSource, events),
             new EntryExtraction());
 
         var thrown = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sut.IngestAsync(
-            new SelectedPluginIngestionRequest(
-                gameDirectory,
+            new PluginProcessingRunRequest(
+                gameDirectory, "ingestion.db",
                 GameRelease.SkyrimSE,
                 ["First.esp", "Never.esp"],
                 UpdateMode.Append),
-            new RecordingRecordStoreSession(events),
+            new RecordingPluginRecordWriter(events),
             cancellationToken: cancellationTokenSource.Token));
 
         Assert.Equal(cancellationTokenSource.Token, thrown.CancellationToken);
         Assert.Equal(
             ["load-order", "overlay:First.esp", "write:First.esp"],
             events);
+    }
+
+    /// <summary>
+    ///     Verifies that cancellation requested during final overlay cleanup wins the report-completion race even when
+    ///     the same cleanup also fails.
+    /// </summary>
+    [Fact]
+    public async Task IngestAsync_FinalOverlayDisposalCancelsAndFails_PreservesCancellation()
+    {
+        var gameDirectory = CreateGameDirectory();
+        await CreatePluginFileAsync(gameDirectory, "First.esp");
+        using var cancellationTokenSource = new CancellationTokenSource();
+        var disposalFailure = new InvalidOperationException("Overlay disposal failed.");
+        IPluginIngestion sut = new PluginIngestion(
+            new RecordingGameLoadOrders(["First.esp"], []),
+            new CancellingOnDisposeOverlayReader(
+                "First.esp",
+                cancellationTokenSource,
+                [],
+                disposalFailure),
+            new EntryExtraction());
+
+        var thrown = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sut.IngestAsync(
+            new PluginProcessingRunRequest(
+                gameDirectory, "ingestion.db",
+                GameRelease.SkyrimSE,
+                ["First.esp"],
+                UpdateMode.Append),
+            new RecordingPluginRecordWriter([]),
+            cancellationToken: cancellationTokenSource.Token));
+
+        Assert.Equal(cancellationTokenSource.Token, thrown.CancellationToken);
     }
 
     /// <summary>
@@ -756,17 +848,15 @@ public sealed class PluginIngestionTests : IDisposable
         await CreatePluginFileAsync(gameDirectory, "Never.esp");
         var events = new List<string>();
         var failure = new IOException("FormID Record Store write failed.");
-        var recordStore = new ThrowingRecordStoreSession(failure);
+        var recordStore = new ThrowingPluginRecordWriter(failure);
         IPluginIngestion sut = new PluginIngestion(
-            new RecordingLoadOrderProvider(
-                new GameLoadOrderSnapshot(["First.esp", "Never.esp"]),
-                []),
+            new RecordingGameLoadOrders(["First.esp", "Never.esp"], []),
             new RecordingOverlayReader(events),
             new EntryExtraction());
 
         var thrown = await Assert.ThrowsAsync<IOException>(() => sut.IngestAsync(
-            new SelectedPluginIngestionRequest(
-                gameDirectory,
+            new PluginProcessingRunRequest(
+                gameDirectory, "ingestion.db",
                 GameRelease.SkyrimSE,
                 ["First.esp", "Never.esp"],
                 UpdateMode.Append),
@@ -775,8 +865,6 @@ public sealed class PluginIngestionTests : IDisposable
 
         Assert.Same(failure, thrown);
         Assert.Equal(["First.esp"], recordStore.AttemptedPlugins);
-        Assert.Equal(0, recordStore.OptimizeCallCount);
-        Assert.Equal(0, recordStore.DisposeCallCount);
         Assert.Equal(["overlay:First.esp"], events);
     }
 
@@ -791,16 +879,16 @@ public sealed class PluginIngestionTests : IDisposable
         await CreatePluginFileAsync(gameDirectory, "Broken.esp");
         var storeFailure = new IOException("FormID Record Store write failed.");
         var disposalFailure = new InvalidOperationException("Overlay disposal failed.");
-        var recordStore = new ThrowingRecordStoreSession(storeFailure);
+        var recordStore = new ThrowingPluginRecordWriter(storeFailure);
         var overlayReader = new DisposalFailureOverlayReader(disposalFailure);
         IPluginIngestion sut = new PluginIngestion(
-            new RecordingLoadOrderProvider(new GameLoadOrderSnapshot(["Broken.esp"]), []),
+            new RecordingGameLoadOrders(["Broken.esp"], []),
             overlayReader,
             new EntryExtraction());
 
         var thrown = await Assert.ThrowsAsync<IOException>(() => sut.IngestAsync(
-            new SelectedPluginIngestionRequest(
-                gameDirectory,
+            new PluginProcessingRunRequest(
+                gameDirectory, "ingestion.db",
                 GameRelease.SkyrimSE,
                 ["Broken.esp"],
                 UpdateMode.Append),
@@ -809,8 +897,6 @@ public sealed class PluginIngestionTests : IDisposable
 
         Assert.Same(storeFailure, thrown);
         Assert.Equal(1, overlayReader.DisposeCallCount);
-        Assert.Equal(0, recordStore.OptimizeCallCount);
-        Assert.Equal(0, recordStore.DisposeCallCount);
     }
 
     /// <summary>
@@ -824,16 +910,16 @@ public sealed class PluginIngestionTests : IDisposable
         await CreatePluginFileAsync(gameDirectory, "Broken.esp");
         var events = new List<string>();
         var disposalFailure = new InvalidOperationException("Overlay disposal failed.");
-        var recordStore = new RecordingRecordStoreSession(events);
+        var recordStore = new RecordingPluginRecordWriter(events);
         var overlayReader = new DisposalFailureOverlayReader(disposalFailure);
         IPluginIngestion sut = new PluginIngestion(
-            new RecordingLoadOrderProvider(new GameLoadOrderSnapshot(["Broken.esp"]), []),
+            new RecordingGameLoadOrders(["Broken.esp"], []),
             overlayReader,
             new EntryExtraction());
 
         var thrown = await Assert.ThrowsAsync<InvalidOperationException>(() => sut.IngestAsync(
-            new SelectedPluginIngestionRequest(
-                gameDirectory,
+            new PluginProcessingRunRequest(
+                gameDirectory, "ingestion.db",
                 GameRelease.SkyrimSE,
                 ["Broken.esp"],
                 UpdateMode.Append),
@@ -843,8 +929,6 @@ public sealed class PluginIngestionTests : IDisposable
         Assert.Same(disposalFailure, thrown);
         Assert.Equal(1, overlayReader.DisposeCallCount);
         Assert.Equal(["write:Broken.esp"], events);
-        Assert.Equal(0, recordStore.OptimizeCallCount);
-        Assert.Equal(0, recordStore.DisposeCallCount);
     }
 
     /// <summary>
@@ -858,19 +942,17 @@ public sealed class PluginIngestionTests : IDisposable
         await CreatePluginFileAsync(gameDirectory, "Warned.esp");
         await CreatePluginFileAsync(gameDirectory, "Clean.esp");
         IPluginIngestion sut = new PluginIngestion(
-            new RecordingLoadOrderProvider(
-                new GameLoadOrderSnapshot(["Warned.esp", "Clean.esp"]),
-                []),
+            new RecordingGameLoadOrders(["Warned.esp", "Clean.esp"], []),
             new RecoverableIssueOverlayReader("Warned.esp", issueCount: 7),
             new EntryExtraction());
 
         var report = await sut.IngestAsync(
-            new SelectedPluginIngestionRequest(
-                gameDirectory,
+            new PluginProcessingRunRequest(
+                gameDirectory, "ingestion.db",
                 GameRelease.SkyrimSE,
                 ["Warned.esp", "Clean.esp"],
                 UpdateMode.Append),
-            new RecordingRecordStoreSession([]),
+            new RecordingPluginRecordWriter([]),
             cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Collection(
@@ -906,19 +988,17 @@ public sealed class PluginIngestionTests : IDisposable
         await CreatePluginFileAsync(gameDirectory, "Available.esp");
         var events = new List<string>();
         IPluginIngestion sut = new PluginIngestion(
-            new RecordingLoadOrderProvider(
-                new GameLoadOrderSnapshot(["Unavailable.esp", "Zero.esp", "Available.esp"]),
-                events),
+            new RecordingGameLoadOrders(["Unavailable.esp", "Zero.esp", "Available.esp"], events),
             new RecordingOverlayReader(events, "Zero.esp"),
             new EntryExtraction());
 
         var report = await sut.IngestAsync(
-            new SelectedPluginIngestionRequest(
-                gameDirectory,
+            new PluginProcessingRunRequest(
+                gameDirectory, "ingestion.db",
                 GameRelease.SkyrimSE,
                 ["Absent.esp", "Unavailable.esp", "Zero.esp", "Available.esp"],
                 UpdateMode.Append),
-            new RecordingRecordStoreSession(events),
+            new RecordingPluginRecordWriter(events),
             cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Equal(
@@ -979,13 +1059,13 @@ public sealed class PluginIngestionTests : IDisposable
             TestContext.Current.CancellationToken);
 
         IPluginIngestion sut = new PluginIngestion(
-            new RecordingLoadOrderProvider(new GameLoadOrderSnapshot(["Empty.esp"]), []),
+            new RecordingGameLoadOrders(["Empty.esp"], []),
             new EmptyPluginOverlayReader(),
             new EntryExtraction());
 
         var report = await sut.IngestAsync(
-            new SelectedPluginIngestionRequest(
-                gameDirectory,
+            new PluginProcessingRunRequest(
+                gameDirectory, "ingestion.db",
                 GameRelease.SkyrimSE,
                 ["Empty.esp"],
                 UpdateMode.ReplacePluginRecords),
@@ -1162,24 +1242,15 @@ public sealed class PluginIngestionTests : IDisposable
 
     private sealed class ThrowingOverlayReader(Exception exception) : IPluginOverlayReader
     {
-        public BinaryReadParameters CapturedReadParameters { get; private set; } = null!;
-
-        public IModDisposeGetter ReadOverlay(
-            string pluginPath,
-            GameRelease gameRelease,
-            BinaryReadParameters readParameters)
+        public IModDisposeGetter ReadOverlay(SelectedPluginReady readyPlugin)
         {
-            CapturedReadParameters = readParameters;
             throw exception;
         }
     }
 
     private sealed class EmptyPluginOverlayReader : IPluginOverlayReader
     {
-        public IModDisposeGetter ReadOverlay(
-            string pluginPath,
-            GameRelease gameRelease,
-            BinaryReadParameters readParameters)
+        public IModDisposeGetter ReadOverlay(SelectedPluginReady readyPlugin)
         {
             var plugin = new Mock<IModDisposeGetter>();
             plugin.Setup(x => x.EnumerateMajorRecords()).Returns([]);
@@ -1196,12 +1267,9 @@ public sealed class PluginIngestionTests : IDisposable
         /// <summary>
         ///     Returns a one-record overlay except for the configured Plugin-opening failure.
         /// </summary>
-        public IModDisposeGetter ReadOverlay(
-            string pluginPath,
-            GameRelease gameRelease,
-            BinaryReadParameters readParameters)
+        public IModDisposeGetter ReadOverlay(SelectedPluginReady readyPlugin)
         {
-            var pluginName = Path.GetFileName(pluginPath);
+            var pluginName = readyPlugin.PluginName;
             AttemptedPlugins.Add(pluginName);
             if (string.Equals(pluginName, failedPluginName, StringComparison.Ordinal))
             {
@@ -1219,12 +1287,9 @@ public sealed class PluginIngestionTests : IDisposable
         /// <summary>
         ///     Returns ordered unreadable records followed by one valid record for the configured warned Plugin.
         /// </summary>
-        public IModDisposeGetter ReadOverlay(
-            string pluginPath,
-            GameRelease gameRelease,
-            BinaryReadParameters readParameters)
+        public IModDisposeGetter ReadOverlay(SelectedPluginReady readyPlugin)
         {
-            var pluginName = Path.GetFileName(pluginPath);
+            var pluginName = readyPlugin.PluginName;
             var records = new List<IMajorRecordGetter>();
             if (string.Equals(pluginName, warnedPluginName, StringComparison.Ordinal))
             {
@@ -1246,25 +1311,38 @@ public sealed class PluginIngestionTests : IDisposable
 
     private sealed class RecordReadingFailureOverlayReader(
         string failedPluginName,
-        Exception readingFailure) : IPluginOverlayReader
+        Exception readingFailure,
+        Exception? disposalFailure = null) : IPluginOverlayReader
     {
         public List<string> AttemptedPlugins { get; } = [];
+
+        public int DisposeCallCount { get; private set; }
 
         /// <summary>
         ///     Returns an overlay whose configured Plugin fails during deferred record enumeration.
         /// </summary>
-        public IModDisposeGetter ReadOverlay(
-            string pluginPath,
-            GameRelease gameRelease,
-            BinaryReadParameters readParameters)
+        public IModDisposeGetter ReadOverlay(SelectedPluginReady readyPlugin)
         {
-            var pluginName = Path.GetFileName(pluginPath);
+            var pluginName = readyPlugin.PluginName;
             AttemptedPlugins.Add(pluginName);
             var record = CreateRecord(pluginName);
             var records = string.Equals(pluginName, failedPluginName, StringComparison.Ordinal)
                 ? YieldThenThrow(record, readingFailure)
                 : [record];
-            return CreateOverlay(records);
+            var overlay = new Mock<IModDisposeGetter>();
+            overlay.Setup(plugin => plugin.EnumerateMajorRecords()).Returns(records);
+            if (disposalFailure is not null)
+            {
+                overlay
+                    .Setup(plugin => plugin.Dispose())
+                    .Callback(() =>
+                    {
+                        DisposeCallCount++;
+                        throw disposalFailure;
+                    });
+            }
+
+            return overlay.Object;
         }
 
         private static IEnumerable<IMajorRecordGetter> YieldThenThrow(
@@ -1279,18 +1357,16 @@ public sealed class PluginIngestionTests : IDisposable
     private sealed class CancellingOnDisposeOverlayReader(
         string cancelledAfterPluginName,
         CancellationTokenSource cancellationTokenSource,
-        List<string> events) : IPluginOverlayReader
+        List<string> events,
+        Exception? disposalFailure = null) : IPluginOverlayReader
     {
         /// <summary>
         ///     Cancels when the configured Plugin overlay is released, after its Store write and before the next selected
         ///     Plugin boundary.
         /// </summary>
-        public IModDisposeGetter ReadOverlay(
-            string pluginPath,
-            GameRelease gameRelease,
-            BinaryReadParameters readParameters)
+        public IModDisposeGetter ReadOverlay(SelectedPluginReady readyPlugin)
         {
-            var pluginName = Path.GetFileName(pluginPath);
+            var pluginName = readyPlugin.PluginName;
             events.Add($"overlay:{pluginName}");
             var overlay = new Mock<IModDisposeGetter>();
             overlay
@@ -1298,7 +1374,16 @@ public sealed class PluginIngestionTests : IDisposable
                 .Returns([CreateRecord(pluginName)]);
             if (string.Equals(pluginName, cancelledAfterPluginName, StringComparison.Ordinal))
             {
-                overlay.Setup(plugin => plugin.Dispose()).Callback(cancellationTokenSource.Cancel);
+                overlay
+                    .Setup(plugin => plugin.Dispose())
+                    .Callback(() =>
+                    {
+                        cancellationTokenSource.Cancel();
+                        if (disposalFailure is not null)
+                        {
+                            throw disposalFailure;
+                        }
+                    });
             }
 
             return overlay.Object;
@@ -1314,7 +1399,7 @@ public sealed class PluginIngestionTests : IDisposable
     ///     record can break the <c>ILoquiObject</c> contract that <see cref="IMajorRecordGetter" /> inherits.
     /// </param>
     /// <returns>The record, carrying FormID <c>000001</c>.</returns>
-    private static IMajorRecordGetter CreateRecordWithUnusableRegistration(Exception registrationFailure = null)
+    private static IMajorRecordGetter CreateRecordWithUnusableRegistration(Exception? registrationFailure = null)
     {
         var record = new Mock<IMajorRecordGetter>();
         record
@@ -1338,12 +1423,9 @@ public sealed class PluginIngestionTests : IDisposable
         /// <summary>
         ///     Returns a readable overlay whose cleanup raises the configured infrastructure failure.
         /// </summary>
-        public IModDisposeGetter ReadOverlay(
-            string pluginPath,
-            GameRelease gameRelease,
-            BinaryReadParameters readParameters)
+        public IModDisposeGetter ReadOverlay(SelectedPluginReady readyPlugin)
         {
-            var pluginName = Path.GetFileName(pluginPath);
+            var pluginName = readyPlugin.PluginName;
             var overlay = new Mock<IModDisposeGetter>();
             overlay
                 .Setup(plugin => plugin.EnumerateMajorRecords())
@@ -1377,63 +1459,111 @@ public sealed class PluginIngestionTests : IDisposable
         return new PluginOverlayReadException(message, new MalformedDataException(message));
     }
 
-    private sealed class RecordingLoadOrderProvider(
-        GameLoadOrderSnapshot snapshot,
-        List<string> events) : IGameLoadOrderProvider
+    private sealed class RecordingGameLoadOrders(
+        IReadOnlyList<string> listedPluginNames,
+        List<string> events) : IGameLoadOrders
     {
-        public int BuildSnapshotCallCount { get; private set; }
+        public int PrepareCallCount { get; private set; }
 
-        public string CapturedDataPath { get; private set; } = null!;
+        public string CapturedCanonicalDataDirectory { get; private set; } = null!;
 
         public GameRelease CapturedGameRelease { get; private set; }
 
-        public bool CapturedIncludeMasterFlagsLookup { get; private set; }
+        public IReadOnlyList<string> CapturedSelection { get; private set; } = [];
 
-        public GameLoadOrderSnapshot BuildSnapshot(
+        /// <inheritdoc />
+        public Task<AvailablePluginsDiscoveryResult> DiscoverAvailablePluginsAsync(
             GameRelease gameRelease,
-            string dataPath,
-            bool includeMasterFlagsLookup = false)
+            string canonicalDataDirectory,
+            IProgress<GameLoadOrderDiscoveryProgress>? progress = null,
+            CancellationToken cancellationToken = default)
         {
-            BuildSnapshotCallCount++;
+            throw new NotSupportedException();
+        }
+
+        /// <inheritdoc />
+        public ImmutableArray<PreparedSelectedPlugin> PrepareSelectedPlugins(
+            GameRelease gameRelease,
+            string canonicalDataDirectory,
+            IReadOnlyList<string> selectedPluginNames,
+            CancellationToken cancellationToken = default)
+        {
+            PrepareCallCount++;
             CapturedGameRelease = gameRelease;
-            CapturedDataPath = dataPath;
-            CapturedIncludeMasterFlagsLookup = includeMasterFlagsLookup;
+            CapturedCanonicalDataDirectory = canonicalDataDirectory;
+            CapturedSelection = selectedPluginNames.ToArray();
             events.Add("load-order");
-            return snapshot;
+
+            var capability = new PluginReadCapability(new object());
+            var prepared = ImmutableArray.CreateBuilder<PreparedSelectedPlugin>(selectedPluginNames.Count);
+            foreach (var selectedPluginName in selectedPluginNames)
+            {
+                var listedPluginName = listedPluginNames.FirstOrDefault(listed =>
+                    string.Equals(listed, selectedPluginName, StringComparison.OrdinalIgnoreCase));
+                if (listedPluginName is null)
+                {
+                    prepared.Add(new SelectedPluginNotListed(selectedPluginName));
+                    continue;
+                }
+
+                var resolvedPluginPath = Path.Combine(canonicalDataDirectory, listedPluginName);
+                prepared.Add(File.Exists(resolvedPluginPath)
+                    ? new SelectedPluginReady(selectedPluginName, resolvedPluginPath, capability)
+                    : new SelectedPluginFileUnavailable(selectedPluginName, resolvedPluginPath));
+            }
+
+            return prepared.ToImmutable();
         }
     }
 
-    private sealed class ThrowingLoadOrderProvider(Exception failure) : IGameLoadOrderProvider
+    private sealed class PreparedCaseOverlayReader : IPluginOverlayReader
     {
-        public int BuildSnapshotCallCount { get; private set; }
+        public List<SelectedPluginReady> OpenedPlugins { get; } = [];
+
+        /// <inheritdoc />
+        public IModDisposeGetter ReadOverlay(SelectedPluginReady readyPlugin)
+        {
+            OpenedPlugins.Add(readyPlugin);
+            return CreateOverlay([CreateRecord(readyPlugin.PluginName)]);
+        }
+    }
+
+    private sealed class ThrowingGameLoadOrders(Exception failure) : IGameLoadOrders
+    {
+        public int PrepareCallCount { get; private set; }
+
+        /// <inheritdoc />
+        public Task<AvailablePluginsDiscoveryResult> DiscoverAvailablePluginsAsync(
+            GameRelease gameRelease,
+            string canonicalDataDirectory,
+            IProgress<GameLoadOrderDiscoveryProgress>? progress = null,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
 
         /// <summary>
         ///     Raises the configured infrastructure failure at the aggregate load-order boundary.
         /// </summary>
-        public GameLoadOrderSnapshot BuildSnapshot(
+        public ImmutableArray<PreparedSelectedPlugin> PrepareSelectedPlugins(
             GameRelease gameRelease,
-            string dataPath,
-            bool includeMasterFlagsLookup = false)
+            string canonicalDataDirectory,
+            IReadOnlyList<string> selectedPluginNames,
+            CancellationToken cancellationToken = default)
         {
-            BuildSnapshotCallCount++;
+            PrepareCallCount++;
             throw failure;
         }
     }
 
     private sealed class RecordingOverlayReader(
         List<string> events,
-        string emptyPluginName = null) : IPluginOverlayReader
+        string? emptyPluginName = null) : IPluginOverlayReader
     {
-        public List<BinaryReadParameters> CapturedReadParameters { get; } = [];
-
-        public IModDisposeGetter ReadOverlay(
-            string pluginPath,
-            GameRelease gameRelease,
-            BinaryReadParameters readParameters)
+        public IModDisposeGetter ReadOverlay(SelectedPluginReady readyPlugin)
         {
-            var pluginName = Path.GetFileName(pluginPath);
+            var pluginName = readyPlugin.PluginName;
             events.Add($"overlay:{pluginName}");
-            CapturedReadParameters.Add(readParameters);
             var overlay = new Mock<IModDisposeGetter>();
             if (string.Equals(pluginName, emptyPluginName, StringComparison.Ordinal))
             {
@@ -1450,12 +1580,8 @@ public sealed class PluginIngestionTests : IDisposable
         }
     }
 
-    private sealed class RecordingRecordStoreSession(List<string> events) : IFormIdRecordStoreSession
+    private sealed class RecordingPluginRecordWriter(List<string> events) : IPluginFormIdRecordWriter
     {
-        public int OptimizeCallCount { get; private set; }
-
-        public int DisposeCallCount { get; private set; }
-
         public Task<FormIdPluginWriteResult> WritePluginAsync(
             string pluginName,
             IEnumerable<FormIdRecord> records,
@@ -1465,30 +1591,9 @@ public sealed class PluginIngestionTests : IDisposable
             events.Add($"write:{pluginName}");
             return Task.FromResult(new FormIdPluginWriteResult(records.Count()));
         }
-
-        public Task<FormIdTextFileImportResult> ImportFormIdTextFileAsync(
-            string formIdTextFilePath,
-            UpdateMode updateMode,
-            IProgress<FormIdStoreProgress> progress = null,
-            CancellationToken cancellationToken = default)
-        {
-            throw new InvalidOperationException("Plugin Ingestion should not import a FormID text file.");
-        }
-
-        public Task OptimizeAsync(CancellationToken cancellationToken = default)
-        {
-            OptimizeCallCount++;
-            throw new InvalidOperationException("Plugin Ingestion should not optimize the FormID Record Store.");
-        }
-
-        public ValueTask DisposeAsync()
-        {
-            DisposeCallCount++;
-            throw new InvalidOperationException("Plugin Ingestion should not dispose the FormID Record Store.");
-        }
     }
 
-    private sealed class UnusedRecordStoreSession : IFormIdRecordStoreSession
+    private sealed class UnusedPluginRecordWriter : IPluginFormIdRecordWriter
     {
         public Task<FormIdPluginWriteResult> WritePluginAsync(
             string pluginName,
@@ -1498,34 +1603,11 @@ public sealed class PluginIngestionTests : IDisposable
         {
             throw new InvalidOperationException("This test should not write Plugin records.");
         }
-
-        public Task<FormIdTextFileImportResult> ImportFormIdTextFileAsync(
-            string formIdTextFilePath,
-            UpdateMode updateMode,
-            IProgress<FormIdStoreProgress> progress = null,
-            CancellationToken cancellationToken = default)
-        {
-            throw new InvalidOperationException("This test should not import a FormID text file.");
-        }
-
-        public Task OptimizeAsync(CancellationToken cancellationToken = default)
-        {
-            throw new InvalidOperationException("This test should not optimize the FormID Record Store.");
-        }
-
-        public ValueTask DisposeAsync()
-        {
-            return ValueTask.CompletedTask;
-        }
     }
 
-    private sealed class ThrowingRecordStoreSession(Exception failure) : IFormIdRecordStoreSession
+    private sealed class ThrowingPluginRecordWriter(Exception failure) : IPluginFormIdRecordWriter
     {
         public List<string> AttemptedPlugins { get; } = [];
-
-        public int OptimizeCallCount { get; private set; }
-
-        public int DisposeCallCount { get; private set; }
 
         public Task<FormIdPluginWriteResult> WritePluginAsync(
             string pluginName,
@@ -1536,31 +1618,10 @@ public sealed class PluginIngestionTests : IDisposable
             AttemptedPlugins.Add(pluginName);
             return Task.FromException<FormIdPluginWriteResult>(failure);
         }
-
-        public Task<FormIdTextFileImportResult> ImportFormIdTextFileAsync(
-            string formIdTextFilePath,
-            UpdateMode updateMode,
-            IProgress<FormIdStoreProgress> progress = null,
-            CancellationToken cancellationToken = default)
-        {
-            throw new InvalidOperationException("Plugin Ingestion should not import a FormID text file.");
-        }
-
-        public Task OptimizeAsync(CancellationToken cancellationToken = default)
-        {
-            OptimizeCallCount++;
-            throw new InvalidOperationException("Plugin Ingestion should not optimize the FormID Record Store.");
-        }
-
-        public ValueTask DisposeAsync()
-        {
-            DisposeCallCount++;
-            throw new InvalidOperationException("Plugin Ingestion should not dispose the FormID Record Store.");
-        }
     }
 
-    private sealed class CancellingRecordStoreSession(CancellationTokenSource cancellationTokenSource)
-        : IFormIdRecordStoreSession
+    private sealed class CancellingPluginRecordWriter(CancellationTokenSource cancellationTokenSource)
+        : IPluginFormIdRecordWriter
     {
         public List<string> AttemptedPlugins { get; } = [];
 
@@ -1578,25 +1639,6 @@ public sealed class PluginIngestionTests : IDisposable
             var result = new FormIdPluginWriteResult(records.Count());
             cancellationTokenSource.Cancel();
             return Task.FromResult(result);
-        }
-
-        public Task<FormIdTextFileImportResult> ImportFormIdTextFileAsync(
-            string formIdTextFilePath,
-            UpdateMode updateMode,
-            IProgress<FormIdStoreProgress> progress = null,
-            CancellationToken cancellationToken = default)
-        {
-            throw new InvalidOperationException("Plugin Ingestion should not import a FormID text file.");
-        }
-
-        public Task OptimizeAsync(CancellationToken cancellationToken = default)
-        {
-            throw new InvalidOperationException("Plugin Ingestion should not optimize the FormID Record Store.");
-        }
-
-        public ValueTask DisposeAsync()
-        {
-            throw new InvalidOperationException("Plugin Ingestion should not dispose the FormID Record Store.");
         }
     }
 }

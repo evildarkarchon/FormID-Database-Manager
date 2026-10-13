@@ -39,11 +39,11 @@ csharp_space_between_method_call_parameter_list_parentheses = false
 csharp_space_between_parentheses = false
 
 # Wrapping preferences
-csharp_preserve_single_line_statements = false
+csharp_preserve_single_line_statements = true
 csharp_preserve_single_line_blocks = true
 
 # Code style rules
-csharp_prefer_braces = true:warning
+csharp_prefer_braces = true:suggestion
 csharp_prefer_simple_using_statement = true:suggestion
 csharp_style_prefer_switch_expression = true:suggestion
 

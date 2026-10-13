@@ -16,7 +16,7 @@ A selected Plugin for which Plugin Ingestion stored one or more FormID records i
 _Avoid_: Successful Plugin, processed Plugin.
 
 **Skipped Plugin**:
-A selected Plugin that a Processing Run did not store records for because it was not present in the load order, its file was unavailable, or it produced zero FormID records. It is reported as a warning and does not count as either an Ingested Plugin or Failed Plugin.
+A selected Plugin that a Processing Run did not store records for because it was not present in the Game Load Order, its file was unavailable, or it produced zero FormID records. It is reported as a warning and does not count as either an Ingested Plugin or Failed Plugin.
 _Avoid_: Successful plugin, missing file error, ignored plugin.
 
 **Failed Plugin**:
@@ -24,7 +24,7 @@ A selected Plugin whose ingestion could not complete because of a fatal Plugin-s
 _Avoid_: Run failure, warning, skipped plugin.
 
 **Unresolvable Master**:
-A master file a selected Plugin declares that the resolved Data directory cannot supply, on a GameRelease whose load order separates master files by type. It fails the whole Processing Run and names the master, rather than becoming a Failed Plugin, because it is a fact about the Data directory: every selected Plugin declares its game's main master, so all of them would fail identically (ADR-0006).
+A master file a selected Plugin declares that the resolved Data directory cannot supply, on a GameRelease whose Game Load Order separates master files by type. It fails the whole Processing Run and names the master, rather than becoming a Failed Plugin, because it is a fact about the Data directory: every selected Plugin declares its game's main master, so all of them would fail identically (ADR-0006).
 _Avoid_: Missing master error, broken plugin, bad load order.
 
 **Plugin List**:
@@ -59,6 +59,10 @@ _Avoid_: Game type, release enum.
 A GameRelease this application can process — one with a FormID Record Store table name, a Base Game Plugin set, and Plugin overlay construction. Mutagen defines GameReleases this application does not support; only a Supported GameRelease can reach a Game Context or a Processing Run.
 _Avoid_: Game type, supported game.
 
+**Game Load Order**:
+The ordered Plugin listings for a Supported GameRelease and canonical Data directory. It describes listing order and membership; whether a listed Plugin file is available is a separate fact.
+_Avoid_: Plugin List, load-order snapshot, Mutagen load order.
+
 **Game Context**:
 The User Workflow state that determines which Plugin List can be loaded: selected GameRelease, selected game directory, and Advanced Mode.
 _Avoid_: Game selection, current game state.
@@ -92,13 +96,33 @@ An ingestion mode that replaces existing FormID records for each successfully in
 _Avoid_: Full database refresh, exact-case replacement.
 
 **Processing Run**:
-A single execution that turns either selected Plugins or one FormID text file into records in a FormID Record Store for one GameRelease. A Processing Run is scoped by its Update Mode and ends as completed, completed with warnings, completed with failures, cancelled, or failed.
+A single execution that turns either selected Plugins or one FormID text file into records in a FormID Record Store for one GameRelease. A Processing Run is scoped by its Update Mode and ends as completed, completed with warnings, completed with failures, cancelled, or failed. A Processing Run can also be a Dry Run, which reports the work it would do instead of storing any records.
 _Avoid_: Processing job, import task, plugin processing.
 
 **Processing Warning**:
 A user-visible condition from a Processing Run that did not stop ingestion, such as a Skipped Plugin or recoverable record issue. Processing Warnings can make a Processing Run complete with warnings but do not count as failed.
 _Avoid_: Non-fatal error, ignored error.
 
+**Processing Run Outcome**:
+How one Processing Run ended, as a value its caller can inspect rather than prose it has to reconstruct from status strings and exception types. There is one case per kind of run — selected Plugins, one FormID text file, and a Dry Run — each carrying the report that run already produced, plus cancellation. Failure is deliberately not an Outcome: an invalid request, an Unresolvable Master, and any unexpected internal failure all leave a run as exceptions (ADR-0007).
+_Avoid_: Run result, run status, processing status.
+
+**Processing Run Plan**:
+What a Dry Run reports: the work a Processing Run would do, stated only as far as it can be known without enumerating a single FormID record. For selected Plugins it is one entry per selected Plugin, in selection order — would ingest, or would skip because the Plugin is not in the Game Load Order or its file is unavailable. For a FormID text file it is whether the file is there and how large it is. A Plan therefore cannot predict the third Skipped Plugin reason, zero FormID records, which only enumeration can establish.
+_Avoid_: Preview, estimate, simulation, dry-run result.
+
+**Dry Run**:
+A Processing Run that produces a Processing Run Plan instead of records. It opens no FormID Record Store and needs no database path, but does every step before that: a selected-Plugin Dry Run resolves the Data directory, reads the Game Load Order, prepares Plugin-read state, and opens each selected Plugin's overlay, so an Unresolvable Master fails a Dry Run exactly as it fails a real run. A FormID text Dry Run neither opens nor parses the file, because counting its rows is what an import does, not what a plan can claim.
+_Avoid_: Test run, preview mode, simulated run, no-op run.
+
+**Processing Run Presentation**:
+The single module that turns a Processing Run's typed reports — what it is doing while it runs, and its Processing Run Outcome — into the wording the user reads. It is a pure renderer: it returns what a report implies and writes nothing, so every ViewModel write for a run stays with the User Workflow. This makes it a role-only mirror of the Plugin List Presentation Adapter, which does write the ViewModel (ADR-0007).
+_Avoid_: Status formatter, message builder, run adapter.
+
 **User Workflow**:
 The end-to-end user interaction that turns a selected GameRelease, a game directory or FormID text file, Plugin selections, database path, and Update Mode into one FormID processing run.
 _Avoid_: UI event flow, MainWindow logic.
+
+**Workflow Activity**:
+One reportable activity that owns the User Workflow's progress channel: either a Processing Run or a Plugin List refresh. Exactly one module reports each — the User Workflow reports run activity, the Plugin List Presentation Adapter reports scan activity — so neither can overwrite the other's report. Run activity takes precedence over scan activity while it is active; scan activity shows otherwise. The progress channel is transient: it shows what an activity is doing now, and is overwritten or cleared as activity changes. Terminal facts about a Processing Run that must outlive it — its errors, its Processing Warnings, and its cancellation acknowledgement — go to the message lists instead, which is where the user looks for what a run did rather than what it is doing.
+_Avoid_: Progress state, busy state, status update, processing status.

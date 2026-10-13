@@ -12,33 +12,40 @@ namespace FormID_Database_Manager.Tests.Unit.Services;
 public sealed class PluginIngestionContractTests
 {
     /// <summary>
-    ///     Verifies production Plugin Ingestion cannot be subclassed as an alternate Processing Run test seam.
+    ///     Requires reports to validate against the same public request accepted by Processing Run.
     /// </summary>
     [Fact]
-    public void PluginIngestion_TypeDefinition_IsInternalSealedInterfaceImplementation()
+    public void Report_Constructor_RequiresAuthoritativeProcessingRunRequest()
     {
-        var implementationType = typeof(PluginIngestion);
-
-        Assert.True(implementationType.IsNotPublic);
-        Assert.True(implementationType.IsSealed);
-        Assert.Contains(typeof(IPluginIngestion), implementationType.GetInterfaces());
+        var constructor = Assert.Single(typeof(PluginIngestionReport).GetConstructors());
+        Assert.Equal(typeof(PluginProcessingRunRequest), constructor.GetParameters()[0].ParameterType);
     }
 
+    /// <summary>
+    ///     Verifies the two operations Plugin Ingestion offers for one captured selection: doing the work, and saying
+    ///     what doing it would come to.
+    /// </summary>
+    /// <remarks>
+    ///     Issue #67 added the second. The parameter lists are pinned because their difference is the contract: doing
+    ///     the work takes the Plugin-write Store role and reports progress, while planning takes neither — a plan opens
+    ///     no database at all, and its output is terminal rather than transient.
+    /// </remarks>
     [Fact]
-    public void IPluginIngestion_TypeDefinition_IsInternalInterfaceWithOneSelectedSetOperation()
+    public void IPluginIngestion_TypeDefinition_IsInternalInterfaceWithOneIngestionAndOnePlanningOperation()
     {
         var interfaceType = typeof(IPluginIngestion);
-        var operation = Assert.Single(interfaceType.GetMethods());
-        var parameters = operation.GetParameters();
+        var pluginWriterType = typeof(IPluginFormIdRecordWriter);
+        var ingestion = Assert.Single(interfaceType.GetMethods(), method => method.Name == "IngestAsync");
+        var planning = Assert.Single(interfaceType.GetMethods(), method => method.Name == "PlanAsync");
 
         Assert.True(interfaceType.IsInterface);
         Assert.True(interfaceType.IsNotPublic);
-        Assert.Equal("IngestAsync", operation.Name);
-        Assert.Equal(typeof(Task<PluginIngestionReport>), operation.ReturnType);
+        Assert.Equal(2, interfaceType.GetMethods().Length);
+        Assert.Equal(typeof(Task<PluginIngestionReport>), ingestion.ReturnType);
         Assert.Collection(
-            parameters,
-            parameter => Assert.Equal(typeof(SelectedPluginIngestionRequest), parameter.ParameterType),
-            parameter => Assert.Equal(typeof(IFormIdRecordStoreSession), parameter.ParameterType),
+            ingestion.GetParameters(),
+            parameter => Assert.Equal(typeof(PluginProcessingRunRequest), parameter.ParameterType),
+            parameter => Assert.Equal(pluginWriterType, parameter.ParameterType),
             parameter =>
             {
                 Assert.Equal(typeof(IProgress<PluginIngestionProgress>), parameter.ParameterType);
@@ -50,17 +57,175 @@ public sealed class PluginIngestionContractTests
                 Assert.Equal(typeof(CancellationToken), parameter.ParameterType);
                 Assert.True(parameter.HasDefaultValue);
             });
+
+        Assert.Equal(typeof(Task<PluginIngestionPlan>), planning.ReturnType);
+        Assert.Collection(
+            planning.GetParameters(),
+            parameter => Assert.Equal(typeof(PluginProcessingRunRequest), parameter.ParameterType),
+            parameter =>
+            {
+                Assert.Equal(typeof(CancellationToken), parameter.ParameterType);
+                Assert.True(parameter.HasDefaultValue);
+            });
     }
 
     /// <summary>
-    ///     Verifies production Processing Run construction does not expose Plugin Ingestion's load-order adapter.
+    ///     Verifies Plugin Ingestion's consumer-owned Store role exposes one atomic Plugin write without carrying Store
+    ///     lifetime or maintenance operations across the seam.
     /// </summary>
     [Fact]
-    public void ProcessingRunExecutor_PublicConstruction_IsParameterless()
+    public void IPluginFormIdRecordWriter_TypeDefinition_IsInternalSingleOperationRoleInheritedByStoreSession()
     {
-        var constructor = Assert.Single(typeof(ProcessingRunExecutor).GetConstructors());
+        var writerType = typeof(IPluginFormIdRecordWriter);
+        var storeSessionType = typeof(IFormIdRecordStoreSession);
+        var writeOperation = Assert.Single(writerType.GetMethods());
 
-        Assert.Empty(constructor.GetParameters());
+        Assert.True(writerType.IsInterface);
+        Assert.True(writerType.IsNotPublic);
+        Assert.Equal("WritePluginAsync", writeOperation.Name);
+        Assert.Equal(typeof(Task<FormIdPluginWriteResult>), writeOperation.ReturnType);
+        Assert.Collection(
+            writeOperation.GetParameters(),
+            parameter => Assert.Equal(typeof(string), parameter.ParameterType),
+            parameter => Assert.Equal(typeof(IEnumerable<FormIdRecord>), parameter.ParameterType),
+            parameter => Assert.Equal(typeof(UpdateMode), parameter.ParameterType),
+            parameter =>
+            {
+                Assert.Equal(typeof(CancellationToken), parameter.ParameterType);
+                Assert.True(parameter.HasDefaultValue);
+            });
+        Assert.False(typeof(IAsyncDisposable).IsAssignableFrom(writerType));
+        Assert.Contains(writerType, storeSessionType.GetInterfaces());
+        Assert.Contains(typeof(IAsyncDisposable), storeSessionType.GetInterfaces());
+        Assert.DoesNotContain(
+            storeSessionType.GetMethods(System.Reflection.BindingFlags.Instance |
+                                        System.Reflection.BindingFlags.Public |
+                                        System.Reflection.BindingFlags.DeclaredOnly),
+            method => method.Name == "WritePluginAsync");
+    }
+
+    /// <summary>
+    ///     Verifies a plan's skip reasons are exactly the two a plan can predict without enumerating records.
+    /// </summary>
+    /// <remarks>
+    ///     The run's third reason, zero FormID records, is deliberately absent: it cannot be known without doing the
+    ///     enumeration a dry run refuses to do, so a plan cannot honestly represent it (issue #67).
+    /// </remarks>
+    [Fact]
+    public void PlannedSkipReason_Values_AreOnlyTheTwoPredictableOnes()
+    {
+        Assert.Equal(
+            [PlannedSkipReason.NotPresentInLoadOrder, PlannedSkipReason.PluginFileUnavailable],
+            Enum.GetValues<PlannedSkipReason>());
+    }
+
+    /// <summary>
+    ///     Verifies a planned unavailable-file skip keeps the resolved path, and that no other planned reason may carry
+    ///     one — the same invariant the run's own Skipped Plugin enforces.
+    /// </summary>
+    [Fact]
+    public void PlannedPluginSkip_ResolvedPath_IsRequiredForAnUnavailableFileAndRejectedOtherwise()
+    {
+        var pluginPath = Path.Combine(Path.GetTempPath(), "Skyrim", "Data", "Missing.esp");
+
+        var skip = new PlannedPluginSkip("Missing.esp", PlannedSkipReason.PluginFileUnavailable, pluginPath);
+        var missingPath = Assert.Throws<ArgumentNullException>(() =>
+            new PlannedPluginSkip("Missing.esp", PlannedSkipReason.PluginFileUnavailable));
+        var unwantedPath = Assert.Throws<ArgumentException>(() =>
+            new PlannedPluginSkip("Absent.esp", PlannedSkipReason.NotPresentInLoadOrder, pluginPath));
+
+        Assert.Equal(pluginPath, skip.ResolvedPluginPath);
+        Assert.Equal("resolvedPluginPath", missingPath.ParamName);
+        Assert.Equal("resolvedPluginPath", unwantedPath.ParamName);
+    }
+
+    /// <summary>
+    ///     Verifies a plan preserves its planned outcomes in order after the source collection is mutated.
+    /// </summary>
+    [Fact]
+    public void PluginIngestionPlan_CallerMutatesSource_PreservesPlannedOrder()
+    {
+        var planned = new List<PlannedPlugin>
+        {
+            new PlannedPluginIngestion("First.esp"),
+            new PlannedPluginSkip("Absent.esp", PlannedSkipReason.NotPresentInLoadOrder)
+        };
+
+        var plan = new PluginIngestionPlan(CreatePlanRequest("First.esp", "Absent.esp"), planned);
+        planned.Reverse();
+
+        Assert.Collection(
+            plan.Plugins,
+            entry => Assert.Equal("First.esp", entry.PluginName),
+            entry => Assert.Equal("Absent.esp", entry.PluginName));
+    }
+
+    /// <summary>
+    ///     Rejects plans that lose, add, rename, recase, or reorder the authoritative selection.
+    /// </summary>
+    [Theory]
+    [InlineData()]
+    [InlineData("First.esp")]
+    [InlineData("First.esp", "Second.ESP", "Extra.esp")]
+    [InlineData("Renamed.esp", "Second.ESP")]
+    [InlineData("first.esp", "Second.ESP")]
+    [InlineData("Second.ESP", "First.esp")]
+    public void PluginIngestionPlan_EntriesDifferFromSelection_RejectsPlan(params string[] names)
+    {
+        var planned = names.Select(name => new PlannedPluginIngestion(name));
+
+        var exception = Assert.Throws<ArgumentException>(() =>
+            new PluginIngestionPlan(CreatePlanRequest("First.esp", "Second.ESP"), planned));
+
+        Assert.Equal("plugins", exception.ParamName);
+    }
+
+    /// <summary>
+    ///     Requires both the authoritative request and a non-null planned entry for each selection.
+    /// </summary>
+    [Fact]
+    public void PluginIngestionPlan_NullInputs_RejectsMissingRequestCollectionOrEntry()
+    {
+        var request = CreatePlanRequest("First.esp");
+
+        Assert.Equal("request", Assert.Throws<ArgumentNullException>(() =>
+            new PluginIngestionPlan(null!, [new PlannedPluginIngestion("First.esp")])).ParamName);
+        Assert.Equal("plugins", Assert.Throws<ArgumentNullException>(() =>
+            new PluginIngestionPlan(request, null!)).ParamName);
+        Assert.Equal("plugins", Assert.Throws<ArgumentException>(() =>
+            new PluginIngestionPlan(request, [null!])).ParamName);
+    }
+
+    /// <summary>
+    ///     Keeps only ordered planned entries after validation, so Store paths and other run facts cannot leak into a plan.
+    /// </summary>
+    [Fact]
+    public void PluginIngestionPlan_TypeDefinition_RetainsAndExposesOnlyPlannedEntries()
+    {
+        var type = typeof(PluginIngestionPlan);
+        var fields = type.GetFields(System.Reflection.BindingFlags.Instance |
+                                    System.Reflection.BindingFlags.Public |
+                                    System.Reflection.BindingFlags.NonPublic);
+
+        Assert.Equal(typeof(System.Collections.Immutable.ImmutableArray<PlannedPlugin>), Assert.Single(fields).FieldType);
+        Assert.Equal(nameof(PluginIngestionPlan.Plugins), Assert.Single(type.GetProperties()).Name);
+    }
+
+    /// <summary>
+    ///     Verifies public Processing Run construction does not expose Plugin Ingestion's Game Load Orders or overlay
+    ///     dependencies without pinning unrelated constructor evolution.
+    /// </summary>
+    [Fact]
+    public void ProcessingRunExecutor_PublicConstruction_ExposesNoPluginIngestionAdapters()
+    {
+        var publicDependencyTypes = typeof(ProcessingRunExecutor)
+            .GetConstructors()
+            .SelectMany(constructor => constructor.GetParameters())
+            .Select(parameter => parameter.ParameterType)
+            .ToArray();
+
+        Assert.DoesNotContain(typeof(IGameLoadOrders), publicDependencyTypes);
+        Assert.DoesNotContain(typeof(IPluginOverlayReader), publicDependencyTypes);
     }
 
     [Fact]
@@ -77,52 +242,6 @@ public sealed class PluginIngestionContractTests
         Assert.Equal("Second.esp", current.PluginName);
         Assert.Equal(2, current.PluginPosition);
         Assert.Equal(3, current.TotalPluginCount);
-    }
-
-    [Fact]
-    public void SelectionRequest_CallerMutatesSource_PreservesCapturedOrder()
-    {
-        var pluginNames = new List<string> { "First.esp", "Second.esp" };
-        var request = new SelectedPluginIngestionRequest(
-            @"C:\Games\Skyrim",
-            GameRelease.SkyrimSE,
-            pluginNames,
-            UpdateMode.Append);
-
-        pluginNames[0] = "Changed.esp";
-        pluginNames.Reverse();
-
-        Assert.Equal(["First.esp", "Second.esp"], request.PluginNames);
-    }
-
-    [Fact]
-    public void SelectionRequest_EmptySelection_ThrowsArgumentException()
-    {
-        Assert.Throws<ArgumentException>(() => new SelectedPluginIngestionRequest(
-            @"C:\Games\Skyrim",
-            GameRelease.SkyrimSE,
-            [],
-            UpdateMode.Append));
-    }
-
-    [Fact]
-    public void SelectionRequest_BlankPluginName_ThrowsArgumentException()
-    {
-        Assert.Throws<ArgumentException>(() => new SelectedPluginIngestionRequest(
-            @"C:\Games\Skyrim",
-            GameRelease.SkyrimSE,
-            ["First.esp", " "],
-            UpdateMode.Append));
-    }
-
-    [Fact]
-    public void SelectionRequest_CaseInsensitiveDuplicateNames_ThrowsArgumentException()
-    {
-        Assert.Throws<ArgumentException>(() => new SelectedPluginIngestionRequest(
-            @"C:\Games\Skyrim",
-            GameRelease.SkyrimSE,
-            ["Duplicate.esp", "DUPLICATE.ESP"],
-            UpdateMode.Append));
     }
 
     [Fact]
@@ -273,12 +392,73 @@ public sealed class PluginIngestionContractTests
             ]));
     }
 
-    private static SelectedPluginIngestionRequest CreateSelectionRequest(params string[] pluginNames)
+    /// <summary>
+    ///     Rejects names that could otherwise silently change the authoritative selection, including casing alone.
+    /// </summary>
+    [Theory]
+    [InlineData("Renamed.esp")]
+    [InlineData("FIRST.ESP")]
+    public void Report_OutcomeNameDiffersFromRequest_ThrowsArgumentException(string outcomeName)
     {
-        return new SelectedPluginIngestionRequest(
-            @"C:\Games\Skyrim",
+        Assert.Throws<ArgumentException>(() => new PluginIngestionReport(
+            CreateSelectionRequest("First.esp"), [new IngestedPlugin(outcomeName, 1)]));
+    }
+
+    /// <summary>
+    ///     Rejects extra outcomes instead of silently extending the accepted selection.
+    /// </summary>
+    [Fact]
+    public void Report_ExtraOutcome_ThrowsArgumentException()
+    {
+        Assert.Throws<ArgumentException>(() => new PluginIngestionReport(
+            CreateSelectionRequest("First.esp"),
+            [new IngestedPlugin("First.esp", 1), new IngestedPlugin("Extra.esp", 1)]));
+    }
+
+    /// <summary>
+    ///     Requires an authoritative request and a non-null outcome for every selected Plugin.
+    /// </summary>
+    [Fact]
+    public void Report_NullInputs_ThrowsArgumentExceptions()
+    {
+        var request = CreateSelectionRequest("First.esp");
+        Assert.Throws<ArgumentNullException>(() => new PluginIngestionReport(null!, []));
+        Assert.Throws<ArgumentNullException>(() => new PluginIngestionReport(request, null!));
+        Assert.Throws<ArgumentException>(() => new PluginIngestionReport(request, [null!]));
+    }
+
+    /// <summary>
+    ///     Keeps completed reports limited to their outcomes instead of retaining unrelated Processing Run facts.
+    /// </summary>
+    [Fact]
+    public void Report_TypeDefinition_RetainsOnlyOutcomeSnapshot()
+    {
+        var property = Assert.Single(typeof(PluginIngestionReport).GetProperties());
+        Assert.Equal(nameof(PluginIngestionReport.Outcomes), property.Name);
+        var field = Assert.Single(typeof(PluginIngestionReport).GetFields(
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic |
+            System.Reflection.BindingFlags.Public));
+        Assert.Equal(typeof(System.Collections.Immutable.ImmutableArray<PluginIngestionOutcome>), field.FieldType);
+    }
+
+    /// <summary>
+    ///     Creates the authoritative real-run selection used to correlate report outcomes.
+    /// </summary>
+    private static PluginProcessingRunRequest CreateSelectionRequest(params string[] pluginNames)
+    {
+        return new PluginProcessingRunRequest(
+            @"C:\Games\Skyrim", "report.db",
             GameRelease.SkyrimSE,
             pluginNames,
             UpdateMode.Append);
     }
+    /// <summary>
+    ///     Creates an authoritative dry-run selection without requiring a Store path.
+    /// </summary>
+    private static PluginProcessingRunRequest CreatePlanRequest(params string[] names)
+    {
+        return new PluginProcessingRunRequest(
+            @"C:\Games\Skyrim", string.Empty, GameRelease.SkyrimSE, names, UpdateMode.Append, dryRun: true);
+    }
+
 }

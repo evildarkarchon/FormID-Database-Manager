@@ -133,6 +133,21 @@ internal static class SupportedGameReleases
         "Constellation.esm");
 
     /// <summary>
+    ///     Indexes <see cref="All" /> so lookups do not walk the list. Frozen because the table never changes after
+    ///     static initialization.
+    /// </summary>
+    private static readonly FrozenDictionary<GameRelease, SupportedGameRelease> ByRelease;
+
+    /// <summary>
+    ///     Builds the release index after the constant table has been initialized.
+    /// </summary>
+    static SupportedGameReleases()
+    {
+        // Static field initializers run in declaration order; the constructor runs after All is populated.
+        ByRelease = All.ToFrozenDictionary(static row => row.Release);
+    }
+
+    /// <summary>
     ///     Gets the Supported GameReleases, in the order the game dropdown shows them.
     /// </summary>
     /// <remarks>
@@ -164,13 +179,6 @@ internal static class SupportedGameReleases
         new(GameRelease.Starfield, "Starfield", StarfieldPlugins,
             (path, parameters) => StarfieldMod.CreateFromBinaryOverlay(path, StarfieldRelease.Starfield, parameters))
     ];
-
-    /// <summary>
-    ///     Indexes <see cref="All" /> so lookups do not walk the list. Frozen because the table never changes after
-    ///     static initialization.
-    /// </summary>
-    private static readonly FrozenDictionary<GameRelease, SupportedGameRelease> ByRelease =
-        All.ToFrozenDictionary(static row => row.Release);
 
     /// <summary>
     ///     Gets the row for a Supported GameRelease.

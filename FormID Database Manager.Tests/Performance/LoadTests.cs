@@ -10,6 +10,7 @@ using FormID_Database_Manager.Services;
 using FormID_Database_Manager.TestUtilities;
 using FormID_Database_Manager.TestUtilities.Builders;
 using FormID_Database_Manager.TestUtilities.Mocks;
+using FormID_Database_Manager.Tests.Fakes;
 using FormID_Database_Manager.ViewModels;
 using Microsoft.Data.Sqlite;
 using Mutagen.Bethesda;
@@ -62,9 +63,10 @@ public class LoadTests : IDisposable
             GameRelease.SkyrimSE,
             plugins,
             UpdateMode.Append);
-        var progress = new Progress<ProcessingRunEvent>(update =>
+        var progress = new Progress<ProcessingRunProgress>(update =>
         {
-            _output.WriteLine($"{update.Value:F1}% - {update.Message}");
+            var rendered = ProcessingRunPresentation.Render(update);
+            _output.WriteLine($"{rendered.Value:F1}% - {rendered.Status}");
         });
 
         Assert.All(plugins, p => Assert.True(File.Exists(Path.Combine(dataPath, p))));
@@ -230,8 +232,8 @@ public class LoadTests : IDisposable
                 .ToArray())
             .ToArray();
         var dispatcher = new SynchronousThreadDispatcher();
-        using var viewModel = new MainWindowViewModel(dispatcher);
-        using var pluginList = new PluginList(new SequencedPluginListDiscovery(membershipSnapshots));
+        var viewModel = new MainWindowViewModel(dispatcher);
+        using var pluginList = new PluginList(new SequencedPluginListGameLoadOrders(membershipSnapshots));
         using var presentationAdapter = new PluginListPresentationAdapter(pluginList, viewModel, dispatcher);
 
         // Act
@@ -296,8 +298,8 @@ public class LoadTests : IDisposable
             .Select(static pluginIndex => $"Plugin_{pluginIndex:D4}.esp")
             .ToArray();
         var dispatcher = new SynchronousThreadDispatcher();
-        using var viewModel = new MainWindowViewModel(dispatcher);
-        using var pluginList = new PluginList(new SequencedPluginListDiscovery([pluginNames]));
+        var viewModel = new MainWindowViewModel(dispatcher);
+        using var pluginList = new PluginList(new SequencedPluginListGameLoadOrders([pluginNames]));
         using var presentationAdapter = new PluginListPresentationAdapter(pluginList, viewModel, dispatcher);
 
         await pluginList.RefreshAsync(
@@ -312,8 +314,10 @@ public class LoadTests : IDisposable
             var stopwatch = Stopwatch.StartNew();
 
             // Simulate UI updates
-            viewModel.ProgressValue = i * 100.0 / updateCount;
-            viewModel.ProgressStatus = $"Processing item {i + 1} of {updateCount}";
+            viewModel.ApplyRunActivityProjection(new ActivityProjection(
+                true,
+                $"Processing item {i + 1} of {updateCount}",
+                i * 100.0 / updateCount));
 
             // Update search filter periodically
             if (i % 100 == 0)
@@ -392,7 +396,7 @@ public class LoadTests : IDisposable
     /// <summary>
     ///     Supplies a deterministic sequence of immutable discovery results to retained Plugin List load coverage.
     /// </summary>
-    private sealed class SequencedPluginListDiscovery : IPluginListDiscovery
+    private sealed class SequencedPluginListGameLoadOrders : PluginListGameLoadOrdersStub
     {
         private readonly IReadOnlyList<IReadOnlyList<string>> _membershipSnapshots;
         private int _nextSnapshotIndex = -1;
@@ -402,7 +406,7 @@ public class LoadTests : IDisposable
         /// </summary>
         /// <param name="membershipSnapshots">The ordered discovery results returned by successive requests.</param>
         /// <exception cref="ArgumentNullException"><paramref name="membershipSnapshots" /> is null.</exception>
-        public SequencedPluginListDiscovery(IReadOnlyList<IReadOnlyList<string>> membershipSnapshots)
+        public SequencedPluginListGameLoadOrders(IReadOnlyList<IReadOnlyList<string>> membershipSnapshots)
         {
             _membershipSnapshots = membershipSnapshots ?? throw new ArgumentNullException(nameof(membershipSnapshots));
         }
@@ -410,14 +414,17 @@ public class LoadTests : IDisposable
         /// <summary>
         ///     Returns the next configured Plugin membership after observing caller cancellation.
         /// </summary>
-        /// <param name="source">The normalized source requested by the Plugin List.</param>
+        /// <param name="gameRelease">The GameRelease requested by the Plugin List.</param>
+        /// <param name="canonicalDataDirectory">The canonical Data directory requested by the Plugin List.</param>
         /// <param name="progress">The optional discovery progress sink; no incremental progress is reported.</param>
         /// <param name="cancellationToken">Cancels the discovery request.</param>
         /// <returns>The next completed immutable discovery result.</returns>
+        /// <exception cref="OperationCanceledException"><paramref name="cancellationToken" /> is cancelled.</exception>
         /// <exception cref="InvalidOperationException">No configured discovery result remains.</exception>
-        public Task<PluginListDiscoveryResult> DiscoverAsync(
-            PluginListSource source,
-            IProgress<PluginListDiscoveryProgress>? progress = null,
+        public override Task<AvailablePluginsDiscoveryResult> DiscoverAvailablePluginsAsync(
+            GameRelease gameRelease,
+            string canonicalDataDirectory,
+            IProgress<GameLoadOrderDiscoveryProgress>? progress = null,
             CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -427,7 +434,7 @@ public class LoadTests : IDisposable
                 throw new InvalidOperationException("No configured Plugin List discovery result remains.");
             }
 
-            return Task.FromResult(PluginListDiscoveryResult.Completed(_membershipSnapshots[snapshotIndex]));
+            return Task.FromResult(Discovered(_membershipSnapshots[snapshotIndex]));
         }
     }
 

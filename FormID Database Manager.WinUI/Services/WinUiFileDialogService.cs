@@ -1,6 +1,3 @@
-using System;
-using System.Collections.Generic;
-using System.Threading.Tasks;
 using FormID_Database_Manager.Services;
 using Microsoft.UI.Windowing;
 using Microsoft.Windows.Storage.Pickers;
@@ -8,14 +5,14 @@ using Microsoft.Windows.Storage.Pickers;
 namespace FormID_Database_Manager.WinUI.Services;
 
 /// <summary>
-/// Provides WinUI file and folder selection through Windows App SDK path-returning pickers.
+///     Provides WinUI file and folder selection through Windows App SDK path-returning pickers.
 /// </summary>
 public sealed class WinUiFileDialogService : IFileDialogService
 {
     private readonly AppWindow _appWindow;
 
     /// <summary>
-    /// Creates a picker service that parents dialogs to the supplied WinUI <see cref="AppWindow.Id"/>.
+    ///     Creates a picker service that parents dialogs to the supplied WinUI <see cref="AppWindow.Id" />.
     /// </summary>
     /// <param name="appWindow">The WinUI window whose ID is used as the picker owner.</param>
     public WinUiFileDialogService(AppWindow appWindow)
@@ -24,7 +21,7 @@ public sealed class WinUiFileDialogService : IFileDialogService
     }
 
     /// <summary>
-    /// Shows a WinUI folder picker for selecting a game installation or data directory.
+    ///     Shows a WinUI folder picker for selecting a game installation or data directory.
     /// </summary>
     /// <returns>The picker outcome, distinguishing selection, cancellation, and platform failure.</returns>
     public async Task<FileDialogResult> SelectGameDirectory()
@@ -50,7 +47,7 @@ public sealed class WinUiFileDialogService : IFileDialogService
     }
 
     /// <summary>
-    /// Shows a WinUI save picker configured for SQLite database output.
+    ///     Shows a WinUI save picker configured for SQLite database output.
     /// </summary>
     /// <returns>The picker outcome, distinguishing selection, cancellation, and platform failure.</returns>
     public async Task<FileDialogResult> SelectDatabaseFile()
@@ -62,10 +59,7 @@ public sealed class WinUiFileDialogService : IFileDialogService
                 DefaultFileExtension = ".db",
                 SuggestedFileName = "FormIDs.db",
                 SuggestedStartLocation = PickerLocationId.DocumentsLibrary,
-                FileTypeChoices =
-                {
-                    { "Database Files", new List<string> { ".db" } }
-                }
+                FileTypeChoices = { { "Database Files", new List<string> { ".db" } } }
             };
 
             var result = await picker.PickSaveFileAsync();
@@ -80,7 +74,7 @@ public sealed class WinUiFileDialogService : IFileDialogService
     }
 
     /// <summary>
-    /// Shows a WinUI open picker configured for optional pipe-delimited FormID text files.
+    ///     Shows a WinUI open picker configured for optional pipe-delimited FormID text files.
     /// </summary>
     /// <returns>The picker outcome, distinguishing selection, cancellation, and platform failure.</returns>
     public async Task<FileDialogResult> SelectFormIdListFile()

@@ -1,7 +1,43 @@
 using System.Collections.Immutable;
-using Mutagen.Bethesda;
 
 namespace FormID_Database_Manager.Services;
+
+/// <summary>
+///     Consumer-owned FormID Record Store role for one atomic Plugin write during Plugin Ingestion.
+/// </summary>
+/// <remarks>
+///     <para>
+///         The surrounding Processing Run owns the complete Store session and its lifetime. Plugin Ingestion borrows
+///         this role only while ingesting a selection; it does not open, optimize, import through, or dispose the Store.
+///     </para>
+///     <para>
+///         Calls do not overlap. The supplied lazy records are enumerated exactly once during the operation and are not
+///         retained after it completes. Each call is one Plugin-scoped transaction: append mode stores every enumerated
+///         record or none, while replace mode matches the Plugin name case-insensitively and performs deletion and
+///         insertion atomically. A zero-record replacement preserves existing rows.
+///     </para>
+/// </remarks>
+internal interface IPluginFormIdRecordWriter
+{
+    /// <summary>
+    ///     Writes one Plugin's lazy FormID record sequence using the requested Update Mode.
+    /// </summary>
+    /// <param name="pluginName">The selected Plugin name stored with each FormID record.</param>
+    /// <param name="records">The lazy records consumed exactly once before this operation completes.</param>
+    /// <param name="updateMode">Whether to append records or atomically replace this Plugin's existing records.</param>
+    /// <param name="cancellationToken">Stops enumeration or the transactional write.</param>
+    /// <returns>The Store-confirmed count of records written by the completed transaction.</returns>
+    /// <exception cref="OperationCanceledException"><paramref name="cancellationToken" /> requests cancellation.</exception>
+    /// <exception cref="Exception">
+    ///     Record enumeration or Store persistence fails. The Plugin transaction is rolled back and the failure
+    ///     propagates unchanged.
+    /// </exception>
+    Task<FormIdPluginWriteResult> WritePluginAsync(
+        string pluginName,
+        IEnumerable<FormIdRecord> records,
+        UpdateMode updateMode,
+        CancellationToken cancellationToken = default);
+}
 
 /// <summary>
 ///     Defines the complete selected-Plugin phase used by a Processing Run.
@@ -9,10 +45,10 @@ namespace FormID_Database_Manager.Services;
 internal interface IPluginIngestion
 {
     /// <summary>
-    ///     Ingests the captured selection through the already-open run-scoped FormID Record Store session.
+    ///     Ingests the captured selection through the borrowed Plugin-write role of the already-open Store session.
     /// </summary>
     /// <param name="request">The immutable selected-Plugin request.</param>
-    /// <param name="recordStore">The Store session owned by the surrounding Processing Run.</param>
+    /// <param name="recordStore">The Plugin-write Store role borrowed from the surrounding Processing Run.</param>
     /// <param name="progress">Optional transient preparation and current-Plugin facts.</param>
     /// <param name="cancellationToken">Stops the selected set without returning a completed report.</param>
     /// <returns>The authoritative ordered outcome report for the complete selection.</returns>
@@ -26,9 +62,38 @@ internal interface IPluginIngestion
     ///     one Plugin (ADR-0006).
     /// </exception>
     Task<PluginIngestionReport> IngestAsync(
-        SelectedPluginIngestionRequest request,
-        IFormIdRecordStoreSession recordStore,
+        PluginProcessingRunRequest request,
+        IPluginFormIdRecordWriter recordStore,
         IProgress<PluginIngestionProgress>? progress = null,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    ///     Plans the captured selection: resolves the Data path, prepares the load order, and opens every selected
+    ///     Plugin's overlay without enumerating a single record.
+    /// </summary>
+    /// <param name="request">The immutable selected-Plugin request.</param>
+    /// <param name="cancellationToken">Stops planning without returning a plan.</param>
+    /// <returns>One planned outcome for every selected Plugin, in selection order.</returns>
+    /// <remarks>
+    ///     <para>
+    ///         Planning takes no Store session and opens no database, which is the whole point: it answers what a run
+    ///         would do without doing any of it. It reports no progress either, because the plan is the dry run's
+    ///         entire output and is terminal — the run's transient channel is handed back as the run ends.
+    ///     </para>
+    ///     <para>
+    ///         Opening overlays is what makes a plan substantive rather than an echo of the selection, and it is also
+    ///         what reaches the ADR-0006 condition: a selected Plugin declaring a master the Data directory cannot
+    ///         supply fails the whole plan exactly as it fails a whole run, so the user sees it before committing.
+    ///     </para>
+    /// </remarks>
+    /// <exception cref="ArgumentNullException"><paramref name="request" /> is <see langword="null" />.</exception>
+    /// <exception cref="OperationCanceledException"><paramref name="cancellationToken" /> requests cancellation.</exception>
+    /// <exception cref="UnresolvableMasterException">
+    ///     A selected Plugin declares a master the Data directory cannot supply, which fails the whole plan rather than
+    ///     one Plugin (ADR-0006).
+    /// </exception>
+    Task<PluginIngestionPlan> PlanAsync(
+        PluginProcessingRunRequest request,
         CancellationToken cancellationToken = default);
 }
 
@@ -64,6 +129,26 @@ internal sealed record PluginIngestionProgress
         PluginPosition = pluginPosition;
         TotalPluginCount = totalPluginCount;
     }
+
+    /// <summary>
+    ///     The active Plugin Ingestion stage.
+    /// </summary>
+    public PluginIngestionProgressStage Stage { get; }
+
+    /// <summary>
+    ///     The current selected Plugin, or <see langword="null" /> during preparation.
+    /// </summary>
+    public string? PluginName { get; }
+
+    /// <summary>
+    ///     The one-based selection position, or <see langword="null" /> during preparation.
+    /// </summary>
+    public int? PluginPosition { get; }
+
+    /// <summary>
+    ///     The total selected Plugin count.
+    /// </summary>
+    public int TotalPluginCount { get; }
 
     /// <summary>
     ///     Creates load-order preparation progress for the captured selection.
@@ -113,26 +198,6 @@ internal sealed record PluginIngestionProgress
             totalPluginCount);
     }
 
-    /// <summary>
-    ///     The active Plugin Ingestion stage.
-    /// </summary>
-    public PluginIngestionProgressStage Stage { get; }
-
-    /// <summary>
-    ///     The current selected Plugin, or <see langword="null" /> during preparation.
-    /// </summary>
-    public string? PluginName { get; }
-
-    /// <summary>
-    ///     The one-based selection position, or <see langword="null" /> during preparation.
-    /// </summary>
-    public int? PluginPosition { get; }
-
-    /// <summary>
-    ///     The total selected Plugin count.
-    /// </summary>
-    public int TotalPluginCount { get; }
-
     private static void EnsurePositiveTotal(int totalPluginCount)
     {
         if (totalPluginCount <= 0)
@@ -142,58 +207,6 @@ internal sealed record PluginIngestionProgress
                 "Plugin Ingestion progress requires at least one selected Plugin.");
         }
     }
-}
-
-/// <summary>
-///     Captures the complete selected-Plugin input for one Plugin Ingestion operation.
-/// </summary>
-internal sealed record SelectedPluginIngestionRequest
-{
-    /// <summary>
-    ///     Creates an immutable snapshot of the selected Plugins and their execution order.
-    /// </summary>
-    /// <param name="gameDirectory">The selected game root or Data directory.</param>
-    /// <param name="gameRelease">The GameRelease whose Plugin rules apply.</param>
-    /// <param name="pluginNames">The selected Plugin names in execution order.</param>
-    /// <param name="updateMode">The Store update behavior for Ingested Plugins.</param>
-    /// <exception cref="ArgumentNullException"><paramref name="pluginNames" /> is <see langword="null" />.</exception>
-    /// <exception cref="ArgumentException">
-    ///     The game directory or a Plugin name is blank, the selection is empty, or Plugin names are duplicated.
-    /// </exception>
-    public SelectedPluginIngestionRequest(
-        string gameDirectory,
-        GameRelease gameRelease,
-        IEnumerable<string> pluginNames,
-        UpdateMode updateMode)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(gameDirectory);
-        ArgumentNullException.ThrowIfNull(pluginNames);
-
-        GameDirectory = gameDirectory;
-        GameRelease = gameRelease;
-        PluginNames = PluginSelectionSnapshot.Capture(pluginNames);
-        UpdateMode = updateMode;
-    }
-
-    /// <summary>
-    ///     The selected game root or Data directory.
-    /// </summary>
-    public string GameDirectory { get; }
-
-    /// <summary>
-    ///     The GameRelease whose Plugin rules apply.
-    /// </summary>
-    public GameRelease GameRelease { get; }
-
-    /// <summary>
-    ///     The immutable selected Plugin names in execution order.
-    /// </summary>
-    public ImmutableArray<string> PluginNames { get; }
-
-    /// <summary>
-    ///     The Store update behavior for Ingested Plugins.
-    /// </summary>
-    public UpdateMode UpdateMode { get; }
 }
 
 /// <summary>
@@ -211,7 +224,7 @@ internal sealed record PluginIngestionReport
     ///     Outcomes contain a null entry or disagree with the request cardinality, names, or order.
     /// </exception>
     public PluginIngestionReport(
-        SelectedPluginIngestionRequest request,
+        PluginProcessingRunRequest request,
         IEnumerable<PluginIngestionOutcome> outcomes)
     {
         ArgumentNullException.ThrowIfNull(request);
@@ -223,7 +236,7 @@ internal sealed record PluginIngestionReport
             throw new ArgumentException("Plugin Ingestion outcomes must not contain null entries.", nameof(outcomes));
         }
 
-        if (outcomeSnapshot.Length != request.PluginNames.Length)
+        if (outcomeSnapshot.Length != request.PluginNames.Count)
         {
             throw new ArgumentException(
                 "Plugin Ingestion must report exactly one outcome for every selected Plugin.",
@@ -293,7 +306,8 @@ internal sealed record IngestedPlugin : PluginIngestionOutcome
     {
         if (formIdCount <= 0)
         {
-            throw new ArgumentOutOfRangeException(nameof(formIdCount), "An Ingested Plugin must store at least one FormID record.");
+            throw new ArgumentOutOfRangeException(nameof(formIdCount),
+                "An Ingested Plugin must store at least one FormID record.");
         }
 
         FormIdCount = formIdCount;
@@ -317,7 +331,7 @@ internal sealed record IngestedPlugin : PluginIngestionOutcome
 internal enum SkippedPluginReason
 {
     /// <summary>
-    ///     The selected Plugin was absent from the prepared load-order snapshot.
+    ///     Game Load Orders prepared the selected Plugin as not listed.
     /// </summary>
     NotPresentInLoadOrder,
 
@@ -479,6 +493,195 @@ internal sealed record FailedPlugin : PluginIngestionOutcome
 }
 
 /// <summary>
+///     What Plugin Ingestion would do to the complete captured selection, in selection order.
+/// </summary>
+/// <remarks>
+///     The plan mirrors <see cref="PluginIngestionReport" /> in shape and order but not in authority: a report states
+///     what happened, while a plan states what would happen and is therefore limited to what can be known without
+///     enumerating a single record.
+/// </remarks>
+internal sealed record PluginIngestionPlan
+{
+    /// <summary>
+    ///     Creates a plan validated against the authoritative selection without retaining the request.
+    /// </summary>
+    /// <param name="request">The accepted Processing Run request whose selection the plan must match exactly.</param>
+    /// <param name="plugins">The planned outcomes in selected-Plugin order, copied into an immutable snapshot.</param>
+    /// <exception cref="ArgumentNullException">The request or planned outcomes are null.</exception>
+    /// <exception cref="ArgumentException">
+    ///     The outcomes contain a null entry or differ from the selection in count, name, casing, or order.
+    /// </exception>
+    public PluginIngestionPlan(PluginProcessingRunRequest request, IEnumerable<PlannedPlugin> plugins)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(plugins);
+
+        var snapshot = ImmutableArray.CreateRange(plugins);
+        if (snapshot.Any(static planned => planned is null))
+        {
+            throw new ArgumentException("A Plugin Ingestion plan must not contain null entries.", nameof(plugins));
+        }
+
+        // Membership is case-insensitive, but a plan must preserve the exact accepted selection for presentation.
+        if (!snapshot.Select(static planned => planned.PluginName)
+                .SequenceEqual(request.PluginNames, StringComparer.Ordinal))
+        {
+            throw new ArgumentException(
+                "Planned entries must match the selected Plugins exactly in count, name, casing, and order.",
+                nameof(plugins));
+        }
+
+        Plugins = snapshot;
+    }
+
+    /// <summary>
+    ///     The immutable planned outcomes in selected-Plugin order.
+    /// </summary>
+    public ImmutableArray<PlannedPlugin> Plugins { get; }
+}
+
+/// <summary>
+///     What one selected Plugin would contribute to a run, at its position in the captured selection.
+/// </summary>
+internal abstract record PlannedPlugin
+{
+    /// <summary>
+    ///     Creates a planned outcome for one selected Plugin name.
+    /// </summary>
+    /// <param name="pluginName">The selected Plugin name.</param>
+    /// <exception cref="ArgumentException"><paramref name="pluginName" /> is blank.</exception>
+    private protected PlannedPlugin(string pluginName)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(pluginName);
+        PluginName = pluginName;
+    }
+
+    /// <summary>
+    ///     The selected Plugin name this planned outcome is about.
+    /// </summary>
+    public string PluginName { get; }
+}
+
+/// <summary>
+///     A selected Plugin a run would ingest: it is in the load order, its file is present, and its overlay opened.
+/// </summary>
+/// <remarks>
+///     Would-ingest is as far as a plan can honestly go. Whether the Plugin actually yields FormID records is only
+///     knowable by enumerating them, which is precisely the work a dry run does not do, so a run may still skip this
+///     Plugin for having none.
+/// </remarks>
+internal sealed record PlannedPluginIngestion : PlannedPlugin
+{
+    /// <inheritdoc cref="PlannedPlugin(string)" />
+    public PlannedPluginIngestion(string pluginName)
+        : base(pluginName)
+    {
+    }
+}
+
+/// <summary>
+///     The skip reasons a plan can predict without enumerating records.
+/// </summary>
+/// <remarks>
+///     Deliberately narrower than <see cref="SkippedPluginReason" />: the run's third reason, zero FormID records, is
+///     unpredictable without doing the enumeration a dry run refuses to do, so a plan cannot honestly represent it and
+///     has no case for it at all.
+/// </remarks>
+internal enum PlannedSkipReason
+{
+    /// <summary>
+    ///     Game Load Orders prepared the selected Plugin as not listed.
+    /// </summary>
+    NotPresentInLoadOrder,
+
+    /// <summary>
+    ///     The selected Plugin's file is not present in the resolved Data directory.
+    /// </summary>
+    PluginFileUnavailable
+}
+
+/// <summary>
+///     A selected Plugin a run would skip, for one of the two reasons a plan can predict.
+/// </summary>
+internal sealed record PlannedPluginSkip : PlannedPlugin
+{
+    /// <summary>
+    ///     Creates a planned skip, retaining the resolved path when the Plugin file is the thing that is missing.
+    /// </summary>
+    /// <param name="pluginName">The selected Plugin name.</param>
+    /// <param name="reason">The predictable reason the run would skip it.</param>
+    /// <param name="resolvedPluginPath">
+    ///     The resolved missing Plugin path, or <see langword="null" /> for the load-order reason.
+    /// </param>
+    /// <exception cref="ArgumentException">
+    ///     <paramref name="pluginName" /> is blank, the unavailable-file reason lacks a resolved path, or the
+    ///     load-order reason supplies one.
+    /// </exception>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="reason" /> is not defined.</exception>
+    public PlannedPluginSkip(string pluginName, PlannedSkipReason reason, string? resolvedPluginPath = null)
+        : base(pluginName)
+    {
+        if (!Enum.IsDefined(reason))
+        {
+            throw new ArgumentOutOfRangeException(nameof(reason));
+        }
+
+        if (reason == PlannedSkipReason.PluginFileUnavailable)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(resolvedPluginPath);
+        }
+        else if (resolvedPluginPath is not null)
+        {
+            throw new ArgumentException(
+                "A resolved Plugin path is only valid for an unavailable Plugin file.",
+                nameof(resolvedPluginPath));
+        }
+
+        Reason = reason;
+        ResolvedPluginPath = resolvedPluginPath;
+    }
+
+    /// <summary>
+    ///     The predictable reason the run would skip this Plugin.
+    /// </summary>
+    public PlannedSkipReason Reason { get; }
+
+    /// <summary>
+    ///     The resolved missing Plugin path, or <see langword="null" /> for the load-order reason.
+    /// </summary>
+    public string? ResolvedPluginPath { get; }
+}
+
+/// <summary>
+///     A selected Plugin whose overlay could not be opened, which a run would report as a Failed Plugin.
+/// </summary>
+/// <remarks>
+///     This is not a skip and carries no <see cref="PlannedSkipReason" />. A plan opens overlays, so it observes this
+///     failure directly rather than predicting it, and reporting the Plugin as one that would be ingested would be a
+///     claim the plan has already disproved.
+/// </remarks>
+internal sealed record PlannedPluginFailure : PlannedPlugin
+{
+    /// <summary>
+    ///     Creates a planned failure from the Plugin-read diagnostics observed while opening the overlay.
+    /// </summary>
+    /// <param name="pluginName">The selected Plugin name.</param>
+    /// <param name="diagnostic">The internal phase and underlying failure message.</param>
+    /// <exception cref="ArgumentException"><paramref name="pluginName" /> is blank.</exception>
+    /// <exception cref="ArgumentNullException"><paramref name="diagnostic" /> is <see langword="null" />.</exception>
+    public PlannedPluginFailure(string pluginName, PluginReadDiagnostic diagnostic)
+        : base(pluginName)
+    {
+        Diagnostic = diagnostic ?? throw new ArgumentNullException(nameof(diagnostic));
+    }
+
+    /// <summary>
+    ///     Internal Plugin-read diagnostics for the overlay that could not be opened.
+    /// </summary>
+    public PluginReadDiagnostic Diagnostic { get; }
+}
+
+/// <summary>
 ///     Bounded diagnostic facts for recoverable record issues in an Ingested Plugin.
 /// </summary>
 internal sealed record ProcessingWarning
@@ -502,7 +705,8 @@ internal sealed record ProcessingWarning
     {
         if (totalIssueCount <= 0)
         {
-            throw new ArgumentOutOfRangeException(nameof(totalIssueCount), "A Processing Warning must represent at least one issue.");
+            throw new ArgumentOutOfRangeException(nameof(totalIssueCount),
+                "A Processing Warning must represent at least one issue.");
         }
 
         ArgumentNullException.ThrowIfNull(diagnosticDetails);
@@ -514,7 +718,8 @@ internal sealed record ProcessingWarning
 
         if (detailSnapshot.Length > totalIssueCount)
         {
-            throw new ArgumentException("Diagnostic detail count cannot exceed the total issue count.", nameof(diagnosticDetails));
+            throw new ArgumentException("Diagnostic detail count cannot exceed the total issue count.",
+                nameof(diagnosticDetails));
         }
 
         TotalIssueCount = totalIssueCount;
@@ -536,41 +741,4 @@ internal sealed record ProcessingWarning
     ///     The number of issues not represented by retained diagnostic details.
     /// </summary>
     public int OmittedDetailCount => TotalIssueCount - DiagnosticDetails.Length;
-}
-
-/// <summary>
-///     Captures and validates the Plugin selection shared by public Processing Run and internal ingestion requests.
-/// </summary>
-internal static class PluginSelectionSnapshot
-{
-    /// <summary>
-    ///     Copies Plugin names while enforcing the selection invariants required before Store opening.
-    /// </summary>
-    /// <param name="pluginNames">The selected Plugin names in execution order.</param>
-    /// <returns>An immutable selection snapshot.</returns>
-    /// <exception cref="ArgumentNullException"><paramref name="pluginNames" /> is <see langword="null" />.</exception>
-    /// <exception cref="ArgumentException">The selection is empty, contains a blank name, or contains a duplicate.</exception>
-    internal static ImmutableArray<string> Capture(IEnumerable<string> pluginNames)
-    {
-        ArgumentNullException.ThrowIfNull(pluginNames);
-
-        var snapshot = ImmutableArray.CreateRange(pluginNames);
-        if (snapshot.IsEmpty)
-        {
-            throw new ArgumentException("No plugins selected");
-        }
-
-        if (snapshot.Any(string.IsNullOrWhiteSpace))
-        {
-            throw new ArgumentException("Plugin name must be specified");
-        }
-
-        // Plugin selection identity is case-insensitive so casing variants cannot write the same Plugin twice.
-        if (snapshot.Distinct(StringComparer.OrdinalIgnoreCase).Count() != snapshot.Length)
-        {
-            throw new ArgumentException("Plugin names must be unique");
-        }
-
-        return snapshot;
-    }
 }

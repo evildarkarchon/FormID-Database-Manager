@@ -7,6 +7,7 @@ using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using FormID_Database_Manager.Services;
+using FormID_Database_Manager.Tests.Fakes;
 using FormID_Database_Manager.TestUtilities.Mocks;
 using Microsoft.Data.Sqlite;
 using Mutagen.Bethesda;
@@ -51,15 +52,15 @@ public sealed class ProcessingRunIntegrationTests : IDisposable
             TestContext.Current.CancellationToken);
 
         using var executor = new ProcessingRunExecutor();
-        var events = new List<ProcessingRunEvent>();
-        var progress = new SynchronousProgress<ProcessingRunEvent>(events.Add);
+        var reports = new List<ProcessingRunProgress>();
+        var progress = new SynchronousProgress<ProcessingRunProgress>(reports.Add);
         var request = new FormIdTextProcessingRunRequest(
             formIdTextFilePath,
             databasePath,
             GameRelease.SkyrimSE,
             UpdateMode.Append);
 
-        await executor.ExecuteAsync(request, progress);
+        var outcome = await executor.ExecuteAsync(request, progress);
 
         Assert.True(File.Exists(databasePath));
 
@@ -102,21 +103,20 @@ public sealed class ProcessingRunIntegrationTests : IDisposable
                     .ThenBy(record => record.FormId, StringComparer.Ordinal));
         }
 
-        Assert.Contains(events, runEvent =>
-            runEvent.Kind == ProcessingRunEventKind.Status &&
-            runEvent.Message.Contains("Completed processing 2 plugins", StringComparison.Ordinal) &&
-            runEvent.Value == 100);
+        Assert.Contains(
+            reports,
+            reported => reported is ImportedFormIdText { ImportResult: { PluginCount: 2, RecordCount: 3 } });
 
-        // The executor emits terminal success only after the real store's optimization completes.
-        var terminalEvent = events[^1];
-        Assert.Equal(ProcessingRunEventKind.Status, terminalEvent.Kind);
-        Assert.Contains("Processing completed successfully", terminalEvent.Message, StringComparison.Ordinal);
-        Assert.Equal(100, terminalEvent.Value);
+        // The run's own terminal fact is the returned outcome, carrying the real Store's confirmed counts.
+        Assert.Equal(
+            new FormIdTextFileImportResult(2, 3),
+            Assert.IsType<FormIdTextRunOutcome>(outcome).ImportResult);
     }
 
     /// <summary>
-    ///     Executes a real selected-Plugin Processing Run across aggregate Plugin Ingestion and the SQLite Store, proving
-    ///     terminal completion is emitted only after explicit Store optimization has produced observable statistics.
+    ///     Executes a real selected-Plugin Processing Run across aggregate Plugin Ingestion and the SQLite Store,
+    ///     proving the run's outcome is returned only after explicit Store optimization has produced observable
+    ///     statistics.
     /// </summary>
     [Fact]
     public async Task ExecuteAsync_SelectedPluginRun_IngestsThroughProductionSeamsAndCompletesAfterOptimization()
@@ -132,26 +132,15 @@ public sealed class ProcessingRunIntegrationTests : IDisposable
         sourceRecord.Name = "Selected NPC";
         sourcePlugin.WriteToBinary(pluginPath);
 
-        var pluginIngestion = new PluginIngestion(new FixedGameLoadOrderProvider([pluginName]));
+        var gameLoadOrders = new GameLoadOrders(new FixtureGameLoadOrderEnvironment([pluginName]));
+        var pluginIngestion = new PluginIngestion(gameLoadOrders);
         using var executor = new ProcessingRunExecutor(
             pluginIngestion,
             new FormIdRecordStoreSessionOpener());
-        var events = new List<ProcessingRunEvent>();
-        var terminalObservedAfterOptimization = false;
-        var progress = new SynchronousProgress<ProcessingRunEvent>(runEvent =>
-        {
-            events.Add(runEvent);
-            if (runEvent is
-                {
-                    Kind: ProcessingRunEventKind.Status,
-                    Value: 100
-                } && runEvent.Message.Contains("Processing completed", StringComparison.Ordinal))
-            {
-                terminalObservedAfterOptimization = HasStoreStatistics(databasePath, GameRelease.SkyrimSE);
-            }
-        });
+        var reports = new List<ProcessingRunProgress>();
+        var progress = new SynchronousProgress<ProcessingRunProgress>(reports.Add);
 
-        await executor.ExecuteAsync(
+        var outcome = await executor.ExecuteAsync(
             new PluginProcessingRunRequest(
                 gameDirectory,
                 databasePath,
@@ -160,7 +149,9 @@ public sealed class ProcessingRunIntegrationTests : IDisposable
                 UpdateMode.Append),
             progress);
 
-        Assert.True(terminalObservedAfterOptimization);
+        // The run withholds its outcome until explicit optimization has succeeded, so statistics are already
+        // observable by the time the caller has anything to report.
+        Assert.True(HasStoreStatistics(databasePath, GameRelease.SkyrimSE));
 
         await using (var store = await FormIdRecordStore.OpenAsync(
                          databasePath,
@@ -181,10 +172,15 @@ public sealed class ProcessingRunIntegrationTests : IDisposable
                 storedRecords);
         }
 
-        var terminalEvent = events[^1];
-        Assert.Equal(ProcessingRunEventKind.Status, terminalEvent.Kind);
-        Assert.Contains("Processing completed successfully", terminalEvent.Message, StringComparison.Ordinal);
-        Assert.Equal(100, terminalEvent.Value);
+        var ingested = Assert.IsType<IngestedPlugin>(
+            Assert.Single(Assert.IsType<PluginRunOutcome>(outcome).Report.Outcomes));
+        Assert.Equal(pluginName, ingested.PluginName);
+        Assert.Equal(1, ingested.FormIdCount);
+        Assert.Null(ingested.Warning);
+        // A run that succeeded reported only what it was doing: no failure, and no completed text import either.
+        Assert.All(
+            reports,
+            reported => Assert.True(reported is PreparingLoadOrder or IngestingPlugin));
     }
 
     /// <summary>
@@ -207,18 +203,6 @@ public sealed class ProcessingRunIntegrationTests : IDisposable
         command.CommandText = "SELECT COUNT(*) FROM sqlite_stat1 WHERE tbl = @tableName";
         command.Parameters.AddWithValue("@tableName", gameRelease.ToString());
         return Convert.ToInt32(command.ExecuteScalar()) > 0;
-    }
-
-    private sealed class FixedGameLoadOrderProvider(IReadOnlyList<string> pluginNames) : IGameLoadOrderProvider
-    {
-        /// <inheritdoc />
-        public GameLoadOrderSnapshot BuildSnapshot(
-            GameRelease gameRelease,
-            string dataPath,
-            bool includeMasterFlagsLookup = false)
-        {
-            return new GameLoadOrderSnapshot(pluginNames);
-        }
     }
 
     /// <summary>

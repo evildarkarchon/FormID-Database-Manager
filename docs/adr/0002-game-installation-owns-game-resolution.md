@@ -50,10 +50,10 @@ a detection service, an install-location interface, or `virtual` members for sub
 Base Plugins are a constant table, not an injected dependency, and are exposed as immutable sets. `PluginList` reads
 that table directly and does not depend on the resolution module.
 
-Load order stays outside this module. It reads plugin files, is expensive in its master-flags mode, and sits on the
-ingestion hot path; folding it in would widen the interface where this decision narrows it. `IGameLoadOrderProvider`
-keeps `BuildSnapshot`, which takes a canonical Data directory rather than a raw path, and loses the unused
-`GetListedPluginNames`.
+Game Load Order stays outside this module. It reads Plugin files, is expensive when preparing separated-master reads,
+and sits on the ingestion hot path; folding it in would widen the interface where this decision narrows it. ADR-0008
+supersedes this ADR's original `IGameLoadOrderProvider.BuildSnapshot` interface shape. Game Load Orders still takes a
+canonical Data directory rather than a raw path.
 
 Resolution returns no value type. After base Plugins became a constant table and `PluginListSource` kept the canonical
 Data directory, nothing remained for such a type to carry; `Detect` returns a nullable GameRelease, which is what
@@ -80,7 +80,8 @@ whitelist switch remains the SQL-injection guard for table names.
 - Architecture tests that pin `ResolveDataPath` to a source file by text must be updated, since the member moves.
 - `MockFactory`'s remaining live stubs become dead, and Plugin List filtering tests exercise the real base Plugin set
   rather than a three-name stub.
-- Carrying canonical paths in `SelectedPluginIngestionRequest`, and `GameLoadOrderProvider`'s duplicate abstraction —
-  an interface alongside an internal delegate bundle — are deliberately left for separate decisions.
+- Carrying canonical paths in `SelectedPluginIngestionRequest` is deliberately left for a separate decision.
+  `GameLoadOrderProvider`'s duplicate abstraction — an interface alongside an internal delegate bundle — is resolved
+  by ADR-0008.
 - This ADR records the decision ahead of the change. The code does not yet have this shape; the migration is sequenced
   so that canonicalization and the defect fix land before detection and location move.

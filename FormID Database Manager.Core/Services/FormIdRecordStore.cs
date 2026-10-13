@@ -58,11 +58,62 @@ public sealed record FormIdRecordQuery
 }
 
 /// <summary>
-///     Progress reported while importing a FormID text file.
+///     A counter update or a Plugin first-encounter fact reported while importing a FormID text file.
 /// </summary>
-/// <param name="Message">The user-facing progress message.</param>
-/// <param name="Value">The optional progress percentage.</param>
-public readonly record struct FormIdStoreProgress(string Message, double? Value);
+/// <remarks>
+///     The Store reports facts and never words: there is no message and no percentage here, because how far along a
+///     percentage makes the run look, and whether the Plugin is worth naming at all, are presentation decisions that
+///     belong to whoever renders these counters.
+///     Derivation is closed to this assembly; the base is public because the Store's import operation is public.
+/// </remarks>
+public abstract record FormIdStoreProgress
+{
+    /// <summary>
+    ///     Captures the import counters shared by both report cases; they describe reading, not committed records.
+    /// </summary>
+    /// <param name="recordCount">The number of valid FormID text rows counted so far.</param>
+    /// <param name="bytesRead">How far into the file the reader has pulled, in bytes.</param>
+    /// <param name="totalBytes">The total size of the FormID text file, in bytes.</param>
+    private protected FormIdStoreProgress(long recordCount, long bytesRead, long totalBytes)
+    {
+        RecordCount = recordCount;
+        BytesRead = bytesRead;
+        TotalBytes = totalBytes;
+    }
+
+    /// <summary>The number of valid FormID text rows counted so far.</summary>
+    public long RecordCount { get; init; }
+
+    /// <summary>How far into the file the reader has pulled, in bytes.</summary>
+    public long BytesRead { get; init; }
+
+    /// <summary>The total size of the FormID text file, in bytes.</summary>
+    public long TotalBytes { get; init; }
+}
+
+/// <summary>
+///     The initial zero-count report or a periodic counter update, without a Plugin announcement.
+/// </summary>
+/// <param name="RecordCount">The number of valid FormID text rows counted so far.</param>
+/// <param name="BytesRead">How far into the file the reader has pulled, in bytes.</param>
+/// <param name="TotalBytes">The total size of the FormID text file, in bytes.</param>
+internal sealed record FormIdStoreCounterUpdate(
+    long RecordCount,
+    long BytesRead,
+    long TotalBytes) : FormIdStoreProgress(RecordCount, BytesRead, TotalBytes);
+
+/// <summary>
+///     A Plugin's first valid row, matched case-insensitively and reported before that row is staged.
+/// </summary>
+/// <param name="RecordCount">The number of valid FormID text rows counted so far.</param>
+/// <param name="BytesRead">How far into the file the reader has pulled, in bytes.</param>
+/// <param name="TotalBytes">The total size of the FormID text file, in bytes.</param>
+/// <param name="PluginName">The Plugin name with the casing of its first valid row.</param>
+internal sealed record FormIdStorePluginFirstEncountered(
+    long RecordCount,
+    long BytesRead,
+    long TotalBytes,
+    string PluginName) : FormIdStoreProgress(RecordCount, BytesRead, TotalBytes);
 
 /// <summary>
 ///     Result of importing a FormID text file into the store.
@@ -92,14 +143,174 @@ public sealed class FormIdRecordStore : IFormIdRecordStoreSession
     private const string StagingTableName = "temp_formid_record_staging";
 
     private readonly SqliteConnection _connection;
-    private readonly string _tableName;
     private readonly List<(string PluginName, string FormId, string Entry)> _stagingBatch = new(TextStagingBatchSize);
+    private readonly string _tableName;
     private SqliteCommand? _stagingInsertCommand;
 
     private FormIdRecordStore(SqliteConnection connection, string tableName)
     {
         _connection = connection;
         _tableName = tableName;
+    }
+
+    /// <summary>
+    ///     Writes one Plugin's FormID records atomically, optionally replacing existing rows for that Plugin first.
+    /// </summary>
+    /// <param name="pluginName">The Plugin whose rows are being written.</param>
+    /// <param name="records">The FormID records to insert for the Plugin.</param>
+    /// <param name="updateMode">Controls whether rows are appended or replace existing rows for the Plugin.</param>
+    /// <param name="cancellationToken">Token to monitor for cancellation.</param>
+    /// <returns>The number of records inserted for the Plugin.</returns>
+    public Task<FormIdPluginWriteResult> WritePluginAsync(
+        string pluginName,
+        IEnumerable<FormIdRecord> records,
+        UpdateMode updateMode,
+        CancellationToken cancellationToken = default)
+    {
+        return WritePluginRecordsCoreAsync(
+            pluginName,
+            records,
+            ShouldReplacePluginRows(updateMode),
+            cancellationToken);
+    }
+
+    /// <summary>
+    ///     Imports a FormID text file into the store using store-owned staging and Plugin-scoped commits.
+    /// </summary>
+    /// <param name="formIdTextFilePath">The FormID text file to import.</param>
+    /// <param name="updateMode">Controls whether rows are appended or replace existing rows for each encountered Plugin.</param>
+    /// <param name="progress">
+    ///     Optional reporter for counter updates and Plugin first-encounter facts. The Store reports every Plugin the
+    ///     first time it sees it; whether that Plugin should be shown to the user is the caller's decision.
+    /// </param>
+    /// <param name="cancellationToken">Token to monitor for cancellation.</param>
+    /// <returns>Counts describing the imported valid records and distinct Plugins.</returns>
+    public async Task<FormIdTextFileImportResult> ImportFormIdTextFileAsync(
+        string formIdTextFilePath,
+        UpdateMode updateMode,
+        IProgress<FormIdStoreProgress>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(formIdTextFilePath);
+
+        var processedPlugins = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var recordCount = 0;
+
+        // Use stream position for progress tracking; it avoids per-line UTF-8 byte counting on large files.
+        var fileInfo = new FileInfo(formIdTextFilePath);
+        var totalBytes = fileInfo.Length;
+
+        progress?.Report(new FormIdStoreCounterUpdate(0, 0, totalBytes));
+
+        await using var stream =
+            new FileStream(formIdTextFilePath, FileMode.Open, FileAccess.Read, FileShare.Read, 81920);
+        using var reader = new StreamReader(stream, Encoding.UTF8);
+
+        try
+        {
+            while (true)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var line = await reader.ReadLineAsync(cancellationToken).ConfigureAwait(false);
+                if (line == null)
+                {
+                    break;
+                }
+
+                var bytesRead = stream.Position;
+
+                if (string.IsNullOrWhiteSpace(line))
+                {
+                    continue;
+                }
+
+                if (!TryParseFormIdTextLine(line, out var pluginName, out var formId, out var entry))
+                {
+                    continue;
+                }
+
+                recordCount++;
+
+                if (recordCount % TextProgressInterval == 0)
+                {
+                    // A coincident first encounter follows this report, preserving the order the user sees.
+                    progress?.Report(new FormIdStoreCounterUpdate(recordCount, bytesRead, totalBytes));
+                }
+
+                if (processedPlugins.Add(pluginName))
+                {
+                    // Report the fact in both modes: whether to show a Plugin announcement belongs to the run.
+                    progress?.Report(
+                        new FormIdStorePluginFirstEncountered(recordCount, bytesRead, totalBytes, pluginName));
+                }
+
+                await StageTextRecordAsync(pluginName, formId, entry, cancellationToken).ConfigureAwait(false);
+            }
+
+            await CommitStagedTextRecordsAsync(ShouldReplacePluginRows(updateMode), cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch
+        {
+            // The Store is reusable, so an aborted import must not expose staged rows to the next import.
+            _stagingBatch.Clear();
+            await ClearStagingTableBestEffortAsync().ConfigureAwait(false);
+            throw;
+        }
+
+        // The completed import is reported as counts rather than a final progress message, so the caller that renders
+        // the run's status decides how a finished import is worded.
+        return new FormIdTextFileImportResult(processedPlugins.Count, recordCount);
+    }
+
+    /// <summary>
+    ///     Checkpoints the write-ahead log and updates SQLite query-planner statistics on the Store-owned connection.
+    /// </summary>
+    /// <param name="cancellationToken">Token to monitor for cancellation.</param>
+    /// <returns>A task that completes when checkpointing and optimization finish.</returns>
+    /// <exception cref="OperationCanceledException">Thrown when optimization is cancelled.</exception>
+    /// <exception cref="SqliteException">Thrown when SQLite cannot checkpoint or optimize the Store.</exception>
+    public async Task OptimizeAsync(CancellationToken cancellationToken = default)
+    {
+        await using var command = _connection.CreateCommand();
+        command.CommandText = "PRAGMA wal_checkpoint(TRUNCATE); PRAGMA optimize;";
+        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    ///     Releases the run-scoped SQLite connection and temporary staging resources on a best-effort basis without
+    ///     optimizing.
+    /// </summary>
+    /// <remarks>
+    ///     Cleanup failures are intentionally suppressed so disposal cannot replace the Processing Run outcome.
+    /// </remarks>
+    public async ValueTask DisposeAsync()
+    {
+        await DropStagingTableBestEffortAsync().ConfigureAwait(false);
+
+        if (_stagingInsertCommand is not null)
+        {
+            try
+            {
+                await _stagingInsertCommand.DisposeAsync().ConfigureAwait(false);
+            }
+            catch
+            {
+                // Temporary-command cleanup must not prevent the Store-owned connection from being released.
+            }
+
+            _stagingInsertCommand = null;
+        }
+
+        try
+        {
+            await _connection.DisposeAsync().ConfigureAwait(false);
+        }
+        catch
+        {
+            // Connection disposal is best-effort cleanup and must not replace the Processing Run outcome.
+        }
     }
 
     /// <summary>
@@ -112,9 +323,9 @@ public sealed class FormIdRecordStore : IFormIdRecordStoreSession
     ///     A FormID Record Store whose owned connection, persisted schema, and temporary staging resources are ready
     ///     for immediate use. The Store must be disposed after the processing run.
     /// </returns>
-    /// <exception cref="ArgumentException">Thrown when <paramref name="databasePath"/> is blank.</exception>
+    /// <exception cref="ArgumentException">Thrown when <paramref name="databasePath" /> is blank.</exception>
     /// <exception cref="ArgumentOutOfRangeException">
-    ///     Thrown when <paramref name="gameRelease"/> is not a Supported GameRelease.
+    ///     Thrown when <paramref name="gameRelease" /> is not a Supported GameRelease.
     /// </exception>
     /// <exception cref="OperationCanceledException">Thrown when opening or preparation is cancelled.</exception>
     /// <exception cref="SqliteException">Thrown when SQLite cannot configure or prepare the Store.</exception>
@@ -160,116 +371,6 @@ public sealed class FormIdRecordStore : IFormIdRecordStoreSession
 
             throw;
         }
-    }
-
-    /// <summary>
-    ///     Writes one Plugin's FormID records atomically, optionally replacing existing rows for that Plugin first.
-    /// </summary>
-    /// <param name="pluginName">The Plugin whose rows are being written.</param>
-    /// <param name="records">The FormID records to insert for the Plugin.</param>
-    /// <param name="updateMode">Controls whether rows are appended or replace existing rows for the Plugin.</param>
-    /// <param name="cancellationToken">Token to monitor for cancellation.</param>
-    /// <returns>The number of records inserted for the Plugin.</returns>
-    public Task<FormIdPluginWriteResult> WritePluginAsync(
-        string pluginName,
-        IEnumerable<FormIdRecord> records,
-        UpdateMode updateMode,
-        CancellationToken cancellationToken = default)
-    {
-        return WritePluginRecordsCoreAsync(
-            pluginName,
-            records,
-            ShouldReplacePluginRows(updateMode),
-            cancellationToken);
-    }
-
-    /// <summary>
-    ///     Imports a FormID text file into the store using store-owned staging and Plugin-scoped commits.
-    /// </summary>
-    /// <param name="formIdTextFilePath">The FormID text file to import.</param>
-    /// <param name="updateMode">Controls whether rows are appended or replace existing rows for each encountered Plugin.</param>
-    /// <param name="progress">Optional progress reporter for user-facing import status.</param>
-    /// <param name="cancellationToken">Token to monitor for cancellation.</param>
-    /// <returns>Counts describing the imported valid records and distinct Plugins.</returns>
-    public async Task<FormIdTextFileImportResult> ImportFormIdTextFileAsync(
-        string formIdTextFilePath,
-        UpdateMode updateMode,
-        IProgress<FormIdStoreProgress>? progress = null,
-        CancellationToken cancellationToken = default)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(formIdTextFilePath);
-
-        var processedPlugins = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var recordCount = 0;
-
-        // Use stream position for progress tracking; it avoids per-line UTF-8 byte counting on large files.
-        var fileInfo = new FileInfo(formIdTextFilePath);
-        var totalBytes = fileInfo.Length;
-
-        progress?.Report(new FormIdStoreProgress("Starting processing...", 0));
-
-        await using var stream =
-            new FileStream(formIdTextFilePath, FileMode.Open, FileAccess.Read, FileShare.Read, 81920);
-        using var reader = new StreamReader(stream, Encoding.UTF8);
-
-        try
-        {
-            while (true)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-
-                var line = await reader.ReadLineAsync(cancellationToken).ConfigureAwait(false);
-                if (line == null)
-                {
-                    break;
-                }
-
-                var bytesRead = stream.Position;
-
-                if (string.IsNullOrWhiteSpace(line))
-                {
-                    continue;
-                }
-
-                if (!TryParseFormIdTextLine(line, out var pluginName, out var formId, out var entry))
-                {
-                    continue;
-                }
-
-                recordCount++;
-
-                if (recordCount % TextProgressInterval == 0)
-                {
-                    var progressPercent = totalBytes > 0 ? (double)bytesRead / totalBytes * 100 : 0;
-                    progress?.Report(new FormIdStoreProgress(
-                        $"Processing: {progressPercent:F1}% ({recordCount:N0} records)",
-                        progressPercent));
-                }
-
-                if (processedPlugins.Add(pluginName) && updateMode == UpdateMode.ReplacePluginRecords)
-                {
-                    progress?.Report(new FormIdStoreProgress($"Processing plugin: {pluginName}", null));
-                }
-
-                await StageTextRecordAsync(pluginName, formId, entry, cancellationToken).ConfigureAwait(false);
-            }
-
-            await CommitStagedTextRecordsAsync(ShouldReplacePluginRows(updateMode), cancellationToken)
-                .ConfigureAwait(false);
-        }
-        catch
-        {
-            // The Store is reusable, so an aborted import must not expose staged rows to the next import.
-            _stagingBatch.Clear();
-            await ClearStagingTableBestEffortAsync().ConfigureAwait(false);
-            throw;
-        }
-
-        progress?.Report(new FormIdStoreProgress(
-            $"Completed processing {processedPlugins.Count} plugins ({recordCount:N0} total records)",
-            100));
-
-        return new FormIdTextFileImportResult(processedPlugins.Count, recordCount);
     }
 
     /// <summary>
@@ -455,54 +556,6 @@ public sealed class FormIdRecordStore : IFormIdRecordStoreSession
         {
             _stagingBatch.Clear();
             await ClearStagingTableBestEffortAsync().ConfigureAwait(false);
-        }
-    }
-
-    /// <summary>
-    ///     Checkpoints the write-ahead log and updates SQLite query-planner statistics on the Store-owned connection.
-    /// </summary>
-    /// <param name="cancellationToken">Token to monitor for cancellation.</param>
-    /// <returns>A task that completes when checkpointing and optimization finish.</returns>
-    /// <exception cref="OperationCanceledException">Thrown when optimization is cancelled.</exception>
-    /// <exception cref="SqliteException">Thrown when SQLite cannot checkpoint or optimize the Store.</exception>
-    public async Task OptimizeAsync(CancellationToken cancellationToken = default)
-    {
-        await using var command = _connection.CreateCommand();
-        command.CommandText = "PRAGMA wal_checkpoint(TRUNCATE); PRAGMA optimize;";
-        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-    }
-
-    /// <summary>
-    ///     Releases the run-scoped SQLite connection and temporary staging resources on a best-effort basis without optimizing.
-    /// </summary>
-    /// <remarks>
-    ///     Cleanup failures are intentionally suppressed so disposal cannot replace the Processing Run outcome.
-    /// </remarks>
-    public async ValueTask DisposeAsync()
-    {
-        await DropStagingTableBestEffortAsync().ConfigureAwait(false);
-
-        if (_stagingInsertCommand is not null)
-        {
-            try
-            {
-                await _stagingInsertCommand.DisposeAsync().ConfigureAwait(false);
-            }
-            catch
-            {
-                // Temporary-command cleanup must not prevent the Store-owned connection from being released.
-            }
-
-            _stagingInsertCommand = null;
-        }
-
-        try
-        {
-            await _connection.DisposeAsync().ConfigureAwait(false);
-        }
-        catch
-        {
-            // Connection disposal is best-effort cleanup and must not replace the Processing Run outcome.
         }
     }
 

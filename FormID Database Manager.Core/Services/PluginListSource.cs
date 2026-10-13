@@ -27,6 +27,14 @@ internal sealed class PluginListSource : IEquatable<PluginListSource>
     /// </summary>
     public string DataDirectory { get; }
 
+    /// <inheritdoc />
+    public bool Equals(PluginListSource? other)
+    {
+        return other is not null &&
+               GameRelease == other.GameRelease &&
+               PathComparer.Equals(DataDirectory, other.DataDirectory);
+    }
+
     /// <summary>
     ///     Creates a source from either a game root or its Data directory.
     /// </summary>
@@ -52,14 +60,6 @@ internal sealed class PluginListSource : IEquatable<PluginListSource>
 
         // Canonicalization is the single owner of the Data-path rule, so equivalent spellings stay one source.
         return new PluginListSource(gameRelease, GameInstallations.CanonicalizeDataDirectory(gameDirectory));
-    }
-
-    /// <inheritdoc />
-    public bool Equals(PluginListSource? other)
-    {
-        return other is not null &&
-               GameRelease == other.GameRelease &&
-               PathComparer.Equals(DataDirectory, other.DataDirectory);
     }
 
     /// <inheritdoc />

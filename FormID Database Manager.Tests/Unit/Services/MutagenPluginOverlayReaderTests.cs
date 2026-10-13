@@ -68,7 +68,7 @@ public sealed class MutagenPluginOverlayReaderTests : IDisposable
     /// </summary>
     private const GameRelease UndefinedRelease = (GameRelease)999;
 
-    private readonly MutagenPluginOverlayReader _reader = new();
+    private readonly IPluginOverlayReader _reader = new MutagenPluginOverlayReader();
     private readonly string _testDirectory;
 
     public MutagenPluginOverlayReaderTests()
@@ -120,7 +120,7 @@ public sealed class MutagenPluginOverlayReaderTests : IDisposable
         var malformedPlugin = WriteMalformedPlugin("Unsupported.esp");
 
         var exception = Record.Exception(() =>
-            _reader.ReadOverlay(malformedPlugin, DeliberatelyUnsupportedRelease, BinaryReadParameters.Default));
+            _reader.ReadOverlay(CreateReadyPlugin(malformedPlugin, DeliberatelyUnsupportedRelease)));
 
         // The "not a Failed Plugin" assertion comes first and is deliberately subsumed by the type assertion below.
         // It is the one that fires if the lookup ever moves inside the try, and it names the actual regression —
@@ -141,7 +141,7 @@ public sealed class MutagenPluginOverlayReaderTests : IDisposable
         var malformedPlugin = WriteMalformedPlugin("Undefined.esp");
 
         var exception = Record.Exception(() =>
-            _reader.ReadOverlay(malformedPlugin, UndefinedRelease, BinaryReadParameters.Default));
+            _reader.ReadOverlay(CreateReadyPlugin(malformedPlugin, UndefinedRelease)));
 
         // Ordered for the same reason as the deliberately-unsupported case above.
         Assert.IsNotType<PluginOverlayReadException>(exception);
@@ -158,7 +158,7 @@ public sealed class MutagenPluginOverlayReaderTests : IDisposable
         var missingPlugin = Path.Combine(_testDirectory, "Missing.esp");
 
         Assert.Throws<ArgumentOutOfRangeException>(() =>
-            _reader.ReadOverlay(missingPlugin, DeliberatelyUnsupportedRelease, BinaryReadParameters.Default));
+            _reader.ReadOverlay(CreateReadyPlugin(missingPlugin, DeliberatelyUnsupportedRelease)));
     }
 
     // ---------------------------------------------------------------------------------------------------------
@@ -177,7 +177,7 @@ public sealed class MutagenPluginOverlayReaderTests : IDisposable
         var missingPlugin = Path.Combine(_testDirectory, "Missing.esp");
 
         var exception = Assert.Throws<PluginOverlayReadException>(() =>
-            _reader.ReadOverlay(missingPlugin, release, BinaryReadParameters.Default));
+            _reader.ReadOverlay(CreateReadyPlugin(missingPlugin, release)));
 
         Assert.IsType<FileNotFoundException>(exception.InnerException);
     }
@@ -193,7 +193,7 @@ public sealed class MutagenPluginOverlayReaderTests : IDisposable
         var malformedPlugin = WriteMalformedPlugin("Malformed.esp");
 
         var exception = Assert.Throws<PluginOverlayReadException>(() =>
-            _reader.ReadOverlay(malformedPlugin, release, BinaryReadParameters.Default));
+            _reader.ReadOverlay(CreateReadyPlugin(malformedPlugin, release)));
 
         Assert.IsType<MalformedDataException>(exception.InnerException);
     }
@@ -210,7 +210,7 @@ public sealed class MutagenPluginOverlayReaderTests : IDisposable
         File.WriteAllBytes(emptyPlugin, []);
 
         var exception = Assert.Throws<PluginOverlayReadException>(() =>
-            _reader.ReadOverlay(emptyPlugin, release, BinaryReadParameters.Default));
+            _reader.ReadOverlay(CreateReadyPlugin(emptyPlugin, release)));
 
         Assert.IsType<MalformedDataException>(exception.InnerException);
     }
@@ -234,7 +234,7 @@ public sealed class MutagenPluginOverlayReaderTests : IDisposable
         Directory.CreateDirectory(unreadablePlugin);
 
         var exception = Assert.Throws<PluginOverlayReadException>(() =>
-            _reader.ReadOverlay(unreadablePlugin, release, BinaryReadParameters.Default));
+            _reader.ReadOverlay(CreateReadyPlugin(unreadablePlugin, release)));
 
         Assert.IsType<UnauthorizedAccessException>(exception.InnerException);
     }
@@ -254,7 +254,7 @@ public sealed class MutagenPluginOverlayReaderTests : IDisposable
         Directory.CreateDirectory(notAPluginName);
 
         var exception = Assert.Throws<PluginOverlayReadException>(() =>
-            _reader.ReadOverlay(notAPluginName, release, BinaryReadParameters.Default));
+            _reader.ReadOverlay(CreateReadyPlugin(notAPluginName, release)));
 
         Assert.IsType<ArgumentException>(exception.InnerException);
     }
@@ -273,7 +273,7 @@ public sealed class MutagenPluginOverlayReaderTests : IDisposable
         var missingPlugin = Path.Combine(_testDirectory, "Missing.esp");
 
         var exception = Assert.Throws<PluginOverlayReadException>(() =>
-            _reader.ReadOverlay(missingPlugin, GameRelease.SkyrimSE, BinaryReadParameters.Default));
+            _reader.ReadOverlay(CreateReadyPlugin(missingPlugin, GameRelease.SkyrimSE)));
 
         // Asserted against the cause's own message, not against a test-side re-implementation of the adapter's
         // unwrapping rule — a helper that walked the chain the same way production does would agree with a wrong
@@ -292,7 +292,7 @@ public sealed class MutagenPluginOverlayReaderTests : IDisposable
         var malformedPlugin = WriteMalformedPlugin("MalformedMessage.esp");
 
         var exception = Assert.Throws<PluginOverlayReadException>(() =>
-            _reader.ReadOverlay(malformedPlugin, GameRelease.SkyrimSE, BinaryReadParameters.Default));
+            _reader.ReadOverlay(CreateReadyPlugin(malformedPlugin, GameRelease.SkyrimSE)));
 
         // Mutagen's own wording, pinned on purpose: this message is what a user reads on a Failed Plugin, so a
         // Mutagen upgrade that reworded it is a user-visible change worth failing on.
@@ -311,9 +311,9 @@ public sealed class MutagenPluginOverlayReaderTests : IDisposable
         var malformedPlugin = WriteMalformedPlugin("MalformedDistinct.esp");
 
         var missingFailure = Assert.Throws<PluginOverlayReadException>(() =>
-            _reader.ReadOverlay(missingPlugin, GameRelease.SkyrimSE, BinaryReadParameters.Default));
+            _reader.ReadOverlay(CreateReadyPlugin(missingPlugin, GameRelease.SkyrimSE)));
         var malformedFailure = Assert.Throws<PluginOverlayReadException>(() =>
-            _reader.ReadOverlay(malformedPlugin, GameRelease.SkyrimSE, BinaryReadParameters.Default));
+            _reader.ReadOverlay(CreateReadyPlugin(malformedPlugin, GameRelease.SkyrimSE)));
 
         Assert.NotEqual(missingFailure.Message, malformedFailure.Message);
     }
@@ -330,6 +330,19 @@ public sealed class MutagenPluginOverlayReaderTests : IDisposable
         // Shorter than the smallest mod header any Supported GameRelease uses, so no release can parse it.
         File.WriteAllBytes(path, [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C]);
         return path;
+    }
+
+    /// <summary>
+    ///     Creates one production-branded ready case so every adapter assertion enters through the live opaque seam.
+    /// </summary>
+    /// <param name="pluginPath">The exact path the adapter should attempt.</param>
+    /// <param name="release">The GameRelease hidden inside the production capability.</param>
+    /// <returns>The ready selected-Plugin case for the path and release.</returns>
+    private static SelectedPluginReady CreateReadyPlugin(string pluginPath, GameRelease release)
+    {
+        var capability = new PluginReadCapability(
+            new MutagenPluginReadCapabilityPayload(release, BinaryReadParameters.Default));
+        return new SelectedPluginReady(Path.GetFileName(pluginPath), pluginPath, capability);
     }
 
     /// <summary>
