@@ -78,5 +78,6 @@ renaming Core members or changing project boundaries. In particular:
 
 ## Repository workflows
 
-For issue, PRD, or triage work, follow `docs/agents/issue-tracker.md` and `docs/agents/triage-labels.md`. Local Markdown
-files under `.scratch/<feature>/` are the request surface; external pull requests are not.
+For issue, PRD, or triage work, follow `docs/agents/issue-tracker.md` and `docs/agents/triage-labels.md`. GitHub
+Issues are the request surface; external pull requests are not. Existing `.scratch/<feature>/` files are historical
+and were not migrated.
