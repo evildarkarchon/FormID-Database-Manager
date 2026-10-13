@@ -69,13 +69,37 @@ public class WinUiPlatformServiceSourceTests
     }
 
     /// <summary>
-    ///     Verifies the shell obtains its User Workflow from the production factory and constructs no Core
-    ///     collaborator itself, so composition cannot drift back into code-behind no test can construct.
+    ///     Verifies the shell obtains its User Workflow from the production factory rather than constructing one, so
+    ///     composition cannot drift back into code-behind no test can construct.
+    /// </summary>
+    /// <remarks>
+    ///     The factory's own wiring is covered behaviourally by the User Workflow's factory smoke test; the Tests
+    ///     project cannot reference the WinUI assembly, so source text is the only guard on the shell's side. The shell
+    ///     legitimately names <c>UserWorkflow</c> for its field and the factory call, so only construction is pinned:
+    ///     an explicit <c>new UserWorkflow(</c>, and a target-typed <c>new(</c> into a <c>UserWorkflow</c> declaration
+    ///     or into the <c>_userWorkflow</c> field.
+    /// </remarks>
+    [Fact]
+    public void WinUiMainWindow_Composition_ObtainsUserWorkflowFromFactory()
+    {
+        var mainWindowSourcePath = Path.Combine(GetWinUiProjectDirectory(), "MainWindow.xaml.cs");
+        var source = File.ReadAllText(mainWindowSourcePath);
+
+        Assert.Contains("UserWorkflow.Create(", source, StringComparison.Ordinal);
+        Assert.DoesNotMatch(@"\bnew\s+UserWorkflow\s*\(", source);
+        Assert.DoesNotMatch(@"\bUserWorkflow\s+\w+\s*=\s*new\s*\(", source);
+        Assert.DoesNotMatch(@"\b_userWorkflow\s*=\s*new\s*\(", source);
+    }
+
+    /// <summary>
+    ///     Verifies the shell never names a Core collaborator that the User Workflow factory builds, so it can neither
+    ///     construct one — explicitly, through a target-typed <c>new()</c>, or through a static factory — nor hold one.
     /// </summary>
     /// <param name="coreTypeName">A Core collaborator the User Workflow factory builds and the shell must not.</param>
     /// <remarks>
-    ///     The factory's own wiring is covered behaviourally by the User Workflow's factory smoke test; the Tests
-    ///     project cannot reference the WinUI assembly, so source text is the only guard on the shell's side.
+    ///     The shell has no legitimate reason to mention any of these types, so any whole-word reference fails. The
+    ///     word boundaries are deliberate: the shell does use <c>PluginListItem</c> as a binding item type, and its
+    ///     prose comments say "Plugin List" with a space, and neither is a reference to the <c>PluginList</c> module.
     /// </remarks>
     [Theory]
     [InlineData("PluginList")]
@@ -87,14 +111,12 @@ public class WinUiPlatformServiceSourceTests
     [InlineData("GameInstallationProbe")]
     [InlineData("FormIdRecordStoreSessionOpener")]
     [InlineData("MutagenPluginOverlayReader")]
-    [InlineData("UserWorkflow")]
-    public void WinUiMainWindow_Composition_ConstructsNoCoreCollaborator(string coreTypeName)
+    public void WinUiMainWindow_Composition_ReferencesNoCoreCollaborator(string coreTypeName)
     {
         var mainWindowSourcePath = Path.Combine(GetWinUiProjectDirectory(), "MainWindow.xaml.cs");
         var source = File.ReadAllText(mainWindowSourcePath);
 
-        Assert.Contains("UserWorkflow.Create(", source, StringComparison.Ordinal);
-        Assert.DoesNotMatch($@"\bnew\s+{coreTypeName}\s*\(", source);
+        Assert.DoesNotMatch($@"\b{coreTypeName}\b", source);
     }
 
     /// <summary>
