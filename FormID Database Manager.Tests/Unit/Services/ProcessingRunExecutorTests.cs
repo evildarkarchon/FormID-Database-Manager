@@ -141,9 +141,8 @@ public sealed class ProcessingRunExecutorTests : IDisposable
         var progress = new SynchronousProgress<ProcessingRunProgress>(reports.Add);
 
         var request = new PluginProcessingRunRequest(
-            @"C:\Games\Skyrim",
+            PluginListSource.Create(GameRelease.SkyrimSE, @"C:\Games\Skyrim"),
             databasePath,
-            GameRelease.SkyrimSE,
             ["PluginA.esp", "PluginB.esp"],
             UpdateMode.Append,
             dryRun: true);
@@ -194,9 +193,8 @@ public sealed class ProcessingRunExecutorTests : IDisposable
         var progress = new SynchronousProgress<ProcessingRunProgress>(reports.Add);
 
         var request = new PluginProcessingRunRequest(
-            @"C:\Games\Skyrim",
+            PluginListSource.Create(GameRelease.SkyrimSE, @"C:\Games\Skyrim"),
             string.Empty,
-            GameRelease.SkyrimSE,
             ["PluginA.esp"],
             UpdateMode.Append,
             dryRun: true);
@@ -472,9 +470,8 @@ public sealed class ProcessingRunExecutorTests : IDisposable
             opener);
         var progress = new SynchronousProgress<ProcessingRunProgress>(reports.Add);
         var request = new PluginProcessingRunRequest(
-            gameDirectory,
+            PluginListSource.Create(GameRelease.SkyrimSE, gameDirectory),
             databasePath,
-            GameRelease.SkyrimSE,
             ["First.esp", "Second.esp"],
             UpdateMode.ReplacePluginRecords);
 
@@ -482,7 +479,7 @@ public sealed class ProcessingRunExecutorTests : IDisposable
 
         var call = Assert.Single(ingestion.Calls);
         Assert.Same(request, call.Request);
-        Assert.Equal(gameDirectory, call.Request.GameDirectory);
+        Assert.Equal(PluginListSource.Create(GameRelease.SkyrimSE, gameDirectory), call.Request.Source);
         Assert.Equal(GameRelease.SkyrimSE, call.Request.GameRelease);
         Assert.Equal(["First.esp", "Second.esp"], call.Request.PluginNames);
         Assert.Equal(UpdateMode.ReplacePluginRecords, call.Request.UpdateMode);
@@ -525,9 +522,8 @@ public sealed class ProcessingRunExecutorTests : IDisposable
             var reports = new List<ProcessingRunProgress>();
             var progress = new SynchronousProgress<ProcessingRunProgress>(reports.Add);
             var request = new PluginProcessingRunRequest(
-                CreateTempDirectory(),
+                PluginListSource.Create(GameRelease.SkyrimSE, CreateTempDirectory()),
                 @"C:\Databases\formids.db",
-                GameRelease.SkyrimSE,
                 ["Plugin.esp"],
                 UpdateMode.Append);
 
@@ -572,9 +568,8 @@ public sealed class ProcessingRunExecutorTests : IDisposable
             var reports = new List<ProcessingRunProgress>();
             var progress = new SynchronousProgress<ProcessingRunProgress>(reports.Add);
             var request = new PluginProcessingRunRequest(
-                CreateTempDirectory(),
+                PluginListSource.Create(GameRelease.SkyrimSE, CreateTempDirectory()),
                 @"C:\Databases\formids.db",
-                GameRelease.SkyrimSE,
                 ["Warned.esp", "Skipped.esp", "Failed.esp"],
                 UpdateMode.Append);
 
@@ -622,9 +617,8 @@ public sealed class ProcessingRunExecutorTests : IDisposable
         var reports = new List<ProcessingRunProgress>();
         var progress = new SynchronousProgress<ProcessingRunProgress>(reports.Add);
         var request = new PluginProcessingRunRequest(
-            CreateTempDirectory(),
+            PluginListSource.Create(GameRelease.SkyrimSE, CreateTempDirectory()),
             @"C:\Databases\formids.db",
-            GameRelease.SkyrimSE,
             ["Warned.esp", "Skipped.esp", "Failed.esp"],
             UpdateMode.Append);
 
@@ -675,9 +669,8 @@ public sealed class ProcessingRunExecutorTests : IDisposable
             new RecordingRecordStoreSessionOpener(recordStore));
         var progress = new SynchronousProgress<ProcessingRunProgress>(reports.Add);
         var request = new PluginProcessingRunRequest(
-            gameDirectory,
+            PluginListSource.Create(GameRelease.SkyrimSE, gameDirectory),
             databasePath,
-            GameRelease.SkyrimSE,
             ["Warned.esp", "Skipped.esp", "Bad.esp", "Good.esp"],
             UpdateMode.Append);
 
@@ -719,9 +712,8 @@ public sealed class ProcessingRunExecutorTests : IDisposable
         var reports = new List<ProcessingRunProgress>();
         var progress = new SynchronousProgress<ProcessingRunProgress>(reports.Add);
         var request = new PluginProcessingRunRequest(
-            gameDirectory,
+            PluginListSource.Create(GameRelease.SkyrimSE, gameDirectory),
             databasePath,
-            GameRelease.SkyrimSE,
             ["Bad.esp", "Never.esp"],
             UpdateMode.Append);
 
@@ -764,9 +756,8 @@ public sealed class ProcessingRunExecutorTests : IDisposable
         var reports = new List<ProcessingRunProgress>();
         var progress = new SynchronousProgress<ProcessingRunProgress>(reports.Add);
         var request = new PluginProcessingRunRequest(
-            gameDirectory,
+            PluginListSource.Create(GameRelease.SkyrimSE, gameDirectory),
             databasePath,
-            GameRelease.SkyrimSE,
             ["Done.esp", "Cancelled.esp"],
             UpdateMode.Append);
 
@@ -798,9 +789,8 @@ public sealed class ProcessingRunExecutorTests : IDisposable
         var reports = new List<ProcessingRunProgress>();
         var progress = new SynchronousProgress<ProcessingRunProgress>(reports.Add);
         var request = new PluginProcessingRunRequest(
-            gameDirectory,
+            PluginListSource.Create(GameRelease.SkyrimSE, gameDirectory),
             databasePath,
-            GameRelease.SkyrimSE,
             ["Plugin.esp"],
             UpdateMode.Append);
 
@@ -910,9 +900,8 @@ public sealed class ProcessingRunExecutorTests : IDisposable
         var reports = new List<ProcessingRunProgress>();
         var progress = new SynchronousProgress<ProcessingRunProgress>(reports.Add);
         var request = new PluginProcessingRunRequest(
-            @"C:\Games\Skyrim",
+            PluginListSource.Create(GameRelease.SkyrimSE, @"C:\Games\Skyrim"),
             databasePath,
-            GameRelease.SkyrimSE,
             ["Plugin.esp"],
             UpdateMode.Append);
 
@@ -1045,9 +1034,8 @@ public sealed class ProcessingRunExecutorTests : IDisposable
     private static PluginProcessingRunRequest CreateDryRunRequest(string pluginName)
     {
         return new PluginProcessingRunRequest(
-            @"C:\Games\Skyrim",
+            PluginListSource.Create(GameRelease.SkyrimSE, @"C:\Games\Skyrim"),
             string.Empty,
-            GameRelease.SkyrimSE,
             [pluginName],
             UpdateMode.Append,
             dryRun: true);

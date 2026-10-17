@@ -28,8 +28,9 @@ public sealed class PluginIngestionPlanTests : IDisposable
     private readonly List<string> _tempDirectories = [];
 
     /// <summary>
-    ///     Verifies that planning canonicalizes once, prepares the complete ordered selection once, and passes each
-    ///     ready case through the opaque overlay seam without reconstructing its path or capability.
+    ///     Verifies that planning reads the Data directory from the request's Plugin List Source, prepares the complete
+    ///     ordered selection once, and passes each ready case through the opaque overlay seam without reconstructing its
+    ///     path or capability.
     /// </summary>
     [Fact]
     public async Task PlanAsync_PreparedReadyCases_PreparesOnceAndPassesEachCaseIntact()
@@ -49,12 +50,12 @@ public sealed class PluginIngestionPlanTests : IDisposable
         var overlayReader = new PreparedCaseOverlayReader();
         IPluginIngestion sut = new PluginIngestion(gameLoadOrders, overlayReader, new EntryExtraction());
 
-        var plan = await sut.PlanAsync(
-            CreateRequest(gameDirectory, "FIRST.esp", "second.ESP"),
-            TestContext.Current.CancellationToken);
+        var request = CreateRequest(gameDirectory, "FIRST.esp", "second.ESP");
+
+        var plan = await sut.PlanAsync(request, TestContext.Current.CancellationToken);
 
         Assert.Equal(1, gameLoadOrders.PrepareCallCount);
-        Assert.Equal(dataDirectory, gameLoadOrders.CapturedCanonicalDataDirectory);
+        Assert.Equal(request.Source.DataDirectory, gameLoadOrders.CapturedCanonicalDataDirectory, StringComparer.Ordinal);
         Assert.Equal(["FIRST.esp", "second.ESP"], gameLoadOrders.CapturedSelection);
         Assert.Collection(
             overlayReader.OpenedPlugins,
@@ -80,11 +81,11 @@ public sealed class PluginIngestionPlanTests : IDisposable
         var overlayReader = new PlanningOverlayReader();
         IPluginIngestion sut = new PluginIngestion(gameLoadOrders, overlayReader, new EntryExtraction());
 
-        var plan = await sut.PlanAsync(
-            CreateRequest(gameDirectory, "First.esp", "Second.esp"),
-            TestContext.Current.CancellationToken);
+        var request = CreateRequest(gameDirectory, "First.esp", "Second.esp");
 
-        Assert.Equal(Path.Combine(gameDirectory, "Data"), gameLoadOrders.CapturedCanonicalDataDirectory);
+        var plan = await sut.PlanAsync(request, TestContext.Current.CancellationToken);
+
+        Assert.Equal(request.Source.DataDirectory, gameLoadOrders.CapturedCanonicalDataDirectory);
         Assert.Equal(1, gameLoadOrders.PrepareCallCount);
         Assert.Equal(["First.esp", "Second.esp"], overlayReader.OpenedPlugins);
         Assert.Equal(["First.esp", "Second.esp"], overlayReader.DisposedPlugins);
@@ -442,9 +443,8 @@ public sealed class PluginIngestionPlanTests : IDisposable
     private static PluginProcessingRunRequest CreateRequest(string gameDirectory, params string[] pluginNames)
     {
         return new PluginProcessingRunRequest(
-            gameDirectory,
+            PluginListSource.Create(GameRelease.SkyrimSE, gameDirectory),
             string.Empty,
-            GameRelease.SkyrimSE,
             pluginNames,
             UpdateMode.Append,
             dryRun: true);

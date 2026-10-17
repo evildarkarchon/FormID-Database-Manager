@@ -132,40 +132,54 @@ public sealed record PluginProcessingRunRequest : ProcessingRunRequest
     /// <summary>
     ///     Creates a Plugin ingestion Processing Run request.
     /// </summary>
-    /// <param name="gameDirectory">The selected game root or Data directory.</param>
+    /// <param name="source">
+    ///     The Plugin List Source the selection was confirmed against. Its canonical Data directory is where the run reads
+    ///     Plugins, and its GameRelease is the request's GameRelease, so the two cannot disagree (ADR-0010).
+    /// </param>
     /// <param name="databasePath">The SQLite database path to write.</param>
-    /// <param name="gameRelease">The GameRelease whose load-order and table rules apply.</param>
     /// <param name="pluginNames">The selected Plugin names to process, captured as an immutable snapshot.</param>
     /// <param name="updateMode">The storage update behavior for ingested Plugin records.</param>
     /// <param name="dryRun">Whether to report the planned work without writing to the store.</param>
-    /// <exception cref="ArgumentNullException"><paramref name="pluginNames" /> is <see langword="null" />.</exception>
-    /// <exception cref="ArgumentException">
-    ///     A required path or Plugin name is blank, the selection is empty, or Plugin names are duplicated.
+    /// <remarks>
+    ///     The constructor is internal because only Processing Run Admission builds a selected-Plugin request, from the
+    ///     Plugin List Source it matched; nothing outside Core can supply one.
+    /// </remarks>
+    /// <exception cref="ArgumentNullException">
+    ///     <paramref name="source" /> or <paramref name="pluginNames" /> is <see langword="null" />. A null source is
+    ///     reported before any other invariant.
     /// </exception>
-    public PluginProcessingRunRequest(
-        string? gameDirectory,
+    /// <exception cref="ArgumentException">
+    ///     The database path is blank for a run that is not a Dry Run, a Plugin name is blank, the selection is empty, or
+    ///     Plugin names are duplicated.
+    /// </exception>
+    internal PluginProcessingRunRequest(
+        PluginListSource source,
         string databasePath,
-        GameRelease gameRelease,
         IEnumerable<string> pluginNames,
         UpdateMode updateMode,
         bool dryRun = false)
-        : base(databasePath, gameRelease, updateMode, dryRun)
+        // The base initializer runs before this body, so the null guard must live inside the argument it feeds.
+        : base(
+            databasePath,
+            (source ?? throw new ArgumentNullException(nameof(source))).GameRelease,
+            updateMode,
+            dryRun)
     {
-        if (string.IsNullOrWhiteSpace(gameDirectory))
-        {
-            throw new ArgumentException("Game directory must be specified.", nameof(gameDirectory));
-        }
-
         ArgumentNullException.ThrowIfNull(pluginNames);
 
         PluginNames = CapturePluginNames(pluginNames);
-        GameDirectory = gameDirectory;
+        Source = source;
     }
 
     /// <summary>
-    ///     The selected game root or Data directory.
+    ///     The Plugin List Source the selection was confirmed against. Plugin Ingestion reads its
+    ///     <see cref="PluginListSource.DataDirectory" /> as-is and never canonicalizes a directory itself (ADR-0002).
     /// </summary>
-    public string GameDirectory { get; }
+    /// <remarks>
+    ///     Internal because <see cref="PluginListSource" /> is a Core type; the request's public facts stay the ones
+    ///     declared on <see cref="ProcessingRunRequest" /> and <see cref="PluginNames" />.
+    /// </remarks>
+    internal PluginListSource Source { get; }
 
     /// <summary>
     ///     The selected Plugin names captured at run start.
@@ -303,7 +317,7 @@ internal abstract record ProcessingRunPlan;
 /// </summary>
 /// <param name="Plan">What Plugin Ingestion would do to each selected Plugin, in selection order.</param>
 /// <remarks>
-///     The plan is substantive: Plugin Ingestion resolved the Data path, prepared the load order and opened every
+///     The plan is substantive: Plugin Ingestion read the source's Data path, prepared the load order and opened every
 ///     selected Plugin's overlay to produce it, so this says what a run would do rather than echoing the names the
 ///     user selected.
 /// </remarks>

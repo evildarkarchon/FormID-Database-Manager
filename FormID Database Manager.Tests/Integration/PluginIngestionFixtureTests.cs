@@ -210,7 +210,9 @@ public sealed class PluginIngestionFixtureTests : IDisposable
         await using (var store = await FormIdRecordStore.OpenAsync(databasePath, release, cancellationToken))
         {
             await ingestion.IngestAsync(
-                new PluginProcessingRunRequest(gameDirectory, "ingestion.db", release, [PluginName], UpdateMode.Append),
+                new PluginProcessingRunRequest(
+                    PluginListSource.Create(release, gameDirectory),
+                    "ingestion.db", [PluginName], UpdateMode.Append),
                 store,
                 progress: null,
                 cancellationToken);
@@ -250,7 +252,9 @@ public sealed class PluginIngestionFixtureTests : IDisposable
         await using (var store = await FormIdRecordStore.OpenAsync(databasePath, release, cancellationToken))
         {
             report = await ingestion.IngestAsync(
-                new PluginProcessingRunRequest(gameDirectory, "ingestion.db", release, [PluginName], UpdateMode.Append),
+                new PluginProcessingRunRequest(
+                    PluginListSource.Create(release, gameDirectory),
+                    "ingestion.db", [PluginName], UpdateMode.Append),
                 store,
                 progress: null,
                 cancellationToken);
@@ -303,7 +307,9 @@ public sealed class PluginIngestionFixtureTests : IDisposable
 
         await using var store = await FormIdRecordStore.OpenAsync(databasePath, release, cancellationToken);
         var exception = await Assert.ThrowsAsync<UnresolvableMasterException>(() => ingestion.IngestAsync(
-            new PluginProcessingRunRequest(gameDirectory, "ingestion.db", release, [PluginName], UpdateMode.Append),
+            new PluginProcessingRunRequest(
+                PluginListSource.Create(release, gameDirectory),
+                "ingestion.db", [PluginName], UpdateMode.Append),
             store,
             progress: null,
             cancellationToken));
@@ -332,7 +338,9 @@ public sealed class PluginIngestionFixtureTests : IDisposable
         await using (var store = await FormIdRecordStore.OpenAsync(databasePath, release, cancellationToken))
         {
             report = await ingestion.IngestAsync(
-                new PluginProcessingRunRequest(gameDirectory, "ingestion.db", release, [PluginName], UpdateMode.Append),
+                new PluginProcessingRunRequest(
+                    PluginListSource.Create(release, gameDirectory),
+                    "ingestion.db", [PluginName], UpdateMode.Append),
                 store,
                 progress: null,
                 cancellationToken);

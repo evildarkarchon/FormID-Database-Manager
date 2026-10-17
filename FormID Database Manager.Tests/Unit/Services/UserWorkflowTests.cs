@@ -960,7 +960,7 @@ public class UserWorkflowTests
 
         var run = Assert.IsType<PluginProcessingRunRequest>(Assert.Single(_processingRuns));
         Assert.Equal(GameRelease.SkyrimSE, run.GameRelease);
-        Assert.Equal(confirmed.Source.DataDirectory, run.GameDirectory);
+        Assert.Equal(confirmed.Source, run.Source);
         Assert.Equal(["First.esp", "Third.esp"], run.PluginNames);
     }
 
@@ -990,7 +990,7 @@ public class UserWorkflowTests
         sut.SetPluginSelection(refreshed.MembershipVersion, "Second.esp", true);
 
         Assert.Equal(confirmed.Source.GameRelease, run.GameRelease);
-        Assert.Equal(confirmed.Source.DataDirectory, run.GameDirectory);
+        Assert.Equal(confirmed.Source, run.Source);
         Assert.Equal(["First.esp", "Third.esp"], run.PluginNames);
     }
 
@@ -1110,7 +1110,8 @@ public class UserWorkflowTests
         await reentrantRun;
 
         var run = Assert.IsType<PluginProcessingRunRequest>(Assert.Single(_processingRuns));
-        Assert.Equal(confirmed.Source.DataDirectory, run.GameDirectory);
+        Assert.Equal(confirmed.Source, run.Source);
+        Assert.Equal(confirmed.Source.DataDirectory, run.Source.DataDirectory);
         Assert.Equal(GameRelease.SkyrimSE, run.GameRelease);
         Assert.Equal(["User.esp"], run.PluginNames);
     }
@@ -1191,7 +1192,7 @@ public class UserWorkflowTests
 
         var run = Assert.IsType<PluginProcessingRunRequest>(Assert.Single(_processingRuns));
         Assert.Equal(GameRelease.SkyrimSE, run.GameRelease);
-        Assert.Equal(Path.Combine(GameDirectory, "Data"), run.GameDirectory);
+        Assert.Equal(PluginListSource.Create(GameRelease.SkyrimSE, GameDirectory), run.Source);
         Assert.Equal(["User.esp"], run.PluginNames);
         Assert.Null(_viewModel.SelectedGame);
         Assert.Empty(_viewModel.ErrorMessages);
@@ -1383,7 +1384,9 @@ public class UserWorkflowTests
         await ConfigureValidPluginProcessingRunAsync(sut);
         _viewModel.DryRun = true;
         _processingRunExecutor.Outcome = new PlannedRunOutcome(new PluginRunPlan(new PluginIngestionPlan(
-            new PluginProcessingRunRequest(@"C:\Games\Skyrim", string.Empty, GameRelease.SkyrimSE,
+            new PluginProcessingRunRequest(
+                PluginListSource.Create(GameRelease.SkyrimSE, @"C:\Games\Skyrim"),
+                string.Empty,
                 ["User.esp", "Absent.esp"], UpdateMode.Append, dryRun: true),
             [
             new PlannedPluginIngestion("User.esp"),
@@ -1689,7 +1692,9 @@ public class UserWorkflowTests
             .ReturnsAsync(FileDialogResult.Success(GameDirectory));
         _processingRunExecutor.ProgressToReport.Add(new IngestingPlugin("User.esp", 2, 5));
         _processingRunExecutor.Outcome = new PlannedRunOutcome(new PluginRunPlan(new PluginIngestionPlan(
-            new PluginProcessingRunRequest(GameDirectory, string.Empty, GameRelease.SkyrimSE,
+            new PluginProcessingRunRequest(
+                PluginListSource.Create(GameRelease.SkyrimSE, GameDirectory),
+                string.Empty,
                 ["User.esp"], UpdateMode.Append, dryRun: true),
             [new PlannedPluginIngestion("User.esp")])));
         var projectedStatuses = RecordProjectedStatuses();
@@ -2138,8 +2143,8 @@ public class UserWorkflowTests
     private static PluginRunOutcome CreatePluginRunOutcome(params PluginIngestionOutcome[] outcomes)
     {
         var request = new PluginProcessingRunRequest(
-            GameDirectory, "ingestion.db",
-            GameRelease.SkyrimSE,
+            PluginListSource.Create(GameRelease.SkyrimSE, GameDirectory),
+            "ingestion.db",
             outcomes.Select(static outcome => outcome.PluginName),
             UpdateMode.Append);
 

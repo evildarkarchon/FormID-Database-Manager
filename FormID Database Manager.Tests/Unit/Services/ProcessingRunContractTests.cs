@@ -34,24 +34,53 @@ public sealed class ProcessingRunContractTests
     private const string DatabasePath = @"C:\Databases\formids.db";
 
     /// <summary>
-    ///     Pins which invariant is reported first when paths and selections contain competing invalid inputs.
+    ///     The Plugin List Source a selected-Plugin request is built from. Creating one is pure path arithmetic, so the
+    ///     directory never has to exist.
+    /// </summary>
+    private static readonly PluginListSource Source = PluginListSource.Create(GameRelease.SkyrimSE, GameDirectory);
+
+    /// <summary>
+    ///     Pins which invariant is reported first when the Store path and the selection are both invalid.
     /// </summary>
     [Theory]
-    [InlineData("", "", false, null, "databasePath", "Database path must be specified")]
-    [InlineData("", "", true, null, "gameDirectory", "Game directory must be specified")]
-    [InlineData("", DatabasePath, false, new string[0], "gameDirectory", "Game directory must be specified")]
-    [InlineData(GameDirectory, DatabasePath, false, new[] { "Same.esp", "SAME.ESP", " " }, "pluginNames",
+    [InlineData("", false, null, "databasePath", "Database path must be specified")]
+    [InlineData("", false, new string[0], "databasePath", "Database path must be specified")]
+    [InlineData("", true, new string[0], "pluginNames", "Plugin selection must not be empty")]
+    [InlineData(DatabasePath, false, new[] { "Same.esp", "SAME.ESP", " " }, "pluginNames",
         "Plugin name must be specified")]
     public void PluginProcessingRunRequest_MultipleInvalidInputs_PreservesInvariantPrecedence(
-        string gameDirectory, string databasePath, bool dryRun, string[]? pluginNames, string expectedParamName,
+        string databasePath, bool dryRun, string[]? pluginNames, string expectedParamName,
         string expectedMessagePrefix)
     {
         var exception = Assert.Throws<ArgumentException>(() =>
-            new PluginProcessingRunRequest(gameDirectory, databasePath, GameRelease.SkyrimSE,
-                pluginNames!, UpdateMode.Append, dryRun));
+            new PluginProcessingRunRequest(Source, databasePath, pluginNames!, UpdateMode.Append, dryRun));
 
         Assert.Equal(expectedParamName, exception.ParamName);
         Assert.StartsWith(expectedMessagePrefix, exception.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    ///     Verifies that a Plugin request given no Plugin List Source throws for the source before any other invariant
+    ///     is checked, because the request's GameRelease is read from that source.
+    /// </summary>
+    [Fact]
+    public void PluginProcessingRunRequest_NullSource_ThrowsArgumentNullExceptionForTheSourceFirst()
+    {
+        var exception = Assert.Throws<ArgumentNullException>(() =>
+            new PluginProcessingRunRequest(null!, string.Empty, [], UpdateMode.Append));
+
+        Assert.Equal("source", exception.ParamName);
+    }
+
+    /// <summary>
+    ///     Verifies that nothing outside Core can build a selected-Plugin request or reach its Plugin List Source:
+    ///     Processing Run Admission is the only builder, from the source it matched (ADR-0010).
+    /// </summary>
+    [Fact]
+    public void PluginProcessingRunRequest_PublicSurface_ExposesNoConstructorOrSource()
+    {
+        Assert.Empty(typeof(PluginProcessingRunRequest).GetConstructors());
+        Assert.Null(typeof(PluginProcessingRunRequest).GetProperty(nameof(PluginProcessingRunRequest.Source)));
     }
 
     /// <summary>
@@ -61,24 +90,25 @@ public sealed class ProcessingRunContractTests
     public void PluginProcessingRunRequest_NullSelection_ThrowsArgumentNullException()
     {
         var exception = Assert.Throws<ArgumentNullException>(() =>
-            new PluginProcessingRunRequest(GameDirectory, DatabasePath, GameRelease.SkyrimSE,
-                null!, UpdateMode.Append));
+            new PluginProcessingRunRequest(Source, DatabasePath, null!, UpdateMode.Append));
 
         Assert.Equal("pluginNames", exception.ParamName);
     }
 
     /// <summary>
-    ///     Allows explicit Dry Run facts without a Store path or a Confirmed Plugin List.
+    ///     Allows explicit Dry Run facts without a Store path or a Confirmed Plugin List, and takes the request's
+    ///     GameRelease from its Plugin List Source so the two cannot disagree.
     /// </summary>
     [Fact]
     public void PluginProcessingRunRequest_DryRunWithoutStorePath_PreservesExplicitFacts()
     {
-        var request = new PluginProcessingRunRequest(GameDirectory, "", GameRelease.SkyrimSE,
+        var source = PluginListSource.Create(GameRelease.Fallout4, GameDirectory);
+        var request = new PluginProcessingRunRequest(source, "",
             ["SECOND.esp", "first.ESP"], UpdateMode.ReplacePluginRecords, dryRun: true);
 
-        Assert.Equal(GameDirectory, request.GameDirectory);
+        Assert.Same(source, request.Source);
         Assert.Equal("", request.DatabasePath);
-        Assert.Equal(GameRelease.SkyrimSE, request.GameRelease);
+        Assert.Equal(GameRelease.Fallout4, request.GameRelease);
         Assert.Equal(UpdateMode.ReplacePluginRecords, request.UpdateMode);
         Assert.True(request.DryRun);
         Assert.Equal(["SECOND.esp", "first.ESP"], request.PluginNames);
@@ -91,7 +121,7 @@ public sealed class ProcessingRunContractTests
     public void PluginProcessingRunRequest_LazySelection_CapturesOnceAndRejectsMutation()
     {
         var enumerationCount = 0;
-        var request = new PluginProcessingRunRequest(GameDirectory, DatabasePath, GameRelease.SkyrimSE,
+        var request = new PluginProcessingRunRequest(PluginListSource.Create(GameRelease.SkyrimSE, GameDirectory), DatabasePath,
             EnumerateNames(), UpdateMode.Append);
 
         Assert.Equal(1, enumerationCount);
@@ -110,23 +140,6 @@ public sealed class ProcessingRunContractTests
     }
 
     /// <summary>
-    ///     Verifies that a Plugin request given no game directory throws a programming-error guard naming it.
-    /// </summary>
-    [Fact]
-    public void PluginProcessingRunRequest_BlankGameDirectory_ThrowsArgumentExceptionForTheGameDirectory()
-    {
-        var exception = Assert.Throws<ArgumentException>(() =>
-            new PluginProcessingRunRequest(
-                string.Empty,
-                DatabasePath,
-                GameRelease.SkyrimSE,
-                ["First.esp"],
-                UpdateMode.Append));
-
-        Assert.Equal("gameDirectory", exception.ParamName);
-    }
-
-    /// <summary>
     ///     Verifies that a real run's request given no Store path throws a programming-error guard naming it.
     /// </summary>
     [Fact]
@@ -134,9 +147,8 @@ public sealed class ProcessingRunContractTests
     {
         var exception = Assert.Throws<ArgumentException>(() =>
             new PluginProcessingRunRequest(
-                GameDirectory,
+                Source,
                 string.Empty,
-                GameRelease.SkyrimSE,
                 ["First.esp"],
                 UpdateMode.Append));
 
@@ -151,9 +163,8 @@ public sealed class ProcessingRunContractTests
     {
         var exception = Assert.Throws<ArgumentException>(() =>
             new PluginProcessingRunRequest(
-                GameDirectory,
+                Source,
                 DatabasePath,
-                GameRelease.SkyrimSE,
                 [],
                 UpdateMode.Append));
 
@@ -169,9 +180,8 @@ public sealed class ProcessingRunContractTests
     {
         var exception = Assert.Throws<ArgumentException>(() =>
             new PluginProcessingRunRequest(
-                GameDirectory,
+                Source,
                 DatabasePath,
-                GameRelease.SkyrimSE,
                 ["Valid.esp", " "],
                 UpdateMode.Append));
 
@@ -188,9 +198,8 @@ public sealed class ProcessingRunContractTests
     {
         var exception = Assert.Throws<ArgumentException>(() =>
             new PluginProcessingRunRequest(
-                GameDirectory,
+                Source,
                 DatabasePath,
-                GameRelease.SkyrimSE,
                 ["Duplicate.esp", "DUPLICATE.ESP"],
                 UpdateMode.Append));
 
@@ -235,9 +244,8 @@ public sealed class ProcessingRunContractTests
     {
         var pluginNames = new List<string> { "First.esp", "Second.esp" };
         var request = new PluginProcessingRunRequest(
-            GameDirectory,
+            Source,
             DatabasePath,
-            GameRelease.SkyrimSE,
             pluginNames,
             UpdateMode.Append);
 

@@ -336,6 +336,29 @@ public class CoreProjectBoundaryTests
     }
 
     /// <summary>
+    ///     Verifies that the game-root-or-Data rule reaches a Processing Run only through the Plugin List Source.
+    /// </summary>
+    /// <remarks>
+    ///     ADR-0002, as amended by ADR-0010. <c>GameInstallations</c> owns the rule and calls it from detection, and
+    ///     <c>PluginListSource.Create</c> is the one place a run's Data directory is decided. Admission, the executor,
+    ///     the run and Plugin Ingestion read <c>PluginListSource.DataDirectory</c> from the request instead of deciding
+    ///     it again, so a second caller anywhere in Core is a second place the run's Data directory could diverge.
+    /// </remarks>
+    [Fact]
+    public void CoreSources_GameRootOrDataRule_ReachesARunOnlyThroughThePluginListSource()
+    {
+        var canonicalizationCallers = Directory
+            .EnumerateFiles(GetCoreProjectDirectory(), "*.cs", SearchOption.AllDirectories)
+            .Where(path => !IsBuildOutput(path))
+            .Where(path => File.ReadAllText(path).Contains("CanonicalizeDataDirectory(", StringComparison.Ordinal))
+            .Select(path => Path.GetFileName(path))
+            .OrderBy(static fileName => fileName, StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.Equal(["GameInstallations.cs", "PluginListSource.cs"], canonicalizationCallers);
+    }
+
+    /// <summary>
     ///     Verifies the final selected-Plugin dependency direction: Processing Run owns the complete Store session,
     ///     while Plugin Ingestion borrows only Plugin-write behavior and owns its read-side adapters.
     /// </summary>
@@ -371,7 +394,6 @@ public class CoreProjectBoundaryTests
         Assert.Contains("IGameLoadOrders", pluginIngestionSource, StringComparison.Ordinal);
         Assert.Contains("PrepareSelectedPlugins", pluginIngestionSource, StringComparison.Ordinal);
         Assert.Contains("IPluginOverlayReader", pluginIngestionSource, StringComparison.Ordinal);
-        Assert.Contains("GameInstallations.CanonicalizeDataDirectory", pluginIngestionSource, StringComparison.Ordinal);
         Assert.Contains(
             ingestionOperation.GetParameters(),
             parameter => parameter.ParameterType == pluginWriterType);

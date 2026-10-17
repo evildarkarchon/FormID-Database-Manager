@@ -58,9 +58,8 @@ public class LoadTests : IDisposable
         // Act
         var stopwatch = Stopwatch.StartNew();
         var request = new PluginProcessingRunRequest(
-            _testDirectory,
+            PluginListSource.Create(GameRelease.SkyrimSE, _testDirectory),
             dbPath,
-            GameRelease.SkyrimSE,
             plugins,
             UpdateMode.Append);
         var progress = new Progress<ProcessingRunProgress>(update =>
@@ -111,9 +110,8 @@ public class LoadTests : IDisposable
 
         using var processingRunExecutor = PerformanceProcessingRunFactory.Create([pluginName]);
         await processingRunExecutor.ExecuteAsync(new PluginProcessingRunRequest(
-            _testDirectory,
+            PluginListSource.Create(GameRelease.SkyrimSE, _testDirectory),
             dbPath,
-            GameRelease.SkyrimSE,
             [pluginName],
             UpdateMode.Append));
 

@@ -288,8 +288,9 @@ public sealed class ProcessingRunAdmissionTests
     }
 
     /// <summary>
-    ///     Verifies that an admitted Plugin run carries the matched source's canonical Data directory, the captured
-    ///     facts, and the confirmed selection in confirmed Plugin List order rather than the order Plugins were clicked.
+    ///     Verifies that an admitted Plugin run carries the matched Plugin List Source, takes its GameRelease from that
+    ///     source, and carries the captured facts and the confirmed selection in confirmed Plugin List order rather than
+    ///     the order Plugins were clicked.
     /// </summary>
     [Fact]
     public async Task Admit_MatchingConfirmationWithSelection_AdmitsAPluginRunInConfirmedOrder()
@@ -308,10 +309,9 @@ public sealed class ProcessingRunAdmissionTests
 
         var admitted = Assert.IsType<AdmittedRun>(decision);
         var request = Assert.IsType<PluginProcessingRunRequest>(admitted.Request);
-        Assert.Equal(
-            PluginListSource.Create(GameRelease.SkyrimSE, _gameDirectory).DataDirectory,
-            request.GameDirectory);
+        Assert.Equal(PluginListSource.Create(GameRelease.SkyrimSE, _gameDirectory), request.Source);
         Assert.Equal(GameRelease.SkyrimSE, request.GameRelease);
+        Assert.Equal(request.Source.GameRelease, request.GameRelease);
         Assert.Equal(["First.esp", "Third.esp"], request.PluginNames);
         Assert.Equal(DatabasePath, request.DatabasePath);
         Assert.Equal(UpdateMode.ReplacePluginRecords, request.UpdateMode);
@@ -321,21 +321,28 @@ public sealed class ProcessingRunAdmissionTests
 
     /// <summary>
     ///     Verifies that a captured directory spelled differently from the confirmed one still matches when both name
-    ///     the same canonical Data directory.
+    ///     the same canonical Data directory, and that the admitted request carries the Plugin List Source the list was
+    ///     confirmed against, so its Plugins are read from exactly the Data directory they were discovered from.
     /// </summary>
     [Fact]
-    public async Task Admit_EquivalentDirectorySpelling_MatchesTheConfirmation()
+    public async Task Admit_EquivalentDirectorySpelling_MatchesTheConfirmationAndCarriesItsSource()
     {
         using var pluginList = new PluginList(ScriptedGameLoadOrders.Fixed("User.esp"));
         await RefreshAsync(pluginList, _gameDirectory);
         SelectAll(pluginList);
+        var confirmedSource = Assert.IsType<ConfirmedPluginList>(pluginList.Current.Confirmed).Source;
+        // Where paths compare case-insensitively the captured spelling also differs in case, so the ordinal check
+        // below tells the confirmed source apart from one rebuilt from the captured directory.
+        var dataDirectoryName = OperatingSystem.IsWindows() ? "data" : "Data";
 
         var decision = ProcessingRunAdmission.Admit(
-            Inputs(pluginList.Current, gameDirectory: Path.Combine(_gameDirectory, "Data", ".")),
+            Inputs(pluginList.Current, gameDirectory: Path.Combine(_gameDirectory, dataDirectoryName, ".")),
             _defaultDatabaseRoot);
 
         var request = Assert.IsType<PluginProcessingRunRequest>(Assert.IsType<AdmittedRun>(decision).Request);
         Assert.Equal(["User.esp"], request.PluginNames);
+        Assert.Equal(confirmedSource, request.Source);
+        Assert.Equal(confirmedSource.DataDirectory, request.Source.DataDirectory, StringComparer.Ordinal);
     }
 
     /// <summary>

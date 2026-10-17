@@ -40,6 +40,32 @@ public sealed class PluginListSourceTests
             ignoreCase: OperatingSystem.IsWindows());
     }
 
+    /// <summary>
+    ///     Verifies that a game root with a terminal separator resolves to the same canonical Data directory as the plain
+    ///     root. This is where a selected-Plugin run's Data directory is decided: Plugin Ingestion reads it from the
+    ///     request's source and no longer canonicalizes the directory itself (ADR-0010).
+    /// </summary>
+    /// <param name="separator">The terminal separator appended to the game root.</param>
+    [Theory]
+    [InlineData("/")]
+    [InlineData("\\")]
+    public void Create_GameRootWithTrailingSeparator_UsesTheRootsCanonicalDataDirectory(string separator)
+    {
+        if (separator == "\\" && !OperatingSystem.IsWindows())
+        {
+            // A backslash is an ordinary file-name character off Windows, so it is not a separator there.
+            return;
+        }
+
+        var source = PluginListSource.Create(GameRelease.SkyrimSE, _gameDirectory + separator);
+
+        Assert.Equal(PluginListSource.Create(GameRelease.SkyrimSE, _gameDirectory), source);
+        Assert.Equal(
+            Path.GetFullPath(Path.Combine(_gameDirectory, "Data")),
+            source.DataDirectory,
+            ignoreCase: OperatingSystem.IsWindows());
+    }
+
     [Fact]
     public void Create_DifferentGameReleaseOrDirectory_ProducesDifferentSources()
     {

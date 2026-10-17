@@ -60,9 +60,8 @@ public class StressTests : IDisposable
         for (var i = 0; i < cancellationAttempts; i++)
         {
             var request = new PluginProcessingRunRequest(
-                _testDirectory,
+                PluginListSource.Create(GameRelease.SkyrimSE, _testDirectory),
                 dbPath,
-                GameRelease.SkyrimSE,
                 [pluginNames[i]],
                 UpdateMode.Append);
             var progress = new CancelOnFirstProgressReport(processingRunExecutor);
@@ -87,9 +86,8 @@ public class StressTests : IDisposable
         }
 
         await processingRunExecutor.ExecuteAsync(new PluginProcessingRunRequest(
-            _testDirectory,
+            PluginListSource.Create(GameRelease.SkyrimSE, _testDirectory),
             dbPath,
-            GameRelease.SkyrimSE,
             [pluginNames[0]],
             UpdateMode.Append,
             dryRun: true));

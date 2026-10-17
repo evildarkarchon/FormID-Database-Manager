@@ -68,7 +68,7 @@ internal interface IPluginIngestion
         CancellationToken cancellationToken = default);
 
     /// <summary>
-    ///     Plans the captured selection: resolves the Data path, prepares the load order, and opens every selected
+    ///     Plans the captured selection: reads the source's Data path, prepares the load order, and opens every selected
     ///     Plugin's overlay without enumerating a single record.
     /// </summary>
     /// <param name="request">The immutable selected-Plugin request.</param>

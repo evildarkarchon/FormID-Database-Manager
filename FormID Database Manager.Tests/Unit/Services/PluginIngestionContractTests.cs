@@ -447,8 +447,8 @@ public sealed class PluginIngestionContractTests
     private static PluginProcessingRunRequest CreateSelectionRequest(params string[] pluginNames)
     {
         return new PluginProcessingRunRequest(
-            @"C:\Games\Skyrim", "report.db",
-            GameRelease.SkyrimSE,
+            PluginListSource.Create(GameRelease.SkyrimSE, @"C:\Games\Skyrim"),
+            "report.db",
             pluginNames,
             UpdateMode.Append);
     }
@@ -458,7 +458,8 @@ public sealed class PluginIngestionContractTests
     private static PluginProcessingRunRequest CreatePlanRequest(params string[] names)
     {
         return new PluginProcessingRunRequest(
-            @"C:\Games\Skyrim", string.Empty, GameRelease.SkyrimSE, names, UpdateMode.Append, dryRun: true);
+            PluginListSource.Create(GameRelease.SkyrimSE, @"C:\Games\Skyrim"),
+            string.Empty, names, UpdateMode.Append, dryRun: true);
     }
 
 }

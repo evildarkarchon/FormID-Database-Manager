@@ -202,9 +202,8 @@ public sealed class ProcessingRunIntegrationTests : IDisposable
 
         var outcome = await executor.ExecuteAsync(
             new PluginProcessingRunRequest(
-                gameDirectory,
+                PluginListSource.Create(GameRelease.SkyrimSE, gameDirectory),
                 databasePath,
-                GameRelease.SkyrimSE,
                 [pluginName],
                 UpdateMode.Append),
             progress);

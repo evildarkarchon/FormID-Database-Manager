@@ -496,7 +496,9 @@ public sealed class ProcessingRunPresentationTests
 
         var rendered = ProcessingRunPresentation.Render(new PlannedRunOutcome(new PluginRunPlan(
             new PluginIngestionPlan(
-                new PluginProcessingRunRequest(@"C:\Games\Skyrim", string.Empty, GameRelease.SkyrimSE,
+                new PluginProcessingRunRequest(
+                    PluginListSource.Create(GameRelease.SkyrimSE, @"C:\Games\Skyrim"),
+                    string.Empty,
                     ["First.esp", "Absent.esp", "Unavailable.esp", "Broken.esp"], UpdateMode.Append, dryRun: true),
                 [
                 new PlannedPluginIngestion("First.esp"),
@@ -537,7 +539,8 @@ public sealed class ProcessingRunPresentationTests
     public void Render_PluginPlanLongerThanTheMessageBound_StaysOneMessage()
     {
         var request = new PluginProcessingRunRequest(
-            @"C:\Games\Skyrim", string.Empty, GameRelease.SkyrimSE,
+            PluginListSource.Create(GameRelease.SkyrimSE, @"C:\Games\Skyrim"),
+            string.Empty,
             Enumerable.Range(1, 40).Select(position => $"Plugin{position}.esp"), UpdateMode.Append, dryRun: true);
         var plan = new PluginIngestionPlan(request, Enumerable
             .Range(1, 40)
@@ -673,8 +676,8 @@ public sealed class ProcessingRunPresentationTests
     private static RenderedRunReport RenderPluginRun(params PluginIngestionOutcome[] outcomes)
     {
         var request = new PluginProcessingRunRequest(
-            GameDirectory, "ingestion.db",
-            GameRelease.SkyrimSE,
+            PluginListSource.Create(GameRelease.SkyrimSE, GameDirectory),
+            "ingestion.db",
             outcomes.Select(static outcome => outcome.PluginName),
             UpdateMode.Append);
 

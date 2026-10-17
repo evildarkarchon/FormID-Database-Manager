@@ -47,7 +47,6 @@ internal static class ProcessingRunAdmission
 
         var formIdListPath = inputs.FormIdListPath;
         ConfirmedPluginList? confirmed = null;
-        PluginListSource? capturedSource = null;
         if (string.IsNullOrWhiteSpace(formIdListPath))
         {
             if (string.IsNullOrWhiteSpace(inputs.GameDirectory))
@@ -58,7 +57,7 @@ internal static class ProcessingRunAdmission
             // Canonicalization is left to throw for a malformed directory or an unsupported release rather than being
             // turned into a refusal: neither is something the user can fix by waiting or selecting, and the caller
             // already reports an unexpected failure as one (ADR-0002).
-            capturedSource = PluginListSource.Create(gameRelease, inputs.GameDirectory);
+            var capturedSource = PluginListSource.Create(gameRelease, inputs.GameDirectory);
             var state = inputs.PluginListState;
             confirmed = state.Confirmed;
             if (confirmed is null || confirmed.Source != capturedSource)
@@ -88,8 +87,10 @@ internal static class ProcessingRunAdmission
             databasePath = defaultedDatabasePath;
         }
 
-        // Only a FormID text run reaches this point without a matched confirmation and its source.
-        ProcessingRunRequest request = confirmed is null || capturedSource is null
+        // Only a FormID text run reaches this point without a matched confirmation. The request carries the source the
+        // list was confirmed against rather than the captured one: the two are equal, but the confirmed one keeps the
+        // exact Data-directory spelling the Plugin List was discovered from, and that is where Plugins are read.
+        ProcessingRunRequest request = confirmed is null
             ? new FormIdTextProcessingRunRequest(
                 formIdListPath,
                 databasePath,
@@ -97,9 +98,8 @@ internal static class ProcessingRunAdmission
                 inputs.UpdateMode,
                 inputs.DryRun)
             : new PluginProcessingRunRequest(
-                capturedSource.DataDirectory,
+                confirmed.Source,
                 databasePath,
-                gameRelease,
                 confirmed.SelectedPluginNames,
                 inputs.UpdateMode,
                 inputs.DryRun);

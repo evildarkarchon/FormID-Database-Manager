@@ -80,7 +80,7 @@ internal sealed class PluginIngestion : IPluginIngestion
         cancellationToken.ThrowIfCancellationRequested();
 
         var totalPluginCount = request.PluginNames.Count;
-        var dataPath = GameInstallations.CanonicalizeDataDirectory(request.GameDirectory);
+        var dataPath = request.Source.DataDirectory;
         progress?.Report(PluginIngestionProgress.PreparingLoadOrder(totalPluginCount));
         // Synchronous progress callbacks can request cancellation before load-order initialization begins.
         cancellationToken.ThrowIfCancellationRequested();
@@ -158,7 +158,7 @@ internal sealed class PluginIngestion : IPluginIngestion
         // A pre-cancelled plan must not consult any external adapter, exactly as a pre-cancelled run must not.
         cancellationToken.ThrowIfCancellationRequested();
 
-        var dataPath = GameInstallations.CanonicalizeDataDirectory(request.GameDirectory);
+        var dataPath = request.Source.DataDirectory;
         var preparedPlugins = _gameLoadOrders.PrepareSelectedPlugins(
             request.GameRelease,
             dataPath,

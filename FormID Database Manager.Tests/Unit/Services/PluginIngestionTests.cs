@@ -75,18 +75,19 @@ public sealed class PluginIngestionTests : IDisposable
             events.Add(report.Stage == PluginIngestionProgressStage.PreparingLoadOrder
                 ? "progress:preparing"
                 : $"progress:{report.PluginPosition}/{report.TotalPluginCount}:{report.PluginName}"));
+        var source = PluginListSource.Create(GameRelease.Starfield, gameDirectory);
 
         var report = await sut.IngestAsync(
             new PluginProcessingRunRequest(
-                gameDirectory, "ingestion.db",
-                GameRelease.Starfield,
+                source,
+                "ingestion.db",
                 ["First.esp", "Second.esp"],
                 UpdateMode.Append),
             recordStore,
             progress,
             TestContext.Current.CancellationToken);
 
-        Assert.Equal(Path.Combine(gameDirectory, "Data"), gameLoadOrders.CapturedCanonicalDataDirectory);
+        Assert.Equal(source.DataDirectory, gameLoadOrders.CapturedCanonicalDataDirectory);
         Assert.Equal(GameRelease.Starfield, gameLoadOrders.CapturedGameRelease);
         Assert.Equal(["First.esp", "Second.esp"], gameLoadOrders.CapturedSelection);
         Assert.Equal(1, gameLoadOrders.PrepareCallCount);
@@ -145,18 +146,19 @@ public sealed class PluginIngestionTests : IDisposable
         ]);
         var overlayReader = new PreparedCaseOverlayReader();
         IPluginIngestion sut = new PluginIngestion(gameLoadOrders, overlayReader, new EntryExtraction());
+        var source = PluginListSource.Create(GameRelease.SkyrimSE, gameDirectory);
 
         var report = await sut.IngestAsync(
             new PluginProcessingRunRequest(
-                gameDirectory, "ingestion.db",
-                GameRelease.SkyrimSE,
+                source,
+                "ingestion.db",
                 ["NotListed.esp", "Unavailable.ESP", "READY.esp"],
                 UpdateMode.Append),
             new RecordingPluginRecordWriter([]),
             cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Equal(1, gameLoadOrders.PrepareCallCount);
-        Assert.Equal(dataDirectory, gameLoadOrders.CapturedCanonicalDataDirectory);
+        Assert.Equal(source.DataDirectory, gameLoadOrders.CapturedCanonicalDataDirectory);
         Assert.Equal(["NotListed.esp", "Unavailable.ESP", "READY.esp"], gameLoadOrders.CapturedSelection);
         Assert.Same(ready, Assert.Single(overlayReader.OpenedPlugins));
         Assert.Collection(
@@ -174,11 +176,15 @@ public sealed class PluginIngestionTests : IDisposable
     }
 
     /// <summary>
-    ///     Verifies that a selected game directory ending in a separator ingests from the same canonical Data directory
-    ///     as the plain form, so a pasted trailing separator cannot send a Processing Run looking in the wrong place.
+    ///     Verifies that ingestion prepares Plugins from exactly the Data directory of the request's Plugin List Source,
+    ///     which is the directory the Plugin List was discovered from.
     /// </summary>
+    /// <remarks>
+    ///     Deciding that directory from a game root, including one pasted with a trailing separator, is the Plugin List
+    ///     Source's job and is covered by <c>PluginListSourceTests</c>; ingestion no longer canonicalizes (ADR-0010).
+    /// </remarks>
     [Fact]
-    public async Task IngestAsync_GameDirectoryWithTrailingSeparator_UsesTheCanonicalDataDirectory()
+    public async Task IngestAsync_RequestSource_PreparesFromItsDataDirectoryVerbatim()
     {
         var gameDirectory = CreateGameDirectory();
         await CreatePluginFileAsync(gameDirectory, "First.esp");
@@ -188,19 +194,20 @@ public sealed class PluginIngestionTests : IDisposable
             gameLoadOrders,
             new RecordingOverlayReader(events),
             new EntryExtraction());
+        var request = new PluginProcessingRunRequest(
+            PluginListSource.Create(GameRelease.SkyrimSE, Path.Combine(gameDirectory, "Data")),
+            "ingestion.db",
+            ["First.esp"],
+            UpdateMode.Append);
 
         var report = await sut.IngestAsync(
-            new PluginProcessingRunRequest(
-                gameDirectory + Path.DirectorySeparatorChar, "ingestion.db",
-                GameRelease.SkyrimSE,
-                ["First.esp"],
-                UpdateMode.Append),
+            request,
             new RecordingPluginRecordWriter(events),
             progress: null,
             TestContext.Current.CancellationToken);
 
-        Assert.Equal(Path.Combine(gameDirectory, "Data"), gameLoadOrders.CapturedCanonicalDataDirectory);
-        // A Plugin found under the canonical Data directory must be ingested, not reported missing.
+        Assert.Equal(request.Source.DataDirectory, gameLoadOrders.CapturedCanonicalDataDirectory, StringComparer.Ordinal);
+        // A Plugin found under the source's Data directory must be ingested, not reported missing.
         var outcome = Assert.Single(report.Outcomes);
         Assert.IsType<IngestedPlugin>(outcome);
     }
@@ -224,8 +231,8 @@ public sealed class PluginIngestionTests : IDisposable
 
         var thrown = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sut.IngestAsync(
             new PluginProcessingRunRequest(
-                gameDirectory, "ingestion.db",
-                GameRelease.SkyrimSE,
+                PluginListSource.Create(GameRelease.SkyrimSE, gameDirectory),
+                "ingestion.db",
                 ["Never.esp"],
                 UpdateMode.Append),
             new RecordingPluginRecordWriter(events),
@@ -256,8 +263,8 @@ public sealed class PluginIngestionTests : IDisposable
 
         var thrown = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sut.IngestAsync(
             new PluginProcessingRunRequest(
-                gameDirectory, "ingestion.db",
-                GameRelease.SkyrimSE,
+                PluginListSource.Create(GameRelease.SkyrimSE, gameDirectory),
+                "ingestion.db",
                 ["Never.esp"],
                 UpdateMode.Append),
             new RecordingPluginRecordWriter(events),
@@ -287,8 +294,8 @@ public sealed class PluginIngestionTests : IDisposable
 
         var thrown = await Assert.ThrowsAsync<IOException>(() => sut.IngestAsync(
             new PluginProcessingRunRequest(
-                gameDirectory, "ingestion.db",
-                GameRelease.SkyrimSE,
+                PluginListSource.Create(GameRelease.SkyrimSE, gameDirectory),
+                "ingestion.db",
                 ["Never.esp"],
                 UpdateMode.Append),
             new RecordingPluginRecordWriter(events),
@@ -326,8 +333,8 @@ public sealed class PluginIngestionTests : IDisposable
 
         var thrown = await Assert.ThrowsAsync<InvalidOperationException>(() => sut.IngestAsync(
             new PluginProcessingRunRequest(
-                gameDirectory, "ingestion.db",
-                GameRelease.SkyrimSE,
+                PluginListSource.Create(GameRelease.SkyrimSE, gameDirectory),
+                "ingestion.db",
                 ["First.esp", "Never.esp"],
                 UpdateMode.Append),
             new RecordingPluginRecordWriter(events),
@@ -362,8 +369,8 @@ public sealed class PluginIngestionTests : IDisposable
 
         var thrown = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sut.IngestAsync(
             new PluginProcessingRunRequest(
-                gameDirectory, "ingestion.db",
-                GameRelease.SkyrimSE,
+                PluginListSource.Create(GameRelease.SkyrimSE, gameDirectory),
+                "ingestion.db",
                 ["Never.esp"],
                 UpdateMode.Append),
             new RecordingPluginRecordWriter(events),
@@ -396,8 +403,8 @@ public sealed class PluginIngestionTests : IDisposable
 
         var report = await sut.IngestAsync(
             new PluginProcessingRunRequest(
-                gameDirectory, "ingestion.db",
-                GameRelease.SkyrimSE,
+                PluginListSource.Create(GameRelease.SkyrimSE, gameDirectory),
+                "ingestion.db",
                 ["Bad.esp", "Good.esp"],
                 UpdateMode.Append),
             new RecordingPluginRecordWriter(storeEvents),
@@ -440,8 +447,8 @@ public sealed class PluginIngestionTests : IDisposable
 
         var report = await sut.IngestAsync(
             new PluginProcessingRunRequest(
-                gameDirectory, "ingestion.db",
-                GameRelease.SkyrimSE,
+                PluginListSource.Create(GameRelease.SkyrimSE, gameDirectory),
+                "ingestion.db",
                 ["BadRecords.esp", "Good.esp"],
                 UpdateMode.Append),
             new RecordingPluginRecordWriter(storeEvents),
@@ -487,8 +494,8 @@ public sealed class PluginIngestionTests : IDisposable
 
         var report = await sut.IngestAsync(
             new PluginProcessingRunRequest(
-                gameDirectory, "ingestion.db",
-                GameRelease.SkyrimSE,
+                PluginListSource.Create(GameRelease.SkyrimSE, gameDirectory),
+                "ingestion.db",
                 ["BadRecords.esp"],
                 UpdateMode.Append),
             new RecordingPluginRecordWriter([]),
@@ -520,8 +527,8 @@ public sealed class PluginIngestionTests : IDisposable
 
         var thrown = await Assert.ThrowsAsync<IOException>(() => sut.IngestAsync(
             new PluginProcessingRunRequest(
-                gameDirectory, "ingestion.db",
-                GameRelease.SkyrimSE,
+                PluginListSource.Create(GameRelease.SkyrimSE, gameDirectory),
+                "ingestion.db",
                 ["Broken.esp", "Never.esp"],
                 UpdateMode.Append),
             new RecordingPluginRecordWriter(storeEvents),
@@ -561,8 +568,8 @@ public sealed class PluginIngestionTests : IDisposable
 
         var thrown = await Assert.ThrowsAsync<UnresolvableMasterException>(() => sut.IngestAsync(
             new PluginProcessingRunRequest(
-                gameDirectory, "ingestion.db",
-                GameRelease.Starfield,
+                PluginListSource.Create(GameRelease.Starfield, gameDirectory),
+                "ingestion.db",
                 ["Patch.esp", "Never.esp"],
                 UpdateMode.Append),
             new RecordingPluginRecordWriter(storeEvents),
@@ -600,8 +607,8 @@ public sealed class PluginIngestionTests : IDisposable
 
         var thrown = await Assert.ThrowsAsync<UnresolvableMasterException>(() => sut.IngestAsync(
             new PluginProcessingRunRequest(
-                gameDirectory, "ingestion.db",
-                GameRelease.Starfield,
+                PluginListSource.Create(GameRelease.Starfield, gameDirectory),
+                "ingestion.db",
                 ["Patch.esp"],
                 UpdateMode.Append),
             new RecordingPluginRecordWriter(storeEvents),
@@ -634,8 +641,8 @@ public sealed class PluginIngestionTests : IDisposable
 
         var thrown = await Assert.ThrowsAsync<IOException>(() => sut.IngestAsync(
             new PluginProcessingRunRequest(
-                gameDirectory, "ingestion.db",
-                GameRelease.SkyrimSE,
+                PluginListSource.Create(GameRelease.SkyrimSE, gameDirectory),
+                "ingestion.db",
                 ["BrokenRecords.esp", "Never.esp"],
                 UpdateMode.Append),
             new RecordingPluginRecordWriter(storeEvents),
@@ -663,8 +670,8 @@ public sealed class PluginIngestionTests : IDisposable
 
         var thrown = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sut.IngestAsync(
             new PluginProcessingRunRequest(
-                gameDirectory, "ingestion.db",
-                GameRelease.SkyrimSE,
+                PluginListSource.Create(GameRelease.SkyrimSE, gameDirectory),
+                "ingestion.db",
                 ["Cancelled.esp"],
                 UpdateMode.Append),
             new RecordingPluginRecordWriter([]),
@@ -699,8 +706,8 @@ public sealed class PluginIngestionTests : IDisposable
 
         var thrown = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sut.IngestAsync(
             new PluginProcessingRunRequest(
-                gameDirectory, "ingestion.db",
-                GameRelease.SkyrimSE,
+                PluginListSource.Create(GameRelease.SkyrimSE, gameDirectory),
+                "ingestion.db",
                 ["CancelledRecords.esp", "Never.esp"],
                 UpdateMode.Append),
             new RecordingPluginRecordWriter(storeEvents),
@@ -729,8 +736,8 @@ public sealed class PluginIngestionTests : IDisposable
 
         var thrown = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sut.IngestAsync(
             new PluginProcessingRunRequest(
-                gameDirectory, "ingestion.db",
-                GameRelease.SkyrimSE,
+                PluginListSource.Create(GameRelease.SkyrimSE, gameDirectory),
+                "ingestion.db",
                 ["Cancelled.esp"],
                 UpdateMode.Append),
             recordStore,
@@ -760,8 +767,8 @@ public sealed class PluginIngestionTests : IDisposable
 
         var thrown = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sut.IngestAsync(
             new PluginProcessingRunRequest(
-                gameDirectory, "ingestion.db",
-                GameRelease.SkyrimSE,
+                PluginListSource.Create(GameRelease.SkyrimSE, gameDirectory),
+                "ingestion.db",
                 ["First.esp", "Never.esp"],
                 UpdateMode.Append),
             recordStore,
@@ -791,8 +798,8 @@ public sealed class PluginIngestionTests : IDisposable
 
         var thrown = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sut.IngestAsync(
             new PluginProcessingRunRequest(
-                gameDirectory, "ingestion.db",
-                GameRelease.SkyrimSE,
+                PluginListSource.Create(GameRelease.SkyrimSE, gameDirectory),
+                "ingestion.db",
                 ["First.esp", "Never.esp"],
                 UpdateMode.Append),
             new RecordingPluginRecordWriter(events),
@@ -826,8 +833,8 @@ public sealed class PluginIngestionTests : IDisposable
 
         var thrown = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sut.IngestAsync(
             new PluginProcessingRunRequest(
-                gameDirectory, "ingestion.db",
-                GameRelease.SkyrimSE,
+                PluginListSource.Create(GameRelease.SkyrimSE, gameDirectory),
+                "ingestion.db",
                 ["First.esp"],
                 UpdateMode.Append),
             new RecordingPluginRecordWriter([]),
@@ -856,8 +863,8 @@ public sealed class PluginIngestionTests : IDisposable
 
         var thrown = await Assert.ThrowsAsync<IOException>(() => sut.IngestAsync(
             new PluginProcessingRunRequest(
-                gameDirectory, "ingestion.db",
-                GameRelease.SkyrimSE,
+                PluginListSource.Create(GameRelease.SkyrimSE, gameDirectory),
+                "ingestion.db",
                 ["First.esp", "Never.esp"],
                 UpdateMode.Append),
             recordStore,
@@ -888,8 +895,8 @@ public sealed class PluginIngestionTests : IDisposable
 
         var thrown = await Assert.ThrowsAsync<IOException>(() => sut.IngestAsync(
             new PluginProcessingRunRequest(
-                gameDirectory, "ingestion.db",
-                GameRelease.SkyrimSE,
+                PluginListSource.Create(GameRelease.SkyrimSE, gameDirectory),
+                "ingestion.db",
                 ["Broken.esp"],
                 UpdateMode.Append),
             recordStore,
@@ -919,8 +926,8 @@ public sealed class PluginIngestionTests : IDisposable
 
         var thrown = await Assert.ThrowsAsync<InvalidOperationException>(() => sut.IngestAsync(
             new PluginProcessingRunRequest(
-                gameDirectory, "ingestion.db",
-                GameRelease.SkyrimSE,
+                PluginListSource.Create(GameRelease.SkyrimSE, gameDirectory),
+                "ingestion.db",
                 ["Broken.esp"],
                 UpdateMode.Append),
             recordStore,
@@ -948,8 +955,8 @@ public sealed class PluginIngestionTests : IDisposable
 
         var report = await sut.IngestAsync(
             new PluginProcessingRunRequest(
-                gameDirectory, "ingestion.db",
-                GameRelease.SkyrimSE,
+                PluginListSource.Create(GameRelease.SkyrimSE, gameDirectory),
+                "ingestion.db",
                 ["Warned.esp", "Clean.esp"],
                 UpdateMode.Append),
             new RecordingPluginRecordWriter([]),
@@ -994,8 +1001,8 @@ public sealed class PluginIngestionTests : IDisposable
 
         var report = await sut.IngestAsync(
             new PluginProcessingRunRequest(
-                gameDirectory, "ingestion.db",
-                GameRelease.SkyrimSE,
+                PluginListSource.Create(GameRelease.SkyrimSE, gameDirectory),
+                "ingestion.db",
                 ["Absent.esp", "Unavailable.esp", "Zero.esp", "Available.esp"],
                 UpdateMode.Append),
             new RecordingPluginRecordWriter(events),
@@ -1065,8 +1072,8 @@ public sealed class PluginIngestionTests : IDisposable
 
         var report = await sut.IngestAsync(
             new PluginProcessingRunRequest(
-                gameDirectory, "ingestion.db",
-                GameRelease.SkyrimSE,
+                PluginListSource.Create(GameRelease.SkyrimSE, gameDirectory),
+                "ingestion.db",
                 ["Empty.esp"],
                 UpdateMode.ReplacePluginRecords),
             recordStore,
