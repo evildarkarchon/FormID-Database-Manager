@@ -614,6 +614,53 @@ public sealed class ProcessingRunPresentationTests
     }
 
     /// <summary>
+    ///     Pins the sentence each Processing Run Admission refusal reaches the user as (ADR-0010).
+    /// </summary>
+    /// <param name="reasonName">
+    ///     The name of the refusal reason, passed as text because the reason is internal and a public test method
+    ///     cannot take it as a parameter.
+    /// </param>
+    /// <param name="expected">The exact sentence the user reads.</param>
+    [Theory]
+    [InlineData(nameof(RunRejectionReason.NoGameSelected), "Please select a game from the dropdown first.")]
+    [InlineData(nameof(RunRejectionReason.NoGameDirectory),
+        "Game directory must be specified when processing plugins")]
+    [InlineData(nameof(RunRejectionReason.PluginListLoading),
+        "The plugin list is still loading for this directory. Try again when it finishes.")]
+    [InlineData(nameof(RunRejectionReason.PluginListUnavailable),
+        "The plugin list for this directory did not load. Browse to the directory again to retry.")]
+    [InlineData(nameof(RunRejectionReason.NoPluginsSelected), "No plugins selected")]
+    [InlineData(nameof(RunRejectionReason.NoDatabaseLocation),
+        "Choose a database file: the default location is unavailable.")]
+    public void Render_RunRejectionReason_ReturnsTheRefusalSentence(string reasonName, string expected)
+    {
+        var reason = Enum.Parse<RunRejectionReason>(reasonName);
+
+        Assert.Equal(expected, ProcessingRunPresentation.Render(reason));
+    }
+
+    /// <summary>
+    ///     Verifies that every refusal reason has a sentence, so adding a reason without wording fails here.
+    /// </summary>
+    [Fact]
+    public void Render_EveryRunRejectionReason_HasASentence()
+    {
+        foreach (var reason in Enum.GetValues<RunRejectionReason>())
+        {
+            Assert.False(string.IsNullOrWhiteSpace(ProcessingRunPresentation.Render(reason)));
+        }
+    }
+
+    /// <summary>
+    ///     Verifies that a refusal reason this module does not know is refused rather than rendered as empty text.
+    /// </summary>
+    [Fact]
+    public void Render_UndefinedRunRejectionReason_Throws()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => ProcessingRunPresentation.Render((RunRejectionReason)999));
+    }
+
+    /// <summary>
     ///     Renders the report of one selected-Plugin run that ended with the supplied outcomes.
     /// </summary>
     /// <param name="outcomes">One outcome per selected Plugin, in selection order.</param>

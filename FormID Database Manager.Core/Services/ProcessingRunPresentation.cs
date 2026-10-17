@@ -4,12 +4,13 @@ using FormID_Database_Manager.ViewModels;
 namespace FormID_Database_Manager.Services;
 
 /// <summary>
-///     Renders how a Processing Run ended into the wording the user reads.
+///     Renders everything a Processing Run says to the user: its transient progress, how it ended, and why Processing
+///     Run Admission refused to start it.
 /// </summary>
 /// <remarks>
 ///     <para>
-///         This is a pure renderer: it takes an outcome, returns what that outcome implies, writes nothing, and holds
-///         no state. Every ViewModel write stays with the User Workflow, which also keeps the run activity and the
+///         This is a pure renderer: it takes a progress report, an outcome or a refusal reason, returns what that value
+///         implies, writes nothing, and holds no state. Every ViewModel write stays with the User Workflow, which also keeps the run activity and the
 ///         lock that orders it — both carry comments explaining races (issue #60, and the window between workflow
 ///         commitment and the executor's cancellation source) that a change about locality of wording has no business
 ///         relocating.
@@ -86,6 +87,31 @@ internal static class ProcessingRunPresentation
         return new RenderedRunProgress(
             $"Processing: {progressPercent:F1}% ({importing.RecordCount:N0} records)",
             progressPercent);
+    }
+
+    /// <summary>
+    ///     Renders why Processing Run Admission refused a press into the one error message its caller should show.
+    /// </summary>
+    /// <param name="reason">Why the press was refused before any run existed.</param>
+    /// <returns>The sentence the user reads, which says what to do next where there is something to do.</returns>
+    /// <exception cref="ArgumentOutOfRangeException">The reason is not one this module knows how to render.</exception>
+    internal static string Render(RunRejectionReason reason)
+    {
+        return reason switch
+        {
+            RunRejectionReason.NoGameSelected => "Please select a game from the dropdown first.",
+            RunRejectionReason.NoGameDirectory => "Game directory must be specified when processing plugins",
+            RunRejectionReason.PluginListLoading =>
+                "The plugin list is still loading for this directory. Try again when it finishes.",
+            RunRejectionReason.PluginListUnavailable =>
+                "The plugin list for this directory did not load. Browse to the directory again to retry.",
+            RunRejectionReason.NoPluginsSelected => "No plugins selected",
+            RunRejectionReason.NoDatabaseLocation => "Choose a database file: the default location is unavailable.",
+            _ => throw new ArgumentOutOfRangeException(
+                nameof(reason),
+                reason,
+                "Unsupported Processing Run refusal reason.")
+        };
     }
 
     /// <summary>

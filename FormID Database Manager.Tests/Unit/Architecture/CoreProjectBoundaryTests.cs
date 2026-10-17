@@ -281,6 +281,37 @@ public class CoreProjectBoundaryTests
     }
 
     /// <summary>
+    ///     Verifies that neither Processing Run Admission nor the User Workflow writes a refusal sentence of its own:
+    ///     admission returns a typed reason and <c>ProcessingRunPresentation</c> alone renders it (ADR-0010).
+    /// </summary>
+    /// <param name="sourceFileName">The Core service source that must hold no refusal wording.</param>
+    /// <remarks>
+    ///     Each sentence is pinned in full. The User Workflow legitimately tells a Browse user it "Could not detect game
+    ///     from directory. Please select a game from the dropdown.", so only the complete refusal sentence, ending in
+    ///     "first.", is forbidden. What a refusal does say is pinned by <c>ProcessingRunPresentationTests</c>.
+    /// </remarks>
+    [Theory]
+    [InlineData("ProcessingRunAdmission.cs")]
+    [InlineData("UserWorkflow.cs")]
+    public void RunAdmissionCallers_RefusalReasons_ContainNoRefusalSentence(string sourceFileName)
+    {
+        var source = File.ReadAllText(Path.Combine(GetCoreProjectDirectory(), "Services", sourceFileName));
+
+        foreach (var refusalSentence in new[]
+                 {
+                     "Please select a game from the dropdown first.",
+                     "Game directory must be specified when processing plugins",
+                     "The plugin list is still loading for this directory.",
+                     "The plugin list for this directory did not load.",
+                     "No plugins selected",
+                     "Choose a database file"
+                 })
+        {
+            Assert.DoesNotContain(refusalSentence, source, StringComparison.Ordinal);
+        }
+    }
+
+    /// <summary>
     ///     Verifies that the dry-run wording a substantive plan replaced has not come back anywhere in Core.
     /// </summary>
     /// <remarks>

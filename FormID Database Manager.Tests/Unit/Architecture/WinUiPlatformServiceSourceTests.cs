@@ -221,8 +221,9 @@ public class WinUiPlatformServiceSourceTests
     }
 
     /// <summary>
-    ///     Verifies the WinUI shell never resolves the default database root itself, nor computes a default database
-    ///     path from one: production composition in <c>UserWorkflow.Create</c> resolves the root once and injects it.
+    ///     Verifies the WinUI shell never resolves the default database root itself, nor decides a run from one:
+    ///     production composition in <c>UserWorkflow.Create</c> resolves the root once and injects it, and only
+    ///     Processing Run Admission computes a default database path from it.
     /// </summary>
     /// <param name="forbiddenText">Source text that would mean the shell is resolving or applying the root itself.</param>
     /// <remarks>
@@ -231,7 +232,7 @@ public class WinUiPlatformServiceSourceTests
     /// </remarks>
     [Theory]
     [InlineData("LocalApplicationData")]
-    [InlineData("DefaultDatabasePathProvider")]
+    [InlineData("ProcessingRunAdmission")]
     public void WinUiShell_DefaultDatabaseRoot_IsNotResolvedByTheShell(string forbiddenText)
     {
         var winUiDirectory = GetWinUiProjectDirectory();

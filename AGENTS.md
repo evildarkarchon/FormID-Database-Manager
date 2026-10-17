@@ -57,8 +57,7 @@ renaming Core members or changing project boundaries. In particular:
 - Processing Run Admission decides, before a run exists, whether a button press starts one (ADR-0010). It is pure: a
   refusal is a typed `RunRejectionReason` that `ProcessingRunPresentation` renders, not an exception, and admission
   creates no directory. The Store creates the database's parent directory when it opens. The selected-Plugin request
-  carries its `PluginListSource`, so canonicalization does not repeat downstream. ADR-0010 records this ahead of the
-  code; until it lands, `ProcessingRunValidationException` and `DefaultDatabasePathProvider` still exist.
+  carries its `PluginListSource`, so canonicalization does not repeat downstream.
 - A dry run returns a Processing Run Plan and opens no Store. A selected-Plugin dry run still resolves the Data path,
   prepares the load order, and opens each Plugin's overlay, so it reports would-ingest and would-skip per Plugin rather
   than echoing the selection. A FormID text dry run reports the file's presence and size, and neither opens nor parses
