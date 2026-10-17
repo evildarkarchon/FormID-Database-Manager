@@ -23,6 +23,14 @@ public class UserWorkflowTests
     private const string DatabasePath = @"C:\Databases\formids.db";
     private const string FormIdListPath = @"C:\Lists\formids.txt";
 
+    /// <summary>
+    /// The default database root injected into every workflow under test. It is deliberately never created, so a
+    /// test can prove that defaulting a database path leaves nothing on disk, and no test touches the developer's
+    /// own local application data directory.
+    /// </summary>
+    private readonly string _defaultDatabaseRoot =
+        Path.Combine(Path.GetTempPath(), $"FormIdTests-DefaultRoot-{Guid.NewGuid():N}");
+
     private readonly SynchronousThreadDispatcher _dispatcher = new();
     private readonly Mock<IFileDialogService> _fileDialogService = new();
     private readonly GameInstallations _gameInstallations;
@@ -855,7 +863,8 @@ public class UserWorkflowTests
             _fileDialogService.Object,
             _gameInstallations,
             pluginList,
-            executor);
+            executor,
+            _defaultDatabaseRoot);
 
         await sut.SelectGameReleaseAsync(GameRelease.Fallout4);
         Assert.Null(viewModel.SelectedGame);
@@ -869,8 +878,12 @@ public class UserWorkflowTests
         Assert.Equal(run.DatabasePath, viewModel.DatabasePath);
     }
 
+    /// <summary>
+    /// Verifies that a real run with no chosen database path defaults one under the injected root, writes it back to
+    /// the database box, and creates nothing: the FormID Record Store creates the folder when the run opens it.
+    /// </summary>
     [Fact]
-    public async Task ProcessFormIdsAsync_EmptyDatabasePath_CreatesDefaultPathForSelectedGame()
+    public async Task ProcessFormIdsAsync_EmptyDatabasePath_DefaultsUnderInjectedRootWithoutCreatingIt()
     {
         var sut = CreateSut();
         var confirmed = await ConfirmPluginListAsync(sut, ["User.esp"]);
@@ -880,10 +893,13 @@ public class UserWorkflowTests
         await sut.ProcessFormIdsAsync();
 
         var run = Assert.IsType<PluginProcessingRunRequest>(Assert.Single(_processingRuns));
-        Assert.Equal(DefaultDatabasePathProvider.CreateDefaultDatabasePath(GameRelease.SkyrimSE), _viewModel.DatabasePath);
+        Assert.Equal(
+            Path.Combine(_defaultDatabaseRoot, "FormID Database Manager", "Databases", "SkyrimSE.db"),
+            _viewModel.DatabasePath);
         Assert.Equal(_viewModel.DatabasePath, run.DatabasePath);
-        Assert.Equal("SkyrimSE.db", Path.GetFileName(run.DatabasePath));
         Assert.Equal(["User.esp"], run.PluginNames);
+        Assert.False(Directory.Exists(_defaultDatabaseRoot),
+            $"Defaulting a database path must not create the root: {_defaultDatabaseRoot}");
     }
 
     /// <summary>
@@ -1319,6 +1335,7 @@ public class UserWorkflowTests
         var run = Assert.IsType<PluginProcessingRunRequest>(Assert.Single(_processingRuns));
         Assert.Empty(_viewModel.DatabasePath);
         Assert.Empty(run.DatabasePath);
+        Assert.False(Directory.Exists(_defaultDatabaseRoot));
     }
 
     /// <summary>
@@ -1865,7 +1882,8 @@ public class UserWorkflowTests
             _fileDialogService.Object,
             _gameInstallations,
             _pluginList,
-            executor);
+            executor,
+            _defaultDatabaseRoot);
         await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
         // The Plugin List is confirmed, but its projection is still waiting on the dispatcher.
         Assert.NotNull(_pluginList.Current.Confirmed);
@@ -1917,6 +1935,23 @@ public class UserWorkflowTests
         Assert.Null(disposalFailure);
         Assert.Empty(viewModel.ErrorMessages);
         fileDialogService.VerifyNoOtherCalls();
+    }
+
+    /// <summary>
+    /// Verifies that production composition resolves the local application data directory and hands it to the
+    /// workflow as its default database root, so no other production code has to read that location on its own.
+    /// </summary>
+    [Fact]
+    public void Create_ProductionComposition_PassesResolvedLocalApplicationDataRootThrough()
+    {
+        var dispatcher = new SynchronousThreadDispatcher();
+        var viewModel = new MainWindowViewModel(dispatcher);
+
+        using var sut = UserWorkflow.Create(viewModel, dispatcher, new Mock<IFileDialogService>().Object);
+
+        Assert.Equal(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            sut.DefaultDatabaseRoot);
     }
 
     /// <summary>
@@ -1992,7 +2027,8 @@ public class UserWorkflowTests
             _fileDialogService.Object,
             _gameInstallations,
             _pluginList,
-            _processingRunExecutor);
+            _processingRunExecutor,
+            _defaultDatabaseRoot);
     }
 
     /// <summary>

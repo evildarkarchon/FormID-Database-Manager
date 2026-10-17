@@ -8,43 +8,34 @@ internal static class DefaultDatabasePathProvider
     private const string DatabaseDirectoryName = "Databases";
 
     /// <summary>
-    ///     Creates the default database path under the current user's local application data directory.
+    ///     Computes the default database path under the supplied default database root.
     /// </summary>
     /// <param name="gameRelease">The selected game release used to choose the safe database filename.</param>
-    /// <returns>The full path to a generated database file whose containing directory already exists.</returns>
-    /// <exception cref="InvalidOperationException">Thrown when the local application data directory cannot be resolved.</exception>
-    public static string CreateDefaultDatabasePath(GameRelease gameRelease)
+    /// <param name="defaultDatabaseRoot">
+    ///     The user-writable root resolved once by production composition (the local application data directory), or
+    ///     null or blank when it could not be resolved.
+    /// </param>
+    /// <returns>
+    ///     The full path to a generated database file. Nothing is created on disk: the FormID Record Store creates the
+    ///     database's parent directory when it opens (ADR-0001), so a refused run or a Dry Run leaves nothing behind.
+    /// </returns>
+    /// <exception cref="InvalidOperationException">
+    ///     Thrown when <paramref name="defaultDatabaseRoot" /> is null or blank, because no default location exists.
+    /// </exception>
+    /// <exception cref="ArgumentOutOfRangeException">
+    ///     Thrown when <paramref name="gameRelease" /> is not a Supported GameRelease.
+    /// </exception>
+    internal static string CreateDefaultDatabasePath(GameRelease gameRelease, string? defaultDatabaseRoot)
     {
-        var localApplicationDataRoot = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-
-        if (string.IsNullOrWhiteSpace(localApplicationDataRoot))
+        if (string.IsNullOrWhiteSpace(defaultDatabaseRoot))
         {
+            // An unresolvable root is an environment fact rather than a caller mistake, so it keeps the wording the
+            // run reported before the root was injected instead of becoming an argument exception.
             throw new InvalidOperationException(
                 "Could not resolve the local application data directory for the current user.");
         }
 
-        return CreateDefaultDatabasePath(gameRelease, localApplicationDataRoot);
-    }
-
-    /// <summary>
-    ///     Creates the default database path under the supplied local application data root.
-    /// </summary>
-    /// <param name="gameRelease">The selected game release used to choose the safe database filename.</param>
-    /// <param name="localApplicationDataRoot">The user-writable local application data root to contain generated databases.</param>
-    /// <returns>The full path to a generated database file whose containing directory already exists.</returns>
-    /// <exception cref="ArgumentException">Thrown when <paramref name="localApplicationDataRoot" /> is blank.</exception>
-    /// <exception cref="ArgumentOutOfRangeException">
-    ///     Thrown when <paramref name="gameRelease" /> is not a Supported GameRelease.
-    /// </exception>
-    internal static string CreateDefaultDatabasePath(GameRelease gameRelease, string localApplicationDataRoot)
-    {
-        if (string.IsNullOrWhiteSpace(localApplicationDataRoot))
-        {
-            throw new ArgumentException("A local application data root is required.", nameof(localApplicationDataRoot));
-        }
-
-        var databaseDirectory = Path.Combine(localApplicationDataRoot, AppDataDirectoryName, DatabaseDirectoryName);
-        Directory.CreateDirectory(databaseDirectory);
+        var databaseDirectory = Path.Combine(defaultDatabaseRoot, AppDataDirectoryName, DatabaseDirectoryName);
 
         // The Store's own table name is the filename, so a database file and the table inside it cannot disagree.
         return Path.Combine(databaseDirectory, $"{SupportedGameReleases.ForRelease(gameRelease).TableName}.db");

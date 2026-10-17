@@ -48,6 +48,15 @@ public sealed class UserWorkflow : IDisposable
     private ActivityProjection _runActivity = ActivityProjection.None;
 
     /// <summary>
+    ///     The default database root this workflow was composed with, or null or blank when none could be resolved.
+    /// </summary>
+    /// <remarks>
+    ///     Resolved once by <see cref="Create" /> from the local application data directory and injected, so no other
+    ///     production code reads that location on its own and tests can supply a root that is never created.
+    /// </remarks>
+    internal string? DefaultDatabaseRoot { get; }
+
+    /// <summary>
     ///     Creates a workflow module that coordinates existing Core modules behind one UI-neutral interface.
     /// </summary>
     /// <param name="viewModel">The binding-state projection updated by workflow transitions.</param>
@@ -59,11 +68,17 @@ public sealed class UserWorkflow : IDisposable
     /// <param name="gameInstallations">The Game Installation resolution module, used for detection and location.</param>
     /// <param name="pluginList">The authoritative Plugin List whose lifetime transfers to this workflow.</param>
     /// <param name="processingRunExecutor">The owned Processing Run executor.</param>
+    /// <param name="defaultDatabaseRoot">
+    ///     The root under which a real run with no chosen database path gets its default database, or null or blank when
+    ///     composition could not resolve one. It is only used to compute a path; nothing is created under it here.
+    /// </param>
     /// <exception cref="ArgumentNullException">Any dependency is null.</exception>
     /// <remarks>
     ///     The Plugin List stays a parameter rather than being built here because tests observe it directly through its
     ///     own public interface. The presentation adapter subscribes to it, and queues its first projection, as the last
-    ///     construction step, so a failed argument check never leaves a subscribed adapter behind.
+    ///     construction step, so a failed argument check never leaves a subscribed adapter behind. An unresolved
+    ///     default root is accepted rather than rejected, because it only matters to a run that needs a default, and
+    ///     that run reports it.
     /// </remarks>
     internal UserWorkflow(
         MainWindowViewModel viewModel,
@@ -71,7 +86,8 @@ public sealed class UserWorkflow : IDisposable
         IFileDialogService fileDialogService,
         GameInstallations gameInstallations,
         PluginList pluginList,
-        IProcessingRunExecutor processingRunExecutor)
+        IProcessingRunExecutor processingRunExecutor,
+        string? defaultDatabaseRoot)
     {
         _viewModel = viewModel ?? throw new ArgumentNullException(nameof(viewModel));
         var checkedDispatcher = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
@@ -80,6 +96,7 @@ public sealed class UserWorkflow : IDisposable
         _pluginList = pluginList ?? throw new ArgumentNullException(nameof(pluginList));
         _processingRunExecutor = processingRunExecutor ??
                                  throw new ArgumentNullException(nameof(processingRunExecutor));
+        DefaultDatabaseRoot = defaultDatabaseRoot;
         _gameContext = new GameContextSnapshot(
             null,
             null,
@@ -132,6 +149,12 @@ public sealed class UserWorkflow : IDisposable
             new FormIdRecordStoreSessionOpener());
         var pluginList = new PluginList(gameLoadOrders);
 
+        // The user's profile location is read here and only here, once, so the workflow and everything it calls
+        // receive the default database root as a value. Resolving it creates nothing; the FormID Record Store creates
+        // the database's folder when a real run opens it (ADR-0001). A blank result is passed through unchanged and
+        // only surfaces if a run actually needs a default path.
+        var defaultDatabaseRoot = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+
         try
         {
             return new UserWorkflow(
@@ -140,7 +163,8 @@ public sealed class UserWorkflow : IDisposable
                 fileDialogService,
                 new GameInstallations(new GameInstallationProbe()),
                 pluginList,
-                processingRunExecutor);
+                processingRunExecutor,
+                defaultDatabaseRoot);
         }
         catch
         {
@@ -818,7 +842,9 @@ public sealed class UserWorkflow : IDisposable
         // deliberately wrote nothing.
         if (string.IsNullOrEmpty(databasePath) && !dryRun)
         {
-            databasePath = DefaultDatabasePathProvider.CreateDefaultDatabasePath(selectedGameRelease);
+            databasePath = DefaultDatabasePathProvider.CreateDefaultDatabasePath(
+                selectedGameRelease,
+                DefaultDatabaseRoot);
             // The accepted run still uses its default, but a reentrant edit must survive for the next run.
             if (string.Equals(_viewModel.DatabasePath, inputs.DatabasePath, StringComparison.Ordinal))
             {

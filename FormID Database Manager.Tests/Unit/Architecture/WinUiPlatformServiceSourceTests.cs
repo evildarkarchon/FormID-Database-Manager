@@ -211,8 +211,6 @@ public class WinUiPlatformServiceSourceTests
         // reflection nothing in the processing path performs, and re-adding one should be a deliberate edit.
         Assert.DoesNotContain("RequiresUnreferencedCode", source, StringComparison.Ordinal);
         Assert.Contains("await _userWorkflow.ProcessFormIdsAsync();", source, StringComparison.Ordinal);
-        Assert.DoesNotContain("DefaultDatabasePathProvider.CreateDefaultDatabasePath", source,
-            StringComparison.Ordinal);
         Assert.DoesNotContain("Directory.GetCurrentDirectory()", source, StringComparison.Ordinal);
         Assert.DoesNotContain("processButton.Content", source, StringComparison.Ordinal);
 
@@ -220,6 +218,31 @@ public class WinUiPlatformServiceSourceTests
         Assert.Contains("ItemsSource=\"{Binding AvailableGames}\"", xaml, StringComparison.Ordinal);
         Assert.Contains("Click=\"ProcessFormIds_Click\"", xaml, StringComparison.Ordinal);
         Assert.Contains("Content=\"{Binding ProcessButtonText, Mode=OneWay}\"", xaml, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    ///     Verifies the WinUI shell never resolves the default database root itself, nor computes a default database
+    ///     path from one: production composition in <c>UserWorkflow.Create</c> resolves the root once and injects it.
+    /// </summary>
+    /// <param name="forbiddenText">Source text that would mean the shell is resolving or applying the root itself.</param>
+    /// <remarks>
+    ///     Every shell source file is scanned, not just the main window, because the shell can see Core internals and
+    ///     any of its files could otherwise grow a second reader of the user's profile location.
+    /// </remarks>
+    [Theory]
+    [InlineData("LocalApplicationData")]
+    [InlineData("DefaultDatabasePathProvider")]
+    public void WinUiShell_DefaultDatabaseRoot_IsNotResolvedByTheShell(string forbiddenText)
+    {
+        var winUiDirectory = GetWinUiProjectDirectory();
+
+        var offendingFiles = Directory.EnumerateFiles(winUiDirectory, "*.cs", SearchOption.AllDirectories)
+            .Where(path => !IsBuildOutput(path))
+            .Where(path => File.ReadAllText(path).Contains(forbiddenText, StringComparison.Ordinal))
+            .Select(path => Path.GetRelativePath(winUiDirectory, path))
+            .ToArray();
+
+        Assert.Empty(offendingFiles);
     }
 
     /// <summary>
@@ -673,6 +696,19 @@ public class WinUiPlatformServiceSourceTests
     private static string GetWinUiProjectDirectory()
     {
         return Path.Combine(FindRepositoryRoot(), "FormID Database Manager.WinUI");
+    }
+
+    /// <summary>
+    /// Excludes generated build output, which can echo source text but is not shell source.
+    /// </summary>
+    /// <param name="path">A file path found under the WinUI project directory.</param>
+    /// <returns><see langword="true" /> when the path lies under a <c>bin</c> or <c>obj</c> directory.</returns>
+    private static bool IsBuildOutput(string path)
+    {
+        return path.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}",
+                   StringComparison.OrdinalIgnoreCase)
+               || path.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}",
+                   StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>

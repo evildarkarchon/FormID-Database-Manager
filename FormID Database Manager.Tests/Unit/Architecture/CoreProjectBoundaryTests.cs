@@ -189,6 +189,25 @@ public class CoreProjectBoundaryTests
     }
 
     /// <summary>
+    ///     Verifies that the User Workflow's production composition is the only Core source that reads the local
+    ///     application data directory, so the default database root is resolved once and injected everywhere else.
+    /// </summary>
+    [Fact]
+    public void CoreSources_DefaultDatabaseRoot_IsResolvedOnlyByUserWorkflowComposition()
+    {
+        var coreProjectDirectory = GetCoreProjectDirectory();
+
+        var localApplicationDataReaders = Directory
+            .EnumerateFiles(coreProjectDirectory, "*.cs", SearchOption.AllDirectories)
+            .Where(path => !IsBuildOutput(path))
+            .Where(path => File.ReadAllText(path).Contains("LocalApplicationData", StringComparison.Ordinal))
+            .Select(path => Path.GetRelativePath(coreProjectDirectory, path))
+            .ToArray();
+
+        Assert.Equal(new[] { Path.Combine("Services", "UserWorkflow.cs") }, localApplicationDataReaders);
+    }
+
+    /// <summary>
     ///     Verifies that the wording the FormID Record Store used to write onto its progress path has not come back,
     ///     leaving both the words and the decision to name a Plugin to whoever renders the counters it reports.
     /// </summary>
