@@ -180,9 +180,10 @@ public sealed class SupportedGameReleasesTests
     [InlineData("Skyrim.ESM")]
     public void ForRelease_BasePluginInAnyCasing_IsMatched(string pluginName)
     {
-        // Asserted through the set's own Contains rather than a sequence search, so the match is the one the
-        // Plugin List performs — decided by the set's comparer, not by an assertion-supplied one.
-        Assert.True(SupportedGameReleases.ForRelease(GameRelease.SkyrimSE).BasePlugins.Contains(pluginName));
+        // BasePlugins is statically an ImmutableHashSet, so this binds to xUnit's set overload, which delegates to the
+        // set's own Contains rather than a sequence search. The match is therefore the one the Plugin List performs —
+        // decided by the set's comparer, not by an assertion-supplied one.
+        Assert.Contains(pluginName, SupportedGameReleases.ForRelease(GameRelease.SkyrimSE).BasePlugins);
     }
 
     /// <summary>
