@@ -664,6 +664,28 @@ public sealed class ProcessingRunPresentationTests
     }
 
     /// <summary>
+    ///     Pins the generic sentence an unexpected failure reaches the user as: the failure's own message behind the
+    ///     legacy "Error processing FormIDs" prefix.
+    /// </summary>
+    [Fact]
+    public void RenderUnexpectedFailure_AnyException_PrefixesTheFailureMessage()
+    {
+        var rendered = ProcessingRunPresentation.RenderUnexpectedFailure(
+            new InvalidOperationException("store unavailable"));
+
+        Assert.Equal("Error processing FormIDs: store unavailable", rendered);
+    }
+
+    /// <summary>
+    ///     Verifies that rendering a missing failure is refused rather than rendered as a message about nothing.
+    /// </summary>
+    [Fact]
+    public void RenderUnexpectedFailure_NullFailure_Throws()
+    {
+        Assert.Throws<ArgumentNullException>(() => ProcessingRunPresentation.RenderUnexpectedFailure(null!));
+    }
+
+    /// <summary>
     ///     Renders the report of one selected-Plugin run that ended with the supplied outcomes.
     /// </summary>
     /// <param name="outcomes">One outcome per selected Plugin, in selection order.</param>

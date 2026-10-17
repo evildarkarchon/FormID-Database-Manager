@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Diagnostics;
 using System.Runtime.ExceptionServices;
 using FormID_Database_Manager.ViewModels;
 using Mutagen.Bethesda;
@@ -427,20 +428,8 @@ public sealed class UserWorkflow : IDisposable
     {
         // The run-active check, Processing Run Admission and the transition into an active run happen together, so a
         // second press arriving before the executor has the run cancels the run in flight rather than starting another.
-        var decision = TryBeginRunActivity(out var inputs, out var admissionFailure);
-        if (admissionFailure is not null)
-        {
-            // Admission throws only when no Plugin List Source can be built from the captured Game Context, such as a
-            // malformed directory Browse kept. It threw before any activity was published, so the gate is still free
-            // and there is no activity to hand back; the failure is shown as the unexpected one it is, exactly as it
-            // was before admission ran inside the gate (ADR-0002).
-            _viewModel.ErrorMessages.Clear();
-            _viewModel.WarningMessages.Clear();
-            _viewModel.AddErrorMessage($"Error processing FormIDs: {admissionFailure.Message}");
-            return;
-        }
-
-        if (inputs is null || decision is null)
+        var press = DecideRunPress();
+        if (press is RunPress.CancelActiveRun)
         {
             // "Cancelling..." is what the run is doing now, not how it ended, so it belongs on the transient channel:
             // it is deliberately not the acknowledgement, which the cancellation handler below writes instead (#60).
@@ -449,32 +438,58 @@ public sealed class UserWorkflow : IDisposable
             return;
         }
 
+        // Every press that does not cancel starts the message lists over, whether it is refused, fails admission or
+        // becomes a run, so what the user reads afterwards is only what this press produced.
         _viewModel.ErrorMessages.Clear();
         _viewModel.WarningMessages.Clear();
 
-        if (decision is RefusedRun refused)
+        switch (press)
         {
-            // A refused press never became a run, so it took no ownership of the gate and has no activity to hand
-            // back: the rendered reason is the only thing it leaves behind (ADR-0010).
-            _viewModel.AddErrorMessage(ProcessingRunPresentation.Render(refused.Reason));
-            return;
+            case RunPress.AdmissionFailed failed:
+                // Admission throws only when no Plugin List Source can be built from the captured Game Context, such
+                // as a malformed directory Browse kept. It threw before any activity was published, so the gate is
+                // still free and there is no activity to hand back; the failure is shown as the unexpected one it is,
+                // exactly as it was before admission ran inside the gate (ADR-0002).
+                _viewModel.AddErrorMessage(ProcessingRunPresentation.RenderUnexpectedFailure(failed.Failure));
+                return;
+            case RunPress.Refused refused:
+                // A refused press never became a run, so it took no ownership of the gate and has no activity to hand
+                // back: the rendered reason is the only thing it leaves behind (ADR-0010).
+                _viewModel.AddErrorMessage(ProcessingRunPresentation.Render(refused.Reason));
+                return;
+            case RunPress.Admitted admitted:
+                await ExecuteAdmittedRunAsync(admitted);
+                return;
+            default:
+                throw new UnreachableException($"Unsupported run press: {press}.");
         }
+    }
 
-        // The decision union is closed to this assembly, so anything not refused was admitted.
-        var admitted = (AdmittedRun)decision;
+    /// <summary>
+    ///     Executes a run this workflow has already admitted and published activity for, reports how it ended, and
+    ///     hands the progress channel back.
+    /// </summary>
+    /// <param name="admitted">The admitted run and the database path captured with it.</param>
+    /// <returns>A task that completes after the run finishes, fails, or observes cancellation.</returns>
+    /// <remarks>
+    ///     The caller must already own the run gate's activity: this method's <c>finally</c> clears it, which is only
+    ///     correct for the press that published it.
+    /// </remarks>
+    private async Task ExecuteAdmittedRunAsync(RunPress.Admitted admitted)
+    {
         try
         {
             // The admitted run still uses its default, but a reentrant edit made during startup notifications must
             // survive for the next run, so the default is written back only while the box still holds the capture.
-            if (admitted.DefaultedDatabasePath is { } defaultedDatabasePath &&
-                string.Equals(_viewModel.DatabasePath, inputs.DatabasePath, StringComparison.Ordinal))
+            if (admitted.Run.DefaultedDatabasePath is { } defaultedDatabasePath &&
+                string.Equals(_viewModel.DatabasePath, admitted.CapturedDatabasePath, StringComparison.Ordinal))
             {
                 _viewModel.DatabasePath = defaultedDatabasePath;
             }
 
             var progress = new ProcessingRunProgressAdapter(ApplyProcessingRunProgress);
 
-            var outcome = await _processingRunExecutor.ExecuteAsync(admitted.Request, progress);
+            var outcome = await _processingRunExecutor.ExecuteAsync(admitted.Run.Request, progress);
             ApplyProcessingRunOutcome(outcome);
         }
         // The failure whose own message already tells the user what is wrong and what to do about it, shown
@@ -485,7 +500,7 @@ public sealed class UserWorkflow : IDisposable
         }
         catch (Exception ex)
         {
-            _viewModel.AddErrorMessage($"Error processing FormIDs: {ex.Message}");
+            _viewModel.AddErrorMessage(ProcessingRunPresentation.RenderUnexpectedFailure(ex));
         }
         finally
         {
@@ -496,42 +511,35 @@ public sealed class UserWorkflow : IDisposable
     }
 
     /// <summary>
-    ///     Captures a press's inputs and runs Processing Run Admission on them, publishing run activity only when the
-    ///     press is admitted, unless a run is already active.
+    ///     Decides what one press of Process FormIDs is, inside the run gate: a cancellation request when a run is
+    ///     already active, and otherwise whatever Processing Run Admission makes of the inputs captured now.
     /// </summary>
-    /// <param name="inputs">The immutable captured inputs, or null when the press requests cancellation instead.</param>
-    /// <param name="admissionFailure">
-    ///     The failure admission raised because no Plugin List Source could be built from the captured Game Context, or
-    ///     null when admission decided the press. It is captured before any activity is published, so the gate stays
-    ///     free.
-    /// </param>
     /// <returns>
-    ///     What admission decided, or null when a run is already active and the press therefore requests cancellation,
-    ///     or when admission failed. The caller owns a new run only when this is an <see cref="AdmittedRun" />.
+    ///     <see cref="RunPress.CancelActiveRun" /> when a run is already active;
+    ///     <see cref="RunPress.AdmissionFailed" /> when admission could not build a Plugin List Source from the captured
+    ///     Game Context; <see cref="RunPress.Refused" /> when admission refused the press; or
+    ///     <see cref="RunPress.Admitted" />, the only case in which run activity was published and the caller now owns a
+    ///     new run.
     /// </returns>
     /// <remarks>
     ///     Capture, admission and activity publication share the run gate, so nothing published in between can change
     ///     what was admitted, and a refused press never becomes an active run. Only admission's own failure is captured:
     ///     anything a re-entrant activity notification throws still propagates, as it did before admission existed.
     /// </remarks>
-    private RunAdmissionDecision? TryBeginRunActivity(
-        out ProcessingRunInputs? inputs,
-        out ArgumentException? admissionFailure)
+    private RunPress DecideRunPress()
     {
-        admissionFailure = null;
         lock (_runActivityLock)
         {
             if (_runActivity.IsActive)
             {
-                inputs = null;
-                return null;
+                return new RunPress.CancelActiveRun();
             }
 
             // Both activity and message-list notifications can re-enter the workflow. Capture every input before
             // either is published so later edits belong to the next run, including changes to the Plugin List source.
             // The whole Plugin List state is captured, not just its confirmation, so admission can tell a list still
             // loading from one that failed to load.
-            inputs = new ProcessingRunInputs(
+            var inputs = new ProcessingRunInputs(
                 _gameContext.SelectedGameRelease,
                 _gameContext.SelectedGameDirectory,
                 _pluginList.Current,
@@ -548,16 +556,19 @@ public sealed class UserWorkflow : IDisposable
             {
                 // Admission runs before any activity is published, so the gate is still free here; the caller reports
                 // the failure after the lock is released, as it reports a refusal.
-                admissionFailure = ex;
-                return null;
+                return new RunPress.AdmissionFailed(ex);
             }
 
-            if (decision is AdmittedRun)
+            switch (decision)
             {
-                ProjectRunActivityLocked(new ActivityProjection(true, "Initializing...", 0));
+                case AdmittedRun admitted:
+                    ProjectRunActivityLocked(new ActivityProjection(true, "Initializing...", 0));
+                    return new RunPress.Admitted(admitted, inputs.DatabasePath);
+                case RefusedRun refused:
+                    return new RunPress.Refused(refused.Reason);
+                default:
+                    throw new UnreachableException($"Unsupported admission decision: {decision}.");
             }
-
-            return decision;
         }
     }
 
@@ -915,6 +926,38 @@ public sealed class UserWorkflow : IDisposable
         string? SelectedGameDirectory,
         ImmutableArray<string> AvailableDirectories,
         AdvancedMode AdvancedMode);
+
+    /// <summary>
+    ///     What one press of Process FormIDs turned out to be once the run gate decided it.
+    /// </summary>
+    /// <remarks>
+    ///     The constructor is private, so the four cases nested here are the only ones and the caller's default branch is
+    ///     unreachable. Only <see cref="Admitted" /> means run activity was published and the caller owns a new run.
+    /// </remarks>
+    private abstract record RunPress
+    {
+        private RunPress()
+        {
+        }
+
+        /// <summary>A run was already active, so the press requests its cancellation instead.</summary>
+        public sealed record CancelActiveRun : RunPress;
+
+        /// <summary>Admission could not build a Plugin List Source from the captured Game Context.</summary>
+        /// <param name="Failure">The failure admission raised, shown to the user as an unexpected one.</param>
+        public sealed record AdmissionFailed(ArgumentException Failure) : RunPress;
+
+        /// <summary>Processing Run Admission refused the press before any run existed.</summary>
+        /// <param name="Reason">Why the press was refused.</param>
+        public sealed record Refused(RunRejectionReason Reason) : RunPress;
+
+        /// <summary>Processing Run Admission admitted the press, and run activity has been published for it.</summary>
+        /// <param name="Run">The admitted request and any database path admission defaulted.</param>
+        /// <param name="CapturedDatabasePath">
+        ///     The database path captured with the press, which guards writing a defaulted path back to the ViewModel.
+        /// </param>
+        public sealed record Admitted(AdmittedRun Run, string? CapturedDatabasePath) : RunPress;
+    }
 
     private sealed class ProcessingRunProgressAdapter(Action<ProcessingRunProgress> handler)
         : IProgress<ProcessingRunProgress>
