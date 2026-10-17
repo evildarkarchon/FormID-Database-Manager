@@ -332,6 +332,40 @@ public sealed class FormIdRecordStoreTests : IDisposable
     }
 
     /// <summary>
+    ///     Verifies that opening a database whose parent directory is missing creates that directory and returns a
+    ///     ready Store, so a deleted or never-created database folder does not stop a Processing Run (ADR-0001).
+    /// </summary>
+    [Fact]
+    public async Task OpenAsync_MissingParentDirectory_CreatesDirectoryAndReturnsReadyStore()
+    {
+        var missingDirectory = Path.Combine(_testFilesDirectory, "missing", "nested");
+        var databasePath = Path.Combine(missingDirectory, "records.db");
+        Assert.False(Directory.Exists(missingDirectory));
+
+        await using (var store = await FormIdRecordStore.OpenAsync(
+                         databasePath,
+                         GameRelease.SkyrimSE,
+                         TestContext.Current.CancellationToken))
+        {
+            Assert.True(Directory.Exists(missingDirectory));
+
+            await store.WritePluginAsync(
+                "Plugin.esp",
+                [new FormIdRecord("000001", "Entry1")],
+                UpdateMode.Append,
+                TestContext.Current.CancellationToken);
+            var records = await store.ReadRecordsAsync(
+                FormIdRecordQuery.All,
+                TestContext.Current.CancellationToken);
+
+            var record = Assert.Single(records);
+            Assert.Equal(new FormIdStoredRecord("Plugin.esp", "000001", "Entry1"), record);
+        }
+
+        Assert.True(File.Exists(databasePath));
+    }
+
+    /// <summary>
     ///     Verifies that reopening the same GameRelease keeps records written by an earlier Store session.
     /// </summary>
     [Fact]
