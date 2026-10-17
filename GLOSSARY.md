@@ -104,8 +104,12 @@ A user-visible condition from a Processing Run that did not stop ingestion, such
 _Avoid_: Non-fatal error, ignored error.
 
 **Processing Run Outcome**:
-How one Processing Run ended, as a value its caller can inspect rather than prose it has to reconstruct from status strings and exception types. There is one case per kind of run — selected Plugins, one FormID text file, and a Dry Run — each carrying the report that run already produced, plus cancellation. Failure is deliberately not an Outcome: an invalid request, an Unresolvable Master, and any unexpected internal failure all leave a run as exceptions (ADR-0007).
+How one Processing Run ended, as a value its caller can inspect rather than prose it has to reconstruct from status strings and exception types. There is one case per kind of run — selected Plugins, one FormID text file, and a Dry Run — each carrying the report that run already produced, plus cancellation. Failure is deliberately not an Outcome: an Unresolvable Master and any unexpected internal failure leave a run as exceptions (ADR-0007), and a request that Processing Run Admission refuses never becomes a run at all (ADR-0010).
 _Avoid_: Run result, run status, processing status.
+
+**Processing Run Admission**:
+The decision, made before a Processing Run exists, of whether the user's request to start one becomes a run, and which run. It either admits the run or refuses it with a reason the user can act on, such as no game selected, a Plugin List still loading or that failed to load, or no Plugins selected. A refused request is neither a Processing Run Outcome nor a failure, because no run ever started (ADR-0010).
+_Avoid_: Validation, pre-flight check, request creation.
 
 **Processing Run Plan**:
 What a Dry Run reports: the work a Processing Run would do, stated only as far as it can be known without enumerating a single FormID record. For selected Plugins it is one entry per selected Plugin, in selection order — would ingest, or would skip because the Plugin is not in the Game Load Order or its file is unavailable. For a FormID text file it is whether the file is there and how large it is. A Plan therefore cannot predict the third Skipped Plugin reason, zero FormID records, which only enumeration can establish.

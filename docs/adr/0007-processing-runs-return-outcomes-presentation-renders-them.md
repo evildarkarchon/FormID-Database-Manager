@@ -79,6 +79,18 @@ This does leave a failing run with something to say and no outcome to say it wit
 `ProcessingRunFailure` is a *progress* case: the last thing a failing run reports goes out on the transient channel,
 like everything else it says while running, before the exception leaves.
 
+### Admission refusals (2026-10-17, ADR-0010)
+
+`ProcessingRunValidationException` is deleted. Whether a request may start a run is now decided by Processing Run
+Admission before the run exists, and a refusal is a typed value rather than an exception. That does not weaken the
+rule above: a refused run never started, so the refusal is not a run's ending at all, neither an outcome nor a failure.
+The request constructors keep their invariants as `ArgumentException`, which by then signals a programming error, so
+only `UnresolvableMasterException` and anything unforeseen propagate from a run.
+
+`ProcessingRunPresentation` gains a third input, the refusal reason, and so becomes the home of every sentence about a
+run, including the one `UserWorkflow` used to write itself. As with outcomes, `UserWorkflow` performs the ViewModel
+write.
+
 ## Why presentation renders but does not write
 
 `ProcessingRunPresentation` returns a `RenderedRunReport` — an activity projection plus warning, error, and information

@@ -83,5 +83,9 @@ whitelist switch remains the SQL-injection guard for table names.
 - Carrying canonical paths in `SelectedPluginIngestionRequest` is deliberately left for a separate decision.
   `GameLoadOrderProvider`'s duplicate abstraction — an interface alongside an internal delegate bundle — is resolved
   by ADR-0008.
+  - *Amended 2026-10-17:* ADR-0010 makes that decision. The selected-Plugin request carries the matched
+    `PluginListSource`, and Plugin Ingestion reads its Data directory instead of canonicalizing again.
+    `CanonicalizeDataDirectory` remains the only implementation of the rule; it now reaches a run only through
+    `PluginListSource`.
 - This ADR records the decision ahead of the change. The code does not yet have this shape; the migration is sequenced
   so that canonicalization and the defect fix land before detection and location move.

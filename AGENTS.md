@@ -52,9 +52,13 @@ renaming Core members or changing project boundaries. In particular:
 - Resolve Store table names only through the closed `SupportedGameReleases` table (ADR-0003).
 - `ProcessingRunExecutor` executes one typed Processing Run request, reports its transient progress, and returns how it
   ended. It owns active-run cancellation: because the token is executor-owned, cancellation is returned as a
-  `CancelledRunOutcome`, while validation failures, `UnresolvableMasterException`, and unexpected internal failures
-  propagate as exceptions rather than becoming outcomes (ADR-0007). Mutagen's `CreateFromBinaryOverlay` is synchronous
-  and cannot be cancelled.
+  `CancelledRunOutcome`, while `UnresolvableMasterException` and unexpected internal failures propagate as exceptions
+  rather than becoming outcomes (ADR-0007). Mutagen's `CreateFromBinaryOverlay` is synchronous and cannot be cancelled.
+- Processing Run Admission decides, before a run exists, whether a button press starts one (ADR-0010). It is pure: a
+  refusal is a typed `RunRejectionReason` that `ProcessingRunPresentation` renders, not an exception, and admission
+  creates no directory. The Store creates the database's parent directory when it opens. The selected-Plugin request
+  carries its `PluginListSource`, so canonicalization does not repeat downstream. ADR-0010 records this ahead of the
+  code; until it lands, `ProcessingRunValidationException` and `DefaultDatabasePathProvider` still exist.
 - A dry run returns a Processing Run Plan and opens no Store. A selected-Plugin dry run still resolves the Data path,
   prepares the load order, and opens each Plugin's overlay, so it reports would-ingest and would-skip per Plugin rather
   than echoing the selection. A FormID text dry run reports the file's presence and size, and neither opens nor parses

@@ -28,6 +28,13 @@ introduce another schema helper, database service, repository-wide SQLite abstra
 Tests open Stores through the production seam; separate raw SQLite connections are permitted for workload generation,
 failure injection, and persisted-state inspection.
 
+### Parent directory creation (2026-10-17, ADR-0010)
+
+Ready-on-return opening also creates the database file's parent directory when it is missing. Previously the default
+database path's directory was created by the module that computed the path, before the request was validated. The
+Store is now the only production code that creates it, so a Dry Run or a run that Processing Run Admission refuses
+creates nothing, and a path the user picked whose folder was later deleted opens rather than failing.
+
 ## Consequences
 
 - SQLite lifecycle and schema changes are localized to `FormIdRecordStore`.
