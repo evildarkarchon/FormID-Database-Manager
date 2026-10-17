@@ -74,13 +74,14 @@ public sealed class ProcessingRunContractTests
 
     /// <summary>
     ///     Verifies that nothing outside Core can build a selected-Plugin request or reach its Plugin List Source:
-    ///     Processing Run Admission is the only builder, from the source it matched (ADR-0010).
+    ///     Processing Run Admission is the only builder, from the source it matched (ADR-0010). The whole type is
+    ///     internal, like every Processing Run Outcome case, while the request base stays public for the executor.
     /// </summary>
     [Fact]
-    public void PluginProcessingRunRequest_PublicSurface_ExposesNoConstructorOrSource()
+    public void PluginProcessingRunRequest_OutsideCore_IsNotVisible()
     {
-        Assert.Empty(typeof(PluginProcessingRunRequest).GetConstructors());
-        Assert.Null(typeof(PluginProcessingRunRequest).GetProperty(nameof(PluginProcessingRunRequest.Source)));
+        Assert.False(typeof(PluginProcessingRunRequest).IsVisible);
+        Assert.True(typeof(ProcessingRunRequest).IsVisible);
     }
 
     /// <summary>

@@ -127,7 +127,12 @@ public abstract record ProcessingRunRequest
 /// <summary>
 ///     Request for a Processing Run that ingests selected Plugin files.
 /// </summary>
-public sealed record PluginProcessingRunRequest : ProcessingRunRequest
+/// <remarks>
+///     The type is internal, like every Processing Run Outcome case, because only Processing Run Admission builds a
+///     selected-Plugin request, from the Plugin List Source it matched (ADR-0010): nothing outside Core can supply one
+///     or reach that Core-only source. The public executor still accepts it through <see cref="ProcessingRunRequest" />.
+/// </remarks>
+internal sealed record PluginProcessingRunRequest : ProcessingRunRequest
 {
     /// <summary>
     ///     Creates a Plugin ingestion Processing Run request.
@@ -140,10 +145,6 @@ public sealed record PluginProcessingRunRequest : ProcessingRunRequest
     /// <param name="pluginNames">The selected Plugin names to process, captured as an immutable snapshot.</param>
     /// <param name="updateMode">The storage update behavior for ingested Plugin records.</param>
     /// <param name="dryRun">Whether to report the planned work without writing to the store.</param>
-    /// <remarks>
-    ///     The constructor is internal because only Processing Run Admission builds a selected-Plugin request, from the
-    ///     Plugin List Source it matched; nothing outside Core can supply one.
-    /// </remarks>
     /// <exception cref="ArgumentNullException">
     ///     <paramref name="source" /> or <paramref name="pluginNames" /> is <see langword="null" />. A null source is
     ///     reported before any other invariant.
@@ -152,7 +153,7 @@ public sealed record PluginProcessingRunRequest : ProcessingRunRequest
     ///     The database path is blank for a run that is not a Dry Run, a Plugin name is blank, the selection is empty, or
     ///     Plugin names are duplicated.
     /// </exception>
-    internal PluginProcessingRunRequest(
+    public PluginProcessingRunRequest(
         PluginListSource source,
         string databasePath,
         IEnumerable<string> pluginNames,
@@ -175,11 +176,7 @@ public sealed record PluginProcessingRunRequest : ProcessingRunRequest
     ///     The Plugin List Source the selection was confirmed against. Plugin Ingestion reads its
     ///     <see cref="PluginListSource.DataDirectory" /> as-is and never canonicalizes a directory itself (ADR-0002).
     /// </summary>
-    /// <remarks>
-    ///     Internal because <see cref="PluginListSource" /> is a Core type; the request's public facts stay the ones
-    ///     declared on <see cref="ProcessingRunRequest" /> and <see cref="PluginNames" />.
-    /// </remarks>
-    internal PluginListSource Source { get; }
+    public PluginListSource Source { get; }
 
     /// <summary>
     ///     The selected Plugin names captured at run start.
