@@ -64,7 +64,7 @@ The ordered Plugin listings for a Supported GameRelease and canonical Data direc
 _Avoid_: Plugin List, load-order snapshot, Mutagen load order.
 
 **Game Context**:
-The User Workflow state that determines which Plugin List can be loaded: selected GameRelease, selected game directory, and Advanced Mode.
+What the user has selected that determines which Plugin List can be loaded: selected GameRelease, selected game directory, and Advanced Mode. A Game Context holds a game directory only together with a GameRelease, and only when the two make a Plugin List Source. A directory that cannot is refused when it is selected and leaves the Game Context as it was, so nothing downstream ever meets an unusable one. A directory in which no game is detected is refused the same way.
 _Avoid_: Game selection, current game state.
 
 **Game Installation**:

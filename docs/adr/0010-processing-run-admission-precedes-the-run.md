@@ -113,3 +113,8 @@ carrying a closed `RunRejectionReason`. It reads nothing from disk, creates noth
 > it: the generic "Error processing FormIDs" sentence for an unforeseen failure moved into `ProcessingRunPresentation`
 > as well, and `PluginProcessingRunRequest` became an internal type rather than a public type with an internal
 > constructor.
+
+> *Amended 2026-10-17:* Under ADR-0011, admission's inputs carry the GameRelease and the Game Context's
+> `PluginListSource` instead of a raw game directory. "No game directory" (reason 2) now means the Game Context has no
+> source. Admission no longer calls `PluginListSource.Create`, and no longer throws `ArgumentException` for a malformed
+> directory, because Game Context refuses one before it can be captured.

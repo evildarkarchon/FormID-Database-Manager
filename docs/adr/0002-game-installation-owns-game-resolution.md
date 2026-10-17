@@ -38,6 +38,10 @@ GameRelease from a directory, and location of install directories for a GameRele
 **Game Installation** as the resolved on-disk facts, distinct from **Game Context**, which remains the User Workflow's
 selection state and stays inside `UserWorkflow`.
 
+> *Amended 2026-10-17:* ADR-0011 supersedes the clause that Game Context stays inside `UserWorkflow`. Game Context is
+> now its own `GameContext` module, which builds the Plugin List Source when a directory is adopted. The rest of this
+> decision stands.
+
 Canonicalization is a pure static member. It is the single implementation of the rule, called by `PluginListSource`,
 `PluginIngestion`, and detection. Production must not introduce a second data-path helper.
 
