@@ -56,6 +56,13 @@ The run stops at the first Plugin that declares an unresolvable master rather th
 is precise: only a Plugin that actually declares an unresolvable master triggers it, which the alternatives below are
 not.
 
+### Admission refusals (2026-10-17, ADR-0010)
+
+`ProcessingRunValidationException`, which point 3 names as the other failure shown unwrapped, is deleted. Processing
+Run Admission now refuses such a request before any run exists, and `ProcessingRunPresentation` renders the refusal
+reason. `UnresolvableMasterException` is therefore the only failure `UserWorkflow` shows unwrapped. The generic "Error
+processing FormIDs" sentence it bypasses is now rendered by `ProcessingRunPresentation` too.
+
 ## Why not the alternatives
 
 - **Add the two failures to the adapter's classification list, making them one Failed Plugin.** Cheapest, and wrong on

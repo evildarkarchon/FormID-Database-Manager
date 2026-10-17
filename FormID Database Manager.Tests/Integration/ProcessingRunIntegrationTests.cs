@@ -5,11 +5,14 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using FormID_Database_Manager.Services;
 using FormID_Database_Manager.Tests.Fakes;
 using FormID_Database_Manager.TestUtilities.Mocks;
+using FormID_Database_Manager.ViewModels;
 using Microsoft.Data.Sqlite;
+using Moq;
 using Mutagen.Bethesda;
 using Mutagen.Bethesda.Plugins;
 using Mutagen.Bethesda.Skyrim;
@@ -114,6 +117,63 @@ public sealed class ProcessingRunIntegrationTests : IDisposable
     }
 
     /// <summary>
+    ///     Runs a real FormID text import through the User Workflow with no chosen database path and a default database
+    ///     root that does not exist yet, proving the defaulted path is written back and the FormID Record Store creates
+    ///     the folder it needs when the run opens it.
+    /// </summary>
+    /// <remarks>
+    ///     Computing the default path creates nothing, so this is the end-to-end guard that a first real run on a fresh
+    ///     profile still works: only the Store's own ready-on-return opening makes the directory (ADR-0001).
+    /// </remarks>
+    [Fact]
+    public async Task ProcessFormIdsAsync_RealRunWithoutDatabasePath_WritesDefaultBackAndStoreCreatesItsFolder()
+    {
+        var defaultDatabaseRoot = Path.Combine(_testDirectory, "LocalAppData");
+        var formIdTextFilePath = Path.Combine(_testDirectory, "formids.txt");
+        await File.WriteAllLinesAsync(
+            formIdTextFilePath,
+            ["PluginA.esp|000001|First Entry"],
+            TestContext.Current.CancellationToken);
+
+        var dispatcher = new SynchronousThreadDispatcher();
+        var viewModel = new MainWindowViewModel(dispatcher)
+        {
+            FormIdListPath = formIdTextFilePath
+        };
+        // No installed directories are declared, so selecting the game never asks the Plugin List to discover.
+        using var sut = new UserWorkflow(
+            viewModel,
+            dispatcher,
+            new Mock<IFileDialogService>(MockBehavior.Strict).Object,
+            new GameInstallations(new InMemoryGameInstallationProbe()),
+            new PluginList(new NoDiscoveryGameLoadOrders()),
+            new ProcessingRunExecutor(),
+            defaultDatabaseRoot);
+        await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
+        Assert.False(Directory.Exists(defaultDatabaseRoot));
+
+        await sut.ProcessFormIdsAsync();
+
+        var expectedDatabasePath = Path.Combine(
+            defaultDatabaseRoot,
+            "FormID Database Manager",
+            "Databases",
+            "SkyrimSE.db");
+        Assert.Empty(viewModel.ErrorMessages);
+        Assert.Equal(expectedDatabasePath, viewModel.DatabasePath);
+        Assert.True(File.Exists(expectedDatabasePath), $"Expected the run to create {expectedDatabasePath}.");
+
+        await using var store = await FormIdRecordStore.OpenAsync(
+            expectedDatabasePath,
+            GameRelease.SkyrimSE,
+            TestContext.Current.CancellationToken);
+        var storedRecords = await store.ReadRecordsAsync(
+            FormIdRecordQuery.All,
+            TestContext.Current.CancellationToken);
+        Assert.Equal([new FormIdStoredRecord("PluginA.esp", "000001", "First Entry")], storedRecords);
+    }
+
+    /// <summary>
     ///     Executes a real selected-Plugin Processing Run across aggregate Plugin Ingestion and the SQLite Store,
     ///     proving the run's outcome is returned only after explicit Store optimization has produced observable
     ///     statistics.
@@ -142,9 +202,8 @@ public sealed class ProcessingRunIntegrationTests : IDisposable
 
         var outcome = await executor.ExecuteAsync(
             new PluginProcessingRunRequest(
-                gameDirectory,
+                PluginListSource.Create(GameRelease.SkyrimSE, gameDirectory),
                 databasePath,
-                GameRelease.SkyrimSE,
                 [pluginName],
                 UpdateMode.Append),
             progress);
@@ -203,6 +262,22 @@ public sealed class ProcessingRunIntegrationTests : IDisposable
         command.CommandText = "SELECT COUNT(*) FROM sqlite_stat1 WHERE tbl = @tableName";
         command.Parameters.AddWithValue("@tableName", gameRelease.ToString());
         return Convert.ToInt32(command.ExecuteScalar()) > 0;
+    }
+
+    /// <summary>
+    ///     Game Load Orders for a run that must never discover Plugins; discovery fails the test loudly.
+    /// </summary>
+    private sealed class NoDiscoveryGameLoadOrders : PluginListGameLoadOrdersStub
+    {
+        /// <inheritdoc />
+        public override Task<AvailablePluginsDiscoveryResult> DiscoverAvailablePluginsAsync(
+            GameRelease gameRelease,
+            string canonicalDataDirectory,
+            IProgress<GameLoadOrderDiscoveryProgress>? progress = null,
+            CancellationToken cancellationToken = default)
+        {
+            throw new InvalidOperationException("This run declares no installed directory, so nothing may discover.");
+        }
     }
 
     /// <summary>

@@ -108,3 +108,8 @@ carrying a closed `RunRejectionReason`. It reads nothing from disk, creates noth
   along with the provider.
 - This ADR records the decision ahead of the change. The planned order is: the Store creates the parent directory;
   then admission and the `UserWorkflow` cutover; then the request carrying `PluginListSource`.
+
+> Note (2026-10-17): The change has landed in that order, so the bullet above is historical. Two follow-ups went with
+> it: the generic "Error processing FormIDs" sentence for an unforeseen failure moved into `ProcessingRunPresentation`
+> as well, and `PluginProcessingRunRequest` became an internal type rather than a public type with an internal
+> constructor.

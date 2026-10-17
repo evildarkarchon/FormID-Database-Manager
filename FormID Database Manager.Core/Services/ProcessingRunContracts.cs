@@ -4,20 +4,6 @@ using Mutagen.Bethesda;
 namespace FormID_Database_Manager.Services;
 
 /// <summary>
-///     The validation failure raised when a Processing Run cannot be started from the supplied domain request.
-/// </summary>
-public sealed class ProcessingRunValidationException : Exception
-{
-    /// <summary>
-    ///     Creates a validation failure with a user-facing message.
-    /// </summary>
-    /// <param name="message">The reason the Processing Run cannot start.</param>
-    public ProcessingRunValidationException(string message) : base(message)
-    {
-    }
-}
-
-/// <summary>
 ///     The failure raised when a selected Plugin declares a master the resolved Data directory cannot supply, on a
 ///     GameRelease whose load order separates master files by type.
 /// </summary>
@@ -85,8 +71,19 @@ public sealed class UnresolvableMasterException : Exception
 /// <summary>
 ///     Base request for one Processing Run against a FormID Record Store.
 /// </summary>
+/// <remarks>
+///     Processing Run Admission decides whether a press becomes a run before any request is built (ADR-0010), so the
+///     constructors only guard their invariants as programming errors. A violation throws an ordinary
+///     <see cref="ArgumentException" /> whose message is diagnostic text, never a sentence the user reads.
+/// </remarks>
 public abstract record ProcessingRunRequest
 {
+    /// <summary>
+    ///     Captures the facts every Processing Run request shares.
+    /// </summary>
+    /// <exception cref="ArgumentException">
+    ///     <paramref name="databasePath" /> is blank for a run that is not a Dry Run.
+    /// </exception>
     private protected ProcessingRunRequest(
         string databasePath,
         GameRelease gameRelease,
@@ -95,7 +92,9 @@ public abstract record ProcessingRunRequest
     {
         if (!dryRun && string.IsNullOrWhiteSpace(databasePath))
         {
-            throw new ProcessingRunValidationException("Database path must be specified");
+            throw new ArgumentException(
+                "Database path must be specified unless the run is a Dry Run.",
+                nameof(databasePath));
         }
 
         DatabasePath = databasePath;
@@ -128,54 +127,56 @@ public abstract record ProcessingRunRequest
 /// <summary>
 ///     Request for a Processing Run that ingests selected Plugin files.
 /// </summary>
-public sealed record PluginProcessingRunRequest : ProcessingRunRequest
+/// <remarks>
+///     The type is internal, like every Processing Run Outcome case, because only Processing Run Admission builds a
+///     selected-Plugin request, from the Plugin List Source it matched (ADR-0010): nothing outside Core can supply one
+///     or reach that Core-only source. The public executor still accepts it through <see cref="ProcessingRunRequest" />.
+/// </remarks>
+internal sealed record PluginProcessingRunRequest : ProcessingRunRequest
 {
     /// <summary>
     ///     Creates a Plugin ingestion Processing Run request.
     /// </summary>
-    /// <param name="gameDirectory">The selected game root or Data directory.</param>
+    /// <param name="source">
+    ///     The Plugin List Source the selection was confirmed against. Its canonical Data directory is where the run reads
+    ///     Plugins, and its GameRelease is the request's GameRelease, so the two cannot disagree (ADR-0010).
+    /// </param>
     /// <param name="databasePath">The SQLite database path to write.</param>
-    /// <param name="gameRelease">The GameRelease whose load-order and table rules apply.</param>
     /// <param name="pluginNames">The selected Plugin names to process, captured as an immutable snapshot.</param>
     /// <param name="updateMode">The storage update behavior for ingested Plugin records.</param>
     /// <param name="dryRun">Whether to report the planned work without writing to the store.</param>
-    /// <exception cref="ArgumentNullException"><paramref name="pluginNames" /> is <see langword="null" />.</exception>
-    /// <exception cref="ProcessingRunValidationException">
-    ///     A required path or Plugin name is blank, the selection is empty, or Plugin names are duplicated.
+    /// <exception cref="ArgumentNullException">
+    ///     <paramref name="source" /> or <paramref name="pluginNames" /> is <see langword="null" />. A null source is
+    ///     reported before any other invariant.
+    /// </exception>
+    /// <exception cref="ArgumentException">
+    ///     The database path is blank for a run that is not a Dry Run, a Plugin name is blank, the selection is empty, or
+    ///     Plugin names are duplicated.
     /// </exception>
     public PluginProcessingRunRequest(
-        string? gameDirectory,
+        PluginListSource source,
         string databasePath,
-        GameRelease gameRelease,
         IEnumerable<string> pluginNames,
         UpdateMode updateMode,
         bool dryRun = false)
-        : base(databasePath, gameRelease, updateMode, dryRun)
+        // The base initializer runs before this body, so the null guard must live inside the argument it feeds.
+        : base(
+            databasePath,
+            (source ?? throw new ArgumentNullException(nameof(source))).GameRelease,
+            updateMode,
+            dryRun)
     {
-        if (string.IsNullOrWhiteSpace(gameDirectory))
-        {
-            throw new ProcessingRunValidationException("Game directory must be specified when processing plugins");
-        }
-
         ArgumentNullException.ThrowIfNull(pluginNames);
 
-        try
-        {
-            PluginNames = CapturePluginNames(pluginNames);
-        }
-        catch (ArgumentException ex)
-        {
-            // Keep selection and enumeration argument failures on the Processing Run validation contract.
-            throw new ProcessingRunValidationException(ex.Message);
-        }
-
-        GameDirectory = gameDirectory;
+        PluginNames = CapturePluginNames(pluginNames);
+        Source = source;
     }
 
     /// <summary>
-    ///     The selected game root or Data directory.
+    ///     The Plugin List Source the selection was confirmed against. Plugin Ingestion reads its
+    ///     <see cref="PluginListSource.DataDirectory" /> as-is and never canonicalizes a directory itself (ADR-0002).
     /// </summary>
-    public string GameDirectory { get; }
+    public PluginListSource Source { get; }
 
     /// <summary>
     ///     The selected Plugin names captured at run start.
@@ -196,18 +197,18 @@ public sealed record PluginProcessingRunRequest : ProcessingRunRequest
         var snapshot = ImmutableArray.CreateRange(pluginNames);
         if (snapshot.IsEmpty)
         {
-            throw new ArgumentException("No plugins selected");
+            throw new ArgumentException("Plugin selection must not be empty.", nameof(pluginNames));
         }
 
         if (snapshot.Any(string.IsNullOrWhiteSpace))
         {
-            throw new ArgumentException("Plugin name must be specified");
+            throw new ArgumentException("Plugin name must be specified.", nameof(pluginNames));
         }
 
         // Plugin selection identity is case-insensitive so casing variants cannot write the same Plugin twice.
         if (snapshot.Distinct(StringComparer.OrdinalIgnoreCase).Count() != snapshot.Length)
         {
-            throw new ArgumentException("Plugin names must be unique");
+            throw new ArgumentException("Plugin names must be unique.", nameof(pluginNames));
         }
 
         return snapshot;
@@ -227,6 +228,7 @@ public sealed record FormIdTextProcessingRunRequest : ProcessingRunRequest
     /// <param name="gameRelease">The GameRelease whose table receives the imported rows.</param>
     /// <param name="updateMode">The storage update behavior for Plugins found in the text file.</param>
     /// <param name="dryRun">Whether to report the planned work without writing to the store.</param>
+    /// <exception cref="ArgumentException">A required path is blank.</exception>
     public FormIdTextProcessingRunRequest(
         string? formIdListPath,
         string databasePath,
@@ -237,7 +239,7 @@ public sealed record FormIdTextProcessingRunRequest : ProcessingRunRequest
     {
         if (string.IsNullOrWhiteSpace(formIdListPath))
         {
-            throw new ProcessingRunValidationException("FormID text file must be specified");
+            throw new ArgumentException("FormID text file path must be specified.", nameof(formIdListPath));
         }
 
         FormIdListPath = formIdListPath;
@@ -312,7 +314,7 @@ internal abstract record ProcessingRunPlan;
 /// </summary>
 /// <param name="Plan">What Plugin Ingestion would do to each selected Plugin, in selection order.</param>
 /// <remarks>
-///     The plan is substantive: Plugin Ingestion resolved the Data path, prepared the load order and opened every
+///     The plan is substantive: Plugin Ingestion read the source's Data path, prepared the load order and opened every
 ///     selected Plugin's overlay to produce it, so this says what a run would do rather than echoing the names the
 ///     user selected.
 /// </remarks>
@@ -427,12 +429,13 @@ internal interface IProcessingRunExecutor : IDisposable
     /// <summary>
     ///     Executes the supplied Processing Run request.
     /// </summary>
-    /// <param name="request">The validated domain request describing the run.</param>
+    /// <param name="request">The admitted domain request describing the run.</param>
     /// <param name="progress">Optional typed reporter for the run's transient progress.</param>
     /// <returns>How the run ended, including cancellation this executor was asked for.</returns>
     /// <remarks>
-    ///     Validation failures, <see cref="UnresolvableMasterException" /> and unexpected internal failures propagate:
-    ///     only cancellation is a value, because only cancellation can be attributed to this executor precisely.
+    ///     <see cref="UnresolvableMasterException" /> and unexpected internal failures propagate: only cancellation is a
+    ///     value, because only cancellation can be attributed to this executor precisely. Whether a press may start a
+    ///     run was already decided by Processing Run Admission before the request existed (ADR-0010).
     /// </remarks>
     Task<ProcessingRunOutcome> ExecuteAsync(
         ProcessingRunRequest request,

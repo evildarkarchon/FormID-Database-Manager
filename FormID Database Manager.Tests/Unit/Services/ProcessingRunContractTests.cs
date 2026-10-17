@@ -8,20 +8,24 @@ using Xunit;
 namespace FormID_Database_Manager.Tests.Unit.Services;
 
 /// <summary>
-///     Covers the Processing Run request and failure contracts: what a request captures, what it refuses, and the exact
-///     words a refusal reaches the user as.
+///     Covers the Processing Run request and failure contracts: what a request captures, which invariants its
+///     constructor guards, and the exact words an unresolvable master reaches the user as.
 /// </summary>
 /// <remarks>
 ///     <para>
-///         Issue #68, under parent #61. These sentences are user-facing — the User Workflow shows a validation failure
-///         and an unresolvable master unwrapped, without the generic processing-error prefix (ADR-0006) — but they are
-///         not rendered by <see cref="ProcessingRunPresentation" />: they are built by the types in
-///         <c>ProcessingRunContracts.cs</c> and travel as exception messages. They therefore belong beside those types
-///         rather than in the executor suite, which asserts what a run does and no longer asserts any wording at all.
+///         Issue #68, under parent #61, and ADR-0010. Processing Run Admission decides whether a press becomes a run
+///         before any request is built, and its refusals are rendered by <see cref="ProcessingRunPresentation" />. A
+///         request constructor therefore only guards its invariants as programming errors: it throws an ordinary
+///         <see cref="ArgumentException" /> that names the violated parameter, and its message is diagnostic text no
+///         user reads. Those guards are pinned by parameter name, with the message prefix telling apart the Plugin
+///         selection invariants that share one parameter.
 ///     </para>
 ///     <para>
-///         An unresolvable master is worded two ways because the underlying failure sometimes names the master and
-///         sometimes does not, and each variant tells the user to look at a different thing. Both are pinned.
+///         The unresolvable master sentences are still user-facing — the User Workflow shows that failure unwrapped,
+///         without the generic processing-error prefix (ADR-0006) — and they travel as the exception's message, so
+///         they belong beside the type that builds them. An unresolvable master is worded two ways because the
+///         underlying failure sometimes names the master and sometimes does not, and each variant tells the user to
+///         look at a different thing. Both are pinned.
 ///     </para>
 /// </remarks>
 public sealed class ProcessingRunContractTests
@@ -30,21 +34,54 @@ public sealed class ProcessingRunContractTests
     private const string DatabasePath = @"C:\Databases\formids.db";
 
     /// <summary>
-    ///     Pins the first reported failure when paths and selections contain competing invalid inputs.
+    ///     The Plugin List Source a selected-Plugin request is built from. Creating one is pure path arithmetic, so the
+    ///     directory never has to exist.
+    /// </summary>
+    private static readonly PluginListSource Source = PluginListSource.Create(GameRelease.SkyrimSE, GameDirectory);
+
+    /// <summary>
+    ///     Pins which invariant is reported first when the Store path and the selection are both invalid.
     /// </summary>
     [Theory]
-    [InlineData("", "", false, null, "Database path must be specified")]
-    [InlineData("", "", true, null, "Game directory must be specified when processing plugins")]
-    [InlineData("", DatabasePath, false, new string[0], "Game directory must be specified when processing plugins")]
-    [InlineData(GameDirectory, DatabasePath, false, new[] { "Same.esp", "SAME.ESP", " " }, "Plugin name must be specified")]
-    public void PluginProcessingRunRequest_MultipleInvalidInputs_PreservesValidationPrecedence(
-        string gameDirectory, string databasePath, bool dryRun, string[]? pluginNames, string expectedMessage)
+    [InlineData("", false, null, "databasePath", "Database path must be specified")]
+    [InlineData("", false, new string[0], "databasePath", "Database path must be specified")]
+    [InlineData("", true, new string[0], "pluginNames", "Plugin selection must not be empty")]
+    [InlineData(DatabasePath, false, new[] { "Same.esp", "SAME.ESP", " " }, "pluginNames",
+        "Plugin name must be specified")]
+    public void PluginProcessingRunRequest_MultipleInvalidInputs_PreservesInvariantPrecedence(
+        string databasePath, bool dryRun, string[]? pluginNames, string expectedParamName,
+        string expectedMessagePrefix)
     {
-        var exception = Assert.Throws<ProcessingRunValidationException>(() =>
-            new PluginProcessingRunRequest(gameDirectory, databasePath, GameRelease.SkyrimSE,
-                pluginNames!, UpdateMode.Append, dryRun));
+        var exception = Assert.Throws<ArgumentException>(() =>
+            new PluginProcessingRunRequest(Source, databasePath, pluginNames!, UpdateMode.Append, dryRun));
 
-        Assert.Equal(expectedMessage, exception.Message);
+        Assert.Equal(expectedParamName, exception.ParamName);
+        Assert.StartsWith(expectedMessagePrefix, exception.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    ///     Verifies that a Plugin request given no Plugin List Source throws for the source before any other invariant
+    ///     is checked, because the request's GameRelease is read from that source.
+    /// </summary>
+    [Fact]
+    public void PluginProcessingRunRequest_NullSource_ThrowsArgumentNullExceptionForTheSourceFirst()
+    {
+        var exception = Assert.Throws<ArgumentNullException>(() =>
+            new PluginProcessingRunRequest(null!, string.Empty, [], UpdateMode.Append));
+
+        Assert.Equal("source", exception.ParamName);
+    }
+
+    /// <summary>
+    ///     Verifies that nothing outside Core can build a selected-Plugin request or reach its Plugin List Source:
+    ///     Processing Run Admission is the only builder, from the source it matched (ADR-0010). The whole type is
+    ///     internal, like every Processing Run Outcome case, while the request base stays public for the executor.
+    /// </summary>
+    [Fact]
+    public void PluginProcessingRunRequest_OutsideCore_IsNotVisible()
+    {
+        Assert.False(typeof(PluginProcessingRunRequest).IsVisible);
+        Assert.True(typeof(ProcessingRunRequest).IsVisible);
     }
 
     /// <summary>
@@ -54,24 +91,25 @@ public sealed class ProcessingRunContractTests
     public void PluginProcessingRunRequest_NullSelection_ThrowsArgumentNullException()
     {
         var exception = Assert.Throws<ArgumentNullException>(() =>
-            new PluginProcessingRunRequest(GameDirectory, DatabasePath, GameRelease.SkyrimSE,
-                null!, UpdateMode.Append));
+            new PluginProcessingRunRequest(Source, DatabasePath, null!, UpdateMode.Append));
 
         Assert.Equal("pluginNames", exception.ParamName);
     }
 
     /// <summary>
-    ///     Allows explicit Dry Run facts without a Store path or a Confirmed Plugin List.
+    ///     Allows explicit Dry Run facts without a Store path or a Confirmed Plugin List, and takes the request's
+    ///     GameRelease from its Plugin List Source so the two cannot disagree.
     /// </summary>
     [Fact]
     public void PluginProcessingRunRequest_DryRunWithoutStorePath_PreservesExplicitFacts()
     {
-        var request = new PluginProcessingRunRequest(GameDirectory, "", GameRelease.SkyrimSE,
+        var source = PluginListSource.Create(GameRelease.Fallout4, GameDirectory);
+        var request = new PluginProcessingRunRequest(source, "",
             ["SECOND.esp", "first.ESP"], UpdateMode.ReplacePluginRecords, dryRun: true);
 
-        Assert.Equal(GameDirectory, request.GameDirectory);
+        Assert.Same(source, request.Source);
         Assert.Equal("", request.DatabasePath);
-        Assert.Equal(GameRelease.SkyrimSE, request.GameRelease);
+        Assert.Equal(GameRelease.Fallout4, request.GameRelease);
         Assert.Equal(UpdateMode.ReplacePluginRecords, request.UpdateMode);
         Assert.True(request.DryRun);
         Assert.Equal(["SECOND.esp", "first.ESP"], request.PluginNames);
@@ -84,7 +122,7 @@ public sealed class ProcessingRunContractTests
     public void PluginProcessingRunRequest_LazySelection_CapturesOnceAndRejectsMutation()
     {
         var enumerationCount = 0;
-        var request = new PluginProcessingRunRequest(GameDirectory, DatabasePath, GameRelease.SkyrimSE,
+        var request = new PluginProcessingRunRequest(PluginListSource.Create(GameRelease.SkyrimSE, GameDirectory), DatabasePath,
             EnumerateNames(), UpdateMode.Append);
 
         Assert.Equal(1, enumerationCount);
@@ -103,105 +141,99 @@ public sealed class ProcessingRunContractTests
     }
 
     /// <summary>
-    ///     Verifies the validation message a Plugin request raises when it is given no game directory.
+    ///     Verifies that a real run's request given no Store path throws a programming-error guard naming it.
     /// </summary>
     [Fact]
-    public void PluginProcessingRunRequest_BlankGameDirectory_UsesTheGameDirectoryValidationWording()
+    public void PluginProcessingRunRequest_BlankDatabasePath_ThrowsArgumentExceptionForTheDatabasePath()
     {
-        var exception = Assert.Throws<ProcessingRunValidationException>(() =>
+        var exception = Assert.Throws<ArgumentException>(() =>
             new PluginProcessingRunRequest(
+                Source,
                 string.Empty,
-                DatabasePath,
-                GameRelease.SkyrimSE,
                 ["First.esp"],
                 UpdateMode.Append));
 
-        Assert.Equal("Game directory must be specified when processing plugins", exception.Message);
+        Assert.Equal("databasePath", exception.ParamName);
     }
 
     /// <summary>
-    ///     Verifies the validation message a request raises when it is given no Store path.
+    ///     Verifies that a Plugin request with nothing selected throws a programming-error guard for the selection.
     /// </summary>
     [Fact]
-    public void PluginProcessingRunRequest_BlankDatabasePath_UsesTheDatabasePathValidationWording()
+    public void PluginProcessingRunRequest_EmptyPluginNames_ThrowsArgumentExceptionForTheSelection()
     {
-        var exception = Assert.Throws<ProcessingRunValidationException>(() =>
+        var exception = Assert.Throws<ArgumentException>(() =>
             new PluginProcessingRunRequest(
-                GameDirectory,
-                string.Empty,
-                GameRelease.SkyrimSE,
-                ["First.esp"],
-                UpdateMode.Append));
-
-        Assert.Equal("Database path must be specified", exception.Message);
-    }
-
-    /// <summary>
-    ///     Verifies the validation message a Plugin request raises when nothing is selected.
-    /// </summary>
-    [Fact]
-    public void PluginProcessingRunRequest_EmptyPluginNames_UsesTheEmptySelectionValidationWording()
-    {
-        var exception = Assert.Throws<ProcessingRunValidationException>(() =>
-            new PluginProcessingRunRequest(
-                GameDirectory,
+                Source,
                 DatabasePath,
-                GameRelease.SkyrimSE,
                 [],
                 UpdateMode.Append));
 
-        Assert.Equal("No plugins selected", exception.Message);
+        Assert.Equal("pluginNames", exception.ParamName);
+        Assert.StartsWith("Plugin selection must not be empty", exception.Message, StringComparison.Ordinal);
     }
 
     /// <summary>
-    ///     Verifies the validation message a Plugin request raises for a blank name inside the selection.
+    ///     Verifies that a blank name inside the selection throws a programming-error guard for the selection.
     /// </summary>
     [Fact]
-    public void PluginProcessingRunRequest_BlankPluginName_UsesTheBlankNameValidationWording()
+    public void PluginProcessingRunRequest_BlankPluginName_ThrowsArgumentExceptionForTheSelection()
     {
-        var exception = Assert.Throws<ProcessingRunValidationException>(() =>
+        var exception = Assert.Throws<ArgumentException>(() =>
             new PluginProcessingRunRequest(
-                GameDirectory,
+                Source,
                 DatabasePath,
-                GameRelease.SkyrimSE,
                 ["Valid.esp", " "],
                 UpdateMode.Append));
 
-        Assert.Equal("Plugin name must be specified", exception.Message);
+        Assert.Equal("pluginNames", exception.ParamName);
+        Assert.StartsWith("Plugin name must be specified", exception.Message, StringComparison.Ordinal);
     }
 
     /// <summary>
-    ///     Verifies the validation message a Plugin request raises for a selection naming one Plugin twice, which the
-    ///     selection snapshot compares without regard to case.
+    ///     Verifies that a selection naming one Plugin twice, which the selection snapshot compares without regard to
+    ///     case, throws a programming-error guard for the selection.
     /// </summary>
     [Fact]
-    public void PluginProcessingRunRequest_CaseInsensitiveDuplicateNames_UsesTheUniqueNameValidationWording()
+    public void PluginProcessingRunRequest_CaseInsensitiveDuplicateNames_ThrowsArgumentExceptionForTheSelection()
     {
-        var exception = Assert.Throws<ProcessingRunValidationException>(() =>
+        var exception = Assert.Throws<ArgumentException>(() =>
             new PluginProcessingRunRequest(
-                GameDirectory,
+                Source,
                 DatabasePath,
-                GameRelease.SkyrimSE,
                 ["Duplicate.esp", "DUPLICATE.ESP"],
                 UpdateMode.Append));
 
-        Assert.Equal("Plugin names must be unique", exception.Message);
+        Assert.Equal("pluginNames", exception.ParamName);
+        Assert.StartsWith("Plugin names must be unique", exception.Message, StringComparison.Ordinal);
     }
 
     /// <summary>
-    ///     Verifies the validation message a FormID text request raises when it names no text file.
+    ///     Verifies that a FormID text request naming no text file throws a programming-error guard naming it.
     /// </summary>
     [Fact]
-    public void FormIdTextProcessingRunRequest_BlankFormIdListPath_UsesTheTextFileValidationWording()
+    public void FormIdTextProcessingRunRequest_BlankFormIdListPath_ThrowsArgumentExceptionForTheTextFilePath()
     {
-        var exception = Assert.Throws<ProcessingRunValidationException>(() =>
+        var exception = Assert.Throws<ArgumentException>(() =>
             new FormIdTextProcessingRunRequest(
                 string.Empty,
                 DatabasePath,
                 GameRelease.SkyrimSE,
                 UpdateMode.Append));
 
-        Assert.Equal("FormID text file must be specified", exception.Message);
+        Assert.Equal("formIdListPath", exception.ParamName);
+    }
+
+    /// <summary>
+    ///     Verifies that the deleted validation exception has not come back: a request refuses invalid input only as an
+    ///     ordinary argument exception, because Processing Run Admission decides refusals before a request exists.
+    /// </summary>
+    [Fact]
+    public void ProcessingRunContracts_AfterAdmission_DefineNoValidationExceptionType()
+    {
+        var retiredTypeName = string.Concat("FormID_Database_Manager.Services.ProcessingRun", "ValidationException");
+
+        Assert.Null(typeof(ProcessingRunRequest).Assembly.GetType(retiredTypeName));
     }
 
     /// <summary>
@@ -213,9 +245,8 @@ public sealed class ProcessingRunContractTests
     {
         var pluginNames = new List<string> { "First.esp", "Second.esp" };
         var request = new PluginProcessingRunRequest(
-            GameDirectory,
+            Source,
             DatabasePath,
-            GameRelease.SkyrimSE,
             pluginNames,
             UpdateMode.Append);
 

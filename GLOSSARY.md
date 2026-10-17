@@ -116,7 +116,7 @@ What a Dry Run reports: the work a Processing Run would do, stated only as far a
 _Avoid_: Preview, estimate, simulation, dry-run result.
 
 **Dry Run**:
-A Processing Run that produces a Processing Run Plan instead of records. It opens no FormID Record Store and needs no database path, but does every step before that: a selected-Plugin Dry Run resolves the Data directory, reads the Game Load Order, prepares Plugin-read state, and opens each selected Plugin's overlay, so an Unresolvable Master fails a Dry Run exactly as it fails a real run. A FormID text Dry Run neither opens nor parses the file, because counting its rows is what an import does, not what a plan can claim.
+A Processing Run that produces a Processing Run Plan instead of records. It opens no FormID Record Store and needs no database path, but does every step before that: a selected-Plugin Dry Run reads the Data directory from its request's Plugin List Source, reads the Game Load Order, prepares Plugin-read state, and opens each selected Plugin's overlay, so an Unresolvable Master fails a Dry Run exactly as it fails a real run. A FormID text Dry Run neither opens nor parses the file, because counting its rows is what an import does, not what a plan can claim.
 _Avoid_: Test run, preview mode, simulated run, no-op run.
 
 **Processing Run Presentation**:

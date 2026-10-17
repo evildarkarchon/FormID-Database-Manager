@@ -1,8 +1,11 @@
 using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Text;
+using System.Text.RegularExpressions;
 using System.Xml.Linq;
 using FormID_Database_Manager.Models;
 using FormID_Database_Manager.Services;
@@ -189,6 +192,25 @@ public class CoreProjectBoundaryTests
     }
 
     /// <summary>
+    ///     Verifies that the User Workflow's production composition is the only Core source that reads the local
+    ///     application data directory, so the default database root is resolved once and injected everywhere else.
+    /// </summary>
+    [Fact]
+    public void CoreSources_DefaultDatabaseRoot_IsResolvedOnlyByUserWorkflowComposition()
+    {
+        var coreProjectDirectory = GetCoreProjectDirectory();
+
+        var localApplicationDataReaders = Directory
+            .EnumerateFiles(coreProjectDirectory, "*.cs", SearchOption.AllDirectories)
+            .Where(path => !IsBuildOutput(path))
+            .Where(path => File.ReadAllText(path).Contains("LocalApplicationData", StringComparison.Ordinal))
+            .Select(path => Path.GetRelativePath(coreProjectDirectory, path))
+            .ToArray();
+
+        Assert.Equal(new[] { Path.Combine("Services", "UserWorkflow.cs") }, localApplicationDataReaders);
+    }
+
+    /// <summary>
     ///     Verifies that the wording the FormID Record Store used to write onto its progress path has not come back,
     ///     leaving both the words and the decision to name a Plugin to whoever renders the counters it reports.
     /// </summary>
@@ -262,6 +284,105 @@ public class CoreProjectBoundaryTests
     }
 
     /// <summary>
+    ///     Verifies that neither Processing Run Admission nor the User Workflow writes a refusal sentence of its own:
+    ///     admission returns a typed reason and <c>ProcessingRunPresentation</c> alone renders it (ADR-0010).
+    /// </summary>
+    /// <param name="sourceFileName">The Core service source that must hold no refusal wording.</param>
+    /// <remarks>
+    ///     Each sentence is pinned in full. The User Workflow legitimately tells a Browse user it "Could not detect game
+    ///     from directory. Please select a game from the dropdown.", so only the complete refusal sentence, ending in
+    ///     "first.", is forbidden. What a refusal does say is pinned by <c>ProcessingRunPresentationTests</c>.
+    /// </remarks>
+    [Theory]
+    [InlineData("ProcessingRunAdmission.cs")]
+    [InlineData("UserWorkflow.cs")]
+    public void RunAdmissionCallers_RefusalReasons_ContainNoRefusalSentence(string sourceFileName)
+    {
+        var source = File.ReadAllText(Path.Combine(GetCoreProjectDirectory(), "Services", sourceFileName));
+
+        foreach (var refusalSentence in new[]
+                 {
+                     "Please select a game from the dropdown first.",
+                     "Game directory must be specified when processing plugins",
+                     "The plugin list is still loading for this directory.",
+                     "The plugin list for this directory did not load.",
+                     "No plugins selected",
+                     "Choose a database file"
+                 })
+        {
+            Assert.DoesNotContain(refusalSentence, source, StringComparison.Ordinal);
+        }
+    }
+
+    /// <summary>
+    ///     Verifies that Processing Run Admission holds no user-facing sentence at all, not only none of the known
+    ///     refusals: every string literal it contains is either a default-path segment or exception diagnostic text
+    ///     (issue #89, ADR-0010).
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         No wording heuristic can do this. "No plugins selected" carries no punctuation and is shorter than the
+    ///         "FormID Database Manager" folder name, so punctuation, word counts and capitalisation would all either
+    ///         miss a real refusal or reject a real path segment. The guard therefore closes the set instead: admission
+    ///         may contain only the literals listed here, so a new literal fails until a reviewer decides whether it is
+    ///         wording (which belongs in <c>ProcessingRunPresentation</c>) or another path segment (which joins the
+    ///         list).
+    ///     </para>
+    ///     <para>
+    ///         Comments are skipped, so a doc comment may still quote a sentence, and an interpolated literal is reduced
+    ///         to its literal text, so <c>$"{tableName}.db"</c> counts as <c>.db</c>. A literal passed straight to an
+    ///         exception constructor is exempt: it is diagnostic text for a programming or input error, which reaches
+    ///         the user only behind the generic unexpected-failure prefix that <c>ProcessingRunPresentation</c> owns.
+    ///     </para>
+    /// </remarks>
+    [Fact]
+    public void ProcessingRunAdmission_StringLiterals_AreOnlyDefaultPathSegmentsOrExceptionDiagnostics()
+    {
+        var admissionSource = File.ReadAllText(
+            Path.Combine(GetCoreProjectDirectory(), "Services", "ProcessingRunAdmission.cs"));
+        string[] defaultPathSegments = ["FormID Database Manager", "Databases", ".db"];
+
+        var unexpectedLiterals = SourceStringLiterals.Extract(admissionSource)
+            .Where(static literal => !literal.IsExceptionArgument)
+            .Select(static literal => literal.Text)
+            .Where(text => !defaultPathSegments.Contains(text, StringComparer.Ordinal))
+            .ToArray();
+
+        Assert.Empty(unexpectedLiterals);
+    }
+
+    /// <summary>
+    ///     Verifies the literal scanner the admission guard depends on, so that guard cannot pass because the scanner
+    ///     stopped seeing literals.
+    /// </summary>
+    [Fact]
+    public void SourceStringLiterals_MixedSource_FindsEveryLiteralOutsideComments()
+    {
+        const string source =
+            "// \"in a line comment\"\n" +
+            "/* \"in a block comment\" */\n" +
+            "private const string Folder = \"Databases\";\n" +
+            "var quote = '\"';\n" +
+            "var path = $\"{Table(\"inner\")}.db\";\n" +
+            "var verbatim = @\"C:\\Games \"\"quoted\"\"\";\n" +
+            "var refusal = \"No plugins selected\";\n" +
+            "throw new ArgumentException(\"Bad directory.\", nameof(path));\n";
+
+        var literals = SourceStringLiterals.Extract(source);
+
+        Assert.Equal(
+            [
+                ("Databases", false),
+                ("inner", false),
+                (".db", false),
+                (@"C:\Games ""quoted""", false),
+                ("No plugins selected", false),
+                ("Bad directory.", true)
+            ],
+            literals.Select(static literal => (literal.Text, literal.IsExceptionArgument)));
+    }
+
+    /// <summary>
     ///     Verifies that the dry-run wording a substantive plan replaced has not come back anywhere in Core.
     /// </summary>
     /// <remarks>
@@ -283,6 +404,29 @@ public class CoreProjectBoundaryTests
             .ToArray();
 
         Assert.Empty(retiredPlanWordingOwners);
+    }
+
+    /// <summary>
+    ///     Verifies that the game-root-or-Data rule reaches a Processing Run only through the Plugin List Source.
+    /// </summary>
+    /// <remarks>
+    ///     ADR-0002, as amended by ADR-0010. <c>GameInstallations</c> owns the rule and calls it from detection, and
+    ///     <c>PluginListSource.Create</c> is the one place a run's Data directory is decided. Admission, the executor,
+    ///     the run and Plugin Ingestion read <c>PluginListSource.DataDirectory</c> from the request instead of deciding
+    ///     it again, so a second caller anywhere in Core is a second place the run's Data directory could diverge.
+    /// </remarks>
+    [Fact]
+    public void CoreSources_GameRootOrDataRule_ReachesARunOnlyThroughThePluginListSource()
+    {
+        var canonicalizationCallers = Directory
+            .EnumerateFiles(GetCoreProjectDirectory(), "*.cs", SearchOption.AllDirectories)
+            .Where(path => !IsBuildOutput(path))
+            .Where(path => File.ReadAllText(path).Contains("CanonicalizeDataDirectory(", StringComparison.Ordinal))
+            .Select(path => Path.GetFileName(path))
+            .OrderBy(static fileName => fileName, StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.Equal(["GameInstallations.cs", "PluginListSource.cs"], canonicalizationCallers);
     }
 
     /// <summary>
@@ -321,7 +465,6 @@ public class CoreProjectBoundaryTests
         Assert.Contains("IGameLoadOrders", pluginIngestionSource, StringComparison.Ordinal);
         Assert.Contains("PrepareSelectedPlugins", pluginIngestionSource, StringComparison.Ordinal);
         Assert.Contains("IPluginOverlayReader", pluginIngestionSource, StringComparison.Ordinal);
-        Assert.Contains("GameInstallations.CanonicalizeDataDirectory", pluginIngestionSource, StringComparison.Ordinal);
         Assert.Contains(
             ingestionOperation.GetParameters(),
             parameter => parameter.ParameterType == pluginWriterType);
@@ -464,5 +607,253 @@ public class CoreProjectBoundaryTests
         }
 
         throw new InvalidOperationException("Could not locate repository root from the test output directory.");
+    }
+
+    /// <summary>
+    ///     One string literal found in C# source text.
+    /// </summary>
+    /// <param name="Text">
+    ///     The literal's text as written, with verbatim doubled quotes collapsed and interpolation holes removed.
+    /// </param>
+    /// <param name="IsExceptionArgument">
+    ///     Whether the literal appears in the argument list of an exception constructor in its statement.
+    /// </param>
+    private readonly record struct SourceStringLiteral(string Text, bool IsExceptionArgument);
+
+    /// <summary>
+    ///     A deliberately small C# scanner that finds string literals outside comments, for source-text guards that
+    ///     have to tell wording from code.
+    /// </summary>
+    /// <remarks>
+    ///     It understands line and block comments, character literals, and regular, verbatim and interpolated strings,
+    ///     including literals nested in an interpolation hole. It does not reduce raw string literals: their whole
+    ///     content is reported as written, which can only make a guard stricter, never let wording slip past it.
+    /// </remarks>
+    private static class SourceStringLiterals
+    {
+        private static readonly Regex ExceptionConstruction = new(
+            @"new\s+[\w.]*Exception\s*\(",
+            RegexOptions.CultureInvariant);
+
+        /// <summary>
+        ///     Finds every string literal in <paramref name="source" />, in source order, with a nested literal
+        ///     reported before the interpolated literal that contains it.
+        /// </summary>
+        /// <param name="source">The C# source text to scan.</param>
+        /// <returns>The literals found outside comments.</returns>
+        internal static IReadOnlyList<SourceStringLiteral> Extract(string source)
+        {
+            var literals = new List<SourceStringLiteral>();
+            // The code of the current statement so far, which decides whether a literal is an exception argument.
+            var statement = new StringBuilder();
+            var index = 0;
+            while (index < source.Length)
+            {
+                var current = source[index];
+                var next = index + 1 < source.Length ? source[index + 1] : '\0';
+                if (current == '/' && next == '/')
+                {
+                    var lineEnd = source.IndexOf('\n', index);
+                    index = lineEnd < 0 ? source.Length : lineEnd + 1;
+                }
+                else if (current == '/' && next == '*')
+                {
+                    var commentEnd = source.IndexOf("*/", index + 2, StringComparison.Ordinal);
+                    index = commentEnd < 0 ? source.Length : commentEnd + 2;
+                }
+                else if (current == '\'')
+                {
+                    index = SkipCharLiteral(source, index);
+                }
+                else if (TryFindStringStart(source, index, out var quoteIndex, out var interpolated, out var verbatim))
+                {
+                    var isExceptionArgument = ExceptionConstruction.IsMatch(statement.ToString());
+                    index = ReadString(source, quoteIndex, interpolated, verbatim, isExceptionArgument, literals);
+                }
+                else
+                {
+                    if (current is ';' or '{' or '}')
+                    {
+                        statement.Clear();
+                    }
+                    else
+                    {
+                        statement.Append(current);
+                    }
+
+                    index++;
+                }
+            }
+
+            return literals;
+        }
+
+        /// <summary>
+        ///     Recognises a string literal's opening, including any <c>$</c> and <c>@</c> prefix, at
+        ///     <paramref name="index" />.
+        /// </summary>
+        private static bool TryFindStringStart(
+            string source,
+            int index,
+            out int quoteIndex,
+            out bool interpolated,
+            out bool verbatim)
+        {
+            interpolated = false;
+            verbatim = false;
+            quoteIndex = index;
+            while (quoteIndex < source.Length && source[quoteIndex] is '$' or '@')
+            {
+                interpolated |= source[quoteIndex] == '$';
+                verbatim |= source[quoteIndex] == '@';
+                quoteIndex++;
+            }
+
+            return quoteIndex < source.Length && source[quoteIndex] == '"';
+        }
+
+        /// <summary>
+        ///     Reads one string literal whose opening quote is at <paramref name="quoteIndex" /> and records it, after
+        ///     any literal nested in one of its interpolation holes.
+        /// </summary>
+        /// <returns>The index just past the literal's closing quote.</returns>
+        private static int ReadString(
+            string source,
+            int quoteIndex,
+            bool interpolated,
+            bool verbatim,
+            bool isExceptionArgument,
+            List<SourceStringLiteral> literals)
+        {
+            if (source.AsSpan(quoteIndex).StartsWith("\"\"\""))
+            {
+                return ReadRawString(source, quoteIndex, isExceptionArgument, literals);
+            }
+
+            var text = new StringBuilder();
+            var index = quoteIndex + 1;
+            while (index < source.Length)
+            {
+                var current = source[index];
+                var next = index + 1 < source.Length ? source[index + 1] : '\0';
+                if (current == '"' && verbatim && next == '"')
+                {
+                    text.Append('"');
+                    index += 2;
+                }
+                else if (current == '"')
+                {
+                    index++;
+                    break;
+                }
+                else if (current == '\\' && !verbatim)
+                {
+                    // An escape is kept as written; only its second character must not end the literal.
+                    text.Append(current).Append(next);
+                    index += 2;
+                }
+                else if (interpolated && current is '{' or '}' && next == current)
+                {
+                    text.Append(current);
+                    index += 2;
+                }
+                else if (interpolated && current == '{')
+                {
+                    index = SkipInterpolationHole(source, index + 1, isExceptionArgument, literals);
+                }
+                else
+                {
+                    text.Append(current);
+                    index++;
+                }
+            }
+
+            literals.Add(new SourceStringLiteral(text.ToString(), isExceptionArgument));
+            return index;
+        }
+
+        /// <summary>
+        ///     Reads a raw string literal opened by three or more quotes and records its content as written.
+        /// </summary>
+        /// <returns>The index just past the closing quote run.</returns>
+        private static int ReadRawString(
+            string source,
+            int quoteIndex,
+            bool isExceptionArgument,
+            List<SourceStringLiteral> literals)
+        {
+            var quoteCount = 0;
+            while (quoteIndex + quoteCount < source.Length && source[quoteIndex + quoteCount] == '"')
+            {
+                quoteCount++;
+            }
+
+            var delimiter = new string('"', quoteCount);
+            var contentStart = quoteIndex + quoteCount;
+            var contentEnd = source.IndexOf(delimiter, contentStart, StringComparison.Ordinal);
+            if (contentEnd < 0)
+            {
+                contentEnd = source.Length;
+            }
+
+            literals.Add(new SourceStringLiteral(source[contentStart..contentEnd], isExceptionArgument));
+            return Math.Min(source.Length, contentEnd + quoteCount);
+        }
+
+        /// <summary>
+        ///     Skips one interpolation hole starting just after its opening brace, recording any literal inside it.
+        /// </summary>
+        /// <returns>The index just past the hole's closing brace.</returns>
+        private static int SkipInterpolationHole(
+            string source,
+            int index,
+            bool isExceptionArgument,
+            List<SourceStringLiteral> literals)
+        {
+            var depth = 1;
+            while (index < source.Length)
+            {
+                var current = source[index];
+                if (current == '\'')
+                {
+                    index = SkipCharLiteral(source, index);
+                }
+                else if (TryFindStringStart(source, index, out var quoteIndex, out var interpolated, out var verbatim))
+                {
+                    index = ReadString(source, quoteIndex, interpolated, verbatim, isExceptionArgument, literals);
+                }
+                else
+                {
+                    depth += current switch
+                    {
+                        '{' => 1,
+                        '}' => -1,
+                        _ => 0
+                    };
+                    index++;
+                    if (depth == 0)
+                    {
+                        break;
+                    }
+                }
+            }
+
+            return index;
+        }
+
+        /// <summary>
+        ///     Skips one character literal, so a quote character written as <c>'"'</c> does not open a string.
+        /// </summary>
+        /// <returns>The index just past the closing apostrophe.</returns>
+        private static int SkipCharLiteral(string source, int index)
+        {
+            index++;
+            while (index < source.Length && source[index] != '\'')
+            {
+                index += source[index] == '\\' ? 2 : 1;
+            }
+
+            return index + 1;
+        }
     }
 }

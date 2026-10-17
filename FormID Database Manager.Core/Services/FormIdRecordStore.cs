@@ -329,6 +329,14 @@ public sealed class FormIdRecordStore : IFormIdRecordStoreSession
     /// </exception>
     /// <exception cref="OperationCanceledException">Thrown when opening or preparation is cancelled.</exception>
     /// <exception cref="SqliteException">Thrown when SQLite cannot configure or prepare the Store.</exception>
+    /// <exception cref="IOException">Thrown when the database's missing parent directory cannot be created.</exception>
+    /// <exception cref="UnauthorizedAccessException">
+    ///     Thrown when the caller may not create the database's missing parent directory.
+    /// </exception>
+    /// <remarks>
+    ///     Opening creates the database file's parent directory when it is missing, before the connection is configured,
+    ///     so a Store that returns is ready even when the database folder was deleted or never existed (ADR-0001).
+    /// </remarks>
     public static async Task<FormIdRecordStore> OpenAsync(
         string databasePath,
         GameRelease gameRelease,
@@ -338,6 +346,11 @@ public sealed class FormIdRecordStore : IFormIdRecordStoreSession
 
         // Resolve the table name before opening a connection so unsupported releases fail through the whitelist seam.
         var tableName = SupportedGameReleases.ForRelease(gameRelease).TableName;
+
+        // The Store owns its database folder (ADR-0001 amendment): admission and Dry Runs create nothing on disk, so
+        // a real run is the first and only place the folder may be created. It must exist before SQLite opens the file.
+        EnsureDatabaseDirectoryExists(databasePath);
+
         var connection = new SqliteConnection(CreateConnectionString(databasePath));
         FormIdRecordStore? store = null;
 
@@ -556,6 +569,23 @@ public sealed class FormIdRecordStore : IFormIdRecordStoreSession
         {
             _stagingBatch.Clear();
             await ClearStagingTableBestEffortAsync().ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    ///     Creates the database file's parent directory when it is missing. A path with no directory component (a bare
+    ///     file name resolved against the working directory) needs nothing created.
+    /// </summary>
+    /// <param name="databasePath">The non-blank SQLite database path.</param>
+    /// <exception cref="IOException">Thrown when the directory cannot be created.</exception>
+    /// <exception cref="UnauthorizedAccessException">Thrown when the caller may not create the directory.</exception>
+    private static void EnsureDatabaseDirectoryExists(string databasePath)
+    {
+        var databaseDirectory = Path.GetDirectoryName(Path.GetFullPath(databasePath));
+        if (!string.IsNullOrEmpty(databaseDirectory))
+        {
+            // CreateDirectory is a no-op for an existing directory, so no separate existence check is needed.
+            Directory.CreateDirectory(databaseDirectory);
         }
     }
 

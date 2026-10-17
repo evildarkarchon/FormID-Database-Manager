@@ -496,7 +496,9 @@ public sealed class ProcessingRunPresentationTests
 
         var rendered = ProcessingRunPresentation.Render(new PlannedRunOutcome(new PluginRunPlan(
             new PluginIngestionPlan(
-                new PluginProcessingRunRequest(@"C:\Games\Skyrim", string.Empty, GameRelease.SkyrimSE,
+                new PluginProcessingRunRequest(
+                    PluginListSource.Create(GameRelease.SkyrimSE, @"C:\Games\Skyrim"),
+                    string.Empty,
                     ["First.esp", "Absent.esp", "Unavailable.esp", "Broken.esp"], UpdateMode.Append, dryRun: true),
                 [
                 new PlannedPluginIngestion("First.esp"),
@@ -537,7 +539,8 @@ public sealed class ProcessingRunPresentationTests
     public void Render_PluginPlanLongerThanTheMessageBound_StaysOneMessage()
     {
         var request = new PluginProcessingRunRequest(
-            @"C:\Games\Skyrim", string.Empty, GameRelease.SkyrimSE,
+            PluginListSource.Create(GameRelease.SkyrimSE, @"C:\Games\Skyrim"),
+            string.Empty,
             Enumerable.Range(1, 40).Select(position => $"Plugin{position}.esp"), UpdateMode.Append, dryRun: true);
         var plan = new PluginIngestionPlan(request, Enumerable
             .Range(1, 40)
@@ -614,6 +617,75 @@ public sealed class ProcessingRunPresentationTests
     }
 
     /// <summary>
+    ///     Pins the sentence each Processing Run Admission refusal reaches the user as (ADR-0010).
+    /// </summary>
+    /// <param name="reasonName">
+    ///     The name of the refusal reason, passed as text because the reason is internal and a public test method
+    ///     cannot take it as a parameter.
+    /// </param>
+    /// <param name="expected">The exact sentence the user reads.</param>
+    [Theory]
+    [InlineData(nameof(RunRejectionReason.NoGameSelected), "Please select a game from the dropdown first.")]
+    [InlineData(nameof(RunRejectionReason.NoGameDirectory),
+        "Game directory must be specified when processing plugins")]
+    [InlineData(nameof(RunRejectionReason.PluginListLoading),
+        "The plugin list is still loading for this directory. Try again when it finishes.")]
+    [InlineData(nameof(RunRejectionReason.PluginListUnavailable),
+        "The plugin list for this directory did not load. Browse to the directory again to retry.")]
+    [InlineData(nameof(RunRejectionReason.NoPluginsSelected), "No plugins selected")]
+    [InlineData(nameof(RunRejectionReason.NoDatabaseLocation),
+        "Choose a database file: the default location is unavailable.")]
+    public void Render_RunRejectionReason_ReturnsTheRefusalSentence(string reasonName, string expected)
+    {
+        var reason = Enum.Parse<RunRejectionReason>(reasonName);
+
+        Assert.Equal(expected, ProcessingRunPresentation.Render(reason));
+    }
+
+    /// <summary>
+    ///     Verifies that every refusal reason has a sentence, so adding a reason without wording fails here.
+    /// </summary>
+    [Fact]
+    public void Render_EveryRunRejectionReason_HasASentence()
+    {
+        foreach (var reason in Enum.GetValues<RunRejectionReason>())
+        {
+            Assert.False(string.IsNullOrWhiteSpace(ProcessingRunPresentation.Render(reason)));
+        }
+    }
+
+    /// <summary>
+    ///     Verifies that a refusal reason this module does not know is refused rather than rendered as empty text.
+    /// </summary>
+    [Fact]
+    public void Render_UndefinedRunRejectionReason_Throws()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => ProcessingRunPresentation.Render((RunRejectionReason)999));
+    }
+
+    /// <summary>
+    ///     Pins the generic sentence an unexpected failure reaches the user as: the failure's own message behind the
+    ///     legacy "Error processing FormIDs" prefix.
+    /// </summary>
+    [Fact]
+    public void RenderUnexpectedFailure_AnyException_PrefixesTheFailureMessage()
+    {
+        var rendered = ProcessingRunPresentation.RenderUnexpectedFailure(
+            new InvalidOperationException("store unavailable"));
+
+        Assert.Equal("Error processing FormIDs: store unavailable", rendered);
+    }
+
+    /// <summary>
+    ///     Verifies that rendering a missing failure is refused rather than rendered as a message about nothing.
+    /// </summary>
+    [Fact]
+    public void RenderUnexpectedFailure_NullFailure_Throws()
+    {
+        Assert.Throws<ArgumentNullException>(() => ProcessingRunPresentation.RenderUnexpectedFailure(null!));
+    }
+
+    /// <summary>
     ///     Renders the report of one selected-Plugin run that ended with the supplied outcomes.
     /// </summary>
     /// <param name="outcomes">One outcome per selected Plugin, in selection order.</param>
@@ -626,8 +698,8 @@ public sealed class ProcessingRunPresentationTests
     private static RenderedRunReport RenderPluginRun(params PluginIngestionOutcome[] outcomes)
     {
         var request = new PluginProcessingRunRequest(
-            GameDirectory, "ingestion.db",
-            GameRelease.SkyrimSE,
+            PluginListSource.Create(GameRelease.SkyrimSE, GameDirectory),
+            "ingestion.db",
             outcomes.Select(static outcome => outcome.PluginName),
             UpdateMode.Append);
 

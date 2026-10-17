@@ -23,6 +23,21 @@ public class UserWorkflowTests
     private const string DatabasePath = @"C:\Databases\formids.db";
     private const string FormIdListPath = @"C:\Lists\formids.txt";
 
+    /// <summary>
+    /// The refusal sentence for a Plugin List still loading for the captured directory, pinned by
+    /// <see cref="ProcessingRunPresentationTests" />.
+    /// </summary>
+    private const string PluginListLoadingMessage =
+        "The plugin list is still loading for this directory. Try again when it finishes.";
+
+    /// <summary>
+    /// The default database root injected into every workflow under test. It is deliberately never created, so a
+    /// test can prove that defaulting a database path leaves nothing on disk, and no test touches the developer's
+    /// own local application data directory.
+    /// </summary>
+    private readonly string _defaultDatabaseRoot =
+        Path.Combine(Path.GetTempPath(), $"FormIdTests-DefaultRoot-{Guid.NewGuid():N}");
+
     private readonly SynchronousThreadDispatcher _dispatcher = new();
     private readonly Mock<IFileDialogService> _fileDialogService = new();
     private readonly GameInstallations _gameInstallations;
@@ -762,73 +777,109 @@ public class UserWorkflowTests
         Assert.Contains("Error selecting database: picker unavailable", _viewModel.ErrorMessages);
     }
 
+    /// <summary>
+    /// Verifies where a Processing Run Admission refusal is shown: exactly one rendered error, with no run activity at
+    /// any point and no call to the executor. Each refusal reason and their order are covered by
+    /// <see cref="ProcessingRunAdmissionTests" />.
+    /// </summary>
     [Fact]
-    public async Task ProcessFormIdsAsync_NoSelectedGame_RecordsValidationMessage()
+    public async Task ProcessFormIdsAsync_Refused_AddsOneRenderedErrorWithoutRunActivity()
     {
         var sut = CreateSut();
+        var projectedStatuses = RecordProjectedStatuses();
+        var progressShown = false;
+        _viewModel.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(MainWindowViewModel.IsProgressVisible) && _viewModel.IsProgressVisible)
+            {
+                progressShown = true;
+            }
+        };
 
         await sut.ProcessFormIdsAsync();
 
-        Assert.Contains("Please select a game from the dropdown first.", _viewModel.ErrorMessages);
+        Assert.Equal(["Please select a game from the dropdown first."], _viewModel.ErrorMessages);
         Assert.Empty(_processingRuns);
+        Assert.Equal(0, _processingRunExecutor.CancelCallCount);
+        Assert.DoesNotContain("Initializing...", projectedStatuses);
+        Assert.Empty(projectedStatuses);
+        Assert.False(progressShown);
         Assert.False(_viewModel.IsProgressVisible);
         Assert.Equal("Process FormIDs", _viewModel.ProcessButtonText);
     }
 
-    [Fact]
-    public async Task ProcessFormIdsAsync_PluginIngestionWithoutGameDirectory_RecordsValidationMessage()
-    {
-        // Nothing is declared for SkyrimSE, so the release stays selected without a directory.
-        var sut = CreateSut();
-        await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
-
-        await sut.ProcessFormIdsAsync();
-
-        Assert.Contains("Game directory must be specified when processing plugins", _viewModel.ErrorMessages);
-        Assert.Empty(_processingRuns);
-    }
-
-    [Fact]
-    public async Task ProcessFormIdsAsync_PluginIngestionWithoutSelectedPlugins_RecordsValidationMessage()
-    {
-        _gameInstallationProbe.WithInstalledDirectories(GameRelease.SkyrimSE, GameDirectory);
-        var sut = CreateSut();
-        await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
-        await sut.ProcessFormIdsAsync();
-        Assert.Contains("No plugins selected", _viewModel.ErrorMessages);
-        Assert.Empty(_processingRuns);
-    }
-
     /// <summary>
-    /// Verifies that an empty confirmed selection retains the existing user-facing validation message.
+    /// Verifies that a refused press clears stale errors and warnings, so the refusal is the only error shown.
     /// </summary>
     [Fact]
-    public async Task ProcessFormIdsAsync_ConfirmedListWithoutSelection_RecordsExistingValidationMessage()
+    public async Task ProcessFormIdsAsync_Refused_ClearsStaleErrorsAndWarnings()
     {
         var sut = CreateSut();
-        await ConfirmPluginListAsync(sut, ["User.esp"]);
+        _viewModel.ErrorMessages.Add("Stale error");
+        _viewModel.WarningMessages.Add("Stale warning");
 
         await sut.ProcessFormIdsAsync();
 
-        Assert.Contains("No plugins selected", _viewModel.ErrorMessages);
-        Assert.Empty(_processingRuns);
-    }
-
-    [Fact]
-    public async Task ProcessFormIdsAsync_FormIdTextFile_SkipsPluginSelectionValidation()
-    {
-        _viewModel.DatabasePath = DatabasePath;
-        _viewModel.FormIdListPath = FormIdListPath;
-        var sut = CreateSut();
-        await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
-        await sut.ProcessFormIdsAsync();
-
-        var run = Assert.IsType<FormIdTextProcessingRunRequest>(Assert.Single(_processingRuns));
-        Assert.Equal(FormIdListPath, run.FormIdListPath);
+        Assert.Equal(["Please select a game from the dropdown first."], _viewModel.ErrorMessages);
+        Assert.Empty(_viewModel.WarningMessages);
     }
 
     /// <summary>
-    /// Verifies that text-run validation and default Store naming use authority even while presentation is still queued.
+    /// Verifies that a refusal never leaves the workflow believing a run is active: the next press starts a run
+    /// rather than requesting cancellation.
+    /// </summary>
+    [Fact]
+    public async Task ProcessFormIdsAsync_PressAfterRefusal_StartsARunRatherThanCancelling()
+    {
+        var sut = CreateSut();
+        await sut.ProcessFormIdsAsync();
+        await ConfigureValidPluginProcessingRunAsync(sut);
+
+        await sut.ProcessFormIdsAsync();
+
+        Assert.IsType<PluginProcessingRunRequest>(Assert.Single(_processingRuns));
+        Assert.Equal(0, _processingRunExecutor.CancelCallCount);
+    }
+
+    /// <summary>
+    /// Verifies that a game directory admission cannot build a Plugin List Source from is shown as the generic
+    /// processing error, as it was before admission existed, and that it leaves the run gate free for the next press.
+    /// </summary>
+    /// <remarks>
+    /// Browse keeps a malformed path in Game Context when a GameRelease is already selected, because detection is
+    /// skipped and the Plugin List refresh is what rejects it. The press then reaches admission with that path.
+    /// </remarks>
+    [Fact]
+    public async Task ProcessFormIdsAsync_MalformedGameDirectory_ShowsTheGenericErrorAndLeavesTheGateFree()
+    {
+        const string malformedDirectory = "C:\\Games\\Sky\0rim";
+        _fileDialogService.Setup(x => x.SelectGameDirectory())
+            .ReturnsAsync(FileDialogResult.Success(malformedDirectory));
+        _viewModel.DatabasePath = DatabasePath;
+        var sut = CreateSut();
+        await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
+        await Assert.ThrowsAnyAsync<ArgumentException>(sut.BrowseGameDirectoryAsync);
+        _viewModel.WarningMessages.Add("Stale warning");
+        var projectedStatuses = RecordProjectedStatuses();
+
+        await sut.ProcessFormIdsAsync();
+
+        var error = Assert.Single(_viewModel.ErrorMessages);
+        Assert.StartsWith("Error processing FormIDs: ", error, StringComparison.Ordinal);
+        Assert.Empty(_viewModel.WarningMessages);
+        Assert.Empty(_processingRuns);
+        Assert.Empty(projectedStatuses);
+        Assert.Equal("Process FormIDs", _viewModel.ProcessButtonText);
+
+        _viewModel.FormIdListPath = FormIdListPath;
+        await sut.ProcessFormIdsAsync();
+
+        Assert.IsType<FormIdTextProcessingRunRequest>(Assert.Single(_processingRuns));
+        Assert.Equal(0, _processingRunExecutor.CancelCallCount);
+    }
+
+    /// <summary>
+    /// Verifies that text-run admission and default Store naming use authority even while presentation is still queued.
     /// </summary>
     [Fact]
     public async Task ProcessFormIdsAsync_FormIdTextFile_UsesAuthoritativeReleaseBeforeQueuedProjection()
@@ -855,7 +906,8 @@ public class UserWorkflowTests
             _fileDialogService.Object,
             _gameInstallations,
             pluginList,
-            executor);
+            executor,
+            _defaultDatabaseRoot);
 
         await sut.SelectGameReleaseAsync(GameRelease.Fallout4);
         Assert.Null(viewModel.SelectedGame);
@@ -869,8 +921,12 @@ public class UserWorkflowTests
         Assert.Equal(run.DatabasePath, viewModel.DatabasePath);
     }
 
+    /// <summary>
+    /// Verifies that a real run with no chosen database path defaults one under the injected root, writes it back to
+    /// the database box, and creates nothing: the FormID Record Store creates the folder when the run opens it.
+    /// </summary>
     [Fact]
-    public async Task ProcessFormIdsAsync_EmptyDatabasePath_CreatesDefaultPathForSelectedGame()
+    public async Task ProcessFormIdsAsync_EmptyDatabasePath_DefaultsUnderInjectedRootWithoutCreatingIt()
     {
         var sut = CreateSut();
         var confirmed = await ConfirmPluginListAsync(sut, ["User.esp"]);
@@ -880,10 +936,13 @@ public class UserWorkflowTests
         await sut.ProcessFormIdsAsync();
 
         var run = Assert.IsType<PluginProcessingRunRequest>(Assert.Single(_processingRuns));
-        Assert.Equal(DefaultDatabasePathProvider.CreateDefaultDatabasePath(GameRelease.SkyrimSE), _viewModel.DatabasePath);
+        Assert.Equal(
+            Path.Combine(_defaultDatabaseRoot, "FormID Database Manager", "Databases", "SkyrimSE.db"),
+            _viewModel.DatabasePath);
         Assert.Equal(_viewModel.DatabasePath, run.DatabasePath);
-        Assert.Equal("SkyrimSE.db", Path.GetFileName(run.DatabasePath));
         Assert.Equal(["User.esp"], run.PluginNames);
+        Assert.False(Directory.Exists(_defaultDatabaseRoot),
+            $"Defaulting a database path must not create the root: {_defaultDatabaseRoot}");
     }
 
     /// <summary>
@@ -901,7 +960,7 @@ public class UserWorkflowTests
 
         var run = Assert.IsType<PluginProcessingRunRequest>(Assert.Single(_processingRuns));
         Assert.Equal(GameRelease.SkyrimSE, run.GameRelease);
-        Assert.Equal(confirmed.Source.DataDirectory, run.GameDirectory);
+        Assert.Equal(confirmed.Source, run.Source);
         Assert.Equal(["First.esp", "Third.esp"], run.PluginNames);
     }
 
@@ -931,12 +990,13 @@ public class UserWorkflowTests
         sut.SetPluginSelection(refreshed.MembershipVersion, "Second.esp", true);
 
         Assert.Equal(confirmed.Source.GameRelease, run.GameRelease);
-        Assert.Equal(confirmed.Source.DataDirectory, run.GameDirectory);
+        Assert.Equal(confirmed.Source, run.Source);
         Assert.Equal(["First.esp", "Third.esp"], run.PluginNames);
     }
 
     /// <summary>
-    /// Verifies that a different-source transition invalidates old selection before a run request can be created.
+    /// Verifies that a different-source transition invalidates old selection before a run can be admitted, and that the
+    /// press is refused as the Plugin List still loading rather than as an empty selection.
     /// </summary>
     [Fact]
     public async Task ProcessFormIdsAsync_DuringSourceTransition_DoesNotMixOldSelectionWithNewGameContext()
@@ -956,14 +1016,15 @@ public class UserWorkflowTests
         await sut.ProcessFormIdsAsync();
 
         Assert.Empty(_processingRuns);
-        Assert.Contains("No plugins selected", _viewModel.ErrorMessages);
+        Assert.Equal([PluginListLoadingMessage], _viewModel.ErrorMessages);
 
         refreshCompletion.SetResult(PluginListGameLoadOrdersStub.Discovered(["New.esp"]));
         await transition;
     }
 
     /// <summary>
-    /// Verifies that a run started reentrantly from release projection cannot reuse the previous source confirmation.
+    /// Verifies that a run started reentrantly from release projection cannot reuse the previous source confirmation,
+    /// and that the refused press writes no default database path for the newly projected release.
     /// </summary>
     [Fact]
     public async Task ProcessFormIdsAsync_DuringReleaseProjection_UsesCapturedAuthoritativeContext()
@@ -987,13 +1048,13 @@ public class UserWorkflowTests
 
         Assert.Empty(_processingRuns);
         Assert.Contains("Game directory must be specified when processing plugins", _viewModel.ErrorMessages);
-        Assert.Equal(
-            "Fallout4.db",
-            Path.GetFileName(_viewModel.DatabasePath));
+        Assert.Empty(_viewModel.DatabasePath);
     }
 
     /// <summary>
     /// Verifies that a run started reentrantly from directory projection rejects confirmation for the previous source.
+    /// The press lands before the new directory's refresh starts, so the Plugin List still describes the old source and
+    /// the truthful refusal is that it is still loading for this directory.
     /// </summary>
     [Fact]
     public async Task ProcessFormIdsAsync_DuringDirectoryProjection_RejectsMismatchedConfirmation()
@@ -1019,7 +1080,7 @@ public class UserWorkflowTests
         await reentrantRun;
 
         Assert.Empty(_processingRuns);
-        Assert.Contains("No plugins selected", _viewModel.ErrorMessages);
+        Assert.Equal([PluginListLoadingMessage], _viewModel.ErrorMessages);
 
         refreshCompletion.SetResult(PluginListGameLoadOrdersStub.Discovered(["New.esp"]));
         await transition;
@@ -1049,7 +1110,8 @@ public class UserWorkflowTests
         await reentrantRun;
 
         var run = Assert.IsType<PluginProcessingRunRequest>(Assert.Single(_processingRuns));
-        Assert.Equal(confirmed.Source.DataDirectory, run.GameDirectory);
+        Assert.Equal(confirmed.Source, run.Source);
+        Assert.Equal(confirmed.Source.DataDirectory, run.Source.DataDirectory);
         Assert.Equal(GameRelease.SkyrimSE, run.GameRelease);
         Assert.Equal(["User.esp"], run.PluginNames);
     }
@@ -1130,7 +1192,7 @@ public class UserWorkflowTests
 
         var run = Assert.IsType<PluginProcessingRunRequest>(Assert.Single(_processingRuns));
         Assert.Equal(GameRelease.SkyrimSE, run.GameRelease);
-        Assert.Equal(Path.Combine(GameDirectory, "Data"), run.GameDirectory);
+        Assert.Equal(PluginListSource.Create(GameRelease.SkyrimSE, GameDirectory), run.Source);
         Assert.Equal(["User.esp"], run.PluginNames);
         Assert.Null(_viewModel.SelectedGame);
         Assert.Empty(_viewModel.ErrorMessages);
@@ -1194,38 +1256,28 @@ public class UserWorkflowTests
     }
 
     /// <summary>
-    /// Verifies that a default chosen for the accepted run does not overwrite a later database-path edit.
+    /// Verifies that a default chosen for the admitted run does not overwrite a database-path edit made during a
+    /// startup notification, while the run itself still uses the default.
     /// </summary>
-    /// <param name="hasSelection">Whether request validation will accept the captured Plugin selection.</param>
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task ProcessFormIdsAsync_InitializingEditsEmptyDatabasePath_PreservesEdit(bool hasSelection)
+    [Fact]
+    public async Task ProcessFormIdsAsync_InitializingEditsEmptyDatabasePath_PreservesEdit()
     {
         var sut = CreateSut();
         var confirmed = await ConfirmPluginListAsync(sut, ["User.esp"]);
-        sut.SetPluginSelection(confirmed.MembershipVersion, "User.esp", hasSelection);
+        sut.SetPluginSelection(confirmed.MembershipVersion, "User.esp", true);
         OnRunStatus("Initializing...", () => _viewModel.DatabasePath = DatabasePath);
 
         await sut.ProcessFormIdsAsync();
 
         Assert.Equal(DatabasePath, _viewModel.DatabasePath);
-        if (hasSelection)
-        {
-            Assert.Equal("SkyrimSE.db", Path.GetFileName(Assert.Single(_processingRuns).DatabasePath));
-        }
-        else
-        {
-            Assert.Empty(_processingRuns);
-            Assert.Contains("No plugins selected", _viewModel.ErrorMessages);
-        }
+        Assert.Equal("SkyrimSE.db", Path.GetFileName(Assert.Single(_processingRuns).DatabasePath));
     }
 
     /// <summary>
-    /// Verifies that an invalid selection still displays the default database path before reporting validation failure.
+    /// Verifies that a refused press writes no default database path: only an admitted run gets one.
     /// </summary>
     [Fact]
-    public async Task ProcessFormIdsAsync_EmptySelectionAndDatabasePath_DisplaysDefaultBeforeValidationFailure()
+    public async Task ProcessFormIdsAsync_RefusedWithEmptyDatabasePath_WritesNoDefaultPath()
     {
         var sut = CreateSut();
         await ConfirmPluginListAsync(sut, ["User.esp"]);
@@ -1233,8 +1285,8 @@ public class UserWorkflowTests
         await sut.ProcessFormIdsAsync();
 
         Assert.Empty(_processingRuns);
-        Assert.Equal("SkyrimSE.db", Path.GetFileName(_viewModel.DatabasePath));
-        Assert.Contains("No plugins selected", _viewModel.ErrorMessages);
+        Assert.Empty(_viewModel.DatabasePath);
+        Assert.Equal(["No plugins selected"], _viewModel.ErrorMessages);
     }
 
     /// <summary>
@@ -1319,6 +1371,7 @@ public class UserWorkflowTests
         var run = Assert.IsType<PluginProcessingRunRequest>(Assert.Single(_processingRuns));
         Assert.Empty(_viewModel.DatabasePath);
         Assert.Empty(run.DatabasePath);
+        Assert.False(Directory.Exists(_defaultDatabaseRoot));
     }
 
     /// <summary>
@@ -1331,7 +1384,9 @@ public class UserWorkflowTests
         await ConfigureValidPluginProcessingRunAsync(sut);
         _viewModel.DryRun = true;
         _processingRunExecutor.Outcome = new PlannedRunOutcome(new PluginRunPlan(new PluginIngestionPlan(
-            new PluginProcessingRunRequest(@"C:\Games\Skyrim", string.Empty, GameRelease.SkyrimSE,
+            new PluginProcessingRunRequest(
+                PluginListSource.Create(GameRelease.SkyrimSE, @"C:\Games\Skyrim"),
+                string.Empty,
                 ["User.esp", "Absent.esp"], UpdateMode.Append, dryRun: true),
             [
             new PlannedPluginIngestion("User.esp"),
@@ -1585,7 +1640,7 @@ public class UserWorkflowTests
     }
 
     /// <summary>
-    ///     Verifies the window this workflow owns run state to close: a press landing after validation has begun but
+    ///     Verifies the window this workflow owns run state to close: a press landing after the run was admitted but
     ///     before the executor has been handed the run cancels rather than launching a second run.
     /// </summary>
     /// <remarks>
@@ -1637,7 +1692,9 @@ public class UserWorkflowTests
             .ReturnsAsync(FileDialogResult.Success(GameDirectory));
         _processingRunExecutor.ProgressToReport.Add(new IngestingPlugin("User.esp", 2, 5));
         _processingRunExecutor.Outcome = new PlannedRunOutcome(new PluginRunPlan(new PluginIngestionPlan(
-            new PluginProcessingRunRequest(GameDirectory, string.Empty, GameRelease.SkyrimSE,
+            new PluginProcessingRunRequest(
+                PluginListSource.Create(GameRelease.SkyrimSE, GameDirectory),
+                string.Empty,
                 ["User.esp"], UpdateMode.Append, dryRun: true),
             [new PlannedPluginIngestion("User.esp")])));
         var projectedStatuses = RecordProjectedStatuses();
@@ -1865,7 +1922,8 @@ public class UserWorkflowTests
             _fileDialogService.Object,
             _gameInstallations,
             _pluginList,
-            executor);
+            executor,
+            _defaultDatabaseRoot);
         await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
         // The Plugin List is confirmed, but its projection is still waiting on the dispatcher.
         Assert.NotNull(_pluginList.Current.Confirmed);
@@ -1917,6 +1975,23 @@ public class UserWorkflowTests
         Assert.Null(disposalFailure);
         Assert.Empty(viewModel.ErrorMessages);
         fileDialogService.VerifyNoOtherCalls();
+    }
+
+    /// <summary>
+    /// Verifies that production composition resolves the local application data directory and hands it to the
+    /// workflow as its default database root, so no other production code has to read that location on its own.
+    /// </summary>
+    [Fact]
+    public void Create_ProductionComposition_PassesResolvedLocalApplicationDataRootThrough()
+    {
+        var dispatcher = new SynchronousThreadDispatcher();
+        var viewModel = new MainWindowViewModel(dispatcher);
+
+        using var sut = UserWorkflow.Create(viewModel, dispatcher, new Mock<IFileDialogService>().Object);
+
+        Assert.Equal(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            sut.DefaultDatabaseRoot);
     }
 
     /// <summary>
@@ -1992,7 +2067,8 @@ public class UserWorkflowTests
             _fileDialogService.Object,
             _gameInstallations,
             _pluginList,
-            _processingRunExecutor);
+            _processingRunExecutor,
+            _defaultDatabaseRoot);
     }
 
     /// <summary>
@@ -2067,8 +2143,8 @@ public class UserWorkflowTests
     private static PluginRunOutcome CreatePluginRunOutcome(params PluginIngestionOutcome[] outcomes)
     {
         var request = new PluginProcessingRunRequest(
-            GameDirectory, "ingestion.db",
-            GameRelease.SkyrimSE,
+            PluginListSource.Create(GameRelease.SkyrimSE, GameDirectory),
+            "ingestion.db",
             outcomes.Select(static outcome => outcome.PluginName),
             UpdateMode.Append);
 
