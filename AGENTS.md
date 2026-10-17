@@ -58,9 +58,9 @@ renaming Core members or changing project boundaries. In particular:
   refusal is a typed `RunRejectionReason` that `ProcessingRunPresentation` renders, not an exception, and admission
   creates no directory. The Store creates the database's parent directory when it opens. The selected-Plugin request
   carries its `PluginListSource`, so canonicalization does not repeat downstream.
-- A dry run returns a Processing Run Plan and opens no Store. A selected-Plugin dry run still resolves the Data path,
-  prepares the load order, and opens each Plugin's overlay, so it reports would-ingest and would-skip per Plugin rather
-  than echoing the selection. A FormID text dry run reports the file's presence and size, and neither opens nor parses
+- A dry run returns a Processing Run Plan and opens no Store. A selected-Plugin dry run still reads the Data directory
+  from the request's Plugin List Source, prepares the load order, and opens each Plugin's overlay, so it reports
+  would-ingest and would-skip per Plugin rather than echoing the selection. A FormID text dry run reports the file's presence and size, and neither opens nor parses
   it — counting rows is what an import does.
 - `ProcessingRunPresentation` is a pure renderer and writes nothing. `UserWorkflow` keeps the run activity, its
   ordering lock, and every ViewModel write, so do not move them there for symmetry with

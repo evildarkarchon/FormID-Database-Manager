@@ -75,7 +75,8 @@ internal static class ProcessingRunAdmission
         var databasePath = inputs.DatabasePath ?? string.Empty;
         // Blank rather than merely empty counts as no path, because a whitespace path names no file and would
         // otherwise reach the request constructor's programming-error guard. A Dry Run opens no Store, so it neither
-        // needs a path nor gets one chosen on the user's behalf.
+        // needs a path nor gets one chosen on the user's behalf: defaulting here would leave a path they never picked
+        // in the box after a run that deliberately wrote nothing.
         if (string.IsNullOrWhiteSpace(databasePath) && !inputs.DryRun)
         {
             if (string.IsNullOrWhiteSpace(defaultDatabaseRoot))

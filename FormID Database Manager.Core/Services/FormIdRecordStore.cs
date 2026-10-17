@@ -573,11 +573,6 @@ public sealed class FormIdRecordStore : IFormIdRecordStoreSession
     }
 
     /// <summary>
-    ///     Creates the pooled, read-write-create connection string owned by a FormID Record Store.
-    /// </summary>
-    /// <param name="databasePath">The validated SQLite database path.</param>
-    /// <returns>The connection string used for the Store's single SQLite connection.</returns>
-    /// <summary>
     ///     Creates the database file's parent directory when it is missing. A path with no directory component (a bare
     ///     file name resolved against the working directory) needs nothing created.
     /// </summary>
@@ -594,6 +589,11 @@ public sealed class FormIdRecordStore : IFormIdRecordStoreSession
         }
     }
 
+    /// <summary>
+    ///     Creates the pooled, read-write-create connection string owned by a FormID Record Store.
+    /// </summary>
+    /// <param name="databasePath">The validated SQLite database path.</param>
+    /// <returns>The connection string used for the Store's single SQLite connection.</returns>
     private static string CreateConnectionString(string databasePath)
     {
         return new SqliteConnectionStringBuilder

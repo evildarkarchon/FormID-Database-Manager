@@ -75,6 +75,10 @@ one Failed Plugin. A broad catch in the executor would undo both, converting eve
 value that the caller would report as a normal ending. So `ProcessingRunValidationException`,
 `UnresolvableMasterException`, and anything unforeseen propagate unchanged.
 
+> Note (2026-10-17): `ProcessingRunValidationException` has since been deleted, so only `UnresolvableMasterException`
+> and anything unforeseen propagate; see "Admission refusals" below. The generic sentence `UserWorkflow` shows for an
+> unforeseen failure is rendered by `ProcessingRunPresentation`, though the failure itself stays an exception.
+
 This does leave a failing run with something to say and no outcome to say it with, which is why
 `ProcessingRunFailure` is a *progress* case: the last thing a failing run reports goes out on the transient channel,
 like everything else it says while running, before the exception leaves.
