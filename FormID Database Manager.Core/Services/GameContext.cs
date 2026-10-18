@@ -84,7 +84,7 @@ internal sealed class GameContext : IDisposable
     /// </remarks>
     public void Dispose()
     {
-        BeginGameContextDirectoryTransition();
+        StartLatestIntentGeneration();
     }
 
     /// <summary>
@@ -105,15 +105,14 @@ internal sealed class GameContext : IDisposable
             return;
         }
 
-        var gameContextVersion = BeginGameContextDirectoryTransition();
-        _current = _current with
+        var gameContextVersion = StartLatestIntentGeneration();
+        Publish(_current with
         {
             SelectedGameRelease = selectedGameRelease,
             SelectedGameDirectory = null,
             PluginListSource = null,
             AvailableDirectories = ImmutableArray<string>.Empty
-        };
-        ProjectGameContext();
+        });
         _pluginList.Invalidate();
 
         if (selectedGameRelease is { } gameRelease)
@@ -156,15 +155,14 @@ internal sealed class GameContext : IDisposable
                 return Task.CompletedTask;
             }
 
-            var clearingVersion = BeginGameContextDirectoryTransition();
-            _current = _current with { SelectedGameDirectory = null, PluginListSource = null };
-            ProjectGameContext();
+            var clearingVersion = StartLatestIntentGeneration();
+            Publish(_current with { SelectedGameDirectory = null, PluginListSource = null });
             return RefreshPluginsForCurrentGameContextAsync(clearingVersion);
         }
 
         // A directory is only adopted once a GameRelease is known; the shell offers no detected directory without one.
         if (_current.SelectedGameRelease is not { } gameRelease ||
-            !TryCreateSource(gameRelease, selectedDirectory, out var source))
+            !TryCreateSourceOrRefuse(gameRelease, selectedDirectory, out var source))
         {
             return Task.CompletedTask;
         }
@@ -174,7 +172,7 @@ internal sealed class GameContext : IDisposable
             return Task.CompletedTask;
         }
 
-        var gameContextVersion = BeginGameContextDirectoryTransition();
+        var gameContextVersion = StartLatestIntentGeneration();
         Adopt(selectedDirectory, source, gameRelease);
         return RefreshPluginsForCurrentGameContextAsync(gameContextVersion);
     }
@@ -211,8 +209,7 @@ internal sealed class GameContext : IDisposable
 
         // Display mode changes do not retire location resolution; a current lookup reads this latest snapshot
         // when it eventually requests Plugin List refresh.
-        _current = _current with { AdvancedMode = advancedMode };
-        ProjectGameContext();
+        Publish(_current with { AdvancedMode = advancedMode });
         return RefreshPluginsForCurrentGameContextAsync();
     }
 
@@ -231,9 +228,9 @@ internal sealed class GameContext : IDisposable
     internal async Task BrowseGameDirectoryAsync()
     {
         // Opening the picker is itself an intent, so cancellation must still retire older asynchronous resolution.
-        var gameContextVersion = BeginGameContextDirectoryTransition();
+        var gameContextVersion = StartLatestIntentGeneration();
         var result = await _fileDialogService.SelectGameDirectory();
-        if (!IsLatestGameContextDirectoryTransition(gameContextVersion))
+        if (!IsLatestIntentGeneration(gameContextVersion))
         {
             return;
         }
@@ -266,13 +263,13 @@ internal sealed class GameContext : IDisposable
             // so placing it off the UI thread is this caller's job.
             folders = await Task.Run(() => _gameInstallations.GetInstalledDirectories(selectedGame));
         }
-        catch (Exception) when (!IsLatestGameContextDirectoryTransition(gameContextVersion))
+        catch (Exception) when (!IsLatestIntentGeneration(gameContextVersion))
         {
             // An older lookup cannot surface failures after a newer release or directory intent becomes authoritative.
             return;
         }
 
-        if (!IsLatestGameContextDirectoryTransition(gameContextVersion))
+        if (!IsLatestIntentGeneration(gameContextVersion))
         {
             return;
         }
@@ -282,7 +279,7 @@ internal sealed class GameContext : IDisposable
         var usable = ImmutableArray.CreateBuilder<(string Directory, PluginListSource Source)>(folders.Length);
         foreach (var folder in folders)
         {
-            if (TryCreateSource(selectedGame, folder, out var source, out _))
+            if (TryCreateSourceSilently(selectedGame, folder, out var source, out _))
             {
                 usable.Add((folder, source));
             }
@@ -336,7 +333,7 @@ internal sealed class GameContext : IDisposable
                 // UI thread, exactly as it does for installed-location lookup (ADR-0002).
                 detectedGame = await Task.Run(() => _gameInstallations.Detect(path));
             }
-            catch (Exception) when (!IsLatestGameContextDirectoryTransition(gameContextVersion))
+            catch (Exception) when (!IsLatestIntentGeneration(gameContextVersion))
             {
                 // A detector overtaken by a newer intent cannot escape into WinUI's current error boundary.
                 return;
@@ -350,7 +347,7 @@ internal sealed class GameContext : IDisposable
                 return;
             }
 
-            if (!IsLatestGameContextDirectoryTransition(gameContextVersion))
+            if (!IsLatestIntentGeneration(gameContextVersion))
             {
                 return;
             }
@@ -366,12 +363,12 @@ internal sealed class GameContext : IDisposable
             gameRelease = detectedGame.Value;
         }
 
-        if (!TryCreateSource(gameRelease.Value, path, out var source))
+        if (!TryCreateSourceOrRefuse(gameRelease.Value, path, out var source))
         {
             return;
         }
 
-        if (source == _current.PluginListSource && !IsFailedFor(source))
+        if (source == _current.PluginListSource && !_pluginList.Current.HasFailedFor(source))
         {
             return;
         }
@@ -379,7 +376,7 @@ internal sealed class GameContext : IDisposable
         // Browse is an explicit retry, so a failed retry must not retain old confirmation. Invalidating notifies the
         // Plugin List's observers, which can re-enter and start a newer intent, hence the latest check after it.
         _pluginList.Invalidate();
-        if (!IsLatestGameContextDirectoryTransition(gameContextVersion))
+        if (!IsLatestIntentGeneration(gameContextVersion))
         {
             return;
         }
@@ -388,7 +385,7 @@ internal sealed class GameContext : IDisposable
         {
             Adopt(path, source, gameRelease.Value);
             // Projection handlers can re-enter and start a newer intent, so the generation is checked again.
-            if (!IsLatestGameContextDirectoryTransition(gameContextVersion))
+            if (!IsLatestIntentGeneration(gameContextVersion))
             {
                 return;
             }
@@ -408,7 +405,7 @@ internal sealed class GameContext : IDisposable
     private async Task RefreshPluginsForCurrentGameContextAsync(int? expectedGameContextVersion = null)
     {
         if (expectedGameContextVersion.HasValue &&
-            !IsLatestGameContextDirectoryTransition(expectedGameContextVersion.Value))
+            !IsLatestIntentGeneration(expectedGameContextVersion.Value))
         {
             return;
         }
@@ -431,9 +428,12 @@ internal sealed class GameContext : IDisposable
     /// <param name="source">The built source, when this returns true.</param>
     /// <returns>True when the source was built; false when the pick was refused and reported.</returns>
     /// <exception cref="ArgumentOutOfRangeException">The GameRelease is unsupported, which is a programming error.</exception>
-    private bool TryCreateSource(GameRelease gameRelease, string directory, [NotNullWhen(true)] out PluginListSource? source)
+    private bool TryCreateSourceOrRefuse(
+        GameRelease gameRelease,
+        string directory,
+        [NotNullWhen(true)] out PluginListSource? source)
     {
-        if (TryCreateSource(gameRelease, directory, out source, out var failure))
+        if (TryCreateSourceSilently(gameRelease, directory, out source, out var failure))
         {
             return true;
         }
@@ -443,7 +443,8 @@ internal sealed class GameContext : IDisposable
     }
 
     /// <summary>
-    ///     Builds the Plugin List Source for a directory, capturing an unusable-directory failure instead of throwing it.
+    ///     Builds the Plugin List Source for a directory, capturing an unusable-directory failure instead of throwing it
+    ///     and reporting nothing, so the caller decides whether the failure is worth a message.
     /// </summary>
     /// <param name="gameRelease">The GameRelease the directory would be adopted with.</param>
     /// <param name="directory">A game root or Data directory.</param>
@@ -451,7 +452,7 @@ internal sealed class GameContext : IDisposable
     /// <param name="failure">Why the directory cannot become a source, when this returns false.</param>
     /// <returns>True when the source was built.</returns>
     /// <exception cref="ArgumentOutOfRangeException">The GameRelease is unsupported, which is a programming error.</exception>
-    private static bool TryCreateSource(
+    private static bool TryCreateSourceSilently(
         GameRelease gameRelease,
         string directory,
         [NotNullWhen(true)] out PluginListSource? source,
@@ -500,17 +501,6 @@ internal sealed class GameContext : IDisposable
     }
 
     /// <summary>
-    ///     Reports whether the borrowed Plugin List's last load for a source failed, which makes a Browse to that same
-    ///     source an explicit retry rather than a no-op.
-    /// </summary>
-    /// <param name="source">The source a Browse resolved to.</param>
-    /// <returns>True when the Plugin List is in its failed state for exactly that source.</returns>
-    private bool IsFailedFor(PluginListSource source)
-    {
-        return _pluginList.Current is PluginListFailedState failed && failed.Source == source;
-    }
-
-    /// <summary>
     ///     Makes a directory and the source built from it authoritative together, with the GameRelease that built it, and
     ///     projects the result.
     /// </summary>
@@ -524,20 +514,25 @@ internal sealed class GameContext : IDisposable
     /// </remarks>
     private void Adopt(string displayedDirectory, PluginListSource source, GameRelease gameRelease)
     {
-        _current = _current with
+        Publish(_current with
         {
             SelectedGameRelease = gameRelease,
             SelectedGameDirectory = displayedDirectory,
             PluginListSource = source
-        };
-        ProjectGameContext();
+        });
     }
 
     /// <summary>
-    ///     Starts a new directory-changing generation, retiring every older one.
+    ///     Starts a new latest-intent generation, retiring every older one so its late lookup, detection or picker work
+    ///     can no longer publish state or messages.
     /// </summary>
     /// <returns>The generation the caller now owns.</returns>
-    private int BeginGameContextDirectoryTransition()
+    /// <remarks>
+    ///     Every directory-changing transition starts one, and so do <see cref="Dispose" /> (to retire everything in
+    ///     flight) and a GameRelease change (to retire an older installed-location lookup). Advanced Mode changes do
+    ///     not, because they leave the directory alone.
+    /// </remarks>
+    private int StartLatestIntentGeneration()
     {
         // Directory discovery can finish after a later user action, so each directory-changing
         // transition gets a generation that retires older lookup results before they touch state.
@@ -549,7 +544,7 @@ internal sealed class GameContext : IDisposable
     /// </summary>
     /// <param name="gameContextVersion">The generation the caller owns.</param>
     /// <returns>True when no newer intent, and no disposal, has retired it.</returns>
-    private bool IsLatestGameContextDirectoryTransition(int gameContextVersion)
+    private bool IsLatestIntentGeneration(int gameContextVersion)
     {
         return gameContextVersion == Volatile.Read(ref _gameContextVersion);
     }
@@ -569,6 +564,21 @@ internal sealed class GameContext : IDisposable
             AvailableDirectories = [.. folders.Select(static folder => folder.Directory)]
         };
         Adopt(folders[0].Directory, folders[0].Source, gameRelease);
+    }
+
+    /// <summary>
+    ///     Makes a new Game Context authoritative and projects it, in that order, as one step.
+    /// </summary>
+    /// <param name="next">The complete next state, usually <c>_current with { … }</c>.</param>
+    /// <remarks>
+    ///     The state is written before projecting so a projection handler that re-enters reads the new state, which is
+    ///     what makes the ComboBox echo a no-op. Projection handlers can also start a newer intent, so callers keep
+    ///     their own generation checks after this returns; none happen inside it.
+    /// </remarks>
+    private void Publish(GameContextState next)
+    {
+        _current = next;
+        ProjectGameContext();
     }
 
     /// <summary>

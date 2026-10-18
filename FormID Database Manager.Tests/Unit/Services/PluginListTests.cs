@@ -633,6 +633,54 @@ public sealed class PluginListTests
         Assert.Equal("The refreshed Plugin List could not be read.", failed.ErrorMessage);
     }
 
+    /// <summary>
+    ///     Verifies that a failed state answers whether the Plugin List failed for a source only for the source whose
+    ///     discovery failed.
+    /// </summary>
+    [Fact]
+    public async Task HasFailedFor_FailedState_IsTrueOnlyForTheFailedSource()
+    {
+        using var sut = new PluginList(ScriptedGameLoadOrders.Sequenced(ScriptedDiscovery.Fails()));
+        var failedSource = PluginListSource.Create(GameRelease.SkyrimSE, CreateGameDirectory());
+        var otherSource = PluginListSource.Create(GameRelease.SkyrimSE, CreateGameDirectory());
+
+        await sut.RefreshAsync(failedSource, AdvancedMode.Off, TestContext.Current.CancellationToken);
+
+        Assert.IsType<PluginListFailedState>(sut.Current);
+        Assert.True(sut.Current.HasFailedFor(failedSource));
+        Assert.False(sut.Current.HasFailedFor(otherSource));
+    }
+
+    /// <summary>
+    ///     Verifies that every state other than Failed reports no failure, even for its own source: a Ready list, a
+    ///     cancelled refresh and an invalidated list are not failures a retry should answer.
+    /// </summary>
+    [Fact]
+    public async Task HasFailedFor_NonFailedStates_IsFalse()
+    {
+        using var sut = new PluginList(ScriptedGameLoadOrders.Sequenced(
+            ScriptedDiscovery.Completes("User.esp"),
+            ScriptedDiscovery.Cancels()));
+        var source = PluginListSource.Create(GameRelease.SkyrimSE, CreateGameDirectory());
+        Assert.False(sut.Current.HasFailedFor(source));
+
+        await sut.RefreshAsync(source, AdvancedMode.Off, TestContext.Current.CancellationToken);
+        Assert.IsType<PluginListReadyState>(sut.Current);
+        Assert.False(sut.Current.HasFailedFor(source));
+
+        // The Plugin List publishes Cancelled only for caller cancellation, which the refresh then rethrows.
+        using var cancelled = new CancellationTokenSource();
+        await cancelled.CancelAsync();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => sut.RefreshAsync(source, AdvancedMode.Off, cancelled.Token));
+        Assert.IsType<PluginListCancelledState>(sut.Current);
+        Assert.False(sut.Current.HasFailedFor(source));
+
+        sut.Invalidate();
+        Assert.IsType<PluginListNoSourceState>(sut.Current);
+        Assert.False(sut.Current.HasFailedFor(source));
+    }
+
     [Fact]
     public async Task RefreshAsync_NewerRefreshOvertakesOlder_OnlyNewerResultCanPublish()
     {

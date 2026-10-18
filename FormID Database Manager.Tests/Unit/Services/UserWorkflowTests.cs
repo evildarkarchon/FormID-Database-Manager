@@ -61,41 +61,85 @@ public class UserWorkflowTests
     }
 
     /// <summary>
-    /// Verifies that the User Workflow forwards each of the four Game Context intents to the Game Context it composed,
-    /// which then projects and refreshes. What each transition does is covered by <see cref="GameContextTests" />.
+    /// Verifies that the User Workflow forwards Browse to the Game Context it composed, which then detects, projects
+    /// and refreshes. What each transition does is covered by <see cref="GameContextTests" />.
     /// </summary>
     [Fact]
-    public async Task GameContextIntents_EachForwardedIntent_ReachesTheGameContext()
+    public async Task BrowseGameDirectoryAsync_DirectoryWithoutGameRelease_ForwardsToTheGameContext()
     {
         const string browsedDirectory = @"E:\Games\Fallout4";
-        const string secondDirectory = @"D:\Games\Skyrim";
-        _gameInstallationProbe
-            .WithFile(Path.Combine(browsedDirectory, "Data", "Fallout4.esm"))
-            .WithInstalledDirectories(GameRelease.SkyrimSE, GameDirectory, secondDirectory);
+        _gameInstallationProbe.WithFile(Path.Combine(browsedDirectory, "Data", "Fallout4.esm"));
         _fileDialogService.Setup(x => x.SelectGameDirectory())
             .ReturnsAsync(FileDialogResult.Success(browsedDirectory));
         var sut = CreateSut();
 
         await sut.BrowseGameDirectoryAsync();
+
         Assert.Equal(GameRelease.Fallout4, _viewModel.SelectedGame);
         Assert.Equal(browsedDirectory, _viewModel.GameDirectory);
+        Assert.Equal([PluginListSource.Create(GameRelease.Fallout4, browsedDirectory)], _refreshes);
+    }
+
+    /// <summary>
+    /// Verifies that the User Workflow forwards a release selection to the Game Context it composed, which then
+    /// projects the first installed location and refreshes. What each transition does is covered by
+    /// <see cref="GameContextTests" />.
+    /// </summary>
+    [Fact]
+    public async Task SelectGameReleaseAsync_InstalledRelease_ForwardsToTheGameContext()
+    {
+        _gameInstallationProbe.WithInstalledDirectories(GameRelease.SkyrimSE, GameDirectory);
+        var sut = CreateSut();
 
         await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
+
         Assert.Equal(GameRelease.SkyrimSE, _viewModel.SelectedGame);
         Assert.Equal(GameDirectory, _viewModel.GameDirectory);
+        Assert.Equal([PluginListSource.Create(GameRelease.SkyrimSE, GameDirectory)], _refreshes);
+    }
+
+    /// <summary>
+    /// Verifies that the User Workflow forwards a detected-directory pick to the Game Context it composed, which then
+    /// projects and refreshes. What each transition does is covered by <see cref="GameContextTests" />.
+    /// </summary>
+    [Fact]
+    public async Task SelectDetectedDirectoryAsync_SecondDetectedDirectory_ForwardsToTheGameContext()
+    {
+        const string secondDirectory = @"D:\Games\Skyrim";
+        _gameInstallationProbe.WithInstalledDirectories(GameRelease.SkyrimSE, GameDirectory, secondDirectory);
+        var sut = CreateSut();
+        await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
 
         await sut.SelectDetectedDirectoryAsync(secondDirectory);
+
         Assert.Equal(secondDirectory, _viewModel.GameDirectory);
-
-        await sut.SetAdvancedModeAsync(AdvancedMode.On);
-        Assert.True(_viewModel.AdvancedMode);
-
         Assert.Equal(
             [
-                PluginListSource.Create(GameRelease.Fallout4, browsedDirectory),
                 PluginListSource.Create(GameRelease.SkyrimSE, GameDirectory),
-                PluginListSource.Create(GameRelease.SkyrimSE, secondDirectory),
                 PluginListSource.Create(GameRelease.SkyrimSE, secondDirectory)
+            ],
+            _refreshes);
+    }
+
+    /// <summary>
+    /// Verifies that the User Workflow forwards an Advanced Mode change to the Game Context it composed, which then
+    /// projects and refreshes the current source. What each transition does is covered by
+    /// <see cref="GameContextTests" />.
+    /// </summary>
+    [Fact]
+    public async Task SetAdvancedModeAsync_On_ForwardsToTheGameContext()
+    {
+        _gameInstallationProbe.WithInstalledDirectories(GameRelease.SkyrimSE, GameDirectory);
+        var sut = CreateSut();
+        await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
+
+        await sut.SetAdvancedModeAsync(AdvancedMode.On);
+
+        Assert.True(_viewModel.AdvancedMode);
+        Assert.Equal(
+            [
+                PluginListSource.Create(GameRelease.SkyrimSE, GameDirectory),
+                PluginListSource.Create(GameRelease.SkyrimSE, GameDirectory)
             ],
             _refreshes);
         Assert.Equal(
@@ -1200,7 +1244,9 @@ public class UserWorkflowTests
     /// slot. The step before it, detaching the Plugin List presentation adapter, is pinned against cancellation by
     /// <see cref="Dispose_QueuedPluginListProjection_DetachesPresentationBeforeCancellingExecutor" />. Retiring the Game
     /// Context has no effect at the moment it runs, only on later work, so its order relative to the adapter is
-    /// not observable and is kept by the source order alone.
+    /// not observable and is kept by the source order alone, which
+    /// <c>CoreProjectBoundaryTests.UserWorkflowDispose_TeardownOrder_DetachesPresentationThenRetiresGameContextThenCancelsExecutor</c>
+    /// pins.
     /// </remarks>
     [Fact]
     public async Task Dispose_LookupFinishingDuringExecutorCancellation_CannotPublishIntoTeardown()

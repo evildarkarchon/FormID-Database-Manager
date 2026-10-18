@@ -442,6 +442,55 @@ public class CoreProjectBoundaryTests
     }
 
     /// <summary>
+    ///     Verifies that <see cref="UserWorkflow.Dispose" /> detaches the Plugin List presentation adapter, then retires
+    ///     the Game Context, then cancels the Processing Run executor, in that order (#98).
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         This is a source pin rather than a behavioural test because part of the order cannot be observed.
+    ///         Retiring the Game Context publishes nothing at the moment it runs and only stops later work, so whether
+    ///         the adapter detaches before or after it changes nothing a test could see. The two observable halves —
+    ///         adapter before cancellation, and Game Context before cancellation — are also covered behaviourally by
+    ///         the <c>Dispose_</c> tests in <c>UserWorkflowTests</c>; this pin holds the whole sequence in one place.
+    ///     </para>
+    ///     <para>
+    ///         The calls are searched for only inside the method's body, and each must appear there exactly once, so a
+    ///         duplicated or relocated call cannot satisfy the order by accident.
+    ///     </para>
+    /// </remarks>
+    [Fact]
+    public void UserWorkflowDispose_TeardownOrder_DetachesPresentationThenRetiresGameContextThenCancelsExecutor()
+    {
+        var userWorkflowSource = File.ReadAllText(Path.Combine(GetCoreProjectDirectory(), "Services", "UserWorkflow.cs"));
+        const string disposeSignature = "public void Dispose()";
+        var disposeStart = userWorkflowSource.IndexOf(disposeSignature, StringComparison.Ordinal);
+        Assert.True(disposeStart >= 0, "UserWorkflow.Dispose was not found in the source.");
+        Assert.Equal(disposeStart, userWorkflowSource.LastIndexOf(disposeSignature, StringComparison.Ordinal));
+        // A member body closes on a brace indented one level, the class body's member indentation.
+        var disposeEnd = Regex.Match(userWorkflowSource[disposeStart..], @"\n    \}\r?\n");
+        Assert.True(disposeEnd.Success, "The end of UserWorkflow.Dispose was not found in the source.");
+        var disposeBody = userWorkflowSource.Substring(disposeStart, disposeEnd.Index);
+        string[] orderedSteps =
+        [
+            "RetireCollaborator(_pluginListPresentationAdapter.Dispose,",
+            "RetireCollaborator(_gameContext.Dispose,",
+            "RetireCollaborator(_processingRunExecutor.Cancel,"
+        ];
+
+        var stepPositions = orderedSteps
+            .Select(step =>
+            {
+                var position = disposeBody.IndexOf(step, StringComparison.Ordinal);
+                Assert.True(position >= 0, $"UserWorkflow.Dispose no longer calls {step}");
+                Assert.Equal(position, disposeBody.LastIndexOf(step, StringComparison.Ordinal));
+                return position;
+            })
+            .ToArray();
+
+        Assert.Equal(stepPositions.Order(), stepPositions);
+    }
+
+    /// <summary>
     ///     Verifies that the Game Context references no Processing Run type: it decides which Plugin List can be loaded,
     ///     and the User Workflow alone joins that to admission and runs (ADR-0011).
     /// </summary>

@@ -778,7 +778,7 @@ public sealed class GameContextTests : IDisposable
     /// </summary>
     /// <returns>A task that completes after Browse detection and Plugin List discovery finish.</returns>
     [Fact]
-    public async Task BrowseGameDirectoryAsync_SelectedDirectoryDetectsGameAndRefreshesPlugins()
+    public async Task BrowseGameDirectoryAsync_DirectoryWithoutGameRelease_DetectsGameAndRefreshesPlugins()
     {
         _fileDialogService.Setup(x => x.SelectGameDirectory())
             .ReturnsAsync(FileDialogResult.Success(GameDirectory));
@@ -1126,47 +1126,57 @@ public sealed class GameContextTests : IDisposable
     }
 
     /// <summary>
-    /// Verifies that the shell's ComboBoxes echoing this module's own projection back as intents change nothing: the
-    /// game and directory ComboBoxes are bound one-way and forward every selection change, including the ones the
-    /// projection itself causes.
+    /// Verifies that the shell's ComboBoxes echoing a release selection's own projection back as intents change
+    /// nothing: the game and directory ComboBoxes are bound one-way and forward every selection change, including the
+    /// ones the projection itself causes.
     /// </summary>
     /// <remarks>
-    /// The handlers below mirror the shell's: a game selection forwards the projected GameRelease, and a directory
-    /// selection forwards the projected directory only while it is one of the detected directories, because the
-    /// directory ComboBox has no item to select otherwise. Every echo must complete synchronously as a no-op, and only
-    /// the two real intents may reach the Plugin List.
+    /// A release selection projects both the GameRelease and, once lookup finishes, the first detected directory, so
+    /// both ComboBoxes echo. Every echo must complete synchronously as a no-op, and only the real intent may reach the
+    /// Plugin List.
     /// </remarks>
     [Fact]
-    public async Task SelectionIntents_ProjectionEchoedBackAsIntent_IsANoOp()
+    public async Task SelectGameReleaseAsync_ProjectionEchoedBackAsIntent_IsANoOp()
+    {
+        _gameInstallationProbe.WithInstalledDirectories(GameRelease.SkyrimSE, GameDirectory, @"D:\Games\Skyrim");
+        var sut = CreateSut(ScriptedGameLoadOrders.Fixed("User.esp"));
+        var echoes = EchoProjectionBackAsIntents(sut);
+
+        await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
+
+        Assert.Contains(nameof(MainWindowViewModel.SelectedGame), echoes.Select(static echo => echo.Property));
+        Assert.Contains(nameof(MainWindowViewModel.GameDirectory), echoes.Select(static echo => echo.Property));
+        Assert.All(echoes, echo => Assert.True(echo.Intent.IsCompletedSuccessfully));
+        Assert.Equal([PluginListSource.Create(GameRelease.SkyrimSE, GameDirectory)], Refreshes);
+        Assert.Equal(
+            PluginListSource.Create(GameRelease.SkyrimSE, GameDirectory),
+            Assert.IsType<ConfirmedPluginList>(PluginList.Current.Confirmed).Source);
+        Assert.Equal(GameDirectory, sut.Current.SelectedGameDirectory);
+    }
+
+    /// <summary>
+    /// Verifies that the directory ComboBox echoing a detected-directory pick's own projection back as an intent
+    /// changes nothing.
+    /// </summary>
+    /// <remarks>
+    /// Every echo must complete synchronously as a no-op, and only the real pick may reach the Plugin List after the
+    /// release selection that listed the directories.
+    /// </remarks>
+    [Fact]
+    public async Task SelectDetectedDirectoryAsync_ProjectionEchoedBackAsIntent_IsANoOp()
     {
         const string secondDirectory = @"D:\Games\Skyrim";
         _gameInstallationProbe.WithInstalledDirectories(GameRelease.SkyrimSE, GameDirectory, secondDirectory);
         var sut = CreateSut(ScriptedGameLoadOrders.Fixed("User.esp"));
-        var echoes = new List<Task>();
-        _viewModel.PropertyChanged += (_, args) =>
-        {
-            if (args.PropertyName == nameof(MainWindowViewModel.SelectedGame) && _viewModel.SelectedGame is { } game)
-            {
-                echoes.Add(sut.SelectGameReleaseAsync(game));
-            }
-            else if (args.PropertyName == nameof(MainWindowViewModel.GameDirectory) &&
-                     _viewModel.DetectedDirectories.Contains(_viewModel.GameDirectory))
-            {
-                echoes.Add(sut.SelectDetectedDirectoryAsync(_viewModel.GameDirectory));
-            }
-        };
-
         await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
+        ForgetRefreshes();
+        var echoes = EchoProjectionBackAsIntents(sut);
+
         await sut.SelectDetectedDirectoryAsync(secondDirectory);
 
-        Assert.True(echoes.Count >= 2, "Both the game and the directory projection should have echoed back.");
-        Assert.All(echoes, echo => Assert.True(echo.IsCompletedSuccessfully));
-        Assert.Equal(
-            [
-                PluginListSource.Create(GameRelease.SkyrimSE, GameDirectory),
-                PluginListSource.Create(GameRelease.SkyrimSE, secondDirectory)
-            ],
-            Refreshes);
+        Assert.Contains(nameof(MainWindowViewModel.GameDirectory), echoes.Select(static echo => echo.Property));
+        Assert.All(echoes, echo => Assert.True(echo.Intent.IsCompletedSuccessfully));
+        Assert.Equal([PluginListSource.Create(GameRelease.SkyrimSE, secondDirectory)], Refreshes);
         Assert.Equal(
             PluginListSource.Create(GameRelease.SkyrimSE, secondDirectory),
             Assert.IsType<ConfirmedPluginList>(PluginList.Current.Confirmed).Source);
@@ -1272,6 +1282,36 @@ public sealed class GameContextTests : IDisposable
         var confirmed = Assert.IsType<ConfirmedPluginList>(PluginList.Current.Confirmed);
         PluginList.Apply(new PluginSelectionByNameIntent(confirmed.MembershipVersion, pluginName, true));
         Assert.Equal([pluginName], PluginList.Current.Confirmed!.SelectedPluginNames);
+    }
+
+    /// <summary>
+    /// Wires ViewModel change handlers that mirror the shell's one-way ComboBoxes, forwarding each projected selection
+    /// back to the Game Context as an intent, and records every intent they forward.
+    /// </summary>
+    /// <param name="sut">The Game Context that receives the echoed intents.</param>
+    /// <returns>The list that receives each echoed property name and the task its forwarded intent returned.</returns>
+    /// <remarks>
+    /// A game selection forwards the projected GameRelease, and a directory selection forwards the projected directory
+    /// only while it is one of the detected directories, because the directory ComboBox has no item to select
+    /// otherwise.
+    /// </remarks>
+    private List<(string Property, Task Intent)> EchoProjectionBackAsIntents(GameContext sut)
+    {
+        var echoes = new List<(string Property, Task Intent)>();
+        _viewModel.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(MainWindowViewModel.SelectedGame) && _viewModel.SelectedGame is { } game)
+            {
+                echoes.Add((args.PropertyName, sut.SelectGameReleaseAsync(game)));
+            }
+            else if (args.PropertyName == nameof(MainWindowViewModel.GameDirectory) &&
+                     _viewModel.DetectedDirectories.Contains(_viewModel.GameDirectory))
+            {
+                echoes.Add((args.PropertyName, sut.SelectDetectedDirectoryAsync(_viewModel.GameDirectory)));
+            }
+        };
+
+        return echoes;
     }
 
     /// <summary>
