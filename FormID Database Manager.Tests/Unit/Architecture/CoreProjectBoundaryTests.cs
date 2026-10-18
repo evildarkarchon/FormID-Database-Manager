@@ -284,18 +284,20 @@ public class CoreProjectBoundaryTests
     }
 
     /// <summary>
-    ///     Verifies that neither Processing Run Admission nor the User Workflow writes a refusal sentence of its own:
-    ///     admission returns a typed reason and <c>ProcessingRunPresentation</c> alone renders it (ADR-0010).
+    ///     Verifies that neither Processing Run Admission, the User Workflow nor the Game Context writes a refusal
+    ///     sentence of its own: admission returns a typed reason and <c>ProcessingRunPresentation</c> alone renders it
+    ///     (ADR-0010).
     /// </summary>
     /// <param name="sourceFileName">The Core service source that must hold no refusal wording.</param>
     /// <remarks>
-    ///     Each sentence is pinned in full. The User Workflow legitimately tells a Browse user it "Could not detect game
+    ///     Each sentence is pinned in full. The Game Context legitimately tells a Browse user it "Could not detect game
     ///     from directory. Please select a game from the dropdown.", so only the complete refusal sentence, ending in
     ///     "first.", is forbidden. What a refusal does say is pinned by <c>ProcessingRunPresentationTests</c>.
     /// </remarks>
     [Theory]
     [InlineData("ProcessingRunAdmission.cs")]
     [InlineData("UserWorkflow.cs")]
+    [InlineData("GameContext.cs")]
     public void RunAdmissionCallers_RefusalReasons_ContainNoRefusalSentence(string sourceFileName)
     {
         var source = File.ReadAllText(Path.Combine(GetCoreProjectDirectory(), "Services", sourceFileName));
@@ -404,6 +406,60 @@ public class CoreProjectBoundaryTests
             .ToArray();
 
         Assert.Empty(retiredPlanWordingOwners);
+    }
+
+    /// <summary>
+    ///     Verifies that the User Workflow reaches Game Installation resolution only through the Game Context it
+    ///     composes: it keeps no reference to <c>GameInstallations</c> and calls none of its members (ADR-0011).
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         The pin is semantic rather than a bare text search for the type name. The User Workflow constructs the
+    ///         Game Context, so its internal constructor still receives <c>GameInstallations</c> and <c>Create</c>
+    ///         still builds the production one, and both hand it straight to <c>new GameContext(...)</c>. What would
+    ///         put resolution back in the workflow is holding the module or calling into it, so that is what is
+    ///         forbidden: no instance field of that type, checked by reflection, and no call to detection, location or
+    ///         canonicalization, checked in the source text.
+    ///     </para>
+    ///     <para>
+    ///         Taking a pre-built Game Context instead would have changed where the Game Context is constructed, and
+    ///         taking only the installation probe would have hidden the dependency without removing it.
+    ///     </para>
+    /// </remarks>
+    [Fact]
+    public void UserWorkflow_GameInstallationResolution_IsReachedOnlyThroughTheGameContext()
+    {
+        const BindingFlags instanceFields = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+        var fieldTypes = typeof(UserWorkflow).GetFields(instanceFields).Select(static field => field.FieldType).ToArray();
+        var userWorkflowSource = File.ReadAllText(Path.Combine(GetCoreProjectDirectory(), "Services", "UserWorkflow.cs"));
+
+        Assert.DoesNotContain(typeof(GameInstallations), fieldTypes);
+        Assert.Contains(typeof(GameContext), fieldTypes);
+        foreach (var resolutionCall in new[] { ".Detect(", ".GetInstalledDirectories(", "CanonicalizeDataDirectory(" })
+        {
+            Assert.DoesNotContain(resolutionCall, userWorkflowSource, StringComparison.Ordinal);
+        }
+    }
+
+    /// <summary>
+    ///     Verifies that the Game Context is the only Core writer of the ViewModel's Game Context projection.
+    /// </summary>
+    /// <remarks>
+    ///     The ViewModel's own file defines the member and is the other legitimate mention. Tests call it directly to
+    ///     exercise the ViewModel, which is why only Core sources are scanned.
+    /// </remarks>
+    [Fact]
+    public void CoreSources_GameContextProjection_IsWrittenOnlyByTheGameContext()
+    {
+        var projectionWriters = Directory
+            .EnumerateFiles(GetCoreProjectDirectory(), "*.cs", SearchOption.AllDirectories)
+            .Where(path => !IsBuildOutput(path))
+            .Where(path => File.ReadAllText(path).Contains("ApplyGameContextProjection(", StringComparison.Ordinal))
+            .Select(path => Path.GetFileName(path))
+            .OrderBy(static fileName => fileName, StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.Equal(["GameContext.cs", "MainWindowViewModel.cs"], projectionWriters);
     }
 
     /// <summary>

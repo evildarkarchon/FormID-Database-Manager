@@ -12,7 +12,8 @@ namespace FormID_Database_Manager.Services;
 ///     detection all call it, so a fix applies everywhere rather than at one of three call sites. The type is a
 ///     concrete sealed class with no interface and no <c>virtual</c> members because nothing about it varies in
 ///     production — tests get their control from <see cref="IGameInstallationProbe" />. It is synchronous: thread
-///     placement is the caller's decision, and User Workflow offloads both detection and location (ADR-0002).
+///     placement is the caller's decision, and the Game Context offloads both detection and location (ADR-0002,
+///     ADR-0011).
 ///     <para>
 ///         Base game Plugins are not here: they are a column of the <c>SupportedGameReleases</c> constant table, read
 ///         directly by the Plugin List, so a change to detection cannot affect Plugin List membership (ADR-0002,
