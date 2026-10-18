@@ -1,15 +1,28 @@
 using System.Collections.Immutable;
+using System.Diagnostics.CodeAnalysis;
 using FormID_Database_Manager.ViewModels;
 using Mutagen.Bethesda;
 
 namespace FormID_Database_Manager.Services;
 
 /// <summary>
-///     Owns the authoritative Game Context: the selected GameRelease, game directory, available directories and Advanced
-///     Mode, the four transitions that change them, and the Plugin List refresh or invalidation each transition implies
-///     (ADR-0011).
+///     Owns the authoritative Game Context: the selected GameRelease, game directory, the Plugin List Source built from
+///     it, available directories and Advanced Mode, the four transitions that change them, and the Plugin List refresh
+///     or invalidation each transition implies (ADR-0011).
 /// </summary>
 /// <remarks>
+///     <para>
+///         The source is built when a directory is adopted, so this module never holds a directory that cannot be
+///         used. Browse and a detected-directory pick share one adoption step: build the source; if that fails, refuse
+///         with "Could not read the selected directory" and change nothing; if the source equals the current one, do
+///         nothing; otherwise adopt it and refresh. "The same directory" therefore means source equality, so a game
+///         root and its Data directory are one pick, and the ComboBox echo of this module's own projection is a no-op.
+///     </para>
+///     <para>
+///         Browse alone has one exception to the equal-source no-op: when the Plugin List for that source is in its
+///         failed state, an equal Browse is the user's explicit retry and invalidates and refreshes again. A Browse
+///         with a different source invalidates the Plugin List first, then adopts and refreshes.
+///     </para>
 ///     <para>
 ///         UI-thread affinity is part of the contract. Every member is entered from a UI handler, and every await
 ///         returns to the UI context, so the selection state is read and written on that thread. The latest-intent
@@ -97,6 +110,7 @@ internal sealed class GameContext : IDisposable
         {
             SelectedGameRelease = selectedGameRelease,
             SelectedGameDirectory = null,
+            PluginListSource = null,
             AvailableDirectories = ImmutableArray<string>.Empty
         };
         ProjectGameContext();
@@ -109,31 +123,59 @@ internal sealed class GameContext : IDisposable
     }
 
     /// <summary>
-    ///     Makes an explicit detected-directory selection authoritative before refreshing the Plugin List.
+    ///     Adopts an explicit detected-directory selection and refreshes the Plugin List for it, or clears the directory
+    ///     and invalidates the Plugin List when the selection is cleared.
     /// </summary>
     /// <param name="selectedDirectory">The selected directory, or null when the selection is cleared.</param>
     /// <returns>A task that completes after current Plugin List discovery finishes.</returns>
-    /// <exception cref="ArgumentException">A complete context contains a whitespace-only directory.</exception>
     /// <exception cref="ArgumentOutOfRangeException">The authoritative GameRelease is unsupported.</exception>
     /// <exception cref="ObjectDisposedException">The borrowed Plugin List has been disposed.</exception>
     /// <exception cref="AggregateException">A registered Plugin List refresh cancellation callback throws.</exception>
-    /// <remarks>Programming and fatal Plugin discovery failures propagate unchanged.</remarks>
+    /// <remarks>
+    ///     <para>
+    ///         Adoption builds the Plugin List Source first. A directory that cannot become one is refused with "Could
+    ///         not read the selected directory" and changes nothing; a source equal to the current one is a no-op, which
+    ///         is what makes an equivalent spelling (game root or Data directory) and the directory ComboBox's echo of
+    ///         this module's own projection harmless. Install-record directories were checked when they were listed,
+    ///         so a pick from the detected list is never refused.
+    ///     </para>
+    ///     <para>
+    ///         With no GameRelease there is nothing to build a source with and no detected list to pick from, so a
+    ///         non-empty directory is ignored rather than held. Programming and fatal Plugin discovery failures
+    ///         propagate unchanged.
+    ///     </para>
+    /// </remarks>
     internal Task SelectDetectedDirectoryAsync(string? selectedDirectory)
     {
-        var domainDirectory = ToDomainDirectory(selectedDirectory);
-        // The directory ComboBox echoes this module's own projection back as an intent, and this comparison is what
-        // makes that echo a no-op.
-        if (string.Equals(
-                _current.SelectedGameDirectory,
-                domainDirectory,
-                StringComparison.OrdinalIgnoreCase))
+        if (string.IsNullOrEmpty(selectedDirectory))
+        {
+            // The empty string is how the presentation represents absence, and clearing an already-absent directory
+            // (including the echo of a cleared projection) is a no-op.
+            if (_current.SelectedGameDirectory is null)
+            {
+                return Task.CompletedTask;
+            }
+
+            var clearingVersion = BeginGameContextDirectoryTransition();
+            _current = _current with { SelectedGameDirectory = null, PluginListSource = null };
+            ProjectGameContext();
+            return RefreshPluginsForCurrentGameContextAsync(clearingVersion);
+        }
+
+        // A directory is only adopted once a GameRelease is known; the shell offers no detected directory without one.
+        if (_current.SelectedGameRelease is not { } gameRelease ||
+            !TryCreateSource(gameRelease, selectedDirectory, out var source))
+        {
+            return Task.CompletedTask;
+        }
+
+        if (source == _current.PluginListSource)
         {
             return Task.CompletedTask;
         }
 
         var gameContextVersion = BeginGameContextDirectoryTransition();
-        _current = _current with { SelectedGameDirectory = domainDirectory };
-        ProjectGameContext();
+        Adopt(selectedDirectory, source, gameRelease);
         return RefreshPluginsForCurrentGameContextAsync(gameContextVersion);
     }
 
@@ -142,7 +184,6 @@ internal sealed class GameContext : IDisposable
     /// </summary>
     /// <param name="advancedMode">The Advanced Mode value selected by the user.</param>
     /// <returns>A task that completes after applicable Plugin List discovery finishes.</returns>
-    /// <exception cref="ArgumentException">The complete Game Context contains an invalid directory.</exception>
     /// <exception cref="ArgumentOutOfRangeException">
     ///     The Advanced Mode or authoritative GameRelease is unsupported, or discovery returns an unsupported result.
     /// </exception>
@@ -182,7 +223,11 @@ internal sealed class GameContext : IDisposable
     /// <returns>A task that completes after picker handling and plugin refresh finish.</returns>
     /// <exception cref="ObjectDisposedException">The borrowed Plugin List has been disposed.</exception>
     /// <exception cref="AggregateException">A registered Plugin List refresh cancellation callback throws.</exception>
-    /// <remarks>Current unexpected picker, detection, and fatal discovery failures propagate to WinUI's final boundary.</remarks>
+    /// <remarks>
+    ///     An unusable directory, or one with no detectable game, is refused with a message rather than thrown, and
+    ///     changes nothing. Current unexpected picker, detection, and fatal discovery failures propagate to WinUI's final
+    ///     boundary.
+    /// </remarks>
     internal async Task BrowseGameDirectoryAsync()
     {
         // Opening the picker is itself an intent, so cancellation must still retire older asynchronous resolution.
@@ -232,19 +277,31 @@ internal sealed class GameContext : IDisposable
             return;
         }
 
-        if (folders.IsEmpty)
+        // Each install-record directory gets its source when it is listed, so a pick from the detected list can never
+        // be refused; directories that cannot become a source are left out rather than offered (ADR-0011).
+        var usable = ImmutableArray.CreateBuilder<(string Directory, PluginListSource Source)>(folders.Length);
+        foreach (var folder in folders)
+        {
+            if (TryCreateSource(selectedGame, folder, out var source, out _))
+            {
+                usable.Add((folder, source));
+            }
+        }
+
+        if (usable.Count == 0)
         {
             _viewModel.AddInformationMessage(
                 $"No installed locations found for {selectedGame}. Use Browse to select a directory.");
             return;
         }
 
-        ApplyDetectedFolders(folders);
+        ApplyDetectedFolders(selectedGame, usable.ToImmutable());
         await RefreshPluginsForCurrentGameContextAsync(gameContextVersion);
     }
 
     /// <summary>
-    ///     Applies one current Browse result while preserving an explicit release and treating suggestions as non-binding.
+    ///     Applies one current Browse result: detects a missing GameRelease, builds the Plugin List Source, and adopts the
+    ///     directory only when both succeed, preserving an explicit release and treating suggestions as non-binding.
     /// </summary>
     /// <param name="path">The user-selected game root or Data directory.</param>
     /// <param name="gameContextVersion">The Browse resolution generation allowed to publish resulting state.</param>
@@ -253,28 +310,23 @@ internal sealed class GameContext : IDisposable
     /// <exception cref="ObjectDisposedException">The borrowed Plugin List has been disposed.</exception>
     /// <exception cref="AggregateException">A registered Plugin List refresh cancellation callback throws.</exception>
     /// <remarks>
-    ///     A path detection cannot use at all is presented as an error describing that failure; other current unexpected
-    ///     detection and fatal discovery failures propagate unchanged.
+    ///     <para>
+    ///         Nothing changes until a GameRelease is known and the source is built: a path detection or the source
+    ///         cannot use is refused with "Could not read the selected directory", and a directory with no detectable
+    ///         game is refused with the detection guidance, both leaving the Game Context and the Plugin List as they
+    ///         were. Other current unexpected detection and fatal discovery failures propagate unchanged.
+    ///     </para>
+    ///     <para>
+    ///         An accepted Browse whose source equals the current one is a no-op, exactly like a detected-directory
+    ///         pick, unless the Plugin List for that source is in its failed state: then Browse is the user's explicit
+    ///         retry, so it invalidates and refreshes again. A Browse with a different source invalidates first,
+    ///         then adopts and refreshes.
+    ///     </para>
     /// </remarks>
     private async Task ApplyBrowsedDirectorySelectedAsync(string path, int gameContextVersion)
     {
-        if (_current.SelectedGameRelease is null)
-        {
-            _current = _current with { AvailableDirectories = ImmutableArray<string>.Empty };
-        }
-
-        _current = _current with { SelectedGameDirectory = ToDomainDirectory(path) };
-        // Projected before the latest check below, because projection handlers can re-enter and start a newer intent.
-        ProjectGameContext();
-        if (!IsLatestGameContextDirectoryTransition(gameContextVersion))
-        {
-            return;
-        }
-
-        // Browse is an explicit retry even for the same path, so a failed retry must not retain old confirmation.
-        _pluginList.Invalidate();
-
-        if (_current.SelectedGameRelease is null)
+        var gameRelease = _current.SelectedGameRelease;
+        if (gameRelease is null)
         {
             GameRelease? detectedGame;
             try
@@ -289,12 +341,12 @@ internal sealed class GameContext : IDisposable
                 // A detector overtaken by a newer intent cannot escape into WinUI's current error boundary.
                 return;
             }
-            catch (Exception ex) when (ex is ArgumentException or NotSupportedException or IOException)
+            catch (Exception ex) when (IsUnusableDirectoryFailure(ex))
             {
                 // Detection returns null for exactly one reason — no known game master file — and throws for a path
                 // it cannot use at all. Reporting that as "could not detect game" would tell the user to pick a game
                 // when the path is what is wrong (ADR-0002), so the actual failure is surfaced instead.
-                _viewModel.AddErrorMessage($"Could not read the selected directory: {ex.Message}");
+                RefuseDirectory(ex);
                 return;
             }
 
@@ -303,28 +355,56 @@ internal sealed class GameContext : IDisposable
                 return;
             }
 
-            if (detectedGame.HasValue)
+            if (detectedGame is null)
             {
-                _current = _current with { SelectedGameRelease = detectedGame.Value };
-                ProjectGameContext();
-            }
-            else
-            {
+                // A directory is only adopted once a GameRelease is known, so this one is refused rather than kept.
                 _viewModel.AddErrorMessage(
                     "Could not detect game from directory. Please select a game from the dropdown.");
                 return;
             }
+
+            gameRelease = detectedGame.Value;
         }
 
-        await RefreshPluginsForCurrentGameContextAsync(gameContextVersion);
+        if (!TryCreateSource(gameRelease.Value, path, out var source))
+        {
+            return;
+        }
+
+        if (source == _current.PluginListSource && !IsFailedFor(source))
+        {
+            return;
+        }
+
+        // Browse is an explicit retry, so a failed retry must not retain old confirmation. Invalidating notifies the
+        // Plugin List's observers, which can re-enter and start a newer intent, hence the latest check after it.
+        _pluginList.Invalidate();
+        if (!IsLatestGameContextDirectoryTransition(gameContextVersion))
+        {
+            return;
+        }
+
+        if (source != _current.PluginListSource)
+        {
+            Adopt(path, source, gameRelease.Value);
+            // Projection handlers can re-enter and start a newer intent, so the generation is checked again.
+            if (!IsLatestGameContextDirectoryTransition(gameContextVersion))
+            {
+                return;
+            }
+        }
+
+        await _pluginList.RefreshAsync(source, _current.AdvancedMode);
     }
 
     /// <summary>
-    ///     Refreshes the exact complete Game Context or explicitly invalidates the borrowed Plugin List.
+    ///     Refreshes the held Plugin List Source or explicitly invalidates the borrowed Plugin List when none is held.
     /// </summary>
     /// <param name="expectedGameContextVersion">An optional directory-transition generation that must still be current.</param>
     /// <returns>A task that completes when applicable Plugin discovery finishes.</returns>
-    /// <exception cref="ArgumentException">The held game directory cannot become a Plugin List Source.</exception>
+    /// <remarks>
+    ///     The source was built when its directory was adopted, so nothing here can fail for an unusable directory.
+    /// </remarks>
     private async Task RefreshPluginsForCurrentGameContextAsync(int? expectedGameContextVersion = null)
     {
         if (expectedGameContextVersion.HasValue &&
@@ -333,19 +413,124 @@ internal sealed class GameContext : IDisposable
             return;
         }
 
-        if (_current.SelectedGameRelease is not { } game ||
-            _current.SelectedGameDirectory is not { } gameDirectory)
+        if (_current.PluginListSource is not { } source)
         {
             _pluginList.Invalidate();
             return;
         }
 
-        // The Plugin List no longer validates a directory, so the source is built here, immediately before the
-        // refresh, keeping today's ArgumentException for an unusable directory until the Game Context builds it
-        // when the directory is adopted (ADR-0011).
-        await _pluginList.RefreshAsync(
-            PluginListSource.Create(game, gameDirectory),
-            _current.AdvancedMode);
+        await _pluginList.RefreshAsync(source, _current.AdvancedMode);
+    }
+
+    /// <summary>
+    ///     Builds the Plugin List Source for a picked directory, or refuses the pick with the one unusable-directory
+    ///     message when it cannot become one.
+    /// </summary>
+    /// <param name="gameRelease">The GameRelease the directory would be adopted with.</param>
+    /// <param name="directory">The picked game root or Data directory.</param>
+    /// <param name="source">The built source, when this returns true.</param>
+    /// <returns>True when the source was built; false when the pick was refused and reported.</returns>
+    /// <exception cref="ArgumentOutOfRangeException">The GameRelease is unsupported, which is a programming error.</exception>
+    private bool TryCreateSource(GameRelease gameRelease, string directory, [NotNullWhen(true)] out PluginListSource? source)
+    {
+        if (TryCreateSource(gameRelease, directory, out source, out var failure))
+        {
+            return true;
+        }
+
+        RefuseDirectory(failure);
+        return false;
+    }
+
+    /// <summary>
+    ///     Builds the Plugin List Source for a directory, capturing an unusable-directory failure instead of throwing it.
+    /// </summary>
+    /// <param name="gameRelease">The GameRelease the directory would be adopted with.</param>
+    /// <param name="directory">A game root or Data directory.</param>
+    /// <param name="source">The built source, when this returns true.</param>
+    /// <param name="failure">Why the directory cannot become a source, when this returns false.</param>
+    /// <returns>True when the source was built.</returns>
+    /// <exception cref="ArgumentOutOfRangeException">The GameRelease is unsupported, which is a programming error.</exception>
+    private static bool TryCreateSource(
+        GameRelease gameRelease,
+        string directory,
+        [NotNullWhen(true)] out PluginListSource? source,
+        [NotNullWhen(false)] out Exception? failure)
+    {
+        try
+        {
+            // The only place Game Context code builds a source, so "the same directory" always means source equality
+            // and canonicalization stays inside PluginListSource (ADR-0002, ADR-0011).
+            source = PluginListSource.Create(gameRelease, directory);
+            failure = null;
+            return true;
+        }
+        catch (Exception ex) when (IsUnusableDirectoryFailure(ex))
+        {
+            source = null;
+            failure = ex;
+            return false;
+        }
+    }
+
+    /// <summary>
+    ///     Reports whether an exception from detection or source building means the directory itself is unusable.
+    /// </summary>
+    /// <param name="exception">The exception thrown for a picked directory.</param>
+    /// <returns>True for a malformed, unsupported or unreadable path; false for anything else.</returns>
+    /// <remarks>
+    ///     <see cref="ArgumentOutOfRangeException" /> is an <see cref="ArgumentException" />, but here it only ever means
+    ///     an unsupported GameRelease, which is a programming error the user cannot fix by picking another directory, so
+    ///     it is left to propagate.
+    /// </remarks>
+    private static bool IsUnusableDirectoryFailure(Exception exception)
+    {
+        return exception is ArgumentException and not ArgumentOutOfRangeException
+            or NotSupportedException
+            or IOException;
+    }
+
+    /// <summary>
+    ///     Reports a refused directory pick with the one message every unusable directory shares.
+    /// </summary>
+    /// <param name="failure">Why the directory cannot be used.</param>
+    private void RefuseDirectory(Exception failure)
+    {
+        _viewModel.AddErrorMessage($"Could not read the selected directory: {failure.Message}");
+    }
+
+    /// <summary>
+    ///     Reports whether the borrowed Plugin List's last load for a source failed, which makes a Browse to that same
+    ///     source an explicit retry rather than a no-op.
+    /// </summary>
+    /// <param name="source">The source a Browse resolved to.</param>
+    /// <returns>True when the Plugin List is in its failed state for exactly that source.</returns>
+    private bool IsFailedFor(PluginListSource source)
+    {
+        return _pluginList.Current is PluginListFailedState failed && failed.Source == source;
+    }
+
+    /// <summary>
+    ///     Makes a directory and the source built from it authoritative together, with the GameRelease that built it, and
+    ///     projects the result.
+    /// </summary>
+    /// <param name="displayedDirectory">The directory as picked, which is what the UI shows.</param>
+    /// <param name="source">The source built from that directory.</param>
+    /// <param name="gameRelease">The GameRelease the source was built with.</param>
+    /// <remarks>
+    ///     Directory and source are written in one step so the invariant — both present or both absent, and both only
+    ///     with a GameRelease — holds in every published state. Callers check their generation afterwards, because
+    ///     projection handlers can re-enter and start a newer intent.
+    /// </remarks>
+    private void Adopt(string displayedDirectory, PluginListSource source, GameRelease gameRelease)
+    {
+        _current = _current with
+        {
+            SelectedGameRelease = gameRelease,
+            SelectedGameDirectory = displayedDirectory,
+            PluginListSource = source
+        };
+        ProjectGameContext();
     }
 
     /// <summary>
@@ -370,13 +555,20 @@ internal sealed class GameContext : IDisposable
     }
 
     /// <summary>
-    ///     Publishes a non-empty installed-location result as the complete ordered available-directory snapshot.
+    ///     Publishes a non-empty set of usable installed locations as the complete ordered available-directory snapshot,
+    ///     adopting the first one.
     /// </summary>
-    /// <param name="folders">The installed locations in record order.</param>
-    private void ApplyDetectedFolders(ImmutableArray<string> folders)
+    /// <param name="gameRelease">The GameRelease the locations were looked up and their sources built for.</param>
+    /// <param name="folders">The usable installed locations in record order, each with the source built from it.</param>
+    private void ApplyDetectedFolders(
+        GameRelease gameRelease,
+        ImmutableArray<(string Directory, PluginListSource Source)> folders)
     {
-        _current = _current with { SelectedGameDirectory = folders[0], AvailableDirectories = folders };
-        ProjectGameContext();
+        _current = _current with
+        {
+            AvailableDirectories = [.. folders.Select(static folder => folder.Directory)]
+        };
+        Adopt(folders[0].Directory, folders[0].Source, gameRelease);
     }
 
     /// <summary>
@@ -390,28 +582,33 @@ internal sealed class GameContext : IDisposable
             _current.AvailableDirectories,
             _current.AdvancedMode);
     }
-
-    /// <summary>
-    ///     Converts the presentation value to the nullable directory used by the domain snapshot.
-    /// </summary>
-    /// <param name="directory">The existing presentation directory value.</param>
-    /// <returns>The domain directory, or null when the presentation value represents absence.</returns>
-    private static string? ToDomainDirectory(string? directory)
-    {
-        return string.IsNullOrEmpty(directory) ? null : directory;
-    }
 }
 
 /// <summary>
 ///     The complete authoritative Game Context as one immutable value.
 /// </summary>
 /// <param name="SelectedGameRelease">The selected GameRelease, when one has been accepted.</param>
-/// <param name="SelectedGameDirectory">The selected domain directory, or null while the context is incomplete.</param>
-/// <param name="AvailableDirectories">The complete ordered available-directory set.</param>
+/// <param name="SelectedGameDirectory">
+///     The displayed game directory as the user picked it, or null while the context is incomplete. It is kept beside
+///     <paramref name="PluginListSource" /> because the source stores only the canonical Data directory, while the UI
+///     shows, and the available directories contain, game roots.
+/// </param>
+/// <param name="PluginListSource">
+///     The Plugin List Source built from the displayed directory when it was adopted, or null exactly when
+///     <paramref name="SelectedGameDirectory" /> is null.
+/// </param>
+/// <param name="AvailableDirectories">
+///     The complete ordered available-directory set, holding only install-record directories that made a source.
+/// </param>
 /// <param name="AdvancedMode">The current Advanced Mode value.</param>
+/// <remarks>
+///     Invariant, held by every state <see cref="GameContext" /> publishes: the displayed directory and the source are
+///     both present or both absent, and both require a GameRelease (ADR-0011).
+/// </remarks>
 internal sealed record GameContextState(
     GameRelease? SelectedGameRelease,
     string? SelectedGameDirectory,
+    PluginListSource? PluginListSource,
     ImmutableArray<string> AvailableDirectories,
     AdvancedMode AdvancedMode)
 {
@@ -419,6 +616,7 @@ internal sealed record GameContextState(
     ///     Gets the state a new Game Context starts in: nothing selected and Advanced Mode off.
     /// </summary>
     internal static GameContextState Empty { get; } = new(
+        null,
         null,
         null,
         ImmutableArray<string>.Empty,

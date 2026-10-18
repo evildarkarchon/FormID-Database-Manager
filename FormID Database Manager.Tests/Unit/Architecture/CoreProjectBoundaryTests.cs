@@ -442,6 +442,43 @@ public class CoreProjectBoundaryTests
     }
 
     /// <summary>
+    ///     Verifies that the Game Context references no Processing Run type: it decides which Plugin List can be loaded,
+    ///     and the User Workflow alone joins that to admission and runs (ADR-0011).
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         The run types are not listed by hand. Every Core type whose name contains the word "Run" — a "Run"
+    ///         followed by an upper-case letter or nothing, so <c>ProcessingRunAdmission</c>, <c>AdmittedRun</c> and
+    ///         <c>RunPress</c> count — is found by reflection, so a new run type is covered the day it is added.
+    ///     </para>
+    ///     <para>
+    ///         The check is on raw source text, comments included, because a <c>cref</c> in a doc comment is a
+    ///         reference too. The Game Context's own <c>Task.Run</c> is a method, not a type, and is not matched.
+    ///     </para>
+    /// </remarks>
+    [Fact]
+    public void GameContextSource_ProcessingRunTypes_AreNotReferenced()
+    {
+        var runTypeNames = typeof(GameContext).Assembly.GetTypes()
+            .Select(static type => type.Name.Split('`')[0])
+            .Where(static name => !name.Contains('<', StringComparison.Ordinal))
+            .Where(static name => Regex.IsMatch(name, "Run(?![a-z])"))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        var gameContextSource = File.ReadAllText(Path.Combine(GetCoreProjectDirectory(), "Services", "GameContext.cs"));
+
+        // Guards the guard: if reflection stopped finding run types, the assertion below would pass vacuously.
+        Assert.Contains(nameof(ProcessingRunAdmission), runTypeNames);
+        Assert.Contains("RunPress", runTypeNames);
+        var referencedRunTypes = runTypeNames
+            .Where(name => Regex.IsMatch(gameContextSource, $@"\b{Regex.Escape(name)}\b"))
+            .OrderBy(static name => name, StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.Empty(referencedRunTypes);
+    }
+
+    /// <summary>
     ///     Verifies that the Game Context is the only Core writer of the ViewModel's Game Context projection.
     /// </summary>
     /// <remarks>

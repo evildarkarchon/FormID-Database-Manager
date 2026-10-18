@@ -272,6 +272,145 @@ public sealed class GameContextTests : IDisposable
     }
 
     /// <summary>
+    /// Verifies that picking the current installation through an equivalent spelling — its Data directory rather than
+    /// its game root — changes nothing: the displayed directory, the Plugin List and its selection are all kept.
+    /// </summary>
+    [Fact]
+    public async Task SelectDetectedDirectoryAsync_EquivalentSpellingOfCurrentDirectory_KeepsPluginListAndSelection()
+    {
+        _gameInstallationProbe.WithInstalledDirectories(GameRelease.SkyrimSE, GameDirectory);
+        var sut = CreateSut(ScriptedGameLoadOrders.Fixed("User.esp"));
+        await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
+        SelectPlugin("User.esp");
+        var stateBeforePick = sut.Current;
+        var pluginListBeforePick = PluginList.Current;
+        ForgetRefreshes();
+
+        await sut.SelectDetectedDirectoryAsync(Path.Combine(GameDirectory, "Data"));
+
+        Assert.Same(stateBeforePick, sut.Current);
+        Assert.Same(pluginListBeforePick, PluginList.Current);
+        Assert.Equal(["User.esp"], PluginList.Current.Confirmed!.SelectedPluginNames);
+        Assert.Equal(GameDirectory, _viewModel.GameDirectory);
+        Assert.Empty(Refreshes);
+    }
+
+    /// <summary>
+    /// Verifies that a directory pick that cannot become a Plugin List Source is refused with the one path message and
+    /// leaves the previous directory, the source and the Plugin List as they were.
+    /// </summary>
+    [Fact]
+    public async Task SelectDetectedDirectoryAsync_UnusableDirectory_RefusesAndLeavesStateAndPluginListUntouched()
+    {
+        _gameInstallationProbe.WithInstalledDirectories(GameRelease.SkyrimSE, GameDirectory);
+        var sut = CreateSut(ScriptedGameLoadOrders.Fixed("User.esp"));
+        await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
+        var stateBeforePick = sut.Current;
+        var pluginListBeforePick = PluginList.Current;
+        ForgetRefreshes();
+
+        await sut.SelectDetectedDirectoryAsync("C:\\Games\\Sky\0rim");
+
+        Assert.Same(stateBeforePick, sut.Current);
+        Assert.Same(pluginListBeforePick, PluginList.Current);
+        Assert.Equal(GameDirectory, _viewModel.GameDirectory);
+        Assert.StartsWith(
+            "Could not read the selected directory:",
+            Assert.Single(_viewModel.ErrorMessages),
+            StringComparison.Ordinal);
+        Assert.Empty(Refreshes);
+    }
+
+    /// <summary>
+    /// Verifies the Game Context invariant at every projection across a run of transitions: the displayed directory
+    /// and the Plugin List Source are both present or both absent, both require a GameRelease, and the source is the
+    /// one the displayed directory makes.
+    /// </summary>
+    [Fact]
+    public async Task Current_EveryProjectedTransition_HoldsDirectoryAndSourceTogether()
+    {
+        const string browsedDirectory = @"E:\Games\Fallout4";
+        _gameInstallationProbe
+            .WithInstalledDirectories(GameRelease.SkyrimSE, GameDirectory, @"D:\Games\Skyrim")
+            .WithFile(Path.Combine(browsedDirectory, "Data", "Fallout4.esm"));
+        _fileDialogService.Setup(x => x.SelectGameDirectory())
+            .ReturnsAsync(FileDialogResult.Success(browsedDirectory));
+        var sut = CreateSut();
+        var observedStates = new List<GameContextState>();
+        _viewModel.PropertyChanged += (_, _) => observedStates.Add(sut.Current);
+
+        await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
+        await sut.SelectDetectedDirectoryAsync(@"D:\Games\Skyrim");
+        await sut.SetAdvancedModeAsync(AdvancedMode.On);
+        await sut.SelectDetectedDirectoryAsync(null);
+        await sut.SelectGameReleaseAsync(null);
+        await sut.BrowseGameDirectoryAsync();
+
+        Assert.NotEmpty(observedStates);
+        Assert.All(observedStates, state =>
+        {
+            Assert.Equal(state.SelectedGameDirectory is null, state.PluginListSource is null);
+            if (state.SelectedGameDirectory is { } directory)
+            {
+                var gameRelease = Assert.NotNull(state.SelectedGameRelease);
+                Assert.Equal(PluginListSource.Create(gameRelease, directory), state.PluginListSource);
+            }
+        });
+        Assert.Equal(GameRelease.Fallout4, sut.Current.SelectedGameRelease);
+        Assert.Equal(PluginListSource.Create(GameRelease.Fallout4, browsedDirectory), sut.Current.PluginListSource);
+    }
+
+    /// <summary>
+    /// Verifies that install-record directories that cannot become a Plugin List Source are left out when they are
+    /// listed, and that the first remaining one is adopted.
+    /// </summary>
+    [Fact]
+    public async Task SelectGameReleaseAsync_UnusableInstallRecordDirectory_IsLeftOutAndFirstUsableIsAdopted()
+    {
+        const string secondDirectory = @"D:\Games\Skyrim";
+        _gameInstallationProbe.WithInstalledDirectories(
+            GameRelease.SkyrimSE,
+            "C:\\Games\\Sky\0rim",
+            GameDirectory,
+            secondDirectory);
+        var sut = CreateSut();
+
+        await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
+
+        Assert.Equal([GameDirectory, secondDirectory], _viewModel.DetectedDirectories);
+        Assert.Equal(GameDirectory, _viewModel.GameDirectory);
+        Assert.Equal([GameDirectory, secondDirectory], sut.Current.AvailableDirectories);
+        Assert.Equal(PluginListSource.Create(GameRelease.SkyrimSE, GameDirectory), sut.Current.PluginListSource);
+        Assert.Empty(_viewModel.ErrorMessages);
+        AssertSingleRefresh(GameDirectory, GameRelease.SkyrimSE, AdvancedMode.Off);
+    }
+
+    /// <summary>
+    /// Verifies that when no install-record directory can become a Plugin List Source, the user sees the existing
+    /// Browse guidance and the Game Context holds no directory.
+    /// </summary>
+    [Fact]
+    public async Task SelectGameReleaseAsync_NoUsableInstallRecordDirectory_RecordsNoInstalledLocationsGuidance()
+    {
+        _gameInstallationProbe.WithInstalledDirectories(GameRelease.SkyrimSE, "C:\\Games\\Sky\0rim");
+        var sut = CreateSut();
+
+        await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
+
+        Assert.Equal(GameRelease.SkyrimSE, sut.Current.SelectedGameRelease);
+        Assert.Null(sut.Current.SelectedGameDirectory);
+        Assert.Null(sut.Current.PluginListSource);
+        Assert.Empty(sut.Current.AvailableDirectories);
+        Assert.Empty(_viewModel.GameDirectory);
+        Assert.Empty(_viewModel.DetectedDirectories);
+        Assert.Equal(
+            ["No installed locations found for SkyrimSE. Use Browse to select a directory."],
+            _viewModel.InformationMessages);
+        Assert.Empty(_viewModel.ErrorMessages);
+        Assert.Empty(Refreshes);
+    }
+
+    /// <summary>
     /// Verifies that an explicit changed directory is projected while preserving the ordered suggestions.
     /// </summary>
     [Fact]
@@ -731,54 +870,111 @@ public sealed class GameContextTests : IDisposable
     }
 
     /// <summary>
-    /// Verifies that browsing the current path retries discovery and leaves prior confirmation cleared on failure.
+    /// Verifies that browsing to an equivalent spelling of the current source while its Plugin List loaded fine is a
+    /// no-op: the same source is the same directory, so nothing is invalidated, reloaded or re-projected.
     /// </summary>
-    /// <returns>A task that completes after the same-path discovery retry fails.</returns>
+    /// <returns>A task that completes after the Browse is handled.</returns>
     [Fact]
-    public async Task BrowseGameDirectoryAsync_SamePathDiscoveryFailure_RetriesAndClearsConfirmation()
+    public async Task BrowseGameDirectoryAsync_EquivalentSpellingOfConfirmedSource_IsANoOp()
     {
         _gameInstallationProbe.WithInstalledDirectories(GameRelease.SkyrimSE, GameDirectory, @"D:\Games\Skyrim");
-        var sut = CreateSut(ScriptedGameLoadOrders.Sequenced(
-            ScriptedDiscovery.Completes("PreviouslyConfirmed.esp"),
-            ScriptedDiscovery.Fails("directory mismatch")));
+        var sut = CreateSut(ScriptedGameLoadOrders.Fixed("User.esp"));
         await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
-        Assert.NotNull(PluginList.Current.Confirmed);
+        SelectPlugin("User.esp");
+        var stateBeforeBrowse = sut.Current;
+        var pluginListBeforeBrowse = PluginList.Current;
         ForgetRefreshes();
         _fileDialogService.Setup(x => x.SelectGameDirectory())
-            .ReturnsAsync(FileDialogResult.Success(GameDirectory));
+            .ReturnsAsync(FileDialogResult.Success(Path.Combine(GameDirectory, "Data")));
 
         await sut.BrowseGameDirectoryAsync();
 
-        Assert.Equal(GameRelease.SkyrimSE, _viewModel.SelectedGame);
+        Assert.Same(stateBeforeBrowse, sut.Current);
+        Assert.Same(pluginListBeforeBrowse, PluginList.Current);
+        Assert.Equal(["User.esp"], PluginList.Current.Confirmed!.SelectedPluginNames);
         Assert.Equal(GameDirectory, _viewModel.GameDirectory);
-        Assert.Equal([GameDirectory, @"D:\Games\Skyrim"], _viewModel.DetectedDirectories);
-        var failed = Assert.IsType<PluginListFailedState>(PluginList.Current);
-        Assert.Null(failed.Confirmed);
-        Assert.Equal("directory mismatch", failed.ErrorMessage);
-        Assert.Equal(PluginListSource.Create(GameRelease.SkyrimSE, GameDirectory), Assert.Single(Refreshes));
-        Assert.Empty(_gameInstallationProbe.ProbedPaths);
-        Assert.Equal([GameRelease.SkyrimSE], _gameInstallationProbe.InstalledDirectoryLookups);
+        Assert.Empty(_viewModel.ErrorMessages);
+        Assert.Empty(Refreshes);
     }
 
     /// <summary>
-    /// Verifies that current detection failure retains the chosen path, invalidates the Plugin List again, and presents
-    /// guidance, all without discovery.
+    /// Verifies that browsing to the current source while its Plugin List is in the failed state is the user's
+    /// explicit retry: the Plugin List is invalidated and then refreshed again, and the Game Context is unchanged.
+    /// </summary>
+    /// <returns>A task that completes after the retried discovery finishes.</returns>
+    [Fact]
+    public async Task BrowseGameDirectoryAsync_EqualSourceWhosePluginListFailed_InvalidatesAndRetries()
+    {
+        _gameInstallationProbe.WithInstalledDirectories(GameRelease.SkyrimSE, GameDirectory, @"D:\Games\Skyrim");
+        var sut = CreateSut(ScriptedGameLoadOrders.Sequenced(
+            ScriptedDiscovery.Fails("directory mismatch"),
+            ScriptedDiscovery.Completes("Retried.esp")));
+        await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
+        Assert.IsType<PluginListFailedState>(PluginList.Current);
+        var stateBeforeBrowse = sut.Current;
+        ForgetRefreshes();
+        var publishedStates = RecordPluginListStates();
+        _fileDialogService.Setup(x => x.SelectGameDirectory())
+            .ReturnsAsync(FileDialogResult.Success(Path.Combine(GameDirectory, "Data")));
+
+        await sut.BrowseGameDirectoryAsync();
+
+        Assert.IsType<PluginListNoSourceState>(publishedStates[0]);
+        Assert.Same(stateBeforeBrowse, sut.Current);
+        Assert.Equal(GameDirectory, _viewModel.GameDirectory);
+        Assert.Equal([GameDirectory, @"D:\Games\Skyrim"], _viewModel.DetectedDirectories);
+        Assert.Equal(PluginListSource.Create(GameRelease.SkyrimSE, GameDirectory), Assert.Single(Refreshes));
+        Assert.Equal(["Retried.esp"], PluginList.Current.Confirmed!.Entries.Select(static entry => entry.Name));
+        Assert.Empty(_gameInstallationProbe.ProbedPaths);
+    }
+
+    /// <summary>
+    /// Verifies that an accepted Browse to a different source invalidates the Plugin List before adopting the directory
+    /// and refreshing, so the old confirmation is gone before the new discovery starts.
+    /// </summary>
+    /// <returns>A task that completes after the new discovery finishes.</returns>
+    [Fact]
+    public async Task BrowseGameDirectoryAsync_DifferentSource_InvalidatesBeforeRefreshing()
+    {
+        const string browsedDirectory = @"D:\Games\Skyrim";
+        _gameInstallationProbe.WithInstalledDirectories(GameRelease.SkyrimSE, GameDirectory);
+        var sut = CreateSut(ScriptedGameLoadOrders.Fixed("User.esp"));
+        await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
+        ForgetRefreshes();
+        var publishedStates = RecordPluginListStates();
+        _fileDialogService.Setup(x => x.SelectGameDirectory())
+            .ReturnsAsync(FileDialogResult.Success(browsedDirectory));
+
+        await sut.BrowseGameDirectoryAsync();
+
+        Assert.IsType<PluginListNoSourceState>(publishedStates[0]);
+        Assert.Equal(browsedDirectory, _viewModel.GameDirectory);
+        Assert.Equal([GameDirectory], _viewModel.DetectedDirectories);
+        Assert.Equal(browsedDirectory, sut.Current.SelectedGameDirectory);
+        Assert.Equal(PluginListSource.Create(GameRelease.SkyrimSE, browsedDirectory), sut.Current.PluginListSource);
+        AssertSingleRefresh(browsedDirectory, GameRelease.SkyrimSE, AdvancedMode.Off);
+    }
+
+    /// <summary>
+    /// Verifies that a Browse with no GameRelease whose directory holds no detectable game is refused with the
+    /// detection guidance and keeps nothing: the directory is not held, and the Plugin List is not touched.
     /// </summary>
     /// <returns>A task that completes after detection failure is presented.</returns>
     /// <remarks>
     /// The Plugin List is driven only through the Game Context: a confirmed list is loaded, then the release is
-    /// cleared, which is the only way the Game Context reaches "no release" after a confirmation. Browse is an explicit
-    /// retry, so it invalidates once more even though the list already has no source.
+    /// cleared, which is the only way the Game Context reaches "no release" after a confirmation. A directory is only
+    /// adopted once a GameRelease is known, so a refused detection must not even invalidate the list again.
     /// </remarks>
     [Fact]
-    public async Task BrowseGameDirectoryAsync_SelectedDirectoryWithoutDetectableGame_RecordsWorkflowError()
+    public async Task BrowseGameDirectoryAsync_SelectedDirectoryWithoutDetectableGame_RefusesAndKeepsNothing()
     {
         _gameInstallationProbe.WithInstalledDirectories(GameRelease.SkyrimSE, GameDirectory);
         var sut = CreateSut(ScriptedGameLoadOrders.Fixed("PreviouslyConfirmed.esp"));
         await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
         Assert.NotNull(PluginList.Current.Confirmed);
         await sut.SelectGameReleaseAsync(null);
-        var revisionBeforeBrowse = PluginList.Current.StateRevision;
+        var stateBeforeBrowse = sut.Current;
+        var pluginListBeforeBrowse = PluginList.Current;
         ForgetRefreshes();
         _fileDialogService.Setup(x => x.SelectGameDirectory())
             .ReturnsAsync(FileDialogResult.Success(GameDirectory));
@@ -786,42 +982,98 @@ public sealed class GameContextTests : IDisposable
 
         await sut.BrowseGameDirectoryAsync();
 
-        Assert.Equal(GameDirectory, _viewModel.GameDirectory);
+        Assert.Empty(_viewModel.GameDirectory);
         Assert.Null(_viewModel.SelectedGame);
-        Assert.IsType<PluginListNoSourceState>(PluginList.Current);
-        Assert.True(PluginList.Current.StateRevision > revisionBeforeBrowse);
-        Assert.Contains(
-            "Could not detect game from directory. Please select a game from the dropdown.",
+        Assert.Same(stateBeforeBrowse, sut.Current);
+        Assert.Same(pluginListBeforeBrowse, PluginList.Current);
+        Assert.Equal(
+            ["Could not detect game from directory. Please select a game from the dropdown."],
             _viewModel.ErrorMessages);
         Assert.Empty(Refreshes);
     }
 
     /// <summary>
     /// Verifies that a path detection cannot use at all is reported as the path problem it is, rather than as a
-    /// missing game the user is asked to supply from the dropdown.
+    /// missing game the user is asked to supply from the dropdown, and that the refused path is not kept.
     /// </summary>
     /// <returns>A task that completes after the malformed path is presented.</returns>
     [Fact]
-    public async Task BrowseGameDirectoryAsync_MalformedSelectedDirectory_RecordsPathErrorRatherThanDetectionGuidance()
+    public async Task BrowseGameDirectoryAsync_MalformedDirectoryWithoutGameRelease_RefusesWithPathErrorAndKeepsNothing()
     {
         const string malformedDirectory = "C:\\Games\\Sky\0rim";
         _fileDialogService.Setup(x => x.SelectGameDirectory())
             .ReturnsAsync(FileDialogResult.Success(malformedDirectory));
-
         var sut = CreateSut();
+        var pluginListBeforeBrowse = PluginList.Current;
 
         await sut.BrowseGameDirectoryAsync();
 
         Assert.Null(_viewModel.SelectedGame);
-        // The chosen path stays on display beside the error, exactly as it does for a game-less directory: the user
-        // is being told what is wrong with the path they picked, so the path has to remain visible.
-        Assert.Equal(malformedDirectory, _viewModel.GameDirectory);
-        Assert.DoesNotContain(
-            "Could not detect game from directory. Please select a game from the dropdown.",
-            _viewModel.ErrorMessages);
-        Assert.Contains(
-            _viewModel.ErrorMessages,
-            message => message.StartsWith("Could not read the selected directory:", StringComparison.Ordinal));
+        Assert.Empty(_viewModel.GameDirectory);
+        Assert.Equal(GameContextState.Empty, sut.Current);
+        Assert.Same(pluginListBeforeBrowse, PluginList.Current);
+        Assert.StartsWith(
+            "Could not read the selected directory:",
+            Assert.Single(_viewModel.ErrorMessages),
+            StringComparison.Ordinal);
+        Assert.Empty(Refreshes);
+    }
+
+    /// <summary>
+    /// Verifies that a Browse with a GameRelease already selected refuses a directory that cannot become a Plugin List
+    /// Source with the one path message, and leaves the previous directory, the source and the Plugin List as they were.
+    /// </summary>
+    /// <returns>A task that completes after the refusal is presented.</returns>
+    /// <remarks>
+    /// Detection is skipped when a GameRelease is selected, so building the source is the only thing that can notice
+    /// the path is unusable. It used to throw out of the Plugin List refresh into the shell's "Unexpected error".
+    /// </remarks>
+    [Fact]
+    public async Task BrowseGameDirectoryAsync_UnusableDirectoryWithGameRelease_RefusesAndLeavesStateAndPluginListUntouched()
+    {
+        _gameInstallationProbe.WithInstalledDirectories(GameRelease.SkyrimSE, GameDirectory);
+        var sut = CreateSut(ScriptedGameLoadOrders.Fixed("PreviouslyConfirmed.esp"));
+        await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
+        var stateBeforeBrowse = sut.Current;
+        var pluginListBeforeBrowse = PluginList.Current;
+        ForgetRefreshes();
+        _fileDialogService.Setup(x => x.SelectGameDirectory())
+            .ReturnsAsync(FileDialogResult.Success("C:\\Games\\Sky\0rim"));
+
+        await sut.BrowseGameDirectoryAsync();
+
+        Assert.Equal(GameRelease.SkyrimSE, _viewModel.SelectedGame);
+        Assert.Equal(GameDirectory, _viewModel.GameDirectory);
+        Assert.Same(stateBeforeBrowse, sut.Current);
+        Assert.Same(pluginListBeforeBrowse, PluginList.Current);
+        Assert.StartsWith(
+            "Could not read the selected directory:",
+            Assert.Single(_viewModel.ErrorMessages),
+            StringComparison.Ordinal);
+        Assert.Empty(Refreshes);
+        Assert.Empty(_gameInstallationProbe.ProbedPaths);
+    }
+
+    /// <summary>
+    /// Verifies that a Browse with no GameRelease whose detection throws for a reason other than the path's shape is
+    /// refused with the path message and keeps nothing.
+    /// </summary>
+    /// <returns>A task that completes after the refusal is presented.</returns>
+    [Fact]
+    public async Task BrowseGameDirectoryAsync_DetectionThrowsWithoutGameRelease_RefusesAndKeepsNothing()
+    {
+        _gameInstallationProbe.BeforeProbe = _ => throw new IOException("drive not ready");
+        _fileDialogService.Setup(x => x.SelectGameDirectory())
+            .ReturnsAsync(FileDialogResult.Success(GameDirectory));
+        var sut = CreateSut();
+        var pluginListBeforeBrowse = PluginList.Current;
+
+        await sut.BrowseGameDirectoryAsync();
+
+        Assert.Empty(_viewModel.GameDirectory);
+        Assert.Equal(GameContextState.Empty, sut.Current);
+        Assert.Same(pluginListBeforeBrowse, PluginList.Current);
+        Assert.Equal(["Could not read the selected directory: drive not ready"], _viewModel.ErrorMessages);
         Assert.Empty(Refreshes);
     }
 
@@ -1008,6 +1260,29 @@ public sealed class GameContextTests : IDisposable
     private void ForgetRefreshes()
     {
         _refreshMark = _loadOrders.DiscoveredSources.Count;
+    }
+
+    /// <summary>
+    /// Selects one Plugin of the currently confirmed Plugin List, so a test can tell whether a later transition kept
+    /// the user's selection.
+    /// </summary>
+    /// <param name="pluginName">The confirmed Plugin to select.</param>
+    private void SelectPlugin(string pluginName)
+    {
+        var confirmed = Assert.IsType<ConfirmedPluginList>(PluginList.Current.Confirmed);
+        PluginList.Apply(new PluginSelectionByNameIntent(confirmed.MembershipVersion, pluginName, true));
+        Assert.Equal([pluginName], PluginList.Current.Confirmed!.SelectedPluginNames);
+    }
+
+    /// <summary>
+    /// Starts recording every state the Plugin List publishes from this point on, in publication order.
+    /// </summary>
+    /// <returns>The list that receives the published states.</returns>
+    private List<PluginListState> RecordPluginListStates()
+    {
+        var publishedStates = new List<PluginListState>();
+        PluginList.Changed += (_, _) => publishedStates.Add(PluginList.Current);
+        return publishedStates;
     }
 
     /// <summary>

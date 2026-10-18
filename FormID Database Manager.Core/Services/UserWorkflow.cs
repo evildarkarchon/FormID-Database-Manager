@@ -261,7 +261,6 @@ public sealed class UserWorkflow : IDisposable
     /// </summary>
     /// <param name="selectedDirectory">The selected directory, or null when the selection is cleared.</param>
     /// <returns>A task that completes after current Plugin List discovery finishes.</returns>
-    /// <exception cref="ArgumentException">A complete context contains a whitespace-only directory.</exception>
     /// <exception cref="ArgumentOutOfRangeException">The authoritative GameRelease is unsupported.</exception>
     /// <exception cref="ObjectDisposedException">The workflow-owned Plugin List has been disposed.</exception>
     /// <exception cref="AggregateException">A registered Plugin List refresh cancellation callback throws.</exception>
@@ -276,7 +275,6 @@ public sealed class UserWorkflow : IDisposable
     /// </summary>
     /// <param name="advancedMode">The Advanced Mode value selected by the user.</param>
     /// <returns>A task that completes after applicable Plugin List discovery finishes.</returns>
-    /// <exception cref="ArgumentException">The complete Game Context contains an invalid directory.</exception>
     /// <exception cref="ArgumentOutOfRangeException">
     ///     The Advanced Mode or authoritative GameRelease is unsupported, or discovery returns an unsupported result.
     /// </exception>
@@ -394,8 +392,9 @@ public sealed class UserWorkflow : IDisposable
         switch (press)
         {
             case RunPress.AdmissionFailed failed:
-                // Admission throws only when no Plugin List Source can be built from the captured Game Context, such
-                // as a malformed directory Browse kept. It threw before any activity was published, so the gate is
+                // Admission throws only when no Plugin List Source can be built from the captured Game Context. The
+                // Game Context now refuses an unusable directory when it is picked (ADR-0011), so no directory reaches
+                // this case; it goes with admission's exception mode. It threw before any activity was published, so the gate is
                 // still free and there is no activity to hand back; the failure is shown as the unexpected one it is,
                 // exactly as it was before admission ran inside the gate (ADR-0002).
                 _viewModel.AddErrorMessage(ProcessingRunPresentation.RenderUnexpectedFailure(failed.Failure));

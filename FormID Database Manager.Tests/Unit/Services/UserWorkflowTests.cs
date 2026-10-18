@@ -183,15 +183,15 @@ public class UserWorkflowTests
     }
 
     /// <summary>
-    /// Verifies that a game directory admission cannot build a Plugin List Source from is shown as the generic
-    /// processing error, as it was before admission existed, and that it leaves the run gate free for the next press.
+    /// Verifies that a malformed directory refused at Browse never reaches Process FormIDs: the press is refused for
+    /// the missing directory rather than reported as "Error processing FormIDs", and the run gate stays free.
     /// </summary>
     /// <remarks>
-    /// Browse keeps a malformed path in Game Context when a GameRelease is already selected, because detection is
-    /// skipped and the Plugin List refresh is what rejects it. The press then reaches admission with that path.
+    /// Browse with a GameRelease already selected skips detection, so building the Plugin List Source is what refuses
+    /// the malformed path, at the moment it is picked. It used to be kept and fail later, in admission.
     /// </remarks>
     [Fact]
-    public async Task ProcessFormIdsAsync_MalformedGameDirectory_ShowsTheGenericErrorAndLeavesTheGateFree()
+    public async Task ProcessFormIdsAsync_AfterMalformedBrowseIsRefused_RefusesForTheMissingDirectoryAndLeavesTheGateFree()
     {
         const string malformedDirectory = "C:\\Games\\Sky\0rim";
         _fileDialogService.Setup(x => x.SelectGameDirectory())
@@ -199,14 +199,18 @@ public class UserWorkflowTests
         _viewModel.DatabasePath = DatabasePath;
         var sut = CreateSut();
         await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
-        await Assert.ThrowsAnyAsync<ArgumentException>(sut.BrowseGameDirectoryAsync);
+        await sut.BrowseGameDirectoryAsync();
+        Assert.StartsWith(
+            "Could not read the selected directory:",
+            Assert.Single(_viewModel.ErrorMessages),
+            StringComparison.Ordinal);
+        Assert.Empty(_viewModel.GameDirectory);
         _viewModel.WarningMessages.Add("Stale warning");
         var projectedStatuses = RecordProjectedStatuses();
 
         await sut.ProcessFormIdsAsync();
 
-        var error = Assert.Single(_viewModel.ErrorMessages);
-        Assert.StartsWith("Error processing FormIDs: ", error, StringComparison.Ordinal);
+        Assert.Equal(["Game directory must be specified when processing plugins"], _viewModel.ErrorMessages);
         Assert.Empty(_viewModel.WarningMessages);
         Assert.Empty(_processingRuns);
         Assert.Empty(projectedStatuses);
@@ -428,28 +432,33 @@ public class UserWorkflowTests
     }
 
     /// <summary>
-    /// Verifies that source matching accepts an equivalent normalized directory spelling during projection.
+    /// Verifies that re-picking the current installation through an equivalent normalized spelling keeps the confirmed
+    /// selection, so the next press admits it unchanged.
     /// </summary>
+    /// <remarks>
+    /// The equivalent spelling makes the same Plugin List Source, so the Game Context treats it as a no-op: it neither
+    /// re-projects the directory nor reloads the Plugin List (ADR-0011).
+    /// </remarks>
     [Fact]
-    public async Task ProcessFormIdsAsync_DuringEquivalentSourceProjection_AcceptsConfirmedSelection()
+    public async Task ProcessFormIdsAsync_AfterEquivalentDirectorySpelling_AdmitsTheKeptSelection()
     {
         var sut = CreateSut();
         var confirmed = await ConfirmPluginListAsync(sut, ["User.esp"]);
         sut.SetPluginSelection(confirmed.MembershipVersion, "User.esp", true);
         _viewModel.DatabasePath = DatabasePath;
-        Task? reentrantRun = null;
+        var directoryProjections = 0;
         _viewModel.PropertyChanged += (_, args) =>
         {
             if (args.PropertyName == nameof(MainWindowViewModel.GameDirectory))
             {
-                reentrantRun = sut.ProcessFormIdsAsync();
+                directoryProjections++;
             }
         };
 
         await sut.SelectDetectedDirectoryAsync(Path.Combine(GameDirectory, "Data", "."));
-        Assert.NotNull(reentrantRun);
-        await reentrantRun;
+        await sut.ProcessFormIdsAsync();
 
+        Assert.Equal(0, directoryProjections);
         var run = Assert.IsType<PluginProcessingRunRequest>(Assert.Single(_processingRuns));
         Assert.Equal(confirmed.Source, run.Source);
         Assert.Equal(confirmed.Source.DataDirectory, run.Source.DataDirectory);
@@ -1029,8 +1038,10 @@ public class UserWorkflowTests
         var sut = CreateSut();
         await ConfigureValidPluginProcessingRunAsync(sut);
         _gameInstallationProbe.WithInstalledDirectories(GameRelease.Fallout4, @"C:\Games\Fallout4");
+        // A different directory, because Browse to the current source is a no-op while its Plugin List is confirmed
+        // and so would start no refresh to collide with the run.
         _fileDialogService.Setup(x => x.SelectGameDirectory())
-            .ReturnsAsync(FileDialogResult.Success(GameDirectory));
+            .ReturnsAsync(FileDialogResult.Success(@"D:\Games\Skyrim"));
         _processingRunExecutor.ProgressToReport.Add(new IngestingPlugin("User.esp", 2, 5));
         _processingRunExecutor.Outcome = new PlannedRunOutcome(new PluginRunPlan(new PluginIngestionPlan(
             new PluginProcessingRunRequest(
