@@ -1,5 +1,5 @@
-using System.Collections.Immutable;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Runtime.ExceptionServices;
 using FormID_Database_Manager.ViewModels;
 using Mutagen.Bethesda;
@@ -7,13 +7,23 @@ using Mutagen.Bethesda;
 namespace FormID_Database_Manager.Services;
 
 /// <summary>
-///     Owns authoritative Game Context, the UI-neutral user workflow, Plugin List lifetime, and Processing Run
-///     coordination.
+///     Owns the UI-neutral user workflow, Plugin List lifetime, and Processing Run coordination, and forwards Game
+///     Context intents to the Game Context it composes.
 /// </summary>
+/// <remarks>
+///     Game Context state, its transitions and its Game Installation resolution live in <see cref="GameContext" />
+///     (ADR-0011). This workflow reads that state once, inside the run gate, when it decides a button press.
+/// </remarks>
 public sealed class UserWorkflow : IDisposable
 {
     private readonly IFileDialogService _fileDialogService;
-    private readonly GameInstallations _gameInstallations;
+
+    /// <summary>
+    ///     The Game Context built in the constructor and retired in <see cref="Dispose" />. It borrows
+    ///     <see cref="_pluginList" />, whose lifetime stays with this workflow.
+    /// </summary>
+    private readonly GameContext _gameContext;
+
     private readonly PluginList _pluginList;
 
     /// <summary>
@@ -32,9 +42,6 @@ public sealed class UserWorkflow : IDisposable
 
     private readonly MainWindowViewModel _viewModel;
     private bool _disposed;
-
-    private GameContextSnapshot _gameContext;
-    private int _gameContextVersion;
 
     /// <summary>
     ///     The Processing Run's Workflow Activity, owned here rather than read back off the ViewModel.
@@ -66,7 +73,10 @@ public sealed class UserWorkflow : IDisposable
     ///     workflow builds and owns.
     /// </param>
     /// <param name="fileDialogService">The platform picker adapter.</param>
-    /// <param name="gameInstallations">The Game Installation resolution module, used for detection and location.</param>
+    /// <param name="gameInstallations">
+    ///     The Game Installation resolution module, handed straight to the Game Context built here; this workflow keeps
+    ///     no reference to it.
+    /// </param>
     /// <param name="pluginList">The authoritative Plugin List whose lifetime transfers to this workflow.</param>
     /// <param name="processingRunExecutor">The owned Processing Run executor.</param>
     /// <param name="defaultDatabaseRoot">
@@ -76,10 +86,11 @@ public sealed class UserWorkflow : IDisposable
     /// <exception cref="ArgumentNullException">Any dependency is null.</exception>
     /// <remarks>
     ///     The Plugin List stays a parameter rather than being built here because tests observe it directly through its
-    ///     own public interface. The presentation adapter subscribes to it, and queues its first projection, as the last
-    ///     construction step, so a failed argument check never leaves a subscribed adapter behind. An unresolved
-    ///     default root is accepted rather than rejected, because it only matters to a run that needs a default, and
-    ///     that run reports it.
+    ///     own public interface. The Game Context is built after every argument check and before the adapter; it only
+    ///     stores its dependencies, so building it subscribes to nothing. The presentation adapter subscribes to the
+    ///     Plugin List, and queues its first projection, as the last construction step, so a failed argument check
+    ///     never leaves a subscribed adapter behind. An unresolved default root is accepted rather than rejected, because
+    ///     it only matters to a run that needs a default, and that run reports it.
     /// </remarks>
     internal UserWorkflow(
         MainWindowViewModel viewModel,
@@ -93,16 +104,13 @@ public sealed class UserWorkflow : IDisposable
         _viewModel = viewModel ?? throw new ArgumentNullException(nameof(viewModel));
         var checkedDispatcher = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
         _fileDialogService = fileDialogService ?? throw new ArgumentNullException(nameof(fileDialogService));
-        _gameInstallations = gameInstallations ?? throw new ArgumentNullException(nameof(gameInstallations));
+        var checkedGameInstallations =
+            gameInstallations ?? throw new ArgumentNullException(nameof(gameInstallations));
         _pluginList = pluginList ?? throw new ArgumentNullException(nameof(pluginList));
         _processingRunExecutor = processingRunExecutor ??
                                  throw new ArgumentNullException(nameof(processingRunExecutor));
         DefaultDatabaseRoot = defaultDatabaseRoot;
-        _gameContext = new GameContextSnapshot(
-            null,
-            null,
-            ImmutableArray<string>.Empty,
-            AdvancedMode.Off);
+        _gameContext = new GameContext(checkedGameInstallations, _fileDialogService, _pluginList, _viewModel);
         _pluginListPresentationAdapter = new PluginListPresentationAdapter(_pluginList, _viewModel, checkedDispatcher);
     }
 
@@ -198,8 +206,8 @@ public sealed class UserWorkflow : IDisposable
     ///     Detaches Plugin List presentation, cancels processing, and releases resources owned by the workflow.
     /// </summary>
     /// <remarks>
-    ///     The steps run in a fixed order: detach the Plugin List presentation adapter, retire Game Context resolution,
-    ///     cancel the Processing Run executor, dispose the executor, then dispose the Plugin List. Every owned
+    ///     The steps run in a fixed order: detach the Plugin List presentation adapter, retire the Game Context, cancel
+    ///     the Processing Run executor, dispose the executor, then dispose the Plugin List. Every owned
     ///     collaborator is retired even when an earlier step fails. Cleanup after a failure is best-effort, matching
     ///     Plugin ingestion overlay cleanup: the first failure keeps its identity, and a standalone cleanup failure still
     ///     propagates because no other path reports it.
@@ -221,9 +229,9 @@ public sealed class UserWorkflow : IDisposable
         // publishing from another thread could queue a new one. Disposing the Plugin List itself publishes no state,
         // so these queued-projection and cross-thread publisher windows are the only ones this ordering guards.
         RetireCollaborator(_pluginListPresentationAdapter.Dispose, ref primaryException);
-        // Retire resolution before cancelling and disposing the executor and Plugin List so late lookup or picker work
-        // cannot publish into torn-down state.
-        RetireCollaborator(() => Interlocked.Increment(ref _gameContextVersion), ref primaryException);
+        // Retire the Game Context before cancelling and disposing the executor and Plugin List so late lookup or picker
+        // work cannot publish into torn-down state. It borrows the Plugin List, so retiring it disposes nothing.
+        RetireCollaborator(_gameContext.Dispose, ref primaryException);
         RetireCollaborator(_processingRunExecutor.Cancel, ref primaryException);
         RetireCollaborator(_processingRunExecutor.Dispose, ref primaryException);
         RetireCollaborator(_pluginList.Dispose, ref primaryException);
@@ -235,126 +243,64 @@ public sealed class UserWorkflow : IDisposable
     }
 
     /// <summary>
-    ///     Makes an explicit GameRelease selection authoritative before resolving its installed locations.
+    ///     Forwards an explicit GameRelease selection to the Game Context.
     /// </summary>
     /// <param name="selectedGameRelease">The selected GameRelease, or null when the selection is cleared.</param>
     /// <returns>A task that completes after current installed-location resolution and Plugin List refresh finish.</returns>
     /// <exception cref="ArgumentOutOfRangeException">The selected GameRelease is unsupported.</exception>
     /// <exception cref="ObjectDisposedException">The workflow-owned Plugin List has been disposed.</exception>
     /// <exception cref="AggregateException">A registered Plugin List refresh cancellation callback throws.</exception>
-    /// <remarks>Current lookup and fatal discovery failures propagate unchanged; failures from retired lookups are ignored.</remarks>
-    internal async Task SelectGameReleaseAsync(GameRelease? selectedGameRelease)
+    /// <remarks>See <see cref="GameContext.SelectGameReleaseAsync" /> for the transition itself.</remarks>
+    internal Task SelectGameReleaseAsync(GameRelease? selectedGameRelease)
     {
-        if (_gameContext.SelectedGameRelease == selectedGameRelease)
-        {
-            return;
-        }
-
-        var gameContextVersion = BeginGameContextDirectoryTransition();
-        _gameContext = _gameContext with
-        {
-            SelectedGameRelease = selectedGameRelease,
-            SelectedGameDirectory = null,
-            AvailableDirectories = ImmutableArray<string>.Empty
-        };
-        ProjectGameContext();
-        _pluginList.Invalidate();
-
-        if (selectedGameRelease is { } gameRelease)
-        {
-            await ResolveInstalledLocationsAsync(gameRelease, gameContextVersion);
-        }
+        return _gameContext.SelectGameReleaseAsync(selectedGameRelease);
     }
 
     /// <summary>
-    ///     Makes an explicit detected-directory selection authoritative before refreshing the Plugin List.
+    ///     Forwards an explicit detected-directory selection to the Game Context.
     /// </summary>
     /// <param name="selectedDirectory">The selected directory, or null when the selection is cleared.</param>
     /// <returns>A task that completes after current Plugin List discovery finishes.</returns>
-    /// <exception cref="ArgumentException">A complete context contains a whitespace-only directory.</exception>
     /// <exception cref="ArgumentOutOfRangeException">The authoritative GameRelease is unsupported.</exception>
     /// <exception cref="ObjectDisposedException">The workflow-owned Plugin List has been disposed.</exception>
     /// <exception cref="AggregateException">A registered Plugin List refresh cancellation callback throws.</exception>
-    /// <remarks>Programming and fatal Plugin discovery failures propagate unchanged.</remarks>
+    /// <remarks>See <see cref="GameContext.SelectDetectedDirectoryAsync" /> for the transition itself.</remarks>
     internal Task SelectDetectedDirectoryAsync(string? selectedDirectory)
     {
-        var domainDirectory = ToDomainDirectory(selectedDirectory);
-        if (string.Equals(
-                _gameContext.SelectedGameDirectory,
-                domainDirectory,
-                StringComparison.OrdinalIgnoreCase))
-        {
-            return Task.CompletedTask;
-        }
-
-        var gameContextVersion = BeginGameContextDirectoryTransition();
-        _gameContext = _gameContext with { SelectedGameDirectory = domainDirectory };
-        ProjectGameContext();
-        return RefreshPluginsForCurrentGameContextAsync(gameContextVersion);
+        return _gameContext.SelectDetectedDirectoryAsync(selectedDirectory);
     }
 
     /// <summary>
-    ///     Makes an explicit Advanced Mode value authoritative and refreshes the current Plugin List source.
+    ///     Forwards an explicit Advanced Mode value to the Game Context.
     /// </summary>
     /// <param name="advancedMode">The Advanced Mode value selected by the user.</param>
     /// <returns>A task that completes after applicable Plugin List discovery finishes.</returns>
-    /// <exception cref="ArgumentException">The complete Game Context contains an invalid directory.</exception>
     /// <exception cref="ArgumentOutOfRangeException">
     ///     The Advanced Mode or authoritative GameRelease is unsupported, or discovery returns an unsupported result.
     /// </exception>
     /// <exception cref="OperationCanceledException">Current Plugin discovery propagates an unexpected cancellation.</exception>
     /// <exception cref="AggregateException">A registered Plugin List refresh cancellation callback throws.</exception>
     /// <exception cref="ObjectDisposedException">The workflow-owned Plugin List has been disposed.</exception>
-    /// <remarks>
-    ///     The authoritative snapshot is projected before discovery starts. Programming and fatal discovery failures propagate
-    ///     unchanged, and Plugin List discovery may continue off the caller thread.
-    /// </remarks>
+    /// <remarks>See <see cref="GameContext.SetAdvancedModeAsync" /> for the transition itself.</remarks>
     internal Task SetAdvancedModeAsync(AdvancedMode advancedMode)
     {
-        if (advancedMode is not AdvancedMode.Off and not AdvancedMode.On)
-        {
-            throw new ArgumentOutOfRangeException(
-                nameof(advancedMode),
-                advancedMode,
-                "Unsupported Advanced Mode value.");
-        }
-
-        if (_gameContext.AdvancedMode == advancedMode)
-        {
-            return Task.CompletedTask;
-        }
-
-        // Display mode changes do not retire location resolution; a current lookup reads this latest snapshot
-        // when it eventually requests Plugin List refresh.
-        _gameContext = _gameContext with { AdvancedMode = advancedMode };
-        ProjectGameContext();
-        return RefreshPluginsForCurrentGameContextAsync();
+        return _gameContext.SetAdvancedModeAsync(advancedMode);
     }
 
     /// <summary>
-    ///     Opens the game-directory picker as a latest-intent operation, detects a missing GameRelease, and refreshes the
-    ///     Plugin List.
+    ///     Forwards a Browse press to the Game Context, which opens the game-directory picker itself.
     /// </summary>
     /// <returns>A task that completes after picker handling and plugin refresh finish.</returns>
     /// <exception cref="ObjectDisposedException">The workflow-owned Plugin List has been disposed.</exception>
     /// <exception cref="AggregateException">A registered Plugin List refresh cancellation callback throws.</exception>
-    /// <remarks>Current unexpected picker, detection, and fatal discovery failures propagate to WinUI's final boundary.</remarks>
-    public async Task BrowseGameDirectoryAsync()
+    /// <remarks>
+    ///     The picker is opened by the Game Context rather than here, because opening it must retire older lookups
+    ///     before the dialog returns (ADR-0011). Current unexpected picker, detection, and fatal discovery failures
+    ///     propagate to WinUI's final boundary.
+    /// </remarks>
+    public Task BrowseGameDirectoryAsync()
     {
-        // Opening the picker is itself an intent, so cancellation must still retire older asynchronous resolution.
-        var gameContextVersion = BeginGameContextDirectoryTransition();
-        var result = await _fileDialogService.SelectGameDirectory();
-        if (!IsLatestGameContextDirectoryTransition(gameContextVersion))
-        {
-            return;
-        }
-
-        if (!TryGetSelectedPath(result, "Error selecting game directory", out var path))
-        {
-            return;
-        }
-
-        await ApplyBrowsedDirectorySelectedAsync(path, gameContextVersion);
+        return _gameContext.BrowseGameDirectoryAsync();
     }
 
     /// <summary>
@@ -438,20 +384,13 @@ public sealed class UserWorkflow : IDisposable
             return;
         }
 
-        // Every press that does not cancel starts the message lists over, whether it is refused, fails admission or
-        // becomes a run, so what the user reads afterwards is only what this press produced.
+        // Every press that does not cancel starts the message lists over, whether it is refused or becomes a run, so
+        // what the user reads afterwards is only what this press produced.
         _viewModel.ErrorMessages.Clear();
         _viewModel.WarningMessages.Clear();
 
         switch (press)
         {
-            case RunPress.AdmissionFailed failed:
-                // Admission throws only when no Plugin List Source can be built from the captured Game Context, such
-                // as a malformed directory Browse kept. It threw before any activity was published, so the gate is
-                // still free and there is no activity to hand back; the failure is shown as the unexpected one it is,
-                // exactly as it was before admission ran inside the gate (ADR-0002).
-                _viewModel.AddErrorMessage(ProcessingRunPresentation.RenderUnexpectedFailure(failed.Failure));
-                return;
             case RunPress.Refused refused:
                 // A refused press never became a run, so it took no ownership of the gate and has no activity to hand
                 // back: the rendered reason is the only thing it leaves behind (ADR-0010).
@@ -515,16 +454,15 @@ public sealed class UserWorkflow : IDisposable
     ///     already active, and otherwise whatever Processing Run Admission makes of the inputs captured now.
     /// </summary>
     /// <returns>
-    ///     <see cref="RunPress.CancelActiveRun" /> when a run is already active;
-    ///     <see cref="RunPress.AdmissionFailed" /> when admission could not build a Plugin List Source from the captured
-    ///     Game Context; <see cref="RunPress.Refused" /> when admission refused the press; or
-    ///     <see cref="RunPress.Admitted" />, the only case in which run activity was published and the caller now owns a
-    ///     new run.
+    ///     <see cref="RunPress.CancelActiveRun" /> when a run is already active; <see cref="RunPress.Refused" /> when
+    ///     admission refused the press; or <see cref="RunPress.Admitted" />, the only case in which run activity was
+    ///     published and the caller now owns a new run.
     /// </returns>
     /// <remarks>
     ///     Capture, admission and activity publication share the run gate, so nothing published in between can change
-    ///     what was admitted, and a refused press never becomes an active run. Only admission's own failure is captured:
-    ///     anything a re-entrant activity notification throws still propagates, as it did before admission existed.
+    ///     what was admitted, and a refused press never becomes an active run. Nothing is caught here: admission has no
+    ///     exception mode for a directory (ADR-0011), so anything it or a re-entrant activity notification throws is a
+    ///     programming error and propagates rather than being shown as a user-facing failure.
     /// </remarks>
     private RunPress DecideRunPress()
     {
@@ -538,26 +476,18 @@ public sealed class UserWorkflow : IDisposable
             // Both activity and message-list notifications can re-enter the workflow. Capture every input before
             // either is published so later edits belong to the next run, including changes to the Plugin List source.
             // The whole Plugin List state is captured, not just its confirmation, so admission can tell a list still
-            // loading from one that failed to load.
+            // loading from one that failed to load. The Game Context is read once, so the release and Plugin List Source
+            // always come from the same state.
+            var gameContext = _gameContext.Current;
             var inputs = new ProcessingRunInputs(
-                _gameContext.SelectedGameRelease,
-                _gameContext.SelectedGameDirectory,
+                gameContext.SelectedGameRelease,
+                gameContext.PluginListSource,
                 _pluginList.Current,
                 _viewModel.FormIdListPath,
                 _viewModel.DatabasePath,
                 _viewModel.UpdateMode ? UpdateMode.ReplacePluginRecords : UpdateMode.Append,
                 _viewModel.DryRun);
-            RunAdmissionDecision decision;
-            try
-            {
-                decision = ProcessingRunAdmission.Admit(inputs, DefaultDatabaseRoot);
-            }
-            catch (ArgumentException ex)
-            {
-                // Admission runs before any activity is published, so the gate is still free here; the caller reports
-                // the failure after the lock is released, as it reports a refusal.
-                return new RunPress.AdmissionFailed(ex);
-            }
+            var decision = ProcessingRunAdmission.Admit(inputs, DefaultDatabaseRoot);
 
             switch (decision)
             {
@@ -643,156 +573,29 @@ public sealed class UserWorkflow : IDisposable
         }
     }
 
-    /// <summary>
-    ///     Resolves installed locations without blocking the UI and publishes only while the initiating intent is current.
-    /// </summary>
-    /// <param name="selectedGame">The GameRelease whose installed locations are requested.</param>
-    /// <param name="gameContextVersion">The resolution generation that owns any resulting state or messages.</param>
-    /// <remarks>Current lookup and fatal discovery failures propagate unchanged; failures from retired lookups are ignored.</remarks>
-    private async Task ResolveInstalledLocationsAsync(GameRelease selectedGame, int gameContextVersion)
-    {
-        ImmutableArray<string> folders;
-        try
-        {
-            // Install-record lookup touches registry and file system state, and the module is synchronous by design,
-            // so placing it off the UI thread is this caller's job.
-            folders = await Task.Run(() => _gameInstallations.GetInstalledDirectories(selectedGame));
-        }
-        catch (Exception) when (!IsLatestGameContextDirectoryTransition(gameContextVersion))
-        {
-            // An older lookup cannot surface failures after a newer release or directory intent becomes authoritative.
-            return;
-        }
-
-        if (!IsLatestGameContextDirectoryTransition(gameContextVersion))
-        {
-            return;
-        }
-
-        if (folders.IsEmpty)
-        {
-            _viewModel.AddInformationMessage(
-                $"No installed locations found for {selectedGame}. Use Browse to select a directory.");
-            return;
-        }
-
-        ApplyDetectedFolders(folders);
-        await RefreshPluginsForCurrentGameContextAsync(gameContextVersion);
-    }
-
-    /// <summary>
-    ///     Applies one current Browse result while preserving an explicit release and treating suggestions as non-binding.
-    /// </summary>
-    /// <param name="path">The user-selected game root or Data directory.</param>
-    /// <param name="gameContextVersion">The Browse resolution generation allowed to publish resulting state.</param>
-    /// <returns>A task that completes after applicable detection and Plugin List discovery finish.</returns>
-    /// <exception cref="ArgumentOutOfRangeException">The detected or selected GameRelease is unsupported.</exception>
-    /// <exception cref="ObjectDisposedException">The workflow-owned Plugin List has been disposed.</exception>
-    /// <exception cref="AggregateException">A registered Plugin List refresh cancellation callback throws.</exception>
-    /// <remarks>
-    ///     A path detection cannot use at all is presented as an error describing that failure; other current unexpected
-    ///     detection and fatal discovery failures propagate unchanged.
-    /// </remarks>
-    private async Task ApplyBrowsedDirectorySelectedAsync(string path, int gameContextVersion)
-    {
-        if (_gameContext.SelectedGameRelease is null)
-        {
-            _gameContext = _gameContext with { AvailableDirectories = ImmutableArray<string>.Empty };
-        }
-
-        _gameContext = _gameContext with { SelectedGameDirectory = ToDomainDirectory(path) };
-        ProjectGameContext();
-        if (!IsLatestGameContextDirectoryTransition(gameContextVersion))
-        {
-            return;
-        }
-
-        // Browse is an explicit retry even for the same path, so a failed retry must not retain old confirmation.
-        _pluginList.Invalidate();
-
-        if (_gameContext.SelectedGameRelease is null)
-        {
-            GameRelease? detectedGame;
-            try
-            {
-                // Detection probes the file system roughly a dozen times, which a slow or network directory can turn
-                // into a visible hang, and the module is synchronous by design — so this caller places it off the
-                // UI thread, exactly as it does for installed-location lookup (ADR-0002).
-                detectedGame = await Task.Run(() => _gameInstallations.Detect(path));
-            }
-            catch (Exception) when (!IsLatestGameContextDirectoryTransition(gameContextVersion))
-            {
-                // A detector overtaken by a newer intent cannot escape into WinUI's current error boundary.
-                return;
-            }
-            catch (Exception ex) when (ex is ArgumentException or NotSupportedException or IOException)
-            {
-                // Detection returns null for exactly one reason — no known game master file — and throws for a path
-                // it cannot use at all. Reporting that as "could not detect game" would tell the user to pick a game
-                // when the path is what is wrong (ADR-0002), so the actual failure is surfaced instead.
-                _viewModel.AddErrorMessage($"Could not read the selected directory: {ex.Message}");
-                return;
-            }
-
-            if (!IsLatestGameContextDirectoryTransition(gameContextVersion))
-            {
-                return;
-            }
-
-            if (detectedGame.HasValue)
-            {
-                _gameContext = _gameContext with { SelectedGameRelease = detectedGame.Value };
-                ProjectGameContext();
-            }
-            else
-            {
-                _viewModel.AddErrorMessage(
-                    "Could not detect game from directory. Please select a game from the dropdown.");
-                return;
-            }
-        }
-
-        await RefreshPluginsForCurrentGameContextAsync(gameContextVersion);
-    }
-
-    /// <summary>
-    ///     Refreshes the exact complete Game Context or explicitly invalidates the authoritative Plugin List.
-    /// </summary>
-    /// <param name="expectedGameContextVersion">An optional directory-transition generation that must still be current.</param>
-    /// <returns>A task that completes when applicable Plugin discovery finishes.</returns>
-    private async Task RefreshPluginsForCurrentGameContextAsync(int? expectedGameContextVersion = null)
-    {
-        if (expectedGameContextVersion.HasValue &&
-            !IsLatestGameContextDirectoryTransition(expectedGameContextVersion.Value))
-        {
-            return;
-        }
-
-        if (_gameContext.SelectedGameRelease is not { } game ||
-            _gameContext.SelectedGameDirectory is not { } gameDirectory)
-        {
-            _pluginList.Invalidate();
-            return;
-        }
-
-        await _pluginList.RefreshAsync(
-            game,
-            gameDirectory,
-            _gameContext.AdvancedMode);
-    }
-
     private static bool IsFailure(FileDialogResult result)
     {
         return result.Kind == FileDialogResultKind.Failure;
     }
 
-    private bool TryGetSelectedPath(FileDialogResult result, string failureContext, out string path)
+    /// <summary>
+    ///     Reads one database or FormID-list picker result, reporting a picker failure in this workflow's own wording.
+    /// </summary>
+    /// <param name="result">The picker outcome.</param>
+    /// <param name="failureContext">The prefix of the error shown when the picker failed.</param>
+    /// <param name="path">The selected path when this returns true; otherwise null.</param>
+    /// <returns>True only when the user selected a path.</returns>
+    /// <remarks>
+    ///     The "selected a non-empty path" check is <see cref="FileDialogResult.TryGetSelectedPath" />, shared with the
+    ///     Game Context's Browse; only the failure wording is this caller's.
+    /// </remarks>
+    private bool TryGetSelectedPath(
+        FileDialogResult result,
+        string failureContext,
+        [NotNullWhen(true)] out string? path)
     {
-        path = string.Empty;
-
-        if (result.Kind == FileDialogResultKind.Success && !string.IsNullOrEmpty(result.Path))
+        if (result.TryGetSelectedPath(out path))
         {
-            path = result.Path;
             return true;
         }
 
@@ -802,50 +605,6 @@ public sealed class UserWorkflow : IDisposable
         }
 
         return false;
-    }
-
-    private int BeginGameContextDirectoryTransition()
-    {
-        // Directory discovery can finish after a later user action, so each directory-changing
-        // transition gets a generation that retires older lookup results before they touch state.
-        return Interlocked.Increment(ref _gameContextVersion);
-    }
-
-    private bool IsLatestGameContextDirectoryTransition(int gameContextVersion)
-    {
-        return gameContextVersion == Volatile.Read(ref _gameContextVersion);
-    }
-
-    /// <summary>
-    ///     Publishes a non-empty installed-location result as the complete ordered available-directory snapshot.
-    /// </summary>
-    /// <param name="folders">The installed locations in record order.</param>
-    private void ApplyDetectedFolders(ImmutableArray<string> folders)
-    {
-        _gameContext = _gameContext with { SelectedGameDirectory = folders[0], AvailableDirectories = folders };
-        ProjectGameContext();
-    }
-
-    /// <summary>
-    ///     Publishes the complete authoritative Game Context through the ViewModel's one restricted projection seam.
-    /// </summary>
-    private void ProjectGameContext()
-    {
-        _viewModel.ApplyGameContextProjection(
-            _gameContext.SelectedGameRelease,
-            _gameContext.SelectedGameDirectory,
-            _gameContext.AvailableDirectories,
-            _gameContext.AdvancedMode);
-    }
-
-    /// <summary>
-    ///     Converts the presentation value to the nullable directory used by the domain snapshot.
-    /// </summary>
-    /// <param name="directory">The existing presentation directory value.</param>
-    /// <returns>The domain directory, or null when the presentation value represents absence.</returns>
-    private static string? ToDomainDirectory(string? directory)
-    {
-        return string.IsNullOrEmpty(directory) ? null : directory;
     }
 
     /// <summary>
@@ -915,23 +674,10 @@ public sealed class UserWorkflow : IDisposable
     }
 
     /// <summary>
-    ///     Retains the complete User Workflow-owned Game Context as one immutable value.
-    /// </summary>
-    /// <param name="SelectedGameRelease">The selected GameRelease, when one has been accepted.</param>
-    /// <param name="SelectedGameDirectory">The selected domain directory, or null while the context is incomplete.</param>
-    /// <param name="AvailableDirectories">The complete ordered available-directory set.</param>
-    /// <param name="AdvancedMode">The current Advanced Mode value.</param>
-    private sealed record GameContextSnapshot(
-        GameRelease? SelectedGameRelease,
-        string? SelectedGameDirectory,
-        ImmutableArray<string> AvailableDirectories,
-        AdvancedMode AdvancedMode);
-
-    /// <summary>
     ///     What one press of Process FormIDs turned out to be once the run gate decided it.
     /// </summary>
     /// <remarks>
-    ///     The constructor is private, so the four cases nested here are the only ones and the caller's default branch is
+    ///     The constructor is private, so the three cases nested here are the only ones and the caller's default branch is
     ///     unreachable. Only <see cref="Admitted" /> means run activity was published and the caller owns a new run.
     /// </remarks>
     private abstract record RunPress
@@ -942,10 +688,6 @@ public sealed class UserWorkflow : IDisposable
 
         /// <summary>A run was already active, so the press requests its cancellation instead.</summary>
         public sealed record CancelActiveRun : RunPress;
-
-        /// <summary>Admission could not build a Plugin List Source from the captured Game Context.</summary>
-        /// <param name="Failure">The failure admission raised, shown to the user as an unexpected one.</param>
-        public sealed record AdmissionFailed(ArgumentException Failure) : RunPress;
 
         /// <summary>Processing Run Admission refused the press before any run existed.</summary>
         /// <param name="Reason">Why the press was refused.</param>

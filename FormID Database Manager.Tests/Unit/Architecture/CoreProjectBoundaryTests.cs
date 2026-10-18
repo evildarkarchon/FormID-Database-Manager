@@ -284,18 +284,20 @@ public class CoreProjectBoundaryTests
     }
 
     /// <summary>
-    ///     Verifies that neither Processing Run Admission nor the User Workflow writes a refusal sentence of its own:
-    ///     admission returns a typed reason and <c>ProcessingRunPresentation</c> alone renders it (ADR-0010).
+    ///     Verifies that neither Processing Run Admission, the User Workflow nor the Game Context writes a refusal
+    ///     sentence of its own: admission returns a typed reason and <c>ProcessingRunPresentation</c> alone renders it
+    ///     (ADR-0010).
     /// </summary>
     /// <param name="sourceFileName">The Core service source that must hold no refusal wording.</param>
     /// <remarks>
-    ///     Each sentence is pinned in full. The User Workflow legitimately tells a Browse user it "Could not detect game
+    ///     Each sentence is pinned in full. The Game Context legitimately tells a Browse user it "Could not detect game
     ///     from directory. Please select a game from the dropdown.", so only the complete refusal sentence, ending in
     ///     "first.", is forbidden. What a refusal does say is pinned by <c>ProcessingRunPresentationTests</c>.
     /// </remarks>
     [Theory]
     [InlineData("ProcessingRunAdmission.cs")]
     [InlineData("UserWorkflow.cs")]
+    [InlineData("GameContext.cs")]
     public void RunAdmissionCallers_RefusalReasons_ContainNoRefusalSentence(string sourceFileName)
     {
         var source = File.ReadAllText(Path.Combine(GetCoreProjectDirectory(), "Services", sourceFileName));
@@ -407,13 +409,156 @@ public class CoreProjectBoundaryTests
     }
 
     /// <summary>
+    ///     Verifies that the User Workflow reaches Game Installation resolution only through the Game Context it
+    ///     composes: it keeps no reference to <c>GameInstallations</c> and calls none of its members (ADR-0011).
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         The pin is semantic rather than a bare text search for the type name. The User Workflow constructs the
+    ///         Game Context, so its internal constructor still receives <c>GameInstallations</c> and <c>Create</c>
+    ///         still builds the production one, and both hand it straight to <c>new GameContext(...)</c>. What would
+    ///         put resolution back in the workflow is holding the module or calling into it, so that is what is
+    ///         forbidden: no instance field of that type, checked by reflection, and no call to detection, location or
+    ///         canonicalization, checked in the source text.
+    ///     </para>
+    ///     <para>
+    ///         Taking a pre-built Game Context instead would have changed where the Game Context is constructed, and
+    ///         taking only the installation probe would have hidden the dependency without removing it.
+    ///     </para>
+    /// </remarks>
+    [Fact]
+    public void UserWorkflow_GameInstallationResolution_IsReachedOnlyThroughTheGameContext()
+    {
+        const BindingFlags instanceFields = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+        var fieldTypes = typeof(UserWorkflow).GetFields(instanceFields).Select(static field => field.FieldType).ToArray();
+        var userWorkflowSource = File.ReadAllText(Path.Combine(GetCoreProjectDirectory(), "Services", "UserWorkflow.cs"));
+
+        Assert.DoesNotContain(typeof(GameInstallations), fieldTypes);
+        Assert.Contains(typeof(GameContext), fieldTypes);
+        foreach (var resolutionCall in new[] { ".Detect(", ".GetInstalledDirectories(", "CanonicalizeDataDirectory(" })
+        {
+            Assert.DoesNotContain(resolutionCall, userWorkflowSource, StringComparison.Ordinal);
+        }
+    }
+
+    /// <summary>
+    ///     Verifies that <see cref="UserWorkflow.Dispose" /> detaches the Plugin List presentation adapter, then retires
+    ///     the Game Context, then cancels the Processing Run executor, in that order (#98).
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         This is a source pin rather than a behavioural test because part of the order cannot be observed.
+    ///         Retiring the Game Context publishes nothing at the moment it runs and only stops later work, so whether
+    ///         the adapter detaches before or after it changes nothing a test could see. The two observable halves —
+    ///         adapter before cancellation, and Game Context before cancellation — are also covered behaviourally by
+    ///         the <c>Dispose_</c> tests in <c>UserWorkflowTests</c>; this pin holds the whole sequence in one place.
+    ///     </para>
+    ///     <para>
+    ///         The calls are searched for only inside the method's body, and each must appear there exactly once, so a
+    ///         duplicated or relocated call cannot satisfy the order by accident.
+    ///     </para>
+    /// </remarks>
+    [Fact]
+    public void UserWorkflowDispose_TeardownOrder_DetachesPresentationThenRetiresGameContextThenCancelsExecutor()
+    {
+        var userWorkflowSource = File.ReadAllText(Path.Combine(GetCoreProjectDirectory(), "Services", "UserWorkflow.cs"));
+        const string disposeSignature = "public void Dispose()";
+        var disposeStart = userWorkflowSource.IndexOf(disposeSignature, StringComparison.Ordinal);
+        Assert.True(disposeStart >= 0, "UserWorkflow.Dispose was not found in the source.");
+        Assert.Equal(disposeStart, userWorkflowSource.LastIndexOf(disposeSignature, StringComparison.Ordinal));
+        // A member body closes on a brace indented one level, the class body's member indentation.
+        var disposeEnd = Regex.Match(userWorkflowSource[disposeStart..], @"\n    \}\r?\n");
+        Assert.True(disposeEnd.Success, "The end of UserWorkflow.Dispose was not found in the source.");
+        var disposeBody = userWorkflowSource.Substring(disposeStart, disposeEnd.Index);
+        string[] orderedSteps =
+        [
+            "RetireCollaborator(_pluginListPresentationAdapter.Dispose,",
+            "RetireCollaborator(_gameContext.Dispose,",
+            "RetireCollaborator(_processingRunExecutor.Cancel,"
+        ];
+
+        var stepPositions = orderedSteps
+            .Select(step =>
+            {
+                var position = disposeBody.IndexOf(step, StringComparison.Ordinal);
+                Assert.True(position >= 0, $"UserWorkflow.Dispose no longer calls {step}");
+                Assert.Equal(position, disposeBody.LastIndexOf(step, StringComparison.Ordinal));
+                return position;
+            })
+            .ToArray();
+
+        Assert.Equal(stepPositions.Order(), stepPositions);
+    }
+
+    /// <summary>
+    ///     Verifies that the Game Context references no Processing Run type: it decides which Plugin List can be loaded,
+    ///     and the User Workflow alone joins that to admission and runs (ADR-0011).
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         The run types are not listed by hand. Every Core type whose name contains the word "Run" — a "Run"
+    ///         followed by an upper-case letter or nothing, so <c>ProcessingRunAdmission</c>, <c>AdmittedRun</c> and
+    ///         <c>RunPress</c> count — is found by reflection, so a new run type is covered the day it is added.
+    ///     </para>
+    ///     <para>
+    ///         The check is on raw source text, comments included, because a <c>cref</c> in a doc comment is a
+    ///         reference too. The Game Context's own <c>Task.Run</c> is a method, not a type, and is not matched.
+    ///     </para>
+    /// </remarks>
+    [Fact]
+    public void GameContextSource_ProcessingRunTypes_AreNotReferenced()
+    {
+        var runTypeNames = typeof(GameContext).Assembly.GetTypes()
+            .Select(static type => type.Name.Split('`')[0])
+            .Where(static name => !name.Contains('<', StringComparison.Ordinal))
+            .Where(static name => Regex.IsMatch(name, "Run(?![a-z])"))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        var gameContextSource = File.ReadAllText(Path.Combine(GetCoreProjectDirectory(), "Services", "GameContext.cs"));
+
+        // Guards the guard: if reflection stopped finding run types, the assertion below would pass vacuously.
+        Assert.Contains(nameof(ProcessingRunAdmission), runTypeNames);
+        Assert.Contains("RunPress", runTypeNames);
+        var referencedRunTypes = runTypeNames
+            .Where(name => Regex.IsMatch(gameContextSource, $@"\b{Regex.Escape(name)}\b"))
+            .OrderBy(static name => name, StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.Empty(referencedRunTypes);
+    }
+
+    /// <summary>
+    ///     Verifies that the Game Context is the only Core writer of the ViewModel's Game Context projection.
+    /// </summary>
+    /// <remarks>
+    ///     The ViewModel's own file defines the member and is the other legitimate mention. Tests call it directly to
+    ///     exercise the ViewModel, which is why only Core sources are scanned.
+    /// </remarks>
+    [Fact]
+    public void CoreSources_GameContextProjection_IsWrittenOnlyByTheGameContext()
+    {
+        var projectionWriters = Directory
+            .EnumerateFiles(GetCoreProjectDirectory(), "*.cs", SearchOption.AllDirectories)
+            .Where(path => !IsBuildOutput(path))
+            .Where(path => File.ReadAllText(path).Contains("ApplyGameContextProjection(", StringComparison.Ordinal))
+            .Select(path => Path.GetFileName(path))
+            .OrderBy(static fileName => fileName, StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.Equal(["GameContext.cs", "MainWindowViewModel.cs"], projectionWriters);
+    }
+
+    /// <summary>
     ///     Verifies that the game-root-or-Data rule reaches a Processing Run only through the Plugin List Source.
     /// </summary>
     /// <remarks>
-    ///     ADR-0002, as amended by ADR-0010. <c>GameInstallations</c> owns the rule and calls it from detection, and
-    ///     <c>PluginListSource.Create</c> is the one place a run's Data directory is decided. Admission, the executor,
-    ///     the run and Plugin Ingestion read <c>PluginListSource.DataDirectory</c> from the request instead of deciding
-    ///     it again, so a second caller anywhere in Core is a second place the run's Data directory could diverge.
+    ///     ADR-0002, as amended by ADR-0010 and ADR-0011. <c>GameInstallations</c> owns the rule and calls it from
+    ///     detection, and <c>PluginListSource.Create</c> is the one place a run's Data directory is decided. The Game
+    ///     Context makes that decision when it adopts a directory, as pinned by
+    ///     <see cref="ProductionSources_PluginListSourceCreation_HappensOnlyInTheGameContext" />. Admission, the
+    ///     executor, the run and Plugin Ingestion read <c>PluginListSource.DataDirectory</c> from the captured source
+    ///     and the request instead of deciding it again, so a second caller anywhere in Core is a second place the run's
+    ///     Data directory could diverge.
     /// </remarks>
     [Fact]
     public void CoreSources_GameRootOrDataRule_ReachesARunOnlyThroughThePluginListSource()
@@ -427,6 +572,34 @@ public class CoreProjectBoundaryTests
             .ToArray();
 
         Assert.Equal(["GameInstallations.cs", "PluginListSource.cs"], canonicalizationCallers);
+    }
+
+    /// <summary>
+    ///     Verifies that the Game Context is the only production code that builds a Plugin List Source, so there is one
+    ///     notion of "same directory" and an unusable directory is refused at the one moment it is picked (ADR-0011).
+    /// </summary>
+    /// <remarks>
+    ///     Processing Run Admission used to build a second source from a captured raw directory, which gave it an
+    ///     exception mode for a malformed one. It now compares the Game Context's own source, so any other production
+    ///     caller would bring that second, later validation back. Tests build sources directly and are not scanned.
+    /// </remarks>
+    [Fact]
+    public void ProductionSources_PluginListSourceCreation_HappensOnlyInTheGameContext()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceCreators = new[]
+            {
+                GetCoreProjectDirectory(),
+                Path.Combine(repositoryRoot, "FormID Database Manager.WinUI")
+            }
+            .SelectMany(directory => Directory.EnumerateFiles(directory, "*.cs", SearchOption.AllDirectories))
+            .Where(path => !IsBuildOutput(path))
+            .Where(path => File.ReadAllText(path).Contains("PluginListSource.Create(", StringComparison.Ordinal))
+            .Select(path => Path.GetFileName(path))
+            .OrderBy(static fileName => fileName, StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.Equal(["GameContext.cs"], sourceCreators);
     }
 
     /// <summary>

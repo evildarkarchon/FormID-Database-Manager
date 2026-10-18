@@ -92,8 +92,7 @@ public sealed class PluginListTests
         Assert.IsType<PluginListNoSourceState>(sut.Current);
 
         await sut.RefreshAsync(
-            GameRelease.SkyrimSE,
-            discovery.GameDirectory,
+            PluginListSource.Create(GameRelease.SkyrimSE, discovery.GameDirectory),
             AdvancedMode.Off,
             TestContext.Current.CancellationToken);
 
@@ -130,8 +129,7 @@ public sealed class PluginListTests
         Assert.Equal(0, sut.Current.ActivityRevision);
 
         var refresh = sut.RefreshAsync(
-            GameRelease.SkyrimSE,
-            CreateGameDirectory(),
+            PluginListSource.Create(GameRelease.SkyrimSE, CreateGameDirectory()),
             AdvancedMode.Off,
             TestContext.Current.CancellationToken);
         var refreshing = sut.Current;
@@ -177,8 +175,7 @@ public sealed class PluginListTests
         using var sut = new PluginList(gameLoadOrders);
 
         var refresh = sut.RefreshAsync(
-            GameRelease.SkyrimSE,
-            gameDirectory,
+            PluginListSource.Create(GameRelease.SkyrimSE, gameDirectory),
             AdvancedMode.Off,
             callerCancellation.Token);
 
@@ -205,8 +202,7 @@ public sealed class PluginListTests
         using var sut = new PluginList(discovery);
 
         await sut.RefreshAsync(
-            GameRelease.SkyrimSE,
-            discovery.GameDirectory,
+            PluginListSource.Create(GameRelease.SkyrimSE, discovery.GameDirectory),
             AdvancedMode.On,
             TestContext.Current.CancellationToken);
 
@@ -249,33 +245,12 @@ public sealed class PluginListTests
         using var sut = new PluginList(discovery);
 
         await sut.RefreshAsync(
-            gameRelease,
-            discovery.GameDirectory,
+            PluginListSource.Create(gameRelease, discovery.GameDirectory),
             AdvancedMode.Off,
             TestContext.Current.CancellationToken);
 
         var confirmed = Assert.IsType<ConfirmedPluginList>(sut.Current.Confirmed);
         Assert.Equal(["User.esp"], confirmed.Entries.Select(entry => entry.Name).ToArray());
-    }
-
-    /// <summary>
-    ///     Verifies a GameRelease that is not in the Supported GameRelease table is rejected rather than refreshed.
-    ///     Oblivion Remastered is defined by Mutagen but unsupported here; it previously produced a Plugin List that
-    ///     hid nothing, because the Base Game Plugin lookup answered with an empty set (ADR-0003).
-    /// </summary>
-    [Fact]
-    public async Task RefreshAsync_UnsupportedRelease_IsRejected()
-    {
-        var discovery = new DeterministicPluginListGameLoadOrders("Oblivion.esm", "User.esp");
-        using var sut = new PluginList(discovery);
-
-        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => sut.RefreshAsync(
-            GameRelease.OblivionRE,
-            discovery.GameDirectory,
-            AdvancedMode.Off,
-            TestContext.Current.CancellationToken));
-
-        Assert.Null(sut.Current.Confirmed);
     }
 
     /// <summary>
@@ -287,8 +262,7 @@ public sealed class PluginListTests
         var discovery = new DeterministicPluginListGameLoadOrders("First.esp", "Second.esp");
         using var sut = new PluginList(discovery);
         await sut.RefreshAsync(
-            GameRelease.SkyrimSE,
-            discovery.GameDirectory,
+            PluginListSource.Create(GameRelease.SkyrimSE, discovery.GameDirectory),
             AdvancedMode.Off,
             TestContext.Current.CancellationToken);
         var beforeSelection = sut.Current;
@@ -321,8 +295,7 @@ public sealed class PluginListTests
         var discovery = new DeterministicPluginListGameLoadOrders("First.esp", "Second.esp", "Third.esp");
         using var sut = new PluginList(discovery);
         await sut.RefreshAsync(
-            GameRelease.SkyrimSE,
-            discovery.GameDirectory,
+            PluginListSource.Create(GameRelease.SkyrimSE, discovery.GameDirectory),
             AdvancedMode.Off,
             TestContext.Current.CancellationToken);
         var membershipVersion = sut.Current.Confirmed!.MembershipVersion;
@@ -343,8 +316,7 @@ public sealed class PluginListTests
         var discovery = new DeterministicPluginListGameLoadOrders("First.esp", "Second.esp");
         using var sut = new PluginList(discovery);
         await sut.RefreshAsync(
-            GameRelease.SkyrimSE,
-            discovery.GameDirectory,
+            PluginListSource.Create(GameRelease.SkyrimSE, discovery.GameDirectory),
             AdvancedMode.Off,
             TestContext.Current.CancellationToken);
         var membershipVersion = sut.Current.Confirmed!.MembershipVersion;
@@ -368,8 +340,7 @@ public sealed class PluginListTests
         var discovery = new DeterministicPluginListGameLoadOrders();
         using var sut = new PluginList(discovery);
         await sut.RefreshAsync(
-            GameRelease.SkyrimSE,
-            discovery.GameDirectory,
+            PluginListSource.Create(GameRelease.SkyrimSE, discovery.GameDirectory),
             AdvancedMode.Off,
             TestContext.Current.CancellationToken);
         var unchanged = sut.Current;
@@ -396,8 +367,7 @@ public sealed class PluginListTests
         var gameDirectory = CreateGameDirectory();
 
         var initialRefresh = sut.RefreshAsync(
-            GameRelease.SkyrimSE,
-            gameDirectory,
+            PluginListSource.Create(GameRelease.SkyrimSE, gameDirectory),
             AdvancedMode.Off,
             TestContext.Current.CancellationToken);
         initial.Complete("StayA.esp", "Removed.esp", "StayB.esp");
@@ -406,8 +376,7 @@ public sealed class PluginListTests
         var initialSnapshot = sut.Current.Confirmed;
 
         var sameSourceRefresh = sut.RefreshAsync(
-            GameRelease.SkyrimSE,
-            gameDirectory,
+            PluginListSource.Create(GameRelease.SkyrimSE, gameDirectory),
             AdvancedMode.Off,
             TestContext.Current.CancellationToken);
         refreshed.Complete("stayb.ESP", "New.esp", "staya.ESP");
@@ -419,8 +388,7 @@ public sealed class PluginListTests
             initialSnapshot.SelectedPluginNames);
 
         var reappearanceRefresh = sut.RefreshAsync(
-            GameRelease.SkyrimSE,
-            gameDirectory,
+            PluginListSource.Create(GameRelease.SkyrimSE, gameDirectory),
             AdvancedMode.Off,
             TestContext.Current.CancellationToken);
         reappeared.Complete("Removed.esp", "STAYA.esp", "STAYB.esp");
@@ -438,14 +406,12 @@ public sealed class PluginListTests
         var discovery = new DeterministicPluginListGameLoadOrders("First.esp", "Second.esp");
         using var sut = new PluginList(discovery);
         await sut.RefreshAsync(
-            GameRelease.SkyrimSE,
-            discovery.GameDirectory,
+            PluginListSource.Create(GameRelease.SkyrimSE, discovery.GameDirectory),
             AdvancedMode.Off,
             TestContext.Current.CancellationToken);
         var staleMembershipVersion = sut.Current.Confirmed!.MembershipVersion;
         await sut.RefreshAsync(
-            GameRelease.SkyrimSE,
-            discovery.GameDirectory,
+            PluginListSource.Create(GameRelease.SkyrimSE, discovery.GameDirectory),
             AdvancedMode.Off,
             TestContext.Current.CancellationToken);
         var unchanged = sut.Current;
@@ -479,8 +445,7 @@ public sealed class PluginListTests
         var discovery = new DeterministicPluginListGameLoadOrders("First.esp", "Second.esp");
         using var sut = new PluginList(discovery);
         await sut.RefreshAsync(
-            GameRelease.SkyrimSE,
-            discovery.GameDirectory,
+            PluginListSource.Create(GameRelease.SkyrimSE, discovery.GameDirectory),
             AdvancedMode.Off,
             TestContext.Current.CancellationToken);
         var membershipVersion = sut.Current.Confirmed!.MembershipVersion;
@@ -505,16 +470,14 @@ public sealed class PluginListTests
         using var sut = new PluginList(discovery);
         var gameDirectory = CreateGameDirectory();
         var initialRefresh = sut.RefreshAsync(
-            GameRelease.SkyrimSE,
-            gameDirectory,
+            PluginListSource.Create(GameRelease.SkyrimSE, gameDirectory),
             AdvancedMode.Off,
             TestContext.Current.CancellationToken);
         initial.Complete("First.esp", "Second.esp");
         await initialRefresh;
 
         var sameSourceRefresh = sut.RefreshAsync(
-            GameRelease.SkyrimSE,
-            gameDirectory,
+            PluginListSource.Create(GameRelease.SkyrimSE, gameDirectory),
             AdvancedMode.Off,
             TestContext.Current.CancellationToken);
         var beforeSelection = Assert.IsType<PluginListRefreshingState>(sut.Current);
@@ -548,8 +511,7 @@ public sealed class PluginListTests
         sut.Changed += (_, _) => publishedStates.Add(sut.Current);
 
         await sut.RefreshAsync(
-            GameRelease.SkyrimSE,
-            discovery.GameDirectory,
+            PluginListSource.Create(GameRelease.SkyrimSE, discovery.GameDirectory),
             AdvancedMode.Off,
             TestContext.Current.CancellationToken);
 
@@ -584,8 +546,7 @@ public sealed class PluginListTests
         var secondDirectory = CreateGameDirectory();
 
         var initialRefresh = sut.RefreshAsync(
-            GameRelease.SkyrimSE,
-            firstDirectory,
+            PluginListSource.Create(GameRelease.SkyrimSE, firstDirectory),
             AdvancedMode.Off,
             TestContext.Current.CancellationToken);
         initial.Complete("Initial.esp");
@@ -593,8 +554,7 @@ public sealed class PluginListTests
         Assert.NotNull(sut.Current.Confirmed);
 
         var replacementRefresh = sut.RefreshAsync(
-            GameRelease.SkyrimSE,
-            secondDirectory,
+            PluginListSource.Create(GameRelease.SkyrimSE, secondDirectory),
             AdvancedMode.Off,
             TestContext.Current.CancellationToken);
 
@@ -622,8 +582,7 @@ public sealed class PluginListTests
         var gameDirectory = CreateGameDirectory();
 
         var initialRefresh = sut.RefreshAsync(
-            GameRelease.SkyrimSE,
-            gameDirectory,
+            PluginListSource.Create(GameRelease.SkyrimSE, gameDirectory),
             AdvancedMode.Off,
             TestContext.Current.CancellationToken);
         initial.Complete("Initial.esp");
@@ -631,8 +590,7 @@ public sealed class PluginListTests
         var initialConfirmed = Assert.IsType<ConfirmedPluginList>(sut.Current.Confirmed);
 
         var replacementRefresh = sut.RefreshAsync(
-            GameRelease.SkyrimSE,
-            gameDirectory,
+            PluginListSource.Create(GameRelease.SkyrimSE, gameDirectory),
             AdvancedMode.On,
             TestContext.Current.CancellationToken);
 
@@ -655,8 +613,7 @@ public sealed class PluginListTests
         var gameDirectory = CreateGameDirectory();
 
         var initialRefresh = sut.RefreshAsync(
-            GameRelease.SkyrimSE,
-            gameDirectory,
+            PluginListSource.Create(GameRelease.SkyrimSE, gameDirectory),
             AdvancedMode.Off,
             TestContext.Current.CancellationToken);
         initial.Complete("Initial.esp");
@@ -664,8 +621,7 @@ public sealed class PluginListTests
         var initialConfirmed = Assert.IsType<ConfirmedPluginList>(sut.Current.Confirmed);
 
         var replacementRefresh = sut.RefreshAsync(
-            GameRelease.SkyrimSE,
-            gameDirectory,
+            PluginListSource.Create(GameRelease.SkyrimSE, gameDirectory),
             AdvancedMode.Off,
             TestContext.Current.CancellationToken);
         replacement.Fail("The refreshed Plugin List could not be read.");
@@ -677,6 +633,54 @@ public sealed class PluginListTests
         Assert.Equal("The refreshed Plugin List could not be read.", failed.ErrorMessage);
     }
 
+    /// <summary>
+    ///     Verifies that a failed state answers whether the Plugin List failed for a source only for the source whose
+    ///     discovery failed.
+    /// </summary>
+    [Fact]
+    public async Task HasFailedFor_FailedState_IsTrueOnlyForTheFailedSource()
+    {
+        using var sut = new PluginList(ScriptedGameLoadOrders.Sequenced(ScriptedDiscovery.Fails()));
+        var failedSource = PluginListSource.Create(GameRelease.SkyrimSE, CreateGameDirectory());
+        var otherSource = PluginListSource.Create(GameRelease.SkyrimSE, CreateGameDirectory());
+
+        await sut.RefreshAsync(failedSource, AdvancedMode.Off, TestContext.Current.CancellationToken);
+
+        Assert.IsType<PluginListFailedState>(sut.Current);
+        Assert.True(sut.Current.HasFailedFor(failedSource));
+        Assert.False(sut.Current.HasFailedFor(otherSource));
+    }
+
+    /// <summary>
+    ///     Verifies that every state other than Failed reports no failure, even for its own source: a Ready list, a
+    ///     cancelled refresh and an invalidated list are not failures a retry should answer.
+    /// </summary>
+    [Fact]
+    public async Task HasFailedFor_NonFailedStates_IsFalse()
+    {
+        using var sut = new PluginList(ScriptedGameLoadOrders.Sequenced(
+            ScriptedDiscovery.Completes("User.esp"),
+            ScriptedDiscovery.Cancels()));
+        var source = PluginListSource.Create(GameRelease.SkyrimSE, CreateGameDirectory());
+        Assert.False(sut.Current.HasFailedFor(source));
+
+        await sut.RefreshAsync(source, AdvancedMode.Off, TestContext.Current.CancellationToken);
+        Assert.IsType<PluginListReadyState>(sut.Current);
+        Assert.False(sut.Current.HasFailedFor(source));
+
+        // The Plugin List publishes Cancelled only for caller cancellation, which the refresh then rethrows.
+        using var cancelled = new CancellationTokenSource();
+        await cancelled.CancelAsync();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => sut.RefreshAsync(source, AdvancedMode.Off, cancelled.Token));
+        Assert.IsType<PluginListCancelledState>(sut.Current);
+        Assert.False(sut.Current.HasFailedFor(source));
+
+        sut.Invalidate();
+        Assert.IsType<PluginListNoSourceState>(sut.Current);
+        Assert.False(sut.Current.HasFailedFor(source));
+    }
+
     [Fact]
     public async Task RefreshAsync_NewerRefreshOvertakesOlder_OnlyNewerResultCanPublish()
     {
@@ -686,14 +690,12 @@ public sealed class PluginListTests
         using var sut = new PluginList(discovery);
 
         var olderRefresh = sut.RefreshAsync(
-            GameRelease.SkyrimSE,
-            CreateGameDirectory(),
+            PluginListSource.Create(GameRelease.SkyrimSE, CreateGameDirectory()),
             AdvancedMode.Off,
             TestContext.Current.CancellationToken);
         var newerDirectory = CreateGameDirectory();
         var newerRefresh = sut.RefreshAsync(
-            GameRelease.SkyrimSE,
-            newerDirectory,
+            PluginListSource.Create(GameRelease.SkyrimSE, newerDirectory),
             AdvancedMode.Off,
             TestContext.Current.CancellationToken);
 
@@ -724,14 +726,12 @@ public sealed class PluginListTests
         using var sut = new PluginList(discovery);
 
         var olderRefresh = sut.RefreshAsync(
-            GameRelease.SkyrimSE,
-            CreateGameDirectory(),
+            PluginListSource.Create(GameRelease.SkyrimSE, CreateGameDirectory()),
             AdvancedMode.Off,
             TestContext.Current.CancellationToken);
         var newerDirectory = CreateGameDirectory();
         var newerRefresh = sut.RefreshAsync(
-            GameRelease.SkyrimSE,
-            newerDirectory,
+            PluginListSource.Create(GameRelease.SkyrimSE, newerDirectory),
             AdvancedMode.Off,
             TestContext.Current.CancellationToken);
 
@@ -758,8 +758,7 @@ public sealed class PluginListTests
         using var callerCancellation = new CancellationTokenSource();
         var gameDirectory = CreateGameDirectory();
         var refresh = sut.RefreshAsync(
-            GameRelease.SkyrimSE,
-            gameDirectory,
+            PluginListSource.Create(GameRelease.SkyrimSE, gameDirectory),
             AdvancedMode.Off,
             callerCancellation.Token);
         var refreshingStateRevision = sut.Current.StateRevision;
@@ -789,16 +788,14 @@ public sealed class PluginListTests
         using var callerCancellation = new CancellationTokenSource();
         var gameDirectory = CreateGameDirectory();
         var initialRefresh = sut.RefreshAsync(
-            GameRelease.SkyrimSE,
-            gameDirectory,
+            PluginListSource.Create(GameRelease.SkyrimSE, gameDirectory),
             AdvancedMode.Off,
             TestContext.Current.CancellationToken);
         initial.Complete("Retained.esp");
         await initialRefresh;
         var confirmed = Assert.IsType<ConfirmedPluginList>(sut.Current.Confirmed);
         var refresh = sut.RefreshAsync(
-            GameRelease.SkyrimSE,
-            gameDirectory,
+            PluginListSource.Create(GameRelease.SkyrimSE, gameDirectory),
             AdvancedMode.Off,
             callerCancellation.Token);
 
@@ -821,13 +818,11 @@ public sealed class PluginListTests
         using var sut = new PluginList(discovery);
         using var callerCancellation = new CancellationTokenSource();
         var olderRefresh = sut.RefreshAsync(
-            GameRelease.SkyrimSE,
-            CreateGameDirectory(),
+            PluginListSource.Create(GameRelease.SkyrimSE, CreateGameDirectory()),
             AdvancedMode.Off,
             callerCancellation.Token);
         var newerRefresh = sut.RefreshAsync(
-            GameRelease.SkyrimSE,
-            CreateGameDirectory(),
+            PluginListSource.Create(GameRelease.SkyrimSE, CreateGameDirectory()),
             AdvancedMode.Off,
             TestContext.Current.CancellationToken);
         var newerRefreshingState = sut.Current;
@@ -855,8 +850,7 @@ public sealed class PluginListTests
         var retry = discovery.Enqueue();
         using var sut = new PluginList(discovery);
         var retiredRefresh = sut.RefreshAsync(
-            GameRelease.SkyrimSE,
-            CreateGameDirectory(),
+            PluginListSource.Create(GameRelease.SkyrimSE, CreateGameDirectory()),
             AdvancedMode.Off,
             TestContext.Current.CancellationToken);
         var retirementFailure = new InvalidOperationException("Synthetic retirement callback failure.");
@@ -876,8 +870,7 @@ public sealed class PluginListTests
 
         var propagated = await Assert.ThrowsAsync<AggregateException>(
             () => sut.RefreshAsync(
-                GameRelease.SkyrimSE,
-                replacementDirectory,
+                PluginListSource.Create(GameRelease.SkyrimSE, replacementDirectory),
                 AdvancedMode.Off,
                 TestContext.Current.CancellationToken));
 
@@ -896,8 +889,7 @@ public sealed class PluginListTests
         Assert.Equal(faultedStateRevision, sut.Current.StateRevision);
         Assert.Equal(faultedActivityRevision, sut.Current.ActivityRevision);
         var retryRefresh = sut.RefreshAsync(
-            GameRelease.SkyrimSE,
-            replacementDirectory,
+            PluginListSource.Create(GameRelease.SkyrimSE, replacementDirectory),
             AdvancedMode.Off,
             TestContext.Current.CancellationToken);
         retry.Complete("Retry.esp");
@@ -914,8 +906,7 @@ public sealed class PluginListTests
         var operation = discovery.Enqueue();
         using var sut = new PluginList(discovery);
         var refresh = sut.RefreshAsync(
-            GameRelease.SkyrimSE,
-            CreateGameDirectory(),
+            PluginListSource.Create(GameRelease.SkyrimSE, CreateGameDirectory()),
             AdvancedMode.Off,
             TestContext.Current.CancellationToken);
 
@@ -944,8 +935,7 @@ public sealed class PluginListTests
         var operation = discovery.Enqueue();
         using var sut = new PluginList(discovery);
         var refresh = sut.RefreshAsync(
-            GameRelease.SkyrimSE,
-            CreateGameDirectory(),
+            PluginListSource.Create(GameRelease.SkyrimSE, CreateGameDirectory()),
             AdvancedMode.Off,
             TestContext.Current.CancellationToken);
         var retirementFailure = new InvalidOperationException("Synthetic retirement callback failure.");
@@ -973,8 +963,7 @@ public sealed class PluginListTests
         var operation = discovery.Enqueue();
         var sut = new PluginList(discovery);
         var refresh = sut.RefreshAsync(
-            GameRelease.SkyrimSE,
-            CreateGameDirectory(),
+            PluginListSource.Create(GameRelease.SkyrimSE, CreateGameDirectory()),
             AdvancedMode.Off,
             TestContext.Current.CancellationToken);
         var stateBeforeDisposal = sut.Current;
@@ -990,8 +979,7 @@ public sealed class PluginListTests
         Assert.Throws<ObjectDisposedException>(sut.Invalidate);
         await Assert.ThrowsAsync<ObjectDisposedException>(
             () => sut.RefreshAsync(
-                GameRelease.SkyrimSE,
-                CreateGameDirectory(),
+                PluginListSource.Create(GameRelease.SkyrimSE, CreateGameDirectory()),
                 AdvancedMode.Off,
                 TestContext.Current.CancellationToken));
         Assert.Throws<ObjectDisposedException>(
@@ -1005,23 +993,29 @@ public sealed class PluginListTests
         var operation = discovery.Enqueue();
         using var sut = new PluginList(discovery);
         var validRefresh = sut.RefreshAsync(
-            GameRelease.SkyrimSE,
-            CreateGameDirectory(),
+            PluginListSource.Create(GameRelease.SkyrimSE, CreateGameDirectory()),
             AdvancedMode.Off,
             TestContext.Current.CancellationToken);
         var validState = sut.Current;
 
         await Assert.ThrowsAsync<ArgumentOutOfRangeException>(
             () => sut.RefreshAsync(
-                GameRelease.SkyrimSE,
-                CreateGameDirectory(),
+                PluginListSource.Create(GameRelease.SkyrimSE, CreateGameDirectory()),
                 (AdvancedMode)int.MaxValue,
+                TestContext.Current.CancellationToken));
+        await Assert.ThrowsAsync<ArgumentNullException>(
+            () => sut.RefreshAsync(
+                null!,
+                AdvancedMode.Off,
                 TestContext.Current.CancellationToken));
 
         Assert.False(operation.CancellationToken.IsCancellationRequested);
         Assert.Same(validState, sut.Current);
         operation.Complete("Valid.esp");
         await validRefresh;
+        // A rejected argument must not have taken over the active generation, so the valid refresh still commits.
+        var ready = Assert.IsType<PluginListReadyState>(sut.Current);
+        Assert.Equal(["Valid.esp"], ready.Confirmed.Entries.Select(entry => entry.Name).ToArray());
     }
 
     [Theory]
@@ -1035,16 +1029,14 @@ public sealed class PluginListTests
         using var sut = new PluginList(discovery);
         var gameDirectory = CreateGameDirectory();
         var initialRefresh = sut.RefreshAsync(
-            GameRelease.SkyrimSE,
-            gameDirectory,
+            PluginListSource.Create(GameRelease.SkyrimSE, gameDirectory),
             AdvancedMode.Off,
             TestContext.Current.CancellationToken);
         initial.Complete("Retained.esp");
         await initialRefresh;
         var confirmed = Assert.IsType<ConfirmedPluginList>(sut.Current.Confirmed);
         var refresh = sut.RefreshAsync(
-            GameRelease.SkyrimSE,
-            gameDirectory,
+            PluginListSource.Create(GameRelease.SkyrimSE, gameDirectory),
             AdvancedMode.Off,
             TestContext.Current.CancellationToken);
         var refreshingStateRevision = sut.Current.StateRevision;
@@ -1089,8 +1081,7 @@ public sealed class PluginListTests
         };
 
         var thrown = await Assert.ThrowsAsync<IOException>(() => sut.RefreshAsync(
-            GameRelease.SkyrimSE,
-            CreateGameDirectory(),
+            PluginListSource.Create(GameRelease.SkyrimSE, CreateGameDirectory()),
             AdvancedMode.Off,
             TestContext.Current.CancellationToken));
 
@@ -1104,8 +1095,7 @@ public sealed class PluginListTests
         var discovery = new DeterministicPluginListGameLoadOrders("User.esp");
         using var sut = new PluginList(discovery);
         await sut.RefreshAsync(
-            GameRelease.SkyrimSE,
-            discovery.GameDirectory,
+            PluginListSource.Create(GameRelease.SkyrimSE, discovery.GameDirectory),
             AdvancedMode.Off,
             TestContext.Current.CancellationToken);
         var confirmedRevision = sut.Current.StateRevision;

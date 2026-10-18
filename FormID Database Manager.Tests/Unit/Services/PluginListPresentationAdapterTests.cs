@@ -45,14 +45,14 @@ public sealed class PluginListPresentationAdapterTests
         var viewModel = new MainWindowViewModel(dispatcher);
         using var sut = new PluginListPresentationAdapter(pluginList, viewModel, dispatcher);
         await pluginList.RefreshAsync(
-            GameRelease.SkyrimSE,
-            discovery.GameDirectory,
+            PluginListSource.Create(GameRelease.SkyrimSE, discovery.GameDirectory),
             AdvancedMode.Off,
             TestContext.Current.CancellationToken);
 
         await pluginList.RefreshAsync(
-            GameRelease.SkyrimSE,
-            Path.Combine(Path.GetTempPath(), $"different-plugin-source-{Guid.NewGuid():N}"),
+            PluginListSource.Create(
+                GameRelease.SkyrimSE,
+                Path.Combine(Path.GetTempPath(), $"different-plugin-source-{Guid.NewGuid():N}")),
             AdvancedMode.Off,
             TestContext.Current.CancellationToken);
 
@@ -77,16 +77,14 @@ public sealed class PluginListPresentationAdapterTests
         Assert.True(dispatcher.RunNext());
 
         var olderRefresh = pluginList.RefreshAsync(
-            GameRelease.SkyrimSE,
-            discovery.GameDirectory,
+            PluginListSource.Create(GameRelease.SkyrimSE, discovery.GameDirectory),
             AdvancedMode.On,
             TestContext.Current.CancellationToken);
         await discovery.OlderStarted.Task.WaitAsync(TestContext.Current.CancellationToken);
         discovery.ReportOlderProgress(4, 8);
 
         await pluginList.RefreshAsync(
-            GameRelease.SkyrimSE,
-            discovery.GameDirectory,
+            PluginListSource.Create(GameRelease.SkyrimSE, discovery.GameDirectory),
             AdvancedMode.On,
             TestContext.Current.CancellationToken);
         discovery.CompleteOlder("Older.esp");
@@ -130,8 +128,7 @@ public sealed class PluginListPresentationAdapterTests
         var postCountAfterDispose = dispatcher.PostCount;
 
         await pluginList.RefreshAsync(
-            GameRelease.SkyrimSE,
-            discovery.GameDirectory,
+            PluginListSource.Create(GameRelease.SkyrimSE, discovery.GameDirectory),
             AdvancedMode.Off,
             TestContext.Current.CancellationToken);
 
@@ -153,8 +150,7 @@ public sealed class PluginListPresentationAdapterTests
         using var sut = new PluginListPresentationAdapter(pluginList, viewModel, dispatcher);
         using var cancellation = new CancellationTokenSource();
         var refresh = pluginList.RefreshAsync(
-            GameRelease.SkyrimSE,
-            discovery.GameDirectory,
+            PluginListSource.Create(GameRelease.SkyrimSE, discovery.GameDirectory),
             AdvancedMode.Off,
             cancellation.Token);
         await discovery.Started.Task.WaitAsync(TestContext.Current.CancellationToken);
@@ -183,8 +179,7 @@ public sealed class PluginListPresentationAdapterTests
         var viewModel = new MainWindowViewModel(dispatcher);
         using var sut = new PluginListPresentationAdapter(pluginList, viewModel, dispatcher);
         var refresh = pluginList.RefreshAsync(
-            GameRelease.SkyrimSE,
-            discovery.GameDirectory,
+            PluginListSource.Create(GameRelease.SkyrimSE, discovery.GameDirectory),
             AdvancedMode.Off,
             TestContext.Current.CancellationToken);
         await discovery.Started.Task.WaitAsync(TestContext.Current.CancellationToken);
@@ -217,16 +212,14 @@ public sealed class PluginListPresentationAdapterTests
         var viewModel = new MainWindowViewModel(dispatcher);
         using var sut = new PluginListPresentationAdapter(pluginList, viewModel, dispatcher);
         await pluginList.RefreshAsync(
-            GameRelease.SkyrimSE,
-            discovery.GameDirectory,
+            PluginListSource.Create(GameRelease.SkyrimSE, discovery.GameDirectory),
             AdvancedMode.Off,
             TestContext.Current.CancellationToken);
         var membershipVersion = pluginList.Current.Confirmed!.MembershipVersion;
         pluginList.Apply(new PluginSelectionByNameIntent(membershipVersion, "Selected.esp", true));
 
         await pluginList.RefreshAsync(
-            GameRelease.SkyrimSE,
-            discovery.GameDirectory,
+            PluginListSource.Create(GameRelease.SkyrimSE, discovery.GameDirectory),
             AdvancedMode.Off,
             TestContext.Current.CancellationToken);
 
@@ -257,14 +250,12 @@ public sealed class PluginListPresentationAdapterTests
         using var sut = new PluginListPresentationAdapter(pluginList, viewModel, dispatcher);
 
         await pluginList.RefreshAsync(
-            GameRelease.SkyrimSE,
-            discovery.GameDirectory,
+            PluginListSource.Create(GameRelease.SkyrimSE, discovery.GameDirectory),
             AdvancedMode.Off,
             TestContext.Current.CancellationToken);
         var firstFailure = pluginList.Current;
         await pluginList.RefreshAsync(
-            GameRelease.SkyrimSE,
-            discovery.GameDirectory,
+            PluginListSource.Create(GameRelease.SkyrimSE, discovery.GameDirectory),
             AdvancedMode.Off,
             TestContext.Current.CancellationToken);
         var secondFailure = pluginList.Current;
@@ -297,8 +288,7 @@ public sealed class PluginListPresentationAdapterTests
         var viewModel = new MainWindowViewModel(dispatcher);
         using var sut = new PluginListPresentationAdapter(pluginList, viewModel, dispatcher);
         await pluginList.RefreshAsync(
-            GameRelease.SkyrimSE,
-            discovery.GameDirectory,
+            PluginListSource.Create(GameRelease.SkyrimSE, discovery.GameDirectory),
             AdvancedMode.Off,
             TestContext.Current.CancellationToken);
         var membershipVersion = pluginList.Current.Confirmed!.MembershipVersion;
@@ -326,8 +316,7 @@ public sealed class PluginListPresentationAdapterTests
         using var sut = new PluginListPresentationAdapter(pluginList, viewModel, dispatcher);
 
         var refresh = pluginList.RefreshAsync(
-            GameRelease.SkyrimSE,
-            discovery.GameDirectory,
+            PluginListSource.Create(GameRelease.SkyrimSE, discovery.GameDirectory),
             AdvancedMode.On,
             TestContext.Current.CancellationToken);
 
@@ -374,13 +363,11 @@ public sealed class PluginListPresentationAdapterTests
         Assert.True(dispatcher.RunNext());
 
         await pluginList.RefreshAsync(
-            GameRelease.SkyrimSE,
-            discovery.GameDirectory,
+            PluginListSource.Create(GameRelease.SkyrimSE, discovery.GameDirectory),
             AdvancedMode.Off,
             TestContext.Current.CancellationToken);
         await pluginList.RefreshAsync(
-            GameRelease.SkyrimSE,
-            discovery.GameDirectory,
+            PluginListSource.Create(GameRelease.SkyrimSE, discovery.GameDirectory),
             AdvancedMode.Off,
             TestContext.Current.CancellationToken);
 

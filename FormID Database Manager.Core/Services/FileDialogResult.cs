@@ -1,3 +1,5 @@
+using System.Diagnostics.CodeAnalysis;
+
 namespace FormID_Database_Manager.Services;
 
 /// <summary>
@@ -47,6 +49,30 @@ public sealed record FileDialogResult
     ///     Gets the failure reason when <see cref="Kind" /> is <see cref="FileDialogResultKind.Failure" />.
     /// </summary>
     public string? ErrorMessage { get; }
+
+    /// <summary>
+    ///     Reports whether the user selected a non-empty path, and returns it.
+    /// </summary>
+    /// <param name="path">The selected path when this returns true; otherwise null.</param>
+    /// <returns>True only for a successful pick that carries a path.</returns>
+    /// <remarks>
+    ///     Every picker caller shares this one check rather than repeating it. A failure is deliberately not reported
+    ///     here: each caller words its own failure message, so it reads <see cref="Kind" /> and
+    ///     <see cref="ErrorMessage" /> itself when this returns false.
+    /// </remarks>
+    public bool TryGetSelectedPath([NotNullWhen(true)] out string? path)
+    {
+        // Success already rejects a blank path, so the emptiness check only guards a construction path that cannot
+        // occur today; it keeps the "non-empty path" promise local to this member instead of relying on the factory.
+        if (Kind == FileDialogResultKind.Success && !string.IsNullOrEmpty(Path))
+        {
+            path = Path;
+            return true;
+        }
+
+        path = null;
+        return false;
+    }
 
     /// <summary>
     ///     Creates a successful picker result.

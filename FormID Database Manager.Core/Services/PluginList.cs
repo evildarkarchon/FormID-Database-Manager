@@ -1,5 +1,4 @@
 using System.Collections.Immutable;
-using Mutagen.Bethesda;
 
 namespace FormID_Database_Manager.Services;
 
@@ -71,17 +70,16 @@ internal sealed class PluginList : IDisposable
     /// <summary>
     ///     Loads and confirms a Plugin List from a normalized source.
     /// </summary>
-    /// <param name="gameRelease">The GameRelease whose load order and base Plugin rules apply.</param>
-    /// <param name="gameDirectory">A game root or Data-directory path.</param>
+    /// <param name="source">
+    ///     The Plugin List Source whose GameRelease load order and base Plugin rules apply. The caller builds it with
+    ///     <see cref="PluginListSource.Create" />, so the Plugin List never validates a directory itself.
+    /// </param>
     /// <param name="advancedMode">Whether base Plugins are included.</param>
     /// <param name="cancellationToken">Cancels the caller's discovery request.</param>
     /// <returns>A task that completes when discovery reaches its terminal state.</returns>
-    /// <exception cref="ArgumentNullException"><paramref name="gameDirectory" /> is null.</exception>
-    /// <exception cref="ArgumentException"><paramref name="gameDirectory" /> is empty or whitespace.</exception>
+    /// <exception cref="ArgumentNullException"><paramref name="source" /> is null.</exception>
     /// <exception cref="ArgumentOutOfRangeException">
-    ///     <paramref name="gameRelease" /> is not a Supported GameRelease — which includes a release Mutagen defines
-    ///     but this application cannot process — or <paramref name="advancedMode" /> is undefined, or discovery
-    ///     returns an unsupported result.
+    ///     <paramref name="advancedMode" /> is undefined, or discovery returns an unsupported result.
     /// </exception>
     /// <exception cref="OperationCanceledException">
     ///     <paramref name="cancellationToken" /> is cancelled, or discovery propagates an unexpected cancellation. Caller
@@ -96,19 +94,20 @@ internal sealed class PluginList : IDisposable
     ///     Programming and fatal discovery failures propagate unchanged.
     /// </remarks>
     public async Task RefreshAsync(
-        GameRelease gameRelease,
-        string gameDirectory,
+        PluginListSource source,
         AdvancedMode advancedMode,
         CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
+        // Rejected before BeginRefresh: a null source would otherwise take over the active generation and then fail
+        // inside the gate, silently orphaning the refresh it replaced.
+        ArgumentNullException.ThrowIfNull(source);
         if (!Enum.IsDefined(advancedMode))
         {
             throw new ArgumentOutOfRangeException(nameof(advancedMode), advancedMode,
                 "Unsupported Advanced Mode value.");
         }
 
-        var source = PluginListSource.Create(gameRelease, gameDirectory);
         var operation = BeginRefresh(source);
 
         try

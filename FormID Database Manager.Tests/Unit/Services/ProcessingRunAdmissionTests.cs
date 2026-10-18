@@ -37,7 +37,7 @@ public sealed class ProcessingRunAdmissionTests
         using var pluginList = new PluginList(ScriptedGameLoadOrders.Fixed());
 
         var decision = ProcessingRunAdmission.Admit(
-            Inputs(pluginList.Current, gameRelease: null, gameDirectory: _gameDirectory),
+            Inputs(pluginList.Current, gameRelease: null, source: Source(_gameDirectory)),
             _defaultDatabaseRoot);
 
         AssertRefused(RunRejectionReason.NoGameSelected, decision);
@@ -71,7 +71,7 @@ public sealed class ProcessingRunAdmissionTests
             Inputs(
                 pluginList.Current,
                 GameRelease.Fallout4,
-                gameDirectory: null,
+                source: null,
                 formIdListPath: FormIdListPath,
                 updateMode: UpdateMode.ReplacePluginRecords),
             _defaultDatabaseRoot);
@@ -99,43 +99,32 @@ public sealed class ProcessingRunAdmissionTests
         using var pluginList = new PluginList(ScriptedGameLoadOrders.Fixed());
 
         var decision = ProcessingRunAdmission.Admit(
-            Inputs(pluginList.Current, gameDirectory: null, formIdListPath: formIdListPath),
+            Inputs(pluginList.Current, source: null, formIdListPath: formIdListPath),
             _defaultDatabaseRoot);
 
         AssertRefused(RunRejectionReason.NoGameDirectory, decision);
     }
 
     /// <summary>
-    ///     Verifies that a Plugin run with no game directory is refused before the Plugin List is consulted.
+    ///     Verifies that a Plugin run whose Game Context holds no Plugin List Source is refused for the missing game
+    ///     directory before the Plugin List is consulted, even when that list holds a confirmation.
     /// </summary>
-    /// <param name="gameDirectory">A game directory that names no directory.</param>
-    [Theory]
-    [InlineData(null)]
-    [InlineData("")]
-    [InlineData("   ")]
-    public void Admit_PluginRunWithoutGameDirectory_RefusesWithNoGameDirectory(string? gameDirectory)
+    /// <remarks>
+    ///     The Game Context holds a directory only when it makes a source (ADR-0011), so "no source" is what "no game
+    ///     directory" means here.
+    /// </remarks>
+    [Fact]
+    public async Task Admit_PluginRunWithoutSource_RefusesWithNoGameDirectory()
     {
-        using var pluginList = new PluginList(ScriptedGameLoadOrders.Fixed());
+        using var pluginList = new PluginList(ScriptedGameLoadOrders.Fixed("User.esp"));
+        await RefreshAsync(pluginList, _gameDirectory);
+        SelectAll(pluginList);
 
         var decision = ProcessingRunAdmission.Admit(
-            Inputs(pluginList.Current, gameDirectory: gameDirectory),
+            Inputs(pluginList.Current, source: null),
             _defaultDatabaseRoot);
 
         AssertRefused(RunRejectionReason.NoGameDirectory, decision);
-    }
-
-    /// <summary>
-    ///     Verifies that a malformed game directory is not turned into a refusal: no Plugin List Source can be built from
-    ///     it, and the failure propagates for the caller to report as unexpected (ADR-0002).
-    /// </summary>
-    [Fact]
-    public void Admit_MalformedGameDirectory_ThrowsArgumentException()
-    {
-        using var pluginList = new PluginList(ScriptedGameLoadOrders.Fixed());
-
-        Assert.ThrowsAny<ArgumentException>(() => ProcessingRunAdmission.Admit(
-            Inputs(pluginList.Current, gameDirectory: "C:\\Games\\Sky\0rim"),
-            _defaultDatabaseRoot));
     }
 
     /// <summary>
@@ -147,7 +136,7 @@ public sealed class ProcessingRunAdmissionTests
         using var pluginList = new PluginList(ScriptedGameLoadOrders.Fixed("User.esp"));
 
         var decision = ProcessingRunAdmission.Admit(
-            Inputs(pluginList.Current, gameDirectory: _gameDirectory),
+            Inputs(pluginList.Current, source: Source(_gameDirectory)),
             _defaultDatabaseRoot);
 
         AssertRefused(RunRejectionReason.PluginListUnavailable, decision);
@@ -164,7 +153,7 @@ public sealed class ProcessingRunAdmissionTests
         var refresh = StartRefresh(pluginList, _gameDirectory);
 
         var decision = ProcessingRunAdmission.Admit(
-            Inputs(pluginList.Current, gameDirectory: _gameDirectory),
+            Inputs(pluginList.Current, source: Source(_gameDirectory)),
             _defaultDatabaseRoot);
 
         AssertRefused(RunRejectionReason.PluginListLoading, decision);
@@ -188,7 +177,7 @@ public sealed class ProcessingRunAdmissionTests
         var refresh = StartRefresh(pluginList, _gameDirectory);
 
         var decision = ProcessingRunAdmission.Admit(
-            Inputs(pluginList.Current, gameDirectory: _gameDirectory),
+            Inputs(pluginList.Current, source: Source(_gameDirectory)),
             _defaultDatabaseRoot);
 
         AssertRefused(RunRejectionReason.PluginListLoading, decision);
@@ -208,7 +197,7 @@ public sealed class ProcessingRunAdmissionTests
         SelectAll(pluginList);
 
         var decision = ProcessingRunAdmission.Admit(
-            Inputs(pluginList.Current, gameDirectory: _gameDirectory),
+            Inputs(pluginList.Current, source: Source(_gameDirectory)),
             _defaultDatabaseRoot);
 
         AssertRefused(RunRejectionReason.PluginListLoading, decision);
@@ -226,7 +215,8 @@ public sealed class ProcessingRunAdmissionTests
         SelectAll(pluginList);
 
         var decision = ProcessingRunAdmission.Admit(
-            Inputs(pluginList.Current, GameRelease.Fallout4, _gameDirectory),
+            Inputs(pluginList.Current, GameRelease.Fallout4,
+                PluginListSource.Create(GameRelease.Fallout4, _gameDirectory)),
             _defaultDatabaseRoot);
 
         AssertRefused(RunRejectionReason.PluginListLoading, decision);
@@ -246,7 +236,7 @@ public sealed class ProcessingRunAdmissionTests
         await EndRefreshAsync(pluginList, _gameDirectory, ending);
 
         var decision = ProcessingRunAdmission.Admit(
-            Inputs(pluginList.Current, gameDirectory: _gameDirectory),
+            Inputs(pluginList.Current, source: Source(_gameDirectory)),
             _defaultDatabaseRoot);
 
         Assert.Null(pluginList.Current.Confirmed);
@@ -264,7 +254,7 @@ public sealed class ProcessingRunAdmissionTests
         await RefreshAsync(pluginList, CreateUncreatedTemporaryPath());
 
         var decision = ProcessingRunAdmission.Admit(
-            Inputs(pluginList.Current, gameDirectory: _gameDirectory),
+            Inputs(pluginList.Current, source: Source(_gameDirectory)),
             _defaultDatabaseRoot);
 
         Assert.IsType<PluginListFailedState>(pluginList.Current);
@@ -281,7 +271,7 @@ public sealed class ProcessingRunAdmissionTests
         await RefreshAsync(pluginList, _gameDirectory);
 
         var decision = ProcessingRunAdmission.Admit(
-            Inputs(pluginList.Current, gameDirectory: _gameDirectory),
+            Inputs(pluginList.Current, source: Source(_gameDirectory)),
             _defaultDatabaseRoot);
 
         AssertRefused(RunRejectionReason.NoPluginsSelected, decision);
@@ -303,7 +293,7 @@ public sealed class ProcessingRunAdmissionTests
         var decision = ProcessingRunAdmission.Admit(
             Inputs(
                 pluginList.Current,
-                gameDirectory: _gameDirectory,
+                source: Source(_gameDirectory),
                 updateMode: UpdateMode.ReplacePluginRecords),
             _defaultDatabaseRoot);
 
@@ -320,9 +310,10 @@ public sealed class ProcessingRunAdmissionTests
     }
 
     /// <summary>
-    ///     Verifies that a captured directory spelled differently from the confirmed one still matches when both name
-    ///     the same canonical Data directory, and that the admitted request carries the Plugin List Source the list was
-    ///     confirmed against, so its Plugins are read from exactly the Data directory they were discovered from.
+    ///     Verifies that a captured source built from a directory spelled differently from the confirmed one still
+    ///     matches when both name the same canonical Data directory, and that the admitted request carries the Plugin
+    ///     List Source the list was confirmed against, so its Plugins are read from exactly the Data directory they were
+    ///     discovered from.
     /// </summary>
     [Fact]
     public async Task Admit_EquivalentDirectorySpelling_MatchesTheConfirmationAndCarriesItsSource()
@@ -336,7 +327,7 @@ public sealed class ProcessingRunAdmissionTests
         var dataDirectoryName = OperatingSystem.IsWindows() ? "data" : "Data";
 
         var decision = ProcessingRunAdmission.Admit(
-            Inputs(pluginList.Current, gameDirectory: Path.Combine(_gameDirectory, dataDirectoryName, ".")),
+            Inputs(pluginList.Current, source: Source(Path.Combine(_gameDirectory, dataDirectoryName, "."))),
             _defaultDatabaseRoot);
 
         var request = Assert.IsType<PluginProcessingRunRequest>(Assert.IsType<AdmittedRun>(decision).Request);
@@ -361,7 +352,7 @@ public sealed class ProcessingRunAdmissionTests
         var refresh = StartRefresh(pluginList, _gameDirectory);
 
         var decision = ProcessingRunAdmission.Admit(
-            Inputs(pluginList.Current, gameDirectory: _gameDirectory),
+            Inputs(pluginList.Current, source: Source(_gameDirectory)),
             _defaultDatabaseRoot);
 
         Assert.IsType<PluginListRefreshingState>(pluginList.Current);
@@ -390,7 +381,7 @@ public sealed class ProcessingRunAdmissionTests
         await EndRefreshAsync(pluginList, _gameDirectory, ending);
 
         var decision = ProcessingRunAdmission.Admit(
-            Inputs(pluginList.Current, gameDirectory: _gameDirectory),
+            Inputs(pluginList.Current, source: Source(_gameDirectory)),
             _defaultDatabaseRoot);
 
         var request = Assert.IsType<PluginProcessingRunRequest>(Assert.IsType<AdmittedRun>(decision).Request);
@@ -458,7 +449,7 @@ public sealed class ProcessingRunAdmissionTests
         SelectAll(pluginList);
 
         var decision = ProcessingRunAdmission.Admit(
-            Inputs(pluginList.Current, gameDirectory: _gameDirectory, databasePath: string.Empty),
+            Inputs(pluginList.Current, source: Source(_gameDirectory), databasePath: string.Empty),
             _defaultDatabaseRoot);
 
         var admitted = Assert.IsType<AdmittedRun>(decision);
@@ -516,7 +507,7 @@ public sealed class ProcessingRunAdmissionTests
         SelectAll(pluginList);
 
         var decision = ProcessingRunAdmission.Admit(
-            Inputs(pluginList.Current, gameDirectory: _gameDirectory, databasePath: string.Empty),
+            Inputs(pluginList.Current, source: Source(_gameDirectory), databasePath: string.Empty),
             defaultDatabaseRoot: null);
 
         AssertRefused(RunRejectionReason.NoDatabaseLocation, decision);
@@ -532,7 +523,7 @@ public sealed class ProcessingRunAdmissionTests
         await RefreshAsync(pluginList, _gameDirectory);
 
         var decision = ProcessingRunAdmission.Admit(
-            Inputs(pluginList.Current, gameDirectory: _gameDirectory, databasePath: string.Empty),
+            Inputs(pluginList.Current, source: Source(_gameDirectory), databasePath: string.Empty),
             defaultDatabaseRoot: null);
 
         AssertRefused(RunRejectionReason.NoPluginsSelected, decision);
@@ -600,7 +591,9 @@ public sealed class ProcessingRunAdmissionTests
                 break;
             case RefreshEnding.Cancelled:
                 await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pluginList.RefreshAsync(
-                    GameRelease.SkyrimSE, gameDirectory, AdvancedMode.Off, new CancellationToken(true)));
+                    PluginListSource.Create(GameRelease.SkyrimSE, gameDirectory),
+                    AdvancedMode.Off,
+                    new CancellationToken(true)));
                 break;
             case RefreshEnding.Faulted:
                 await Assert.ThrowsAsync<IOException>(() => RefreshAsync(pluginList, gameDirectory));
@@ -615,7 +608,7 @@ public sealed class ProcessingRunAdmissionTests
     /// </summary>
     private static Task RefreshAsync(PluginList pluginList, string gameDirectory)
     {
-        return pluginList.RefreshAsync(GameRelease.SkyrimSE, gameDirectory, AdvancedMode.Off,
+        return pluginList.RefreshAsync(PluginListSource.Create(GameRelease.SkyrimSE, gameDirectory), AdvancedMode.Off,
             TestContext.Current.CancellationToken);
     }
 
@@ -651,7 +644,7 @@ public sealed class ProcessingRunAdmissionTests
     private static ProcessingRunInputs Inputs(
         PluginListState pluginListState,
         GameRelease? gameRelease = GameRelease.SkyrimSE,
-        string? gameDirectory = null,
+        PluginListSource? source = null,
         string? formIdListPath = null,
         string? databasePath = DatabasePath,
         UpdateMode updateMode = UpdateMode.Append,
@@ -659,12 +652,20 @@ public sealed class ProcessingRunAdmissionTests
     {
         return new ProcessingRunInputs(
             gameRelease,
-            gameDirectory,
+            source,
             pluginListState,
             formIdListPath,
             databasePath,
             updateMode,
             dryRun);
+    }
+
+    /// <summary>
+    ///     Builds the SkyrimSE Plugin List Source a Game Context would hold for the given directory.
+    /// </summary>
+    private static PluginListSource Source(string gameDirectory)
+    {
+        return PluginListSource.Create(GameRelease.SkyrimSE, gameDirectory);
     }
 
     /// <summary>

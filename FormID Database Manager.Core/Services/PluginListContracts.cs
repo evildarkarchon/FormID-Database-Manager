@@ -50,6 +50,24 @@ internal abstract record PluginListState
     public long ActivityRevision { get; }
 
     public virtual ConfirmedPluginList? Confirmed { get; }
+
+    /// <summary>
+    ///     Reports whether this snapshot is an expected discovery failure for exactly the given source.
+    /// </summary>
+    /// <param name="source">The Plugin List Source to ask about.</param>
+    /// <returns>
+    ///     True only for a Failed state governed by an equal source; every other variant, including Cancelled and
+    ///     Faulted, reports false.
+    /// </returns>
+    /// <remarks>
+    ///     The answer comes from this one snapshot, so a caller that reads <see cref="PluginList.Current" /> once gets
+    ///     a coherent answer (ADR-0009). The Game Context asks this to decide whether a Browse to the same source is an
+    ///     explicit retry.
+    /// </remarks>
+    public virtual bool HasFailedFor(PluginListSource source)
+    {
+        return false;
+    }
 }
 
 /// <summary>
@@ -190,6 +208,16 @@ internal sealed record PluginListFailedState : SourcedPluginListState
     }
 
     public string ErrorMessage { get; }
+
+    /// <summary>
+    ///     Reports whether this failure belongs to the given source.
+    /// </summary>
+    /// <param name="source">The Plugin List Source to ask about.</param>
+    /// <returns>True when <paramref name="source" /> equals the source whose discovery failed.</returns>
+    public override bool HasFailedFor(PluginListSource source)
+    {
+        return Source == source;
+    }
 }
 
 /// <summary>

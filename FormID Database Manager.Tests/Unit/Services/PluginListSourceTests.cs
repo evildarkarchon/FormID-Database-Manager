@@ -91,6 +91,9 @@ public sealed class PluginListSourceTests
 
         // Mutagen defines OblivionRE, so an enum-definedness check would have admitted it. The guard tests
         // supported-ness instead, which is what its message has always claimed (ADR-0003).
+        // This is the only unsupported-release guard in front of a Plugin List refresh: the refresh takes a built
+        // source, and an unsupported release once produced a Plugin List that hid nothing, because the Base Game
+        // Plugin lookup answered with an empty set.
         Assert.Throws<ArgumentOutOfRangeException>(() =>
             PluginListSource.Create(GameRelease.OblivionRE, _gameDirectory));
     }

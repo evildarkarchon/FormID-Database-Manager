@@ -2,7 +2,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -26,6 +25,11 @@ namespace FormID_Database_Manager.Tests.Unit.Services;
 /// </remarks>
 public sealed class ProcessingRunExecutorTests : IDisposable
 {
+    // Set only while the offload test is synchronously inside ExecuteAsync, and cleared before that thread can return
+    // to the pool, so it reads true only on the caller's own stack. A thread-id comparison could not do this: once the
+    // caller awaits, its pool thread is free to pick up the queued run and would report the same id.
+    [ThreadStatic] private static bool _executeCallInProgressOnThisThread;
+
     private readonly List<string> _tempDirectories = [];
     private readonly List<string> _tempFiles = [];
 
@@ -781,11 +785,15 @@ public sealed class ProcessingRunExecutorTests : IDisposable
     {
         var gameDirectory = CreateTempDirectory();
         var databasePath = Path.Combine(gameDirectory, "cancel.db");
-        var ingestion = new BlockingPluginIngestion();
+        var ingestion = new CancellationObservingPluginIngestion();
         var recordStore = new RecordingRecordStoreSession();
         using var sut = new ProcessingRunExecutor(
             ingestion,
             new RecordingRecordStoreSessionOpener(recordStore));
+
+        // Cancelling from inside ingestion pins where the run is when cancellation arrives, with no wait on the test
+        // thread for the worker to get there.
+        ingestion.OnIngestionStarted = sut.Cancel;
         var reports = new List<ProcessingRunProgress>();
         var progress = new SynchronousProgress<ProcessingRunProgress>(reports.Add);
         var request = new PluginProcessingRunRequest(
@@ -794,13 +802,7 @@ public sealed class ProcessingRunExecutorTests : IDisposable
             ["Plugin.esp"],
             UpdateMode.Append);
 
-        var processingTask = sut.ExecuteAsync(request, progress);
-        var startedTask = await Task.WhenAny(ingestion.Started.Task, Task.Delay(TimeSpan.FromSeconds(1), TestContext.Current.CancellationToken));
-        Assert.Same(ingestion.Started.Task, startedTask);
-
-        sut.Cancel();
-
-        Assert.IsType<CancelledRunOutcome>(await processingTask);
+        Assert.IsType<CancelledRunOutcome>(await sut.ExecuteAsync(request, progress));
         Assert.Equal(0, recordStore.OptimizeCallCount);
         Assert.True(recordStore.Disposed);
         AssertNoCancellationReportedOnTheProgressChannel(reports);
@@ -816,26 +818,30 @@ public sealed class ProcessingRunExecutorTests : IDisposable
     [Fact]
     public async Task ExecuteAsync_SecondRunSupersedesFirst_OlderCompletionCannotClearNewerActiveRun()
     {
-        using var opener = new SequencedBlockingRecordStoreSessionOpener();
+        var opener = new InterceptingRecordStoreSessionOpener();
         using var sut = new ProcessingRunExecutor(new UnexpectedPluginIngestion(), opener);
+        var releaseSecondImport = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Task<ProcessingRunOutcome>? secondTask = null;
+        opener.OnOpen = openNumber =>
+        {
+            if (openNumber == 1)
+            {
+                // Run one is inside initialization holding the token it captured, so starting run two here supersedes
+                // a run that is still executing, and run one cannot finish until run two owns the active slot.
+                secondTask = sut.ExecuteAsync(CreateTextFileRequest("second.txt"));
+                return new CancellationAwareRecordStoreSession();
+            }
 
-        var firstTask = sut.ExecuteAsync(CreateTextFileRequest("first.txt"));
-        Assert.True(opener.FirstOpenStarted.Wait(TimeSpan.FromSeconds(1), TestContext.Current.CancellationToken));
+            return new CancellationAwareRecordStoreSession(releaseSecondImport.Task);
+        };
 
-        var secondTask = sut.ExecuteAsync(CreateTextFileRequest("second.txt"));
-        await opener.SecondImportStarted.Task.WaitAsync(
-            TimeSpan.FromSeconds(1),
-            TestContext.Current.CancellationToken);
+        var firstOutcome = await sut.ExecuteAsync(CreateTextFileRequest("first.txt"));
 
-        opener.AllowFirstOpenToReturn.Set();
-        var firstOutcome = await firstTask;
-
-        // The older run finishes after the newer run owns the active slot; cancellation must still target run two.
+        // The older run has finished after the newer run took the active slot; cancellation must still target run two,
+        // which is held inside its import until the gate opens and so cannot have finished yet.
         sut.Cancel();
-        await opener.SecondCancellationObserved.Task.WaitAsync(
-            TimeSpan.FromSeconds(1),
-            TestContext.Current.CancellationToken);
-        var secondOutcome = await secondTask;
+        releaseSecondImport.SetResult();
+        var secondOutcome = await secondTask!;
 
         Assert.IsType<CancelledRunOutcome>(firstOutcome);
         Assert.IsType<CancelledRunOutcome>(secondOutcome);
@@ -847,46 +853,49 @@ public sealed class ProcessingRunExecutorTests : IDisposable
     [Fact]
     public async Task Dispose_ActiveRun_CancelsRunAndCanBeRepeated()
     {
-        using var opener = new SequencedBlockingRecordStoreSessionOpener();
+        var opener = new InterceptingRecordStoreSessionOpener();
         using var sut = new ProcessingRunExecutor(new UnexpectedPluginIngestion(), opener);
+        opener.OnOpen = _ =>
+        {
+            // Disposing from inside initialization guarantees the run is active and has captured its token.
+            sut.Dispose();
+            sut.Dispose();
+            return new CancellationAwareRecordStoreSession();
+        };
 
-        var processingTask = sut.ExecuteAsync(CreateTextFileRequest("dispose.txt"));
-        Assert.True(opener.FirstOpenStarted.Wait(TimeSpan.FromSeconds(1), TestContext.Current.CancellationToken));
-
-        sut.Dispose();
-        sut.Dispose();
-        opener.AllowFirstOpenToReturn.Set();
-
-        Assert.IsType<CancelledRunOutcome>(await processingTask);
+        Assert.IsType<CancelledRunOutcome>(await sut.ExecuteAsync(CreateTextFileRequest("dispose.txt")));
     }
 
     /// <summary>
-    ///     Verifies that synchronously blocking initialization is offloaded before execution is returned to its caller.
+    ///     Verifies that synchronous Store initialization is offloaded rather than run on the caller's stack, so a
+    ///     blocking open cannot hold up the thread that started the run.
     /// </summary>
     [Fact]
-    public async Task ExecuteAsync_SynchronousRecordStoreInitializationBlocks_ReturnsControlAsynchronously()
+    public async Task ExecuteAsync_SynchronousRecordStoreInitialization_DoesNotRunOnCallersStack()
     {
-        using var opener = new SequencedBlockingRecordStoreSessionOpener();
+        var opener = new InterceptingRecordStoreSessionOpener();
         using var sut = new ProcessingRunExecutor(new UnexpectedPluginIngestion(), opener);
-        using var returnedFromExecute = new ManualResetEventSlim(false);
-        Task<ProcessingRunOutcome>? processingTask = null;
-
-        var callerTask = Task.Run(() =>
+        var openedOnCallersStack = true;
+        opener.OnOpen = _ =>
         {
-            processingTask = sut.ExecuteAsync(CreateTextFileRequest("blocking.txt"));
-            returnedFromExecute.Set();
-        }, TestContext.Current.CancellationToken);
+            openedOnCallersStack = _executeCallInProgressOnThisThread;
+            return new CancellationAwareRecordStoreSession();
+        };
 
-        Assert.True(opener.FirstOpenStarted.Wait(TimeSpan.FromSeconds(1), TestContext.Current.CancellationToken));
-        var returnedBeforeInitializationCompleted = returnedFromExecute.Wait(
-            TimeSpan.FromSeconds(1),
-            TestContext.Current.CancellationToken);
+        Task<ProcessingRunOutcome> processingTask;
+        _executeCallInProgressOnThisThread = true;
+        try
+        {
+            processingTask = sut.ExecuteAsync(CreateTextFileRequest("offloaded.txt"));
+        }
+        finally
+        {
+            _executeCallInProgressOnThisThread = false;
+        }
 
-        opener.AllowFirstOpenToReturn.Set();
-        await callerTask;
-        await processingTask!;
-
-        Assert.True(returnedBeforeInitializationCompleted);
+        // The completed text outcome proves the open ran, so the flag it captured is a real observation.
+        Assert.IsType<FormIdTextRunOutcome>(await processingTask);
+        Assert.False(openedOnCallersStack);
     }
 
     [Fact]
@@ -1195,19 +1204,22 @@ public sealed class ProcessingRunExecutorTests : IDisposable
         }
     }
 
-    private sealed class SequencedBlockingRecordStoreSessionOpener : IFormIdRecordStoreSessionOpener, IDisposable
+    /// <summary>
+    ///     Opens Store sessions by running a test-supplied callback on the run's worker, from inside initialization.
+    /// </summary>
+    /// <remarks>
+    ///     Lifecycle tests act from inside the callback (cancel, dispose, start another run) instead of waiting on the
+    ///     test thread for the worker to reach initialization, so where the run is when they act is fixed by
+    ///     construction rather than by how quickly the thread pool schedules it.
+    /// </remarks>
+    private sealed class InterceptingRecordStoreSessionOpener : IFormIdRecordStoreSessionOpener
     {
         private int _openCount;
 
-        public ManualResetEventSlim FirstOpenStarted { get; } = new(false);
-
-        public ManualResetEventSlim AllowFirstOpenToReturn { get; } = new(false);
-
-        public TaskCompletionSource<bool> SecondImportStarted { get; } =
-            new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-        public TaskCompletionSource<bool> SecondCancellationObserved { get; } =
-            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        /// <summary>
+        ///     Receives the 1-based open number and returns the session for that run.
+        /// </summary>
+        public Func<int, IFormIdRecordStoreSession>? OnOpen { get; set; }
 
         /// <inheritdoc />
         public Task<IFormIdRecordStoreSession> OpenAsync(
@@ -1215,41 +1227,21 @@ public sealed class ProcessingRunExecutorTests : IDisposable
             GameRelease gameRelease,
             CancellationToken cancellationToken = default)
         {
-            var openNumber = Interlocked.Increment(ref _openCount);
-            if (openNumber == 1)
-            {
-                FirstOpenStarted.Set();
-
-                // Ignore cancellation while blocked so the older initializer returns after supersession,
-                // forcing the executor to use the older run's captured token without touching its source.
-                AllowFirstOpenToReturn.Wait(TestContext.Current.CancellationToken);
-                return Task.FromResult<IFormIdRecordStoreSession>(new CancellationAwareRecordStoreSession());
-            }
-
-            if (openNumber == 2)
-            {
-                return Task.FromResult<IFormIdRecordStoreSession>(new CancellationAwareRecordStoreSession(
-                    SecondImportStarted,
-                    SecondCancellationObserved));
-            }
-
-            throw new InvalidOperationException("The lifecycle test opener supports at most two Processing Runs.");
-        }
-
-        /// <summary>
-        ///     Releases and disposes the synchronization gates owned by this test opener.
-        /// </summary>
-        public void Dispose()
-        {
-            AllowFirstOpenToReturn.Set();
-            FirstOpenStarted.Dispose();
-            AllowFirstOpenToReturn.Dispose();
+            var onOpen = OnOpen ?? throw new InvalidOperationException("The test did not configure OnOpen.");
+            return Task.FromResult(onOpen(Interlocked.Increment(ref _openCount)));
         }
     }
 
-    private sealed class CancellationAwareRecordStoreSession(
-        TaskCompletionSource<bool>? importStarted = null,
-        TaskCompletionSource<bool>? cancellationObserved = null) : IFormIdRecordStoreSession
+    /// <summary>
+    ///     A Store session whose import ends cancelled exactly when its run's token has been cancelled by the time the
+    ///     import checks it, and otherwise completes with empty counts.
+    /// </summary>
+    /// <param name="importGate">
+    ///     Optional gate the import waits on before checking the token. It deliberately ignores the token, so the run
+    ///     cannot finish before the test opens it, and a cancellation that never reached the token shows up as a
+    ///     completed outcome rather than as a hang.
+    /// </param>
+    private sealed class CancellationAwareRecordStoreSession(Task? importGate = null) : IFormIdRecordStoreSession
     {
         /// <inheritdoc />
         public Task<FormIdPluginWriteResult> WritePluginAsync(
@@ -1269,24 +1261,13 @@ public sealed class ProcessingRunExecutorTests : IDisposable
             IProgress<FormIdStoreProgress>? progress = null,
             CancellationToken cancellationToken = default)
         {
-            if (importStarted is null)
+            if (importGate is not null)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                return new FormIdTextFileImportResult(0, 0);
+                await importGate.ConfigureAwait(false);
             }
 
-            importStarted.SetResult(true);
-            try
-            {
-                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-            {
-                cancellationObserved!.SetResult(true);
-                throw;
-            }
-
-            throw new UnreachableException();
+            cancellationToken.ThrowIfCancellationRequested();
+            return new FormIdTextFileImportResult(0, 0);
         }
 
         /// <inheritdoc />
@@ -1303,20 +1284,30 @@ public sealed class ProcessingRunExecutorTests : IDisposable
         }
     }
 
-    private sealed class BlockingPluginIngestion : IPluginIngestion
+    /// <summary>
+    ///     Plugin Ingestion that runs a test-supplied callback when ingestion starts, then reports whether the token it
+    ///     was handed has been cancelled by then.
+    /// </summary>
+    private sealed class CancellationObservingPluginIngestion : IPluginIngestion
     {
-        public TaskCompletionSource<bool> Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public Action? OnIngestionStarted { get; set; }
 
         /// <inheritdoc />
-        public async Task<PluginIngestionReport> IngestAsync(
+        public Task<PluginIngestionReport> IngestAsync(
             PluginProcessingRunRequest request,
             IPluginFormIdRecordWriter recordStore,
             IProgress<PluginIngestionProgress>? progress = null,
             CancellationToken cancellationToken = default)
         {
-            Started.SetResult(true);
-            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false);
-            throw new UnreachableException();
+            OnIngestionStarted?.Invoke();
+
+            // Failing rather than blocking when the token was never cancelled turns a cancellation that missed this
+            // interface into a test failure instead of a hang. An ordinary report is not used for that, because the
+            // executor's own token check before optimization could still turn it into a cancelled outcome.
+            return cancellationToken.IsCancellationRequested
+                ? Task.FromCanceled<PluginIngestionReport>(cancellationToken)
+                : Task.FromException<PluginIngestionReport>(
+                    new InvalidOperationException("Cancellation did not reach the Plugin Ingestion token."));
         }
 
         /// <inheritdoc />

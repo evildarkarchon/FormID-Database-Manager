@@ -15,13 +15,13 @@ public sealed class ScriptedGameLoadOrdersTests
     public async Task RefreshAsync_FixedDiscovery_PublishesReadyStateWithThatPluginSet()
     {
         using var sut = new PluginList(ScriptedGameLoadOrders.Fixed("UserA.esp", "UserB.esp"));
-        var gameDirectory = CreateGameDirectory();
+        var source = CreateSource();
 
-        await sut.RefreshAsync(GameRelease.SkyrimSE, gameDirectory, AdvancedMode.Off,
+        await sut.RefreshAsync(source, AdvancedMode.Off,
             TestContext.Current.CancellationToken);
 
         var ready = Assert.IsType<PluginListReadyState>(sut.Current);
-        Assert.Equal(PluginListSource.Create(GameRelease.SkyrimSE, gameDirectory), ready.Source);
+        Assert.Equal(source, ready.Source);
         Assert.Equal(["UserA.esp", "UserB.esp"], EntryNames(ready.Confirmed));
     }
 
@@ -31,12 +31,12 @@ public sealed class ScriptedGameLoadOrdersTests
         using var sut = new PluginList(ScriptedGameLoadOrders.Sequenced(
             ScriptedDiscovery.Completes("First.esp"),
             ScriptedDiscovery.Completes("Second.esp", "Third.esp")));
-        var gameDirectory = CreateGameDirectory();
+        var source = CreateSource();
 
-        await sut.RefreshAsync(GameRelease.SkyrimSE, gameDirectory, AdvancedMode.Off,
+        await sut.RefreshAsync(source, AdvancedMode.Off,
             TestContext.Current.CancellationToken);
         var first = EntryNames(sut.Current.Confirmed);
-        await sut.RefreshAsync(GameRelease.SkyrimSE, gameDirectory, AdvancedMode.Off,
+        await sut.RefreshAsync(source, AdvancedMode.Off,
             TestContext.Current.CancellationToken);
 
         Assert.Equal(["First.esp"], first);
@@ -52,12 +52,12 @@ public sealed class ScriptedGameLoadOrdersTests
     public async Task RefreshAsync_SequenceExhausted_FaultsWithInvalidOperation()
     {
         using var sut = new PluginList(ScriptedGameLoadOrders.Sequenced(ScriptedDiscovery.Completes("Only.esp")));
-        var gameDirectory = CreateGameDirectory();
-        await sut.RefreshAsync(GameRelease.SkyrimSE, gameDirectory, AdvancedMode.Off,
+        var source = CreateSource();
+        await sut.RefreshAsync(source, AdvancedMode.Off,
             TestContext.Current.CancellationToken);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() => sut.RefreshAsync(GameRelease.SkyrimSE,
-            gameDirectory, AdvancedMode.Off, TestContext.Current.CancellationToken));
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            sut.RefreshAsync(source, AdvancedMode.Off, TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -65,14 +65,14 @@ public sealed class ScriptedGameLoadOrdersTests
     {
         var held = ScriptedDiscovery.Held("Released.esp");
         using var sut = new PluginList(ScriptedGameLoadOrders.Sequenced(held));
-        var gameDirectory = CreateGameDirectory();
+        var source = CreateSource();
 
-        var refresh = sut.RefreshAsync(GameRelease.SkyrimSE, gameDirectory, AdvancedMode.Off,
+        var refresh = sut.RefreshAsync(source, AdvancedMode.Off,
             TestContext.Current.CancellationToken);
 
         var loading = Assert.IsType<PluginListRefreshingState>(sut.Current);
         Assert.Null(loading.Confirmed);
-        Assert.Equal(PluginListSource.Create(GameRelease.SkyrimSE, gameDirectory), loading.Source);
+        Assert.Equal(source, loading.Source);
         Assert.False(refresh.IsCompleted);
 
         held.Release();
@@ -89,12 +89,12 @@ public sealed class ScriptedGameLoadOrdersTests
         using var sut = new PluginList(ScriptedGameLoadOrders.Sequenced(
             ScriptedDiscovery.Completes("Kept.esp"),
             held));
-        var gameDirectory = CreateGameDirectory();
-        await sut.RefreshAsync(GameRelease.SkyrimSE, gameDirectory, AdvancedMode.Off,
+        var source = CreateSource();
+        await sut.RefreshAsync(source, AdvancedMode.Off,
             TestContext.Current.CancellationToken);
         var confirmed = Assert.IsType<ConfirmedPluginList>(sut.Current.Confirmed);
 
-        var refresh = sut.RefreshAsync(GameRelease.SkyrimSE, gameDirectory, AdvancedMode.Off,
+        var refresh = sut.RefreshAsync(source, AdvancedMode.Off,
             TestContext.Current.CancellationToken);
 
         var refreshing = Assert.IsType<PluginListRefreshingState>(sut.Current);
@@ -119,10 +119,10 @@ public sealed class ScriptedGameLoadOrdersTests
         using var sut = new PluginList(ScriptedGameLoadOrders.Sequenced(
             held,
             ScriptedDiscovery.Completes("Newer.esp")));
-        var olderRefresh = sut.RefreshAsync(GameRelease.SkyrimSE, CreateGameDirectory(), AdvancedMode.Off,
+        var olderRefresh = sut.RefreshAsync(CreateSource(), AdvancedMode.Off,
             TestContext.Current.CancellationToken);
 
-        await sut.RefreshAsync(GameRelease.SkyrimSE, CreateGameDirectory(), AdvancedMode.Off,
+        await sut.RefreshAsync(CreateSource(), AdvancedMode.Off,
             TestContext.Current.CancellationToken);
         await olderRefresh;
 
@@ -138,7 +138,7 @@ public sealed class ScriptedGameLoadOrdersTests
     {
         using var sut = new PluginList(ScriptedGameLoadOrders.Fixed("User.esp"));
         Assert.IsType<PluginListNoSourceState>(sut.Current);
-        await sut.RefreshAsync(GameRelease.SkyrimSE, CreateGameDirectory(), AdvancedMode.Off,
+        await sut.RefreshAsync(CreateSource(), AdvancedMode.Off,
             TestContext.Current.CancellationToken);
 
         sut.Invalidate();
@@ -152,15 +152,15 @@ public sealed class ScriptedGameLoadOrdersTests
     {
         using var sut = new PluginList(ScriptedGameLoadOrders.Sequenced(
             ScriptedDiscovery.Fails("plugins.txt could not be read.")));
-        var gameDirectory = CreateGameDirectory();
+        var source = CreateSource();
 
-        await sut.RefreshAsync(GameRelease.SkyrimSE, gameDirectory, AdvancedMode.Off,
+        await sut.RefreshAsync(source, AdvancedMode.Off,
             TestContext.Current.CancellationToken);
 
         var failed = Assert.IsType<PluginListFailedState>(sut.Current);
         Assert.Null(failed.Confirmed);
         Assert.Equal("plugins.txt could not be read.", failed.ErrorMessage);
-        Assert.Equal(PluginListSource.Create(GameRelease.SkyrimSE, gameDirectory), failed.Source);
+        Assert.Equal(source, failed.Source);
     }
 
     /// <summary>
@@ -172,8 +172,8 @@ public sealed class ScriptedGameLoadOrdersTests
     {
         using var sut = new PluginList(ScriptedGameLoadOrders.Sequenced(ScriptedDiscovery.Cancels()));
         using var callerCancellation = new CancellationTokenSource();
-        var gameDirectory = CreateGameDirectory();
-        var refresh = sut.RefreshAsync(GameRelease.SkyrimSE, gameDirectory, AdvancedMode.Off,
+        var source = CreateSource();
+        var refresh = sut.RefreshAsync(source, AdvancedMode.Off,
             callerCancellation.Token);
         Assert.IsType<PluginListRefreshingState>(sut.Current);
 
@@ -182,7 +182,7 @@ public sealed class ScriptedGameLoadOrdersTests
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => refresh);
         var cancelled = Assert.IsType<PluginListCancelledState>(sut.Current);
         Assert.Null(cancelled.Confirmed);
-        Assert.Equal(PluginListSource.Create(GameRelease.SkyrimSE, gameDirectory), cancelled.Source);
+        Assert.Equal(source, cancelled.Source);
     }
 
     [Fact]
@@ -190,8 +190,8 @@ public sealed class ScriptedGameLoadOrdersTests
     {
         using var sut = new PluginList(ScriptedGameLoadOrders.Sequenced(ScriptedDiscovery.Cancels()));
 
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sut.RefreshAsync(GameRelease.SkyrimSE,
-            CreateGameDirectory(), AdvancedMode.Off, new CancellationToken(true)));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            sut.RefreshAsync(CreateSource(), AdvancedMode.Off, new CancellationToken(true)));
 
         Assert.IsType<PluginListCancelledState>(sut.Current);
     }
@@ -201,15 +201,15 @@ public sealed class ScriptedGameLoadOrdersTests
     {
         var fault = new IOException("Unexpected discovery failure.");
         using var sut = new PluginList(ScriptedGameLoadOrders.Sequenced(ScriptedDiscovery.Faults(fault)));
-        var gameDirectory = CreateGameDirectory();
+        var source = CreateSource();
 
-        var thrown = await Assert.ThrowsAsync<IOException>(() => sut.RefreshAsync(GameRelease.SkyrimSE,
-            gameDirectory, AdvancedMode.Off, TestContext.Current.CancellationToken));
+        var thrown = await Assert.ThrowsAsync<IOException>(() =>
+            sut.RefreshAsync(source, AdvancedMode.Off, TestContext.Current.CancellationToken));
 
         Assert.Same(fault, thrown);
         var faulted = Assert.IsType<PluginListFaultedState>(sut.Current);
         Assert.Null(faulted.Confirmed);
-        Assert.Equal(PluginListSource.Create(GameRelease.SkyrimSE, gameDirectory), faulted.Source);
+        Assert.Equal(source, faulted.Source);
     }
 
     /// <summary>
@@ -231,15 +231,15 @@ public sealed class ScriptedGameLoadOrdersTests
         using var sut = new PluginList(ScriptedGameLoadOrders.Sequenced(
             ScriptedDiscovery.Completes("Retained.esp"),
             terminalStep));
-        var gameDirectory = CreateGameDirectory();
-        await sut.RefreshAsync(GameRelease.SkyrimSE, gameDirectory, AdvancedMode.Off,
+        var source = CreateSource();
+        await sut.RefreshAsync(source, AdvancedMode.Off,
             TestContext.Current.CancellationToken);
         var confirmed = Assert.IsType<ConfirmedPluginList>(sut.Current.Confirmed);
 
         try
         {
             // Cancelled is published only for caller cancellation, so that case refreshes with a cancelled token.
-            await sut.RefreshAsync(GameRelease.SkyrimSE, gameDirectory, AdvancedMode.Off,
+            await sut.RefreshAsync(source, AdvancedMode.Off,
                 new CancellationToken(terminalState == nameof(PluginListCancelledState)));
         }
         catch (Exception exception) when (exception is OperationCanceledException or IOException)
@@ -252,12 +252,14 @@ public sealed class ScriptedGameLoadOrdersTests
     }
 
     /// <summary>
-    ///     Returns a game directory under the temporary directory that is never created, so no test reads an installed
-    ///     game or touches disk.
+    ///     Returns a SkyrimSE Plugin List Source over a game directory under the temporary directory that is never
+    ///     created, so no test reads an installed game or touches disk.
     /// </summary>
-    private static string CreateGameDirectory()
+    private static PluginListSource CreateSource()
     {
-        return Path.Combine(Path.GetTempPath(), $"scripted-game-load-orders-{Guid.NewGuid():N}");
+        return PluginListSource.Create(
+            GameRelease.SkyrimSE,
+            Path.Combine(Path.GetTempPath(), $"scripted-game-load-orders-{Guid.NewGuid():N}"));
     }
 
     private static string[] EntryNames(ConfirmedPluginList? confirmed)

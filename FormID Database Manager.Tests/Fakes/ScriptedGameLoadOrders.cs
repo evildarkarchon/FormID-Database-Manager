@@ -15,6 +15,7 @@ namespace FormID_Database_Manager.Tests.Fakes;
 /// </remarks>
 internal sealed class ScriptedGameLoadOrders : PluginListGameLoadOrdersStub
 {
+    private readonly List<PluginListSource> _discoveredSources = [];
     private readonly object _gate = new();
     private readonly ScriptedDiscovery? _repeating;
     private readonly Queue<ScriptedDiscovery> _sequence;
@@ -23,6 +24,24 @@ internal sealed class ScriptedGameLoadOrders : PluginListGameLoadOrdersStub
     {
         _sequence = new Queue<ScriptedDiscovery>(sequence);
         _repeating = repeating;
+    }
+
+    /// <summary>
+    ///     Gets the Plugin List Source of every discovery started so far, in the order they started.
+    /// </summary>
+    /// <remarks>
+    ///     A snapshot, so a test can tell which source a caller refreshed, and how often, without reaching into the
+    ///     Plugin List. Each source is rebuilt from the GameRelease and canonical Data directory the Plugin List passed.
+    /// </remarks>
+    public IReadOnlyList<PluginListSource> DiscoveredSources
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _discoveredSources.ToArray();
+            }
+        }
     }
 
     /// <summary>
@@ -65,6 +84,7 @@ internal sealed class ScriptedGameLoadOrders : PluginListGameLoadOrdersStub
         ScriptedDiscovery? step;
         lock (_gate)
         {
+            _discoveredSources.Add(PluginListSource.Create(gameRelease, canonicalDataDirectory));
             if (!_sequence.TryDequeue(out step))
             {
                 step = _repeating;

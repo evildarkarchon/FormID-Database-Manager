@@ -108,6 +108,7 @@ public class WinUiPlatformServiceSourceTests
     [InlineData("PluginIngestion")]
     [InlineData("ProcessingRunExecutor")]
     [InlineData("GameInstallations")]
+    [InlineData("GameContext")]
     [InlineData("GameInstallationProbe")]
     [InlineData("FormIdRecordStoreSessionOpener")]
     [InlineData("MutagenPluginOverlayReader")]
