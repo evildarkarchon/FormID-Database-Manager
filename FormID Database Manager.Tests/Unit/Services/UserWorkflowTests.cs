@@ -664,8 +664,7 @@ public class UserWorkflowTests
     {
         _pluginListGameLoadOrders.PluginNames = ["PreviouslyConfirmed.esp"];
         await _pluginList.RefreshAsync(
-            GameRelease.SkyrimSE,
-            GameDirectory,
+            PluginListSource.Create(GameRelease.SkyrimSE, GameDirectory),
             AdvancedMode.Off,
             TestContext.Current.CancellationToken);
         Assert.NotNull(_pluginList.Current.Confirmed);

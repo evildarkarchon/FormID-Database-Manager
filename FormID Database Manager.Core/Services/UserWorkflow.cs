@@ -760,6 +760,7 @@ public sealed class UserWorkflow : IDisposable
     /// </summary>
     /// <param name="expectedGameContextVersion">An optional directory-transition generation that must still be current.</param>
     /// <returns>A task that completes when applicable Plugin discovery finishes.</returns>
+    /// <exception cref="ArgumentException">The held game directory cannot become a Plugin List Source.</exception>
     private async Task RefreshPluginsForCurrentGameContextAsync(int? expectedGameContextVersion = null)
     {
         if (expectedGameContextVersion.HasValue &&
@@ -775,9 +776,11 @@ public sealed class UserWorkflow : IDisposable
             return;
         }
 
+        // The Plugin List no longer validates a directory, so the source is built here, immediately before the
+        // refresh, keeping today's ArgumentException for an unusable directory until the Game Context builds it
+        // when the directory is adopted (ADR-0011).
         await _pluginList.RefreshAsync(
-            game,
-            gameDirectory,
+            PluginListSource.Create(game, gameDirectory),
             _gameContext.AdvancedMode);
     }
 

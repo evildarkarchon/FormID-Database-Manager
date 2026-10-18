@@ -600,7 +600,9 @@ public sealed class ProcessingRunAdmissionTests
                 break;
             case RefreshEnding.Cancelled:
                 await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pluginList.RefreshAsync(
-                    GameRelease.SkyrimSE, gameDirectory, AdvancedMode.Off, new CancellationToken(true)));
+                    PluginListSource.Create(GameRelease.SkyrimSE, gameDirectory),
+                    AdvancedMode.Off,
+                    new CancellationToken(true)));
                 break;
             case RefreshEnding.Faulted:
                 await Assert.ThrowsAsync<IOException>(() => RefreshAsync(pluginList, gameDirectory));
@@ -615,7 +617,7 @@ public sealed class ProcessingRunAdmissionTests
     /// </summary>
     private static Task RefreshAsync(PluginList pluginList, string gameDirectory)
     {
-        return pluginList.RefreshAsync(GameRelease.SkyrimSE, gameDirectory, AdvancedMode.Off,
+        return pluginList.RefreshAsync(PluginListSource.Create(GameRelease.SkyrimSE, gameDirectory), AdvancedMode.Off,
             TestContext.Current.CancellationToken);
     }
 

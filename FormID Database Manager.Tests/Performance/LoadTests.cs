@@ -248,8 +248,7 @@ public class LoadTests : IDisposable
 
             // Refreshing the same source grows confirmed membership through the production projection boundary.
             await pluginList.RefreshAsync(
-                GameRelease.SkyrimSE,
-                _testDirectory,
+                PluginListSource.Create(GameRelease.SkyrimSE, _testDirectory),
                 AdvancedMode.On);
 
             // Process some operations
@@ -301,8 +300,7 @@ public class LoadTests : IDisposable
         using var presentationAdapter = new PluginListPresentationAdapter(pluginList, viewModel, dispatcher);
 
         await pluginList.RefreshAsync(
-            GameRelease.SkyrimSE,
-            _testDirectory,
+            PluginListSource.Create(GameRelease.SkyrimSE, _testDirectory),
             AdvancedMode.On);
         Assert.Equal(updateCount, viewModel.Plugins.Count);
 
