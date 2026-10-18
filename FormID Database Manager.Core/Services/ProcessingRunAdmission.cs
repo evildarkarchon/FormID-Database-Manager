@@ -21,15 +21,19 @@ internal static class ProcessingRunAdmission
     /// </param>
     /// <returns>An admitted run carrying its request, or a refused run carrying its reason.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="inputs" /> is null.</exception>
-    /// <exception cref="ArgumentException">
-    ///     A selected-Plugin run's captured game directory is malformed, so no Plugin List Source can be built from it.
-    ///     An unsupported GameRelease raises the <see cref="ArgumentOutOfRangeException" /> subclass.
+    /// <exception cref="ArgumentOutOfRangeException">
+    ///     A run needs a default database path and the captured GameRelease is not a Supported GameRelease.
     /// </exception>
     /// <remarks>
     ///     <para>
     ///         The checks run in a fixed order: no GameRelease; then a non-blank FormID text path chooses a FormID text
-    ///         run, to which only the database-location check still applies; then a selected-Plugin run's game
-    ///         directory, its Plugin List match and its selection; and last the database location.
+    ///         run, to which only the database-location check still applies; then a selected-Plugin run's Plugin List
+    ///         Source, its Plugin List match and its selection; and last the database location.
+    ///     </para>
+    ///     <para>
+    ///         There is no exception mode for a directory. The Game Context builds the Plugin List Source when it adopts
+    ///         a directory and refuses one that cannot become a source, so a captured source is always usable and a
+    ///         missing one is a refusal (ADR-0011).
     ///     </para>
     ///     <para>
     ///         This is pure: it reads no disk, creates nothing, and writes no ViewModel state. A defaulted database path
@@ -49,15 +53,13 @@ internal static class ProcessingRunAdmission
         ConfirmedPluginList? confirmed = null;
         if (string.IsNullOrWhiteSpace(formIdListPath))
         {
-            if (string.IsNullOrWhiteSpace(inputs.GameDirectory))
+            // The Game Context holds a directory only when it makes a source, so no source is what "no game directory"
+            // means to the user (ADR-0011).
+            if (inputs.PluginListSource is not { } capturedSource)
             {
                 return new RefusedRun(RunRejectionReason.NoGameDirectory);
             }
 
-            // Canonicalization is left to throw for a malformed directory or an unsupported release rather than being
-            // turned into a refusal: neither is something the user can fix by waiting or selecting, and the caller
-            // already reports an unexpected failure as one (ADR-0002).
-            var capturedSource = PluginListSource.Create(gameRelease, inputs.GameDirectory);
             var state = inputs.PluginListState;
             confirmed = state.Confirmed;
             if (confirmed is null || confirmed.Source != capturedSource)
@@ -126,7 +128,7 @@ internal static class ProcessingRunAdmission
     ///     Explains why a Plugin List state holds no Confirmed Plugin List for the captured source.
     /// </summary>
     /// <param name="state">The captured Plugin List state, which has no matching confirmation.</param>
-    /// <param name="capturedSource">The Plugin List Source built from the captured Game Context.</param>
+    /// <param name="capturedSource">The Plugin List Source captured from the Game Context.</param>
     /// <returns>
     ///     Loading while discovery is in flight or the list still describes another source, because a list for the
     ///     captured source is on its way; otherwise unavailable, because the captured source's discovery ended or never
@@ -150,7 +152,10 @@ internal static class ProcessingRunAdmission
 ///     The inputs captured when the user pressed Process FormIDs, fixed before any startup notification can edit them.
 /// </summary>
 /// <param name="GameRelease">The selected GameRelease, or null when none is selected.</param>
-/// <param name="GameDirectory">The selected game root or Data directory, or null when none is selected.</param>
+/// <param name="PluginListSource">
+///     The Game Context's Plugin List Source, or null when it holds no game directory. It is built from the same Game
+///     Context state as <paramref name="GameRelease" />, so its GameRelease is the selected one.
+/// </param>
 /// <param name="PluginListState">The Plugin List's whole immutable state snapshot at the press.</param>
 /// <param name="FormIdListPath">The optional FormID text path; a non-blank one chooses a FormID text run.</param>
 /// <param name="DatabasePath">The chosen database path, before any default is applied.</param>
@@ -158,7 +163,7 @@ internal static class ProcessingRunAdmission
 /// <param name="DryRun">Whether the run only produces a Processing Run Plan.</param>
 internal sealed record ProcessingRunInputs(
     GameRelease? GameRelease,
-    string? GameDirectory,
+    PluginListSource? PluginListSource,
     PluginListState PluginListState,
     string? FormIdListPath,
     string? DatabasePath,
@@ -174,7 +179,7 @@ internal enum RunRejectionReason
     /// <summary>No GameRelease is selected.</summary>
     NoGameSelected,
 
-    /// <summary>A selected-Plugin run has no game directory.</summary>
+    /// <summary>A selected-Plugin run has no game directory, so the Game Context holds no Plugin List Source.</summary>
     NoGameDirectory,
 
     /// <summary>The Plugin List is still loading for the captured Plugin List Source.</summary>

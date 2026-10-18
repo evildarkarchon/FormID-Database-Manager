@@ -384,21 +384,13 @@ public sealed class UserWorkflow : IDisposable
             return;
         }
 
-        // Every press that does not cancel starts the message lists over, whether it is refused, fails admission or
-        // becomes a run, so what the user reads afterwards is only what this press produced.
+        // Every press that does not cancel starts the message lists over, whether it is refused or becomes a run, so
+        // what the user reads afterwards is only what this press produced.
         _viewModel.ErrorMessages.Clear();
         _viewModel.WarningMessages.Clear();
 
         switch (press)
         {
-            case RunPress.AdmissionFailed failed:
-                // Admission throws only when no Plugin List Source can be built from the captured Game Context. The
-                // Game Context now refuses an unusable directory when it is picked (ADR-0011), so no directory reaches
-                // this case; it goes with admission's exception mode. It threw before any activity was published, so the gate is
-                // still free and there is no activity to hand back; the failure is shown as the unexpected one it is,
-                // exactly as it was before admission ran inside the gate (ADR-0002).
-                _viewModel.AddErrorMessage(ProcessingRunPresentation.RenderUnexpectedFailure(failed.Failure));
-                return;
             case RunPress.Refused refused:
                 // A refused press never became a run, so it took no ownership of the gate and has no activity to hand
                 // back: the rendered reason is the only thing it leaves behind (ADR-0010).
@@ -462,16 +454,15 @@ public sealed class UserWorkflow : IDisposable
     ///     already active, and otherwise whatever Processing Run Admission makes of the inputs captured now.
     /// </summary>
     /// <returns>
-    ///     <see cref="RunPress.CancelActiveRun" /> when a run is already active;
-    ///     <see cref="RunPress.AdmissionFailed" /> when admission could not build a Plugin List Source from the captured
-    ///     Game Context; <see cref="RunPress.Refused" /> when admission refused the press; or
-    ///     <see cref="RunPress.Admitted" />, the only case in which run activity was published and the caller now owns a
-    ///     new run.
+    ///     <see cref="RunPress.CancelActiveRun" /> when a run is already active; <see cref="RunPress.Refused" /> when
+    ///     admission refused the press; or <see cref="RunPress.Admitted" />, the only case in which run activity was
+    ///     published and the caller now owns a new run.
     /// </returns>
     /// <remarks>
     ///     Capture, admission and activity publication share the run gate, so nothing published in between can change
-    ///     what was admitted, and a refused press never becomes an active run. Only admission's own failure is captured:
-    ///     anything a re-entrant activity notification throws still propagates, as it did before admission existed.
+    ///     what was admitted, and a refused press never becomes an active run. Nothing is caught here: admission has no
+    ///     exception mode for a directory (ADR-0011), so anything it or a re-entrant activity notification throws is a
+    ///     programming error and propagates rather than being shown as a user-facing failure.
     /// </remarks>
     private RunPress DecideRunPress()
     {
@@ -485,28 +476,18 @@ public sealed class UserWorkflow : IDisposable
             // Both activity and message-list notifications can re-enter the workflow. Capture every input before
             // either is published so later edits belong to the next run, including changes to the Plugin List source.
             // The whole Plugin List state is captured, not just its confirmation, so admission can tell a list still
-            // loading from one that failed to load. The Game Context is read once, so the release and directory always
-            // come from the same state.
+            // loading from one that failed to load. The Game Context is read once, so the release and Plugin List Source
+            // always come from the same state.
             var gameContext = _gameContext.Current;
             var inputs = new ProcessingRunInputs(
                 gameContext.SelectedGameRelease,
-                gameContext.SelectedGameDirectory,
+                gameContext.PluginListSource,
                 _pluginList.Current,
                 _viewModel.FormIdListPath,
                 _viewModel.DatabasePath,
                 _viewModel.UpdateMode ? UpdateMode.ReplacePluginRecords : UpdateMode.Append,
                 _viewModel.DryRun);
-            RunAdmissionDecision decision;
-            try
-            {
-                decision = ProcessingRunAdmission.Admit(inputs, DefaultDatabaseRoot);
-            }
-            catch (ArgumentException ex)
-            {
-                // Admission runs before any activity is published, so the gate is still free here; the caller reports
-                // the failure after the lock is released, as it reports a refusal.
-                return new RunPress.AdmissionFailed(ex);
-            }
+            var decision = ProcessingRunAdmission.Admit(inputs, DefaultDatabaseRoot);
 
             switch (decision)
             {
@@ -696,7 +677,7 @@ public sealed class UserWorkflow : IDisposable
     ///     What one press of Process FormIDs turned out to be once the run gate decided it.
     /// </summary>
     /// <remarks>
-    ///     The constructor is private, so the four cases nested here are the only ones and the caller's default branch is
+    ///     The constructor is private, so the three cases nested here are the only ones and the caller's default branch is
     ///     unreachable. Only <see cref="Admitted" /> means run activity was published and the caller owns a new run.
     /// </remarks>
     private abstract record RunPress
@@ -707,10 +688,6 @@ public sealed class UserWorkflow : IDisposable
 
         /// <summary>A run was already active, so the press requests its cancellation instead.</summary>
         public sealed record CancelActiveRun : RunPress;
-
-        /// <summary>Admission could not build a Plugin List Source from the captured Game Context.</summary>
-        /// <param name="Failure">The failure admission raised, shown to the user as an unexpected one.</param>
-        public sealed record AdmissionFailed(ArgumentException Failure) : RunPress;
 
         /// <summary>Processing Run Admission refused the press before any run existed.</summary>
         /// <param name="Reason">Why the press was refused.</param>

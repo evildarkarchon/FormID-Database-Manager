@@ -42,6 +42,8 @@ renaming Core members or changing project boundaries. In particular:
 - `UserWorkflow.Create` is the only production composition. The WinUI shell supplies the ViewModel, thread
   dispatcher, and file dialog adapter and constructs no Core collaborator. `UserWorkflow` owns the
   `PluginListPresentationAdapter`'s lifetime and detaches it first on dispose.
+- `GameContext` owns Game Context state, its transitions, and the Plugin List Source built from it. `UserWorkflow`
+  constructs it and forwards Game Context intents to it.
 - Projected `MainWindowViewModel` state is read-only to consumers, and retired APIs must not be reintroduced.
 
 ## Engineering conventions

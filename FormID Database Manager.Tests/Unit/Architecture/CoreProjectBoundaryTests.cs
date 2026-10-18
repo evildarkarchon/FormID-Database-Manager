@@ -503,10 +503,13 @@ public class CoreProjectBoundaryTests
     ///     Verifies that the game-root-or-Data rule reaches a Processing Run only through the Plugin List Source.
     /// </summary>
     /// <remarks>
-    ///     ADR-0002, as amended by ADR-0010. <c>GameInstallations</c> owns the rule and calls it from detection, and
-    ///     <c>PluginListSource.Create</c> is the one place a run's Data directory is decided. Admission, the executor,
-    ///     the run and Plugin Ingestion read <c>PluginListSource.DataDirectory</c> from the request instead of deciding
-    ///     it again, so a second caller anywhere in Core is a second place the run's Data directory could diverge.
+    ///     ADR-0002, as amended by ADR-0010 and ADR-0011. <c>GameInstallations</c> owns the rule and calls it from
+    ///     detection, and <c>PluginListSource.Create</c> is the one place a run's Data directory is decided. The Game
+    ///     Context makes that decision when it adopts a directory, as pinned by
+    ///     <see cref="ProductionSources_PluginListSourceCreation_HappensOnlyInTheGameContext" />. Admission, the
+    ///     executor, the run and Plugin Ingestion read <c>PluginListSource.DataDirectory</c> from the captured source
+    ///     and the request instead of deciding it again, so a second caller anywhere in Core is a second place the run's
+    ///     Data directory could diverge.
     /// </remarks>
     [Fact]
     public void CoreSources_GameRootOrDataRule_ReachesARunOnlyThroughThePluginListSource()
@@ -520,6 +523,34 @@ public class CoreProjectBoundaryTests
             .ToArray();
 
         Assert.Equal(["GameInstallations.cs", "PluginListSource.cs"], canonicalizationCallers);
+    }
+
+    /// <summary>
+    ///     Verifies that the Game Context is the only production code that builds a Plugin List Source, so there is one
+    ///     notion of "same directory" and an unusable directory is refused at the one moment it is picked (ADR-0011).
+    /// </summary>
+    /// <remarks>
+    ///     Processing Run Admission used to build a second source from a captured raw directory, which gave it an
+    ///     exception mode for a malformed one. It now compares the Game Context's own source, so any other production
+    ///     caller would bring that second, later validation back. Tests build sources directly and are not scanned.
+    /// </remarks>
+    [Fact]
+    public void ProductionSources_PluginListSourceCreation_HappensOnlyInTheGameContext()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceCreators = new[]
+            {
+                GetCoreProjectDirectory(),
+                Path.Combine(repositoryRoot, "FormID Database Manager.WinUI")
+            }
+            .SelectMany(directory => Directory.EnumerateFiles(directory, "*.cs", SearchOption.AllDirectories))
+            .Where(path => !IsBuildOutput(path))
+            .Where(path => File.ReadAllText(path).Contains("PluginListSource.Create(", StringComparison.Ordinal))
+            .Select(path => Path.GetFileName(path))
+            .OrderBy(static fileName => fileName, StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.Equal(["GameContext.cs"], sourceCreators);
     }
 
     /// <summary>

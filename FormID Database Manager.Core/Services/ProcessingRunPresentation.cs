@@ -118,8 +118,8 @@ internal static class ProcessingRunPresentation
     ///     Renders a failure nothing anticipated into the one generic error message its caller should show.
     /// </summary>
     /// <param name="failure">
-    ///     The failure that ended a run, or stopped admission from deciding a press, whose message is the only detail
-    ///     available about it.
+    ///     The failure that ended a run, whose message is the only detail available about it. Admission has no failure
+    ///     to render: a press it does not admit is a refusal (ADR-0010, ADR-0011).
     /// </param>
     /// <returns>The failure's message behind the legacy "Error processing FormIDs" prefix.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="failure" /> is <see langword="null" />.</exception>
