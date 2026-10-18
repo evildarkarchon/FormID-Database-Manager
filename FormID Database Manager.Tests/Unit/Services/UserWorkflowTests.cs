@@ -1258,7 +1258,9 @@ public class UserWorkflowTests
         var sut = CreateSut();
         // Started from the thread pool, so the selection's continuations never need the test's own context, which is
         // blocked inside the cancellation callback below while it waits for them.
-        var selection = Task.Run(() => sut.SelectGameReleaseAsync(GameRelease.Fallout4));
+        var selection = Task.Run(
+            () => sut.SelectGameReleaseAsync(GameRelease.Fallout4),
+            TestContext.Current.CancellationToken);
         await lookupStarted.Task;
         string? directoryDuringCancel = null;
         var refreshesDuringCancel = -1;
