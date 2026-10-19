@@ -14,7 +14,7 @@ namespace FormID_Database_Manager.Services;
 ///     <para>
 ///         The source is built when a directory is adopted, so this module never holds a directory that cannot be
 ///         used. Browse and a detected-directory pick share one adoption step: build the source; if that fails, refuse
-///         with "Could not read the selected directory" and change nothing; if the source equals the current one, do
+///         with a <see cref="DirectoryRefused" /> notice and change nothing; if the source equals the current one, do
 ///         nothing; otherwise adopt it and refresh. "The same directory" therefore means source equality, so a game
 ///         root and its Data directory are one pick, and the ComboBox echo of this module's own projection is a no-op.
 ///     </para>
@@ -31,8 +31,9 @@ namespace FormID_Database_Manager.Services;
 ///     </para>
 ///     <para>
 ///         The Plugin List is borrowed: whoever constructs this module owns the Plugin List's lifetime, and
-///         <see cref="Dispose" /> leaves it alone. This module writes the ViewModel's Game Context projection and its
-///         own messages directly; with one projection there is no separate presentation adapter to earn.
+///         <see cref="Dispose" /> leaves it alone. This module writes the ViewModel's Game Context projection directly,
+///         and adds its messages directly too, but holds no wording: it reports a typed <see cref="GameContextNotice" />
+///         that <see cref="GameContextPresentation" /> renders (ADR-0013).
 ///     </para>
 /// </remarks>
 internal sealed class GameContext : IDisposable
@@ -132,8 +133,8 @@ internal sealed class GameContext : IDisposable
     /// <exception cref="AggregateException">A registered Plugin List refresh cancellation callback throws.</exception>
     /// <remarks>
     ///     <para>
-    ///         Adoption builds the Plugin List Source first. A directory that cannot become one is refused with "Could
-    ///         not read the selected directory" and changes nothing; a source equal to the current one is a no-op, which
+    ///         Adoption builds the Plugin List Source first. A directory that cannot become one is refused with a
+    ///         <see cref="DirectoryRefused" /> notice and changes nothing; a source equal to the current one is a no-op, which
     ///         is what makes an equivalent spelling (game root or Data directory) and the directory ComboBox's echo of
     ///         this module's own projection harmless. Install-record directories were checked when they were listed,
     ///         so a pick from the detected list is never refused.
@@ -239,7 +240,9 @@ internal sealed class GameContext : IDisposable
         {
             if (result.Kind == FileDialogResultKind.Failure)
             {
-                _viewModel.AddErrorMessage($"Error selecting game directory: {result.ErrorMessage}");
+                // A failure result always carries its text; the fallback only satisfies the nullable property's type
+                // and renders exactly what the old interpolation of a null did.
+                Report(new GameDirectoryPickerFailed(result.ErrorMessage ?? string.Empty));
             }
 
             return;
@@ -287,8 +290,7 @@ internal sealed class GameContext : IDisposable
 
         if (usable.Count == 0)
         {
-            _viewModel.AddInformationMessage(
-                $"No installed locations found for {selectedGame}. Use Browse to select a directory.");
+            Report(new NoInstalledLocationsFound(selectedGame));
             return;
         }
 
@@ -309,8 +311,8 @@ internal sealed class GameContext : IDisposable
     /// <remarks>
     ///     <para>
     ///         Nothing changes until a GameRelease is known and the source is built: a path detection or the source
-    ///         cannot use is refused with "Could not read the selected directory", and a directory with no detectable
-    ///         game is refused with the detection guidance, both leaving the Game Context and the Plugin List as they
+    ///         cannot use is refused with a <see cref="DirectoryRefused" /> notice, and a directory with no detectable
+    ///         game is refused with a <see cref="NoGameDetected" /> notice, both leaving the Game Context and the Plugin List as they
     ///         were. Other current unexpected detection and fatal discovery failures propagate unchanged.
     ///     </para>
     ///     <para>
@@ -355,8 +357,7 @@ internal sealed class GameContext : IDisposable
             if (detectedGame is null)
             {
                 // A directory is only adopted once a GameRelease is known, so this one is refused rather than kept.
-                _viewModel.AddErrorMessage(
-                    "Could not detect game from directory. Please select a game from the dropdown.");
+                Report(new NoGameDetected());
                 return;
             }
 
@@ -421,7 +422,7 @@ internal sealed class GameContext : IDisposable
 
     /// <summary>
     ///     Builds the Plugin List Source for a picked directory, or refuses the pick with the one unusable-directory
-    ///     message when it cannot become one.
+    ///     notice when it cannot become one.
     /// </summary>
     /// <param name="gameRelease">The GameRelease the directory would be adopted with.</param>
     /// <param name="directory">The picked game root or Data directory.</param>
@@ -492,12 +493,41 @@ internal sealed class GameContext : IDisposable
     }
 
     /// <summary>
-    ///     Reports a refused directory pick with the one message every unusable directory shares.
+    ///     Reports a refused directory pick with the one notice every unusable directory shares.
     /// </summary>
     /// <param name="failure">Why the directory cannot be used.</param>
     private void RefuseDirectory(Exception failure)
     {
-        _viewModel.AddErrorMessage($"Could not read the selected directory: {failure.Message}");
+        Report(new DirectoryRefused(failure.Message));
+    }
+
+    /// <summary>
+    ///     Renders one Game Context notice through <see cref="GameContextPresentation" /> and adds it to the message
+    ///     list Presentation chose.
+    /// </summary>
+    /// <param name="notice">What Game Context has to tell the user.</param>
+    /// <remarks>
+    ///     This is the one place Game Context still writes a message, and it holds no wording of its own. Issue #116
+    ///     moves the write behind a sink the User Workflow implements (ADR-0013).
+    /// </remarks>
+    /// <exception cref="ArgumentOutOfRangeException">Presentation names a message list this module cannot write.</exception>
+    private void Report(GameContextNotice notice)
+    {
+        var rendered = GameContextPresentation.Render(notice);
+        switch (rendered.List)
+        {
+            case GameContextMessageList.Error:
+                _viewModel.AddErrorMessage(rendered.Text);
+                break;
+            case GameContextMessageList.Information:
+                _viewModel.AddInformationMessage(rendered.Text);
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(
+                    nameof(notice),
+                    rendered.List,
+                    "Unsupported Game Context message list.");
+        }
     }
 
     /// <summary>
@@ -632,3 +662,39 @@ internal sealed record GameContextState(
         ImmutableArray<string>.Empty,
         AdvancedMode.Off);
 }
+
+/// <summary>
+///     Something Game Context tells the user: why a pick was refused, or why nothing was found.
+/// </summary>
+/// <remarks>
+///     A closed set of four value records, so the things Game Context can say are visible in one place and a test can
+///     compare a reported notice against an expected one directly. The notices carry facts, not wording;
+///     <see cref="GameContextPresentation" /> renders them (ADR-0013).
+/// </remarks>
+internal abstract record GameContextNotice;
+
+/// <summary>
+///     The game-directory picker failed instead of returning a directory or a cancellation.
+/// </summary>
+/// <param name="ErrorMessage">The picker's own error text.</param>
+internal sealed record GameDirectoryPickerFailed(string ErrorMessage) : GameContextNotice;
+
+/// <summary>
+///     A GameRelease was selected, but none of its installed locations can become a Plugin List Source.
+/// </summary>
+/// <param name="GameRelease">The selected GameRelease whose locations were looked up.</param>
+internal sealed record NoInstalledLocationsFound(GameRelease GameRelease) : GameContextNotice;
+
+/// <summary>
+///     A picked directory was refused because it cannot be used at all, and the Game Context was left as it was.
+/// </summary>
+/// <param name="FailureMessage">
+///     The failure's message. It is a string rather than the exception so the notice keeps value equality and a test can
+///     build the expected notice without holding the same exception instance.
+/// </param>
+internal sealed record DirectoryRefused(string FailureMessage) : GameContextNotice;
+
+/// <summary>
+///     A browsed directory with no GameRelease selected was refused because no game was detected in it.
+/// </summary>
+internal sealed record NoGameDetected : GameContextNotice;

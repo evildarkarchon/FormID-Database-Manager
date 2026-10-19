@@ -132,7 +132,7 @@ public sealed class GameContextTests : IDisposable
         Assert.Equal(GameRelease.Fallout4, sut.Current.SelectedGameRelease);
         Assert.Null(sut.Current.SelectedGameDirectory);
         Assert.Contains(
-            "No installed locations found for Fallout4. Use Browse to select a directory.",
+            Rendered(new NoInstalledLocationsFound(GameRelease.Fallout4)),
             _viewModel.InformationMessages);
         Assert.Empty(Refreshes);
     }
@@ -202,7 +202,7 @@ public sealed class GameContextTests : IDisposable
         Assert.Equal(@"C:\NewFallout", _viewModel.GameDirectory);
         AssertSingleRefresh(@"C:\NewFallout", GameRelease.Fallout4, AdvancedMode.Off);
         Assert.DoesNotContain(
-            "No installed locations found for SkyrimSE. Use Browse to select a directory.",
+            Rendered(new NoInstalledLocationsFound(GameRelease.SkyrimSE)),
             _viewModel.InformationMessages);
     }
 
@@ -314,10 +314,9 @@ public sealed class GameContextTests : IDisposable
         Assert.Same(stateBeforePick, sut.Current);
         Assert.Same(pluginListBeforePick, PluginList.Current);
         Assert.Equal(GameDirectory, _viewModel.GameDirectory);
-        Assert.StartsWith(
-            "Could not read the selected directory:",
-            Assert.Single(_viewModel.ErrorMessages),
-            StringComparison.Ordinal);
+        Assert.Equal(
+            [RenderedRefusal(() => PluginListSource.Create(GameRelease.SkyrimSE, "C:\\Games\\Sky\0rim"))],
+            _viewModel.ErrorMessages);
         Assert.Empty(Refreshes);
     }
 
@@ -404,7 +403,7 @@ public sealed class GameContextTests : IDisposable
         Assert.Empty(_viewModel.GameDirectory);
         Assert.Empty(_viewModel.DetectedDirectories);
         Assert.Equal(
-            ["No installed locations found for SkyrimSE. Use Browse to select a directory."],
+            [Rendered(new NoInstalledLocationsFound(GameRelease.SkyrimSE))],
             _viewModel.InformationMessages);
         Assert.Empty(_viewModel.ErrorMessages);
         Assert.Empty(Refreshes);
@@ -986,9 +985,7 @@ public sealed class GameContextTests : IDisposable
         Assert.Null(_viewModel.SelectedGame);
         Assert.Same(stateBeforeBrowse, sut.Current);
         Assert.Same(pluginListBeforeBrowse, PluginList.Current);
-        Assert.Equal(
-            ["Could not detect game from directory. Please select a game from the dropdown."],
-            _viewModel.ErrorMessages);
+        Assert.Equal([Rendered(new NoGameDetected())], _viewModel.ErrorMessages);
         Assert.Empty(Refreshes);
     }
 
@@ -1012,10 +1009,10 @@ public sealed class GameContextTests : IDisposable
         Assert.Empty(_viewModel.GameDirectory);
         Assert.Equal(GameContextState.Empty, sut.Current);
         Assert.Same(pluginListBeforeBrowse, PluginList.Current);
-        Assert.StartsWith(
-            "Could not read the selected directory:",
-            Assert.Single(_viewModel.ErrorMessages),
-            StringComparison.Ordinal);
+        var detection = new GameInstallations(new InMemoryGameInstallationProbe());
+        Assert.Equal(
+            [RenderedRefusal(() => detection.Detect(malformedDirectory))],
+            _viewModel.ErrorMessages);
         Assert.Empty(Refreshes);
     }
 
@@ -1046,10 +1043,9 @@ public sealed class GameContextTests : IDisposable
         Assert.Equal(GameDirectory, _viewModel.GameDirectory);
         Assert.Same(stateBeforeBrowse, sut.Current);
         Assert.Same(pluginListBeforeBrowse, PluginList.Current);
-        Assert.StartsWith(
-            "Could not read the selected directory:",
-            Assert.Single(_viewModel.ErrorMessages),
-            StringComparison.Ordinal);
+        Assert.Equal(
+            [RenderedRefusal(() => PluginListSource.Create(GameRelease.SkyrimSE, "C:\\Games\\Sky\0rim"))],
+            _viewModel.ErrorMessages);
         Assert.Empty(Refreshes);
         Assert.Empty(_gameInstallationProbe.ProbedPaths);
     }
@@ -1073,7 +1069,7 @@ public sealed class GameContextTests : IDisposable
         Assert.Empty(_viewModel.GameDirectory);
         Assert.Equal(GameContextState.Empty, sut.Current);
         Assert.Same(pluginListBeforeBrowse, PluginList.Current);
-        Assert.Equal(["Could not read the selected directory: drive not ready"], _viewModel.ErrorMessages);
+        Assert.Equal([Rendered(new DirectoryRefused("drive not ready"))], _viewModel.ErrorMessages);
         Assert.Empty(Refreshes);
     }
 
@@ -1098,7 +1094,7 @@ public sealed class GameContextTests : IDisposable
         Assert.Equal(@"C:\Existing", _viewModel.GameDirectory);
         Assert.Equal([@"C:\Existing", @"D:\Suggested"], _viewModel.DetectedDirectories);
         Assert.Same(stateBeforeBrowse, sut.Current);
-        Assert.Contains("Error selecting game directory: picker unavailable", _viewModel.ErrorMessages);
+        Assert.Contains(Rendered(new GameDirectoryPickerFailed("picker unavailable")), _viewModel.ErrorMessages);
         Assert.Empty(Refreshes);
     }
 
@@ -1379,5 +1375,29 @@ public sealed class GameContextTests : IDisposable
         Assert.Equal(PluginListSource.Create(gameRelease, gameDirectory), Assert.Single(Refreshes));
         var confirmed = Assert.IsType<ConfirmedPluginList>(PluginList.Current.Confirmed);
         Assert.Equal(advancedMode, confirmed.AdvancedMode);
+    }
+
+    /// <summary>
+    /// Returns the text Game Context Presentation renders for a notice, so these tests never restate a sentence.
+    /// </summary>
+    /// <param name="notice">The notice the Game Context is expected to have reported.</param>
+    /// <returns>The rendered text the ViewModel should hold.</returns>
+    private static string Rendered(GameContextNotice notice)
+    {
+        return GameContextPresentation.Render(notice).Text;
+    }
+
+    /// <summary>
+    /// Returns the text of the refusal a directory pick should produce, built from the failure the unusable path
+    /// actually raises in the module that rejects it.
+    /// </summary>
+    /// <param name="rejectPath">The call that rejects the path the same way the Game Context's own call does.</param>
+    /// <returns>The rendered refusal text the ViewModel should hold.</returns>
+    /// <remarks>
+    /// The failure's message comes from the runtime's path handling, so it is captured here rather than written down.
+    /// </remarks>
+    private static string RenderedRefusal(Action rejectPath)
+    {
+        return Rendered(new DirectoryRefused(Assert.ThrowsAny<Exception>(rejectPath).Message));
     }
 }
