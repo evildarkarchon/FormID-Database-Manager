@@ -24,13 +24,6 @@ public class UserWorkflowTests
     private const string FormIdListPath = @"C:\Lists\formids.txt";
 
     /// <summary>
-    /// The refusal sentence for a Plugin List still loading for the captured directory, pinned by
-    /// <see cref="ProcessingRunPresentationTests" />.
-    /// </summary>
-    private const string PluginListLoadingMessage =
-        "The plugin list is still loading for this directory. Try again when it finishes.";
-
-    /// <summary>
     /// The default database root injected into every workflow under test. It is deliberately never created, so a
     /// test can prove that defaulting a database path leaves nothing on disk, and no test touches the developer's
     /// own local application data directory.
@@ -163,72 +156,35 @@ public class UserWorkflowTests
     }
 
     /// <summary>
-    /// Verifies where a Processing Run Admission refusal is shown: exactly one rendered error, with no run activity at
-    /// any point and no call to the executor. Each refusal reason and their order are covered by
-    /// <see cref="ProcessingRunAdmissionTests" />.
+    /// Verifies the sink adapter's list clear: a press that does not cancel empties the error and warning lists the user
+    /// was reading, and leaves the information messages in place.
     /// </summary>
+    /// <remarks>
+    /// When a press reports the clear is Processing Run Control's rule, pinned by
+    /// <see cref="ProcessingRunControlTests" />; which lists the clear empties is this workflow's own write.
+    /// </remarks>
     [Fact]
-    public async Task ProcessFormIdsAsync_Refused_AddsOneRenderedErrorWithoutRunActivity()
+    public async Task ProcessFormIdsAsync_AdmittedPress_ClearsStaleErrorsAndWarningsButKeepsInformation()
     {
         var sut = CreateSut();
-        var projectedStatuses = RecordProjectedStatuses();
-        var progressShown = false;
-        _viewModel.PropertyChanged += (_, args) =>
-        {
-            if (args.PropertyName == nameof(MainWindowViewModel.IsProgressVisible) && _viewModel.IsProgressVisible)
-            {
-                progressShown = true;
-            }
-        };
-
-        await sut.ProcessFormIdsAsync();
-
-        Assert.Equal(["Please select a game from the dropdown first."], _viewModel.ErrorMessages);
-        Assert.Empty(_processingRuns);
-        Assert.DoesNotContain("Initializing...", projectedStatuses);
-        Assert.Empty(projectedStatuses);
-        Assert.False(progressShown);
-        Assert.False(_viewModel.IsProgressVisible);
-        Assert.Equal("Process FormIDs", _viewModel.ProcessButtonText);
-    }
-
-    /// <summary>
-    /// Verifies that a refused press clears stale errors and warnings, so the refusal is the only error shown.
-    /// </summary>
-    [Fact]
-    public async Task ProcessFormIdsAsync_Refused_ClearsStaleErrorsAndWarnings()
-    {
-        var sut = CreateSut();
+        await ConfigureValidPluginProcessingRunAsync(sut);
         _viewModel.ErrorMessages.Add("Stale error");
         _viewModel.WarningMessages.Add("Stale warning");
+        // Confirming the Plugin List left its own information message, which the clear must not take with it.
+        var informationBeforePress = _viewModel.InformationMessages.ToArray();
+        Assert.NotEmpty(informationBeforePress);
 
         await sut.ProcessFormIdsAsync();
 
-        Assert.Equal(["Please select a game from the dropdown first."], _viewModel.ErrorMessages);
+        Assert.Single(_processingRuns);
+        Assert.Empty(_viewModel.ErrorMessages);
         Assert.Empty(_viewModel.WarningMessages);
-    }
-
-    /// <summary>
-    /// Verifies that a refusal never leaves the workflow believing a run is active: the next press starts a run
-    /// rather than requesting cancellation.
-    /// </summary>
-    [Fact]
-    public async Task ProcessFormIdsAsync_PressAfterRefusal_StartsARunRatherThanCancelling()
-    {
-        var sut = CreateSut();
-        await sut.ProcessFormIdsAsync();
-        await ConfigureValidPluginProcessingRunAsync(sut);
-
-        await sut.ProcessFormIdsAsync();
-
-        Assert.IsType<PluginProcessingRunRequest>(Assert.Single(_processingRuns));
-        Assert.False(Assert.Single(_processingRunExecutor.ReceivedTokens).IsCancellationRequested);
+        Assert.Equal(informationBeforePress, _viewModel.InformationMessages);
     }
 
     /// <summary>
     /// Verifies that the press captures the Game Context's Plugin List Source: with a GameRelease selected but no
-    /// source held, the press is refused for the missing directory through Processing Run Presentation, and the run
-    /// gate stays free for the next press.
+    /// source held, the press is refused for the missing directory, as Processing Run Presentation renders it.
     /// </summary>
     /// <remarks>
     /// Which directories the Game Context refuses to hold is covered by <see cref="GameContextTests" />, and the
@@ -236,28 +192,17 @@ public class UserWorkflowTests
     /// the Game Context's source, so no directory problem can reach the user as "Error processing FormIDs".
     /// </remarks>
     [Fact]
-    public async Task ProcessFormIdsAsync_GameContextWithoutSource_RefusesForTheMissingDirectoryAndLeavesTheGateFree()
+    public async Task ProcessFormIdsAsync_GameContextWithoutSource_RefusesForTheMissingDirectory()
     {
         _viewModel.DatabasePath = DatabasePath;
         var sut = CreateSut();
         await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
         Assert.Null(_pluginList.Current.Confirmed);
-        _viewModel.WarningMessages.Add("Stale warning");
-        var projectedStatuses = RecordProjectedStatuses();
 
         await sut.ProcessFormIdsAsync();
 
-        Assert.Equal(["Game directory must be specified when processing plugins"], _viewModel.ErrorMessages);
-        Assert.Empty(_viewModel.WarningMessages);
+        Assert.Equal([ProcessingRunPresentation.Render(RunRejectionReason.NoGameDirectory)], _viewModel.ErrorMessages);
         Assert.Empty(_processingRuns);
-        Assert.Empty(projectedStatuses);
-        Assert.Equal("Process FormIDs", _viewModel.ProcessButtonText);
-
-        _viewModel.FormIdListPath = FormIdListPath;
-        await sut.ProcessFormIdsAsync();
-
-        Assert.IsType<FormIdTextProcessingRunRequest>(Assert.Single(_processingRuns));
-        Assert.False(Assert.Single(_processingRunExecutor.ReceivedTokens).IsCancellationRequested);
     }
 
     /// <summary>
@@ -427,7 +372,9 @@ public class UserWorkflowTests
         await sut.ProcessFormIdsAsync();
 
         Assert.Empty(_processingRuns);
-        Assert.Equal([PluginListLoadingMessage], _viewModel.ErrorMessages);
+        Assert.Equal(
+            [ProcessingRunPresentation.Render(RunRejectionReason.PluginListLoading)],
+            _viewModel.ErrorMessages);
 
         refreshCompletion.SetResult(PluginListGameLoadOrdersStub.Discovered(["New.esp"]));
         await transition;
@@ -458,7 +405,7 @@ public class UserWorkflowTests
         await reentrantRun;
 
         Assert.Empty(_processingRuns);
-        Assert.Contains("Game directory must be specified when processing plugins", _viewModel.ErrorMessages);
+        Assert.Contains(ProcessingRunPresentation.Render(RunRejectionReason.NoGameDirectory), _viewModel.ErrorMessages);
         Assert.Empty(_viewModel.DatabasePath);
     }
 
@@ -491,7 +438,9 @@ public class UserWorkflowTests
         await reentrantRun;
 
         Assert.Empty(_processingRuns);
-        Assert.Equal([PluginListLoadingMessage], _viewModel.ErrorMessages);
+        Assert.Equal(
+            [ProcessingRunPresentation.Render(RunRejectionReason.PluginListLoading)],
+            _viewModel.ErrorMessages);
 
         refreshCompletion.SetResult(PluginListGameLoadOrdersStub.Discovered(["New.esp"]));
         await transition;
@@ -502,7 +451,7 @@ public class UserWorkflowTests
     /// </summary>
     /// <param name="notification">The startup notification that edits the run inputs.</param>
     [Theory]
-    [InlineData("Initializing")]
+    [InlineData("Starting")]
     [InlineData("Errors")]
     [InlineData("Warnings")]
     public async Task ProcessFormIdsAsync_StartupNotificationEditsInputs_UsesCapturedInputsUntilNextRun(
@@ -527,9 +476,9 @@ public class UserWorkflowTests
             _viewModel.DryRun = true;
         }
 
-        if (notification == "Initializing")
+        if (notification == "Starting")
         {
-            OnRunStatus("Initializing...", EditInputs);
+            OnRunStatus(StartingStatus(), EditInputs);
         }
         else if (notification == "Errors")
         {
@@ -560,14 +509,15 @@ public class UserWorkflowTests
     }
 
     /// <summary>
-    /// Verifies that a release change during initialization cannot invalidate the selection already accepted for a run.
+    /// Verifies that a release change from the starting-status notification cannot invalidate the selection already
+    /// accepted for a run.
     /// </summary>
     [Fact]
-    public async Task ProcessFormIdsAsync_InitializingChangesGameContext_UsesCapturedSourceAndSelection()
+    public async Task ProcessFormIdsAsync_StartingStatusChangesGameContext_UsesCapturedSourceAndSelection()
     {
         var sut = CreateSut();
         await ConfigureValidPluginProcessingRunAsync(sut);
-        OnRunStatus("Initializing...", () => sut.SelectGameReleaseAsync(null).GetAwaiter().GetResult());
+        OnRunStatus(StartingStatus(), () => sut.SelectGameReleaseAsync(null).GetAwaiter().GetResult());
 
         await sut.ProcessFormIdsAsync();
 
@@ -580,16 +530,17 @@ public class UserWorkflowTests
     }
 
     /// <summary>
-    /// Verifies that text-run input capture preserves both its path and Dry Run decision across initialization.
+    /// Verifies that text-run input capture preserves both its path and Dry Run decision across an edit made from the
+    /// starting-status notification.
     /// </summary>
     [Fact]
-    public async Task ProcessFormIdsAsync_InitializingEditsTextDryRun_UsesCapturedPathWithoutDefaulting()
+    public async Task ProcessFormIdsAsync_StartingStatusEditsTextDryRun_UsesCapturedPathWithoutDefaulting()
     {
         var sut = CreateSut();
         await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
         _viewModel.FormIdListPath = FormIdListPath;
         _viewModel.DryRun = true;
-        OnRunStatus("Initializing...", () =>
+        OnRunStatus(StartingStatus(), () =>
         {
             _viewModel.FormIdListPath = @"C:\Lists\next.txt";
             _viewModel.DryRun = false;
@@ -641,12 +592,12 @@ public class UserWorkflowTests
     /// startup notification, while the run itself still uses the default.
     /// </summary>
     [Fact]
-    public async Task ProcessFormIdsAsync_InitializingEditsEmptyDatabasePath_PreservesEdit()
+    public async Task ProcessFormIdsAsync_StartingStatusEditsEmptyDatabasePath_PreservesEdit()
     {
         var sut = CreateSut();
         var confirmed = await ConfirmPluginListAsync(sut, ["User.esp"]);
         sut.SetPluginSelection(confirmed.MembershipVersion, "User.esp", true);
-        OnRunStatus("Initializing...", () => _viewModel.DatabasePath = DatabasePath);
+        OnRunStatus(StartingStatus(), () => _viewModel.DatabasePath = DatabasePath);
 
         await sut.ProcessFormIdsAsync();
 
@@ -678,50 +629,6 @@ public class UserWorkflowTests
         Assert.Equal(
             Path.Combine(_defaultDatabaseRoot, "FormID Database Manager", "Databases", "SkyrimSE.db"),
             Assert.Single(_processingRuns).DatabasePath);
-    }
-
-    /// <summary>
-    /// Verifies that a refused press writes no default database path: only an admitted run gets one.
-    /// </summary>
-    [Fact]
-    public async Task ProcessFormIdsAsync_RefusedWithEmptyDatabasePath_WritesNoDefaultPath()
-    {
-        var sut = CreateSut();
-        await ConfirmPluginListAsync(sut, ["User.esp"]);
-
-        await sut.ProcessFormIdsAsync();
-
-        Assert.Empty(_processingRuns);
-        Assert.Empty(_viewModel.DatabasePath);
-        Assert.Equal(["No plugins selected"], _viewModel.ErrorMessages);
-    }
-
-    /// <summary>
-    /// Verifies that a second press during the first startup notification really cancels the run it re-enters: the
-    /// token handed to the executor is already cancelled, no second run is accepted, and the run ends with the normal
-    /// cancellation acknowledgement.
-    /// </summary>
-    /// <remarks>
-    /// Issue #104, under parent #102. This used to count cancel calls on the fake executor, and passed while the
-    /// cancel was being dropped: the executor's own cancellation source did not exist yet when the press arrived. The
-    /// token is what the run actually observes, so asserting on it proves the cancel took effect.
-    /// </remarks>
-    [Fact]
-    public async Task ProcessFormIdsAsync_PressedDuringInitializing_HandsTheExecutorAnAlreadyCancelledToken()
-    {
-        var sut = CreateSut();
-        await ConfigureValidPluginProcessingRunAsync(sut);
-        OnRunStatus("Initializing...", () => sut.ProcessFormIdsAsync().GetAwaiter().GetResult());
-
-        await sut.ProcessFormIdsAsync();
-
-        Assert.Single(_processingRuns);
-        Assert.True(Assert.Single(_processingRunExecutor.ReceivedTokens).IsCancellationRequested);
-        // The last information message, because the Plugin List refresh that set the run up leaves its own ahead of it.
-        Assert.Equal(
-            ProcessingRunPresentation.Render(new CancelledRunOutcome()).InformationMessages.ToArray(),
-            _viewModel.InformationMessages.TakeLast(1).ToArray());
-        Assert.Equal("Process FormIDs", _viewModel.ProcessButtonText);
     }
 
     [Fact]
@@ -770,30 +677,6 @@ public class UserWorkflowTests
     }
 
     /// <summary>
-    ///     Verifies that a dry run leaves an empty database path empty.
-    /// </summary>
-    /// <remarks>
-    ///     A dry run opens no FormID Record Store, so defaulting a path for it would leave one the user never chose in
-    ///     the box after a run that deliberately wrote nothing.
-    /// </remarks>
-    [Fact]
-    public async Task ProcessFormIdsAsync_DryRunWithEmptyDatabasePath_DoesNotChooseADefaultPath()
-    {
-        var sut = CreateSut();
-        var confirmed = await ConfirmPluginListAsync(sut, ["User.esp"]);
-        sut.SetPluginSelection(confirmed.MembershipVersion, "User.esp", true);
-        _viewModel.DatabasePath = string.Empty;
-        _viewModel.DryRun = true;
-
-        await sut.ProcessFormIdsAsync();
-
-        var run = Assert.IsType<PluginProcessingRunRequest>(Assert.Single(_processingRuns));
-        Assert.Empty(_viewModel.DatabasePath);
-        Assert.Empty(run.DatabasePath);
-        Assert.False(Directory.Exists(_defaultDatabaseRoot));
-    }
-
-    /// <summary>
     ///     Verifies the workflow writes a dry run's plan to the information messages the user reads.
     /// </summary>
     [Fact]
@@ -814,107 +697,15 @@ public class UserWorkflowTests
 
         await sut.ProcessFormIdsAsync();
 
-        // The last message rather than the only one: confirming a Plugin List already reported what it loaded, and a
+        var rendered = ProcessingRunPresentation.Render(_processingRunExecutor.Outcome);
+        Assert.NotEmpty(rendered.InformationMessages);
+        // The last messages rather than the whole list: confirming a Plugin List already reported what it loaded, and a
         // run does not clear the information list the way it clears warnings and errors.
         Assert.Equal(
-            "Dry run: 1 would be ingested, 1 would be skipped, and 0 would fail." + Environment.NewLine +
-            "Would ingest User.esp" + Environment.NewLine +
-            "Would skip Absent.esp: not present in the load order",
-            _viewModel.InformationMessages[^1]);
+            rendered.InformationMessages.ToArray(),
+            _viewModel.InformationMessages.TakeLast(rendered.InformationMessages.Length).ToArray());
         Assert.Empty(_viewModel.WarningMessages);
         Assert.Empty(_viewModel.ErrorMessages);
-    }
-
-    [Fact]
-    public async Task ProcessFormIdsAsync_StartsNewRun_ClearsStaleWarnings()
-    {
-        var sut = CreateSut();
-        await ConfigureValidPluginProcessingRunAsync(sut);
-        _viewModel.WarningMessages.Add("Stale warning");
-
-        await sut.ProcessFormIdsAsync();
-
-        Assert.Empty(_viewModel.WarningMessages);
-    }
-
-    /// <summary>
-    ///     Verifies the workflow performs the writes a warned run's rendered report implies, and no others.
-    /// </summary>
-    /// <remarks>
-    ///     A run no longer says a word about how it ended: the executor returns the outcome and the workflow renders
-    ///     it, so this asserts the writes rather than the routing of a warning event that no longer exists.
-    /// </remarks>
-    [Fact]
-    public async Task ProcessFormIdsAsync_RunOutcomeWithASkippedPlugin_AddsTheRenderedWarningMessage()
-    {
-        var sut = CreateSut();
-        await ConfigureValidPluginProcessingRunAsync(sut);
-        _processingRunExecutor.Outcome = CreatePluginRunOutcome(
-            new SkippedPlugin("User.esp", SkippedPluginReason.ZeroFormIdRecords));
-
-        await sut.ProcessFormIdsAsync();
-
-        Assert.Equal(
-            [
-                "1 processing warning." + Environment.NewLine +
-                "User.esp: User.esp produced zero FormID records."
-            ],
-            _viewModel.WarningMessages);
-        Assert.Empty(_viewModel.ErrorMessages);
-    }
-
-    /// <summary>
-    ///     Verifies the workflow performs the writes a failed run's rendered report implies, and no others.
-    /// </summary>
-    [Fact]
-    public async Task ProcessFormIdsAsync_RunOutcomeWithAFailedPlugin_AddsTheRenderedErrorMessage()
-    {
-        var sut = CreateSut();
-        await ConfigureValidPluginProcessingRunAsync(sut);
-        _processingRunExecutor.Outcome = CreatePluginRunOutcome(
-            new FailedPlugin(
-                "User.esp",
-                new PluginReadDiagnostic(PluginReadPhase.OpeningPlugin, "Invalid plugin header.")));
-
-        await sut.ProcessFormIdsAsync();
-
-        Assert.Equal(
-            [
-                "1 failed plugin." + Environment.NewLine +
-                "User.esp: Error opening User.esp: Invalid plugin header."
-            ],
-            _viewModel.ErrorMessages);
-        Assert.Empty(_viewModel.WarningMessages);
-    }
-
-    /// <summary>
-    ///     Verifies a run stopped by an unresolvable master reaches the user as the failure's own message, without the
-    ///     generic processing-error prefix that every other terminal failure gets.
-    /// </summary>
-    /// <remarks>
-    ///     Issue #52. The message already names the missing master and what to do about it, so burying it behind
-    ///     "Error processing FormIDs" would waste the one piece of information the fix exists to deliver (ADR-0006).
-    ///     The generic case below is asserted alongside it so this stays a distinction rather than a coincidence.
-    /// </remarks>
-    [Fact]
-    public async Task ProcessFormIdsAsync_UnresolvableMaster_ShowsTheFailureMessageUnwrapped()
-    {
-        var sut = CreateSut();
-        await ConfigureValidPluginProcessingRunAsync(sut);
-        var failure = new UnresolvableMasterException("User.esp", "Starfield.esm");
-        _processingRunExecutor.ExecuteFailure = failure;
-        // Recorded after the setup that confirmed the Plugin List, so the sequence below is the run's alone.
-        var projectedStatuses = RecordProjectedStatuses();
-
-        await sut.ProcessFormIdsAsync();
-
-        Assert.Equal([failure.Message], _viewModel.ErrorMessages);
-        Assert.Empty(_viewModel.WarningMessages);
-        Assert.False(_viewModel.IsProgressVisible);
-        Assert.Equal(string.Empty, _viewModel.ProgressStatus);
-        // The complete sequence rather than a containment check: a failure reaches the user once, in the error list,
-        // and never flickers on the transient channel (#102, user story 12).
-        Assert.Equal(["Initializing...", string.Empty], projectedStatuses);
     }
 
     /// <summary>
@@ -923,10 +714,11 @@ public class UserWorkflowTests
     ///     progress channel.
     /// </summary>
     /// <remarks>
-    ///     The separate warned-run and failed-run tests above cannot show this, because each has only one part to
-    ///     place. Routing is the workflow's own responsibility — the wording of all three parts is pinned by
-    ///     <see cref="ProcessingRunPresentationTests" /> — so what is asserted here is which list each part reached,
-    ///     and that the completion status reached none of them.
+    ///     One run that produced both parts shows the routing that a single-part run cannot. Routing is the sink
+    ///     adapter's responsibility — the wording of all three parts is pinned by
+    ///     <see cref="ProcessingRunPresentationTests" />, and the order they are reported in by
+    ///     <see cref="ProcessingRunControlTests" /> — so what is asserted here is which list each part reached, and
+    ///     that the completion status reached none of them.
     /// </remarks>
     [Fact]
     public async Task ProcessFormIdsAsync_RunOutcomeWithWarningsAndFailures_RoutesEachRenderedPartToItsOwnList()
@@ -938,149 +730,20 @@ public class UserWorkflowTests
             new FailedPlugin(
                 "Bad.esp",
                 new PluginReadDiagnostic(PluginReadPhase.OpeningPlugin, "Invalid plugin header.")));
+        var rendered = ProcessingRunPresentation.Render(_processingRunExecutor.Outcome);
+        Assert.NotEmpty(rendered.WarningMessages);
+        Assert.NotEmpty(rendered.ErrorMessages);
+        Assert.True(rendered.Activity.IsActive);
+        // Recorded after the setup that confirmed the Plugin List, so the sequence below is the run's alone.
         var projectedStatuses = RecordProjectedStatuses();
+        var informationBeforePress = _viewModel.InformationMessages.ToArray();
 
         await sut.ProcessFormIdsAsync();
 
-        Assert.Equal(
-            [
-                "1 processing warning." + Environment.NewLine +
-                "User.esp: 1 recoverable record issue. Recoverable issue"
-            ],
-            _viewModel.WarningMessages);
-        Assert.Equal(
-            [
-                "1 failed plugin." + Environment.NewLine +
-                "Bad.esp: Error opening Bad.esp: Invalid plugin header."
-            ],
-            _viewModel.ErrorMessages);
-        Assert.Equal(
-            [
-                "Initializing...",
-                "Processing completed with failures: 1 ingested, 0 skipped, and 1 failed Plugins.",
-                string.Empty
-            ],
-            projectedStatuses);
-    }
-
-    [Fact]
-    public async Task ProcessFormIdsAsync_UnexpectedRunFailure_ShowsTheGenericProcessingErrorMessage()
-    {
-        var sut = CreateSut();
-        await ConfigureValidPluginProcessingRunAsync(sut);
-        _processingRunExecutor.ExecuteFailure = new InvalidOperationException("store unavailable");
-
-        await sut.ProcessFormIdsAsync();
-
-        Assert.Equal(["Error processing FormIDs: store unavailable"], _viewModel.ErrorMessages);
-        Assert.False(_viewModel.IsProgressVisible);
-    }
-
-    /// <summary>
-    ///     Verifies a press arriving while a run is in flight cancels that run instead of starting a second one, and
-    ///     that the acknowledgement reaches the progress channel while the run is still the activity that owns it.
-    /// </summary>
-    [Fact]
-    public async Task ProcessFormIdsAsync_PressedWhileRunActive_CancelsThatRunAndShowsCancellingStatus()
-    {
-        var sut = CreateSut();
-        await ConfigureValidPluginProcessingRunAsync(sut);
-        _processingRunExecutor.ProgressToReport.Add(new IngestingPlugin("User.esp", 2, 5));
-        var statusDuringCancellation = string.Empty;
-        var buttonTextDuringRun = string.Empty;
-        // The run's own progress report notifies synchronously while the run is still in flight, which is how this
-        // test acts mid-run without the recording executor needing a gate.
-        OnRunStatus("Ingesting plugin 2 of 5: User.esp", () =>
-        {
-            buttonTextDuringRun = _viewModel.ProcessButtonText;
-            // The second press: Processing Run Control's run state, not the ViewModel, decides this means cancel.
-            sut.ProcessFormIdsAsync().GetAwaiter().GetResult();
-            statusDuringCancellation = _viewModel.ProgressStatus;
-        });
-
-        await sut.ProcessFormIdsAsync();
-
-        Assert.True(Assert.Single(_processingRunExecutor.ReceivedTokens).IsCancellationRequested);
-        Assert.Single(_processingRuns);
-        Assert.Equal("Cancel Processing", buttonTextDuringRun);
-        Assert.Equal("Cancelling...", statusDuringCancellation);
-        Assert.Equal("Process FormIDs", _viewModel.ProcessButtonText);
-    }
-
-    /// <summary>
-    ///     Verifies that cancelling an active Processing Run leaves a lasting acknowledgement in the information
-    ///     messages, and that the acknowledgement never reaches the transient progress channel at all.
-    /// </summary>
-    /// <remarks>
-    ///     Issue #60. The notice used to be written to the progress channel by this workflow's cancellation handler and
-    ///     then erased by the run's own cleanup one step later, so the user never saw it and nothing covered the case.
-    ///     Both halves are asserted here: that it lands in the message lists where the other terminal facts about a run
-    ///     go, and that it survives the cleanup that used to erase it.
-    /// </remarks>
-    [Fact]
-    public async Task ProcessFormIdsAsync_CancelledMidRun_PutsTheAcknowledgementInTheInformationMessages()
-    {
-        var sut = CreateSut();
-        await ConfigureValidPluginProcessingRunAsync(sut);
-        _processingRunExecutor.ProgressToReport.Add(new IngestingPlugin("User.esp", 2, 5));
-        var projectedStatuses = RecordProjectedStatuses();
-        // The second press is the cancellation intent, delivered mid-run from the run's own progress notification. The
-        // recording executor ends the run as cancelled only because that press cancelled the token it was handed, as
-        // the real executor does for the cancellation it was asked for and never for one it was not.
-        OnRunStatus("Ingesting plugin 2 of 5: User.esp", () => sut.ProcessFormIdsAsync().GetAwaiter().GetResult());
-
-        await sut.ProcessFormIdsAsync();
-
-        Assert.True(Assert.Single(_processingRunExecutor.ReceivedTokens).IsCancellationRequested);
-        // The Plugin List refresh that set this run up leaves its own information message ahead of the acknowledgement.
-        Assert.Contains("Processing cancelled by user.", _viewModel.InformationMessages);
-        Assert.Empty(_viewModel.ErrorMessages);
-        Assert.Empty(_viewModel.WarningMessages);
-        // The run's cleanup hands the channel back, and can no longer erase an acknowledgement that was never on it.
-        Assert.Equal(string.Empty, _viewModel.ProgressStatus);
-        Assert.False(_viewModel.IsProgressVisible);
-        // The complete sequence rather than a containment check: showing that the acknowledgement never reached a
-        // channel that erases itself means stating everything that did reach it, not just the one string it did not.
-        Assert.Equal(
-            ["Initializing...", "Ingesting plugin 2 of 5: User.esp", "Cancelling...", string.Empty],
-            projectedStatuses);
-    }
-
-    /// <summary>
-    ///     Verifies the window Processing Run Control owns run state to close: a press landing after the run was admitted
-    ///     but before the executor has been handed the run cancels that run rather than launching a second one, and the
-    ///     cancel really reaches it.
-    /// </summary>
-    /// <remarks>
-    ///     The second press is delivered from the notification raised when the workflow defaults the database path,
-    ///     which happens inside that window. The run's cancellation source is created the moment admission admits the
-    ///     press, before anything is published (issue #104), so the token the executor is then handed is already
-    ///     cancelled — and the defaulted path the press chose still reaches the database path box.
-    /// </remarks>
-    [Fact]
-    public async Task ProcessFormIdsAsync_PressedBeforeTheRunReachesTheExecutor_CancelsTheRunWithoutLaunchingASecond()
-    {
-        var sut = CreateSut();
-        var confirmed = await ConfirmPluginListAsync(sut, ["User.esp"]);
-        sut.SetPluginSelection(confirmed.MembershipVersion, "User.esp", true);
-        var secondPressed = false;
-        _viewModel.PropertyChanged += (_, args) =>
-        {
-            if (args.PropertyName != nameof(MainWindowViewModel.DatabasePath) || secondPressed)
-            {
-                return;
-            }
-
-            secondPressed = true;
-            sut.ProcessFormIdsAsync().GetAwaiter().GetResult();
-        };
-
-        await sut.ProcessFormIdsAsync();
-
-        Assert.True(secondPressed);
-        var run = Assert.Single(_processingRuns);
-        Assert.True(Assert.Single(_processingRunExecutor.ReceivedTokens).IsCancellationRequested);
-        Assert.Equal(run.DatabasePath, _viewModel.DatabasePath);
+        Assert.Equal(rendered.WarningMessages.ToArray(), _viewModel.WarningMessages);
+        Assert.Equal(rendered.ErrorMessages.ToArray(), _viewModel.ErrorMessages);
+        Assert.Equal(informationBeforePress, _viewModel.InformationMessages);
+        Assert.Equal([StartingStatus(), rendered.Activity.Status, string.Empty], projectedStatuses);
     }
 
     /// <summary>
@@ -1102,7 +765,10 @@ public class UserWorkflowTests
         // and so would start no refresh to collide with the run.
         _fileDialogService.Setup(x => x.SelectGameDirectory())
             .ReturnsAsync(FileDialogResult.Success(@"D:\Games\Skyrim"));
-        _processingRunExecutor.ProgressToReport.Add(new IngestingPlugin("User.esp", 2, 5));
+        var ingestingProgress = new IngestingPlugin("User.esp", 2, 5);
+        var ingesting = ProcessingRunPresentation.Render(ingestingProgress);
+        Assert.NotNull(ingesting.Value);
+        _processingRunExecutor.ProgressToReport.Add(ingestingProgress);
         _processingRunExecutor.Outcome = new PlannedRunOutcome(new PluginRunPlan(new PluginIngestionPlan(
             new PluginProcessingRunRequest(
                 PluginListSource.Create(GameRelease.SkyrimSE, GameDirectory),
@@ -1113,7 +779,7 @@ public class UserWorkflowTests
         var statusAfterRefresh = string.Empty;
         var valueAfterRefresh = 0d;
         // The refresh is triggered from the run's own progress notification, so it genuinely overlaps a run in flight.
-        OnRunStatus("Ingesting plugin 2 of 5: User.esp", () =>
+        OnRunStatus(ingesting.Status, () =>
         {
             TriggerRefreshAsync(sut, refreshTrigger).GetAwaiter().GetResult();
             statusAfterRefresh = _viewModel.ProgressStatus;
@@ -1122,12 +788,11 @@ public class UserWorkflowTests
 
         await sut.ProcessFormIdsAsync();
 
-        Assert.Equal("Ingesting plugin 2 of 5: User.esp", statusAfterRefresh);
-        // The second of five selected Plugins, which the run's progress renders as 40%.
-        Assert.Equal(40, valueAfterRefresh);
+        Assert.Equal(ingesting.Status, statusAfterRefresh);
+        Assert.Equal(ingesting.Value.Value, valueAfterRefresh);
         Assert.DoesNotContain(projectedStatuses, status => status.StartsWith("Scanning", StringComparison.Ordinal));
         // The run's own reports are the only thing the channel ever showed, and it ends empty.
-        Assert.Equal(["Initializing...", "Ingesting plugin 2 of 5: User.esp", string.Empty], projectedStatuses);
+        Assert.Equal([StartingStatus(), ingesting.Status, string.Empty], projectedStatuses);
     }
 
     /// <summary>
@@ -1171,6 +836,15 @@ public class UserWorkflowTests
             handled = true;
             handler();
         };
+    }
+
+    /// <summary>
+    ///     The starting status Processing Run Presentation renders for an admitted run, which this file compares
+    ///     against rather than restating, so a wording change edits only <see cref="ProcessingRunPresentationTests" />.
+    /// </summary>
+    private static string StartingStatus()
+    {
+        return ProcessingRunPresentation.Render(new ProcessingRunStarting()).Status;
     }
 
     /// <summary>

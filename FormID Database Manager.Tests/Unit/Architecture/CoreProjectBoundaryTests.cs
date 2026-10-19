@@ -325,7 +325,10 @@ public class CoreProjectBoundaryTests
     ///     from directory. Please select a game from the dropdown.", so only the complete refusal sentence, ending in
     ///     "first.", is forbidden. What a refusal does say is pinned by <c>ProcessingRunPresentationTests</c>. Issue
     ///     #105 moved the refusal report from the User Workflow to Processing Run Control, which is the row that
-    ///     matters now; the User Workflow row stays so the sentences cannot drift back.
+    ///     matters now. The User Workflow row still guards something real: the workflow captures every press before
+    ///     Processing Run Control sees it and writes its own picker errors straight to the ViewModel, so it is the one
+    ///     place a pre-check, such as refusing an empty selection before the press is handed on, could show a refusal
+    ///     that bypasses admission and Presentation.
     /// </remarks>
     [Theory]
     [InlineData("ProcessingRunAdmission.cs")]

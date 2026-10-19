@@ -100,6 +100,34 @@ public sealed class ProcessingRunControlTests : IDisposable
     }
 
     /// <summary>
+    ///     Verifies that a refused press with no database path chosen reports no defaulted path, even with a default
+    ///     root to compute one under: only an admitted run gets a default.
+    /// </summary>
+    /// <remarks>
+    ///     Issue #106, under parent #102. This moved here from the User Workflow tests, which used to pin it through the
+    ///     database path box; the box is written only when this module reports a defaulted path.
+    /// </remarks>
+    [Fact]
+    public async Task PressAsync_RefusedWithAnEmptyDatabasePath_ReportsNoDefaultedPath()
+    {
+        var pluginList = NewPluginList(ScriptedGameLoadOrders.Fixed(PluginName));
+        var source = Source();
+        await RefreshAsync(pluginList, source);
+        var inputs = PluginInputs(pluginList.Current, source) with { DatabasePath = string.Empty };
+        using var sut = CreateSut();
+
+        await sut.PressAsync(inputs);
+
+        Assert.Equal(
+            [
+                new MessageListsCleared(),
+                new ErrorMessageAdded(ProcessingRunPresentation.Render(RunRejectionReason.NoPluginsSelected))
+            ],
+            _sink.Entries);
+        Assert.Empty(_executor.Requests);
+    }
+
+    /// <summary>
     ///     Verifies that a refusal leaves the gate inactive: the next press starts a run rather than cancelling one.
     /// </summary>
     [Fact]
