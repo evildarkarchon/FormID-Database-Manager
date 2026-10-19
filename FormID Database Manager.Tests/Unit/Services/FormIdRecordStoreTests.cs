@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using FormID_Database_Manager.Services;
@@ -19,7 +18,7 @@ public sealed class FormIdRecordStoreTests : IDisposable
     private readonly string _testFilesDirectory;
 
     /// <summary>
-    ///     Creates isolated database and FormID text file paths for each test.
+    ///     Creates an isolated database path and scratch directory for each test.
     /// </summary>
     public FormIdRecordStoreTests()
     {
@@ -28,7 +27,7 @@ public sealed class FormIdRecordStoreTests : IDisposable
     }
 
     /// <summary>
-    ///     Removes the isolated database and FormID text files created by the test.
+    ///     Removes the isolated database and scratch directory created by the test.
     /// </summary>
     public void Dispose()
     {
@@ -293,18 +292,22 @@ public sealed class FormIdRecordStoreTests : IDisposable
             await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
         }
 
-        var testFile = await WriteFormIdTextFileAsync("ready_store.txt", ["Plugin.esp|000001|Entry1"]);
         await using (var store = await FormIdRecordStore.OpenAsync(
                          _testDbPath,
                          GameRelease.SkyrimSE,
                          TestContext.Current.CancellationToken))
         {
-            var importResult = await store.ImportFormIdTextFileAsync(
-                testFile,
+            // Writing through the text-row role straight after opening proves text staging is ready, with no setup.
+            IFormIdTextRowWriter writer = store;
+            await writer.WriteTextRowsAsync(
+                StreamRowsAsync([new FormIdTextRow("Plugin.esp", "000001", "Entry1")]),
                 UpdateMode.Append,
-                cancellationToken: TestContext.Current.CancellationToken);
+                TestContext.Current.CancellationToken);
 
-            Assert.Equal(new FormIdTextFileImportResult(1, 1), importResult);
+            Assert.Equal(
+                new FormIdStoredRecord("Plugin.esp", "000001", "Entry1"),
+                Assert.Single(
+                    await store.ReadRecordsAsync(FormIdRecordQuery.All, TestContext.Current.CancellationToken)));
         }
 
         await using var verificationConnection = await OpenUnpooledDatabaseConnectionAsync();
@@ -553,559 +556,303 @@ public sealed class FormIdRecordStoreTests : IDisposable
     }
 
     /// <summary>
-    ///     Verifies that valid, interleaved rows for multiple Plugins are parsed and persisted through the store.
+    ///     Verifies that the text-row role in append mode keeps a Plugin's existing rows beside the streamed ones.
     /// </summary>
     [Fact]
-    public async Task ImportFormIdTextFileAsync_ValidRowsForMultiplePlugins_StoresEveryRecord()
+    public async Task WriteTextRowsAsync_AppendMode_PreservesExistingRows()
     {
-        var testFile = await WriteFormIdTextFileAsync(
-            "valid_multiple_plugins.txt",
-            [
-                "Plugin1.esp|000001|Entry1",
-                "Plugin1.esp|000002|Entry2",
-                "Plugin2.esp|000003|Entry3",
-                "Plugin2.esp|000004|Entry4",
-                "Plugin1.esp|000005|Entry5",
-                "Plugin3.esp|000006|Entry6"
-            ]);
+        await InsertTestRecordAsync("Plugin1.esp", "000001", "OldEntry");
         await using var store = await OpenStoreAsync();
+        IFormIdTextRowWriter writer = store;
 
-        var result = await store.ImportFormIdTextFileAsync(
-            testFile,
+        await writer.WriteTextRowsAsync(
+            StreamRowsAsync([new FormIdTextRow("Plugin1.esp", "000002", "NewEntry")]),
             UpdateMode.Append,
-            cancellationToken: TestContext.Current.CancellationToken);
+            TestContext.Current.CancellationToken);
 
         var records = await store.ReadRecordsAsync(FormIdRecordQuery.All, TestContext.Current.CancellationToken);
-
-        Assert.Equal(new FormIdTextFileImportResult(3, 6), result);
-        Assert.Equal(6, records.Count);
-        Assert.Equal(3, records.Count(record => record.Plugin == "Plugin1.esp"));
-        Assert.Equal(2, records.Count(record => record.Plugin == "Plugin2.esp"));
-        Assert.Single(records, record => record.Plugin == "Plugin3.esp");
-        Assert.Contains(records, record => record is { Plugin: "Plugin1.esp", FormId: "000001", Entry: "Entry1" });
-        Assert.Contains(records, record => record is { Plugin: "Plugin3.esp", FormId: "000006", Entry: "Entry6" });
-    }
-
-    /// <summary>
-    ///     Verifies that whitespace is trimmed and malformed rows are skipped without hiding valid rows.
-    /// </summary>
-    [Fact]
-    public async Task ImportFormIdTextFileAsync_MalformedAndWhitespaceRows_ImportsOnlyValidTrimmedRows()
-    {
-        var testFile = await WriteFormIdTextFileAsync(
-            "malformed_rows.txt",
-            [
-                "Plugin1.esp|000001|Entry1",
-                "  Plugin2.esp  |  000002  |  Entry2  ",
-                "Plugin3.esp|000003|Entry3|ExtraData",
-                "",
-                "   ",
-                "InvalidLine",
-                "Plugin4.esp|000004",
-                "||||"
-            ]);
-        await using var store = await OpenStoreAsync();
-
-        var result = await store.ImportFormIdTextFileAsync(
-            testFile,
-            UpdateMode.Append,
-            cancellationToken: TestContext.Current.CancellationToken);
-
-        var records = await store.ReadRecordsAsync(FormIdRecordQuery.All, TestContext.Current.CancellationToken);
-
-        Assert.Equal(new FormIdTextFileImportResult(2, 2), result);
         Assert.Equal(
             [
-                new FormIdStoredRecord("Plugin1.esp", "000001", "Entry1"),
-                new FormIdStoredRecord("Plugin2.esp", "000002", "Entry2")
+                new FormIdStoredRecord("Plugin1.esp", "000001", "OldEntry"),
+                new FormIdStoredRecord("Plugin1.esp", "000002", "NewEntry")
             ],
             records);
     }
 
     /// <summary>
-    ///     Verifies that an empty FormID text file completes with zero imported rows.
+    ///     Verifies that Update Mode replaces each mentioned Plugin case-insensitively, keeps each row's casing,
+    ///     inserts new Plugins, and leaves unmentioned Plugins alone.
     /// </summary>
     [Fact]
-    public async Task ImportFormIdTextFileAsync_EmptyFile_ReturnsZeroCounts()
-    {
-        var testFile = await WriteFormIdTextFileAsync("empty.txt", []);
-        await using var store = await OpenStoreAsync();
-
-        var result = await store.ImportFormIdTextFileAsync(
-            testFile,
-            UpdateMode.Append,
-            cancellationToken: TestContext.Current.CancellationToken);
-
-        var records = await store.ReadRecordsAsync(FormIdRecordQuery.All, TestContext.Current.CancellationToken);
-
-        Assert.Equal(new FormIdTextFileImportResult(0, 0), result);
-        Assert.Empty(records);
-    }
-
-    /// <summary>
-    ///     Verifies that importing a missing FormID text file surfaces the file-system error.
-    /// </summary>
-    [Fact]
-    public async Task ImportFormIdTextFileAsync_MissingFile_ThrowsFileNotFoundException()
-    {
-        var missingFile = Path.Combine(_testFilesDirectory, "missing.txt");
-        await using var store = await OpenStoreAsync();
-
-        await Assert.ThrowsAsync<FileNotFoundException>(() => store.ImportFormIdTextFileAsync(
-            missingFile,
-            UpdateMode.Append,
-            cancellationToken: TestContext.Current.CancellationToken));
-    }
-
-    /// <summary>
-    ///     Verifies that supported punctuation in FormID text Entries round-trips unchanged.
-    /// </summary>
-    [Fact]
-    public async Task ImportFormIdTextFileAsync_SpecialCharacters_PreservesEntries()
-    {
-        string[] expectedEntries =
-        [
-            "Entry with spaces",
-            "Entry-with-dashes",
-            "Entry_with_underscores",
-            "Entry.with.dots",
-            "Entry'with'quotes",
-            @"Entry\with\backslashes",
-            "Entry/with/forward/slashes",
-            "Entry(with)parentheses",
-            "Entry[with]brackets",
-            "Entry{with}braces"
-        ];
-        var lines = expectedEntries
-            .Select((entry, index) => $"Plugin.esp|{index + 1:X6}|{entry}")
-            .ToArray();
-        var testFile = await WriteFormIdTextFileAsync("special_characters.txt", lines);
-        await using var store = await OpenStoreAsync();
-
-        var result = await store.ImportFormIdTextFileAsync(
-            testFile,
-            UpdateMode.Append,
-            cancellationToken: TestContext.Current.CancellationToken);
-
-        var records = await store.ReadRecordsAsync(FormIdRecordQuery.All, TestContext.Current.CancellationToken);
-
-        Assert.Equal(new FormIdTextFileImportResult(1, expectedEntries.Length), result);
-        Assert.Equal(expectedEntries, records.Select(record => record.Entry).ToArray());
-    }
-
-    /// <summary>
-    ///     Verifies the counters the Store reports across multiple progress-report intervals: the opening report, one
-    ///     report for each newly seen Plugin, and one every thousandth record, with byte counts that only advance.
-    /// </summary>
-    /// <remarks>
-    ///     The Store reports facts, not sentences, so this pins the numbers rather than any wording. The final counts
-    ///     are no longer a progress report at all — they are the value the import returns.
-    /// </remarks>
-    [Fact]
-    public async Task ImportFormIdTextFileAsync_CrossesProgressIntervals_ReportsMonotonicCountersAndTheSeenPlugin()
-    {
-        const int totalRecords = 2500;
-        var lines = Enumerable.Range(0, totalRecords).Select(i => $"Plugin.esp|{i:X6}|Entry{i}");
-        var testFile = await WriteFormIdTextFileAsync("progress.txt", lines);
-        var progressReports = new List<FormIdStoreProgress>();
-        var progress = new SynchronousProgress<FormIdStoreProgress>(progressReports.Add);
-        var totalBytes = new FileInfo(testFile).Length;
-        await using var store = await OpenStoreAsync();
-
-        var result = await store.ImportFormIdTextFileAsync(
-            testFile,
-            UpdateMode.Append,
-            progress,
-            TestContext.Current.CancellationToken);
-
-        Assert.Equal(new FormIdTextFileImportResult(1, totalRecords), result);
-
-        // The opening report counts nothing and names no Plugin; every report carries the file's total size.
-        Assert.Equal(new FormIdStoreCounterUpdate(0, 0, totalBytes), progressReports[0]);
-        Assert.All(progressReports, report => Assert.Equal(totalBytes, report.TotalBytes));
-
-        // One report for the first record's newly seen Plugin, then one for every thousandth record.
-        Assert.Equal(
-            [0L, 1L, 1000L, 2000L],
-            progressReports.Select(report => report.RecordCount).ToArray());
-        Assert.Collection(progressReports,
-            report => Assert.IsType<FormIdStoreCounterUpdate>(report),
-            report => Assert.Equal("Plugin.esp", Assert.IsType<FormIdStorePluginFirstEncountered>(report).PluginName),
-            report => Assert.IsType<FormIdStoreCounterUpdate>(report),
-            report => Assert.IsType<FormIdStoreCounterUpdate>(report));
-
-        var byteCounts = progressReports.Select(report => report.BytesRead).ToArray();
-        Assert.All(byteCounts, value => Assert.InRange(value, 0L, totalBytes));
-        for (var i = 1; i < byteCounts.Length; i++)
-        {
-            Assert.True(byteCounts[i] >= byteCounts[i - 1]);
-        }
-    }
-
-    /// <summary>
-    ///     Verifies the exact byte counts an import reports for a file of known size, pinning the stream-position
-    ///     arithmetic every reported percentage is derived from.
-    /// </summary>
-    /// <remarks>
-    ///     <para>
-    ///         Issue #68. The monotonicity assertion above bounds these counts but does not pin them, and a caller
-    ///         renders them as a percentage: an off-by-a-buffer error would keep every count in range and in order
-    ///         while showing the user the wrong number. Fixed-width rows are what make the expected values exact —
-    ///         with 2,048 rows of 32 bytes the file is exactly 65,536 bytes, so the two interval reports land on
-    ///         ratios that are exact in binary and comparable by value rather than by tolerance.
-    ///     </para>
-    ///     <para>
-    ///         What the Store reports is how far the <c>StreamReader</c> has pulled ahead of the row it just returned,
-    ///         not where that row ends, so these counts are a function of the reader's 1 KiB read size as well as the
-    ///         file's size. That is precisely why they are worth pinning: the counts are not derivable from the row
-    ///         number by anyone reading the caller.
-    ///     </para>
-    /// </remarks>
-    [Fact]
-    public async Task ImportFormIdTextFileAsync_FileOfKnownSize_ReportsTheExactReaderPositionAtEachInterval()
-    {
-        const int recordCount = 2048;
-        const int rowByteLength = 32;
-        const long totalBytes = recordCount * rowByteLength;
-        var testFile = await WriteFixedWidthFormIdTextFileAsync("known_size.txt", recordCount, rowByteLength);
-        var progressReports = new List<FormIdStoreProgress>();
-        var progress = new SynchronousProgress<FormIdStoreProgress>(progressReports.Add);
-        await using var store = await OpenStoreAsync();
-
-        var result = await store.ImportFormIdTextFileAsync(
-            testFile,
-            UpdateMode.Append,
-            progress,
-            TestContext.Current.CancellationToken);
-
-        Assert.Equal(new FormIdTextFileImportResult(2, recordCount), result);
-        Assert.Equal(totalBytes, new FileInfo(testFile).Length);
-        Assert.All(progressReports, report => Assert.Equal(totalBytes, report.TotalBytes));
-        // Half the file by the thousandth record, and all but one 1 KiB read by the two-thousandth.
-        Assert.Equal(32_768L, ReportedBytesAt(progressReports, 1_000));
-        Assert.Equal(64_512L, ReportedBytesAt(progressReports, 2_000));
-    }
-
-    /// <summary>
-    ///     Returns the reader position the Store reported alongside one record count.
-    /// </summary>
-    /// <param name="progressReports">Every report the import made, in order.</param>
-    /// <param name="recordCount">The counted-record milestone whose report is wanted.</param>
-    /// <returns>The bytes read at that milestone.</returns>
-    private static long ReportedBytesAt(IReadOnlyList<FormIdStoreProgress> progressReports, long recordCount)
-    {
-        return Assert.Single(progressReports, report => report.RecordCount == recordCount).BytesRead;
-    }
-
-    /// <summary>
-    ///     Writes a FormID text file of fixed-width rows, split evenly between two Plugins.
-    /// </summary>
-    /// <param name="fileName">The file name within the isolated directory.</param>
-    /// <param name="recordCount">The number of rows to write.</param>
-    /// <param name="rowByteLength">The exact byte length of every row, including its CRLF terminator.</param>
-    /// <returns>The absolute path to the written file.</returns>
-    /// <remarks>
-    ///     The rows carry an explicit CRLF rather than going through <c>File.WriteAllLines</c>, so the file is exactly
-    ///     <paramref name="recordCount" /> × <paramref name="rowByteLength" /> bytes on any platform rather than on
-    ///     whichever one supplies <see cref="Environment.NewLine" />. Every character is ASCII, so one character is
-    ///     one UTF-8 byte, and the encoding is written without a byte-order mark for the same reason.
-    /// </remarks>
-    private async Task<string> WriteFixedWidthFormIdTextFileAsync(
-        string fileName,
-        int recordCount,
-        int rowByteLength)
-    {
-        var contents = new StringBuilder(recordCount * rowByteLength);
-        for (var index = 0; index < recordCount; index++)
-        {
-            var pluginName = index < recordCount / 2 ? "PluginA.esp" : "PluginB.esp";
-            var row = $"{pluginName}|{index:X8}|Entry{index:D4}";
-            Assert.Equal(rowByteLength - 2, row.Length);
-            contents.Append(row).Append("\r\n");
-        }
-
-        var path = Path.Combine(_testFilesDirectory, fileName);
-        await File.WriteAllTextAsync(
-            path,
-            contents.ToString(),
-            new UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
-            TestContext.Current.CancellationToken);
-
-        return path;
-    }
-
-    /// <summary>
-    ///     Verifies that an import reports each Plugin the first time the file mentions it, in file order, and reports
-    ///     it identically under both update modes.
-    /// </summary>
-    /// <param name="updateMode">The update mode the import applies to the Plugins in the file.</param>
-    /// <remarks>
-    ///     Running both modes is the point: whether a newly seen Plugin is worth naming to the user is the caller's
-    ///     decision, so the Store's reports must not vary with the update mode at all.
-    /// </remarks>
-    [Theory]
-    [InlineData(UpdateMode.Append)]
-    [InlineData(UpdateMode.ReplacePluginRecords)]
-    public async Task ImportFormIdTextFileAsync_MultiplePlugins_ReportsEachPluginTheFirstTimeItIsSeen(
-        UpdateMode updateMode)
-    {
-        var testFile = await WriteFormIdTextFileAsync(
-            "most_recent_plugin.txt",
-            [
-                "First.esp|000001|FirstEntry",
-                "FIRST.ESP|000002|SecondEntry",
-                "Second.esp|000003|ThirdEntry",
-                "first.esp|000004|FourthEntry"
-            ]);
-        var progressReports = new List<FormIdStoreProgress>();
-        var progress = new SynchronousProgress<FormIdStoreProgress>(progressReports.Add);
-        await using var store = await OpenStoreAsync();
-
-        var result = await store.ImportFormIdTextFileAsync(
-            testFile,
-            updateMode,
-            progress,
-            TestContext.Current.CancellationToken);
-
-        Assert.Equal(new FormIdTextFileImportResult(2, 4), result);
-        Assert.Collection(progressReports,
-            report => Assert.IsType<FormIdStoreCounterUpdate>(report),
-            report => Assert.Equal("First.esp", Assert.IsType<FormIdStorePluginFirstEncountered>(report).PluginName),
-            report => Assert.Equal("Second.esp", Assert.IsType<FormIdStorePluginFirstEncountered>(report).PluginName));
-        Assert.Equal(
-            [0L, 1L, 3L],
-            progressReports.Select(report => report.RecordCount).ToArray());
-    }
-
-    /// <summary>
-    ///     Verifies that when a Plugin's first row lands exactly on a progress interval, the Store reports the interval
-    ///     as a counter update, and only then reports the newly seen Plugin.
-    /// </summary>
-    /// <remarks>
-    ///     The two facts have identical counters but distinct meanings. Swapping or collapsing them would change
-    ///     what the user sees on this collision, even though callers no longer infer meaning from prior reports.
-    /// </remarks>
-    [Fact]
-    public async Task ImportFormIdTextFileAsync_NewPluginOnAProgressInterval_ReportsTheIntervalBeforeThePlugin()
-    {
-        const int intervalRecord = 1000;
-        var lines = Enumerable
-            .Range(0, intervalRecord)
-            .Select(index => index < intervalRecord - 1
-                ? $"First.esp|{index:X6}|Entry{index}"
-                : $"Second.esp|{index:X6}|Entry{index}");
-        var testFile = await WriteFormIdTextFileAsync("plugin_on_interval.txt", lines);
-        var progressReports = new List<FormIdStoreProgress>();
-        var progress = new SynchronousProgress<FormIdStoreProgress>(progressReports.Add);
-        await using var store = await OpenStoreAsync();
-
-        var result = await store.ImportFormIdTextFileAsync(
-            testFile,
-            UpdateMode.ReplacePluginRecords,
-            progress,
-            TestContext.Current.CancellationToken);
-
-        Assert.Equal(new FormIdTextFileImportResult(2, intervalRecord), result);
-        Assert.Equal(
-            [0L, 1L, intervalRecord, intervalRecord],
-            progressReports.Select(report => report.RecordCount).ToArray());
-        Assert.Collection(progressReports,
-            report => Assert.IsType<FormIdStoreCounterUpdate>(report),
-            report => Assert.Equal("First.esp", Assert.IsType<FormIdStorePluginFirstEncountered>(report).PluginName),
-            report => Assert.IsType<FormIdStoreCounterUpdate>(report),
-            report => Assert.Equal("Second.esp", Assert.IsType<FormIdStorePluginFirstEncountered>(report).PluginName));
-        Assert.Equal(progressReports[2].BytesRead, progressReports[3].BytesRead);
-        Assert.Equal(progressReports[2].TotalBytes, progressReports[3].TotalBytes);
-    }
-
-    /// <summary>
-    ///     Verifies that imports crossing the 10,000-row staging boundary commit every row through the public Store seam.
-    /// </summary>
-    [Fact]
-    public async Task ImportFormIdTextFileAsync_ExceedsStagingBatchSize_CommitsAllRecords()
-    {
-        const int totalRecords = 10100;
-        var lines = Enumerable.Range(0, totalRecords).Select(i => $"Plugin.esp|{i:X6}|Entry{i}");
-        var testFile = await WriteFormIdTextFileAsync("batch_boundary.txt", lines);
-        await using var store = await FormIdRecordStore.OpenAsync(
-            _testDbPath,
-            GameRelease.SkyrimSE,
-            TestContext.Current.CancellationToken);
-
-        var result = await store.ImportFormIdTextFileAsync(
-            testFile,
-            UpdateMode.Append,
-            cancellationToken: TestContext.Current.CancellationToken);
-
-        var records = await store.ReadRecordsAsync(FormIdRecordQuery.All, TestContext.Current.CancellationToken);
-
-        Assert.Equal(new FormIdTextFileImportResult(1, totalRecords), result);
-        Assert.Equal(totalRecords, records.Count);
-    }
-
-    /// <summary>
-    ///     Verifies that the indexed staging path imports many distinct Plugins through the public Store seam.
-    /// </summary>
-    [Fact]
-    public async Task ImportFormIdTextFileAsync_ManyDistinctPlugins_ImportsEveryPlugin()
-    {
-        const int pluginCount = 512;
-        var lines = Enumerable.Range(0, pluginCount)
-            .Select(i => $"Plugin{i:D4}.esp|{i:X6}|Entry{i}");
-        var testFile = await WriteFormIdTextFileAsync("many_distinct_plugins.txt", lines);
-        await using var store = await FormIdRecordStore.OpenAsync(
-            _testDbPath,
-            GameRelease.SkyrimSE,
-            TestContext.Current.CancellationToken);
-
-        var result = await store.ImportFormIdTextFileAsync(
-            testFile,
-            UpdateMode.Append,
-            cancellationToken: TestContext.Current.CancellationToken);
-        var records = await store.ReadRecordsAsync(FormIdRecordQuery.All, TestContext.Current.CancellationToken);
-
-        Assert.Equal(new FormIdTextFileImportResult(pluginCount, pluginCount), result);
-        Assert.Equal(pluginCount, records.Count);
-    }
-
-    /// <summary>
-    ///     Verifies that cancellation after a staging flush does not expose managed or TEMP rows to a later import.
-    /// </summary>
-    [Fact]
-    public async Task ImportFormIdTextFileAsync_CancelledAfterStagingFlush_ReusedStoreDoesNotCommitStaleRows()
-    {
-        const int cancelledRecordCount = 11000;
-        var lines = Enumerable.Range(0, cancelledRecordCount)
-            .Select(i => $"Cancelled.esp|{i:X6}|CancelledEntry{i}");
-        var testFile = await WriteFormIdTextFileAsync("cancelled.txt", lines);
-        var freshFile = await WriteFormIdTextFileAsync(
-            "after_cancelled.txt",
-            ["Fresh.esp|FFFFFF|FreshEntry"]);
-        using var cancellationSource = new CancellationTokenSource();
-        var progress = new SynchronousProgress<FormIdStoreProgress>(report =>
-        {
-            // Cancelling on the report for the 11,000th counted record leaves one full batch in TEMP and 999 rows
-            // managed before cancellation is observed: that report fires before the record it counts is staged.
-            if (report.RecordCount == cancelledRecordCount)
-            {
-                cancellationSource.Cancel();
-            }
-        });
-        await using var store = await OpenStoreAsync();
-
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => store.ImportFormIdTextFileAsync(
-            testFile,
-            UpdateMode.Append,
-            progress,
-            cancellationSource.Token));
-
-        var records = await store.ReadRecordsAsync(FormIdRecordQuery.All, TestContext.Current.CancellationToken);
-        Assert.Empty(records);
-
-        var result = await store.ImportFormIdTextFileAsync(
-            freshFile,
-            UpdateMode.Append,
-            cancellationToken: TestContext.Current.CancellationToken);
-        records = await store.ReadRecordsAsync(FormIdRecordQuery.All, TestContext.Current.CancellationToken);
-
-        Assert.Equal(new FormIdTextFileImportResult(1, 1), result);
-        Assert.Equal(
-            new FormIdStoredRecord("Fresh.esp", "FFFFFF", "FreshEntry"),
-            Assert.Single(records));
-    }
-
-    /// <summary>
-    ///     Verifies that append imports preserve existing rows for the same Plugin.
-    /// </summary>
-    [Fact]
-    public async Task ImportFormIdTextFileAsync_AppendMode_PreservesExistingRows()
-    {
-        await InsertTestRecordAsync("Plugin1.esp", "000001", "OldEntry");
-        var testFile = await WriteFormIdTextFileAsync(
-            "append.txt",
-            ["Plugin1.esp|000002|NewEntry"]);
-        await using var store = await OpenStoreAsync();
-
-        var result = await store.ImportFormIdTextFileAsync(
-            testFile,
-            UpdateMode.Append,
-            cancellationToken: TestContext.Current.CancellationToken);
-
-        var records = await store.ReadRecordsAsync(FormIdRecordQuery.All, TestContext.Current.CancellationToken);
-
-        Assert.Equal(new FormIdTextFileImportResult(1, 1), result);
-        Assert.Equal(2, records.Count);
-        Assert.Contains(records, record => record is { Plugin: "Plugin1.esp", FormId: "000001", Entry: "OldEntry" });
-        Assert.Contains(records, record => record is { Plugin: "Plugin1.esp", FormId: "000002", Entry: "NewEntry" });
-    }
-
-    /// <summary>
-    ///     Verifies case-insensitive replacement, source casing, and new-Plugin insertion in one Update Mode import.
-    /// </summary>
-    [Fact]
-    public async Task ImportFormIdTextFileAsync_UpdateMode_ReplacesExistingPluginAndInsertsNewPlugin()
+    public async Task WriteTextRowsAsync_UpdateMode_ReplacesMentionedPluginsAndInsertsNewOnes()
     {
         await InsertTestRecordAsync("Plugin1.esp", "000001", "OldEntry1");
         await InsertTestRecordAsync("Plugin1.esp", "000002", "OldEntry2");
-        var testFile = await WriteFormIdTextFileAsync(
-            "update_mode.txt",
-            [
-                "PLUGIN1.ESP|000010|NewEntry1",
-                "plugin1.esp|000011|NewEntry2",
-                "BrandNewPlugin.esp|000020|BrandNewEntry"
-            ]);
+        await InsertTestRecordAsync("Untouched.esp", "000003", "UntouchedEntry");
         await using var store = await OpenStoreAsync();
+        IFormIdTextRowWriter writer = store;
 
-        var result = await store.ImportFormIdTextFileAsync(
-            testFile,
+        await writer.WriteTextRowsAsync(
+            StreamRowsAsync(
+            [
+                new FormIdTextRow("PLUGIN1.ESP", "000010", "NewEntry1"),
+                new FormIdTextRow("plugin1.esp", "000011", "NewEntry2"),
+                new FormIdTextRow("BrandNewPlugin.esp", "000020", "BrandNewEntry")
+            ]),
             UpdateMode.ReplacePluginRecords,
-            cancellationToken: TestContext.Current.CancellationToken);
+            TestContext.Current.CancellationToken);
 
         var records = await store.ReadRecordsAsync(FormIdRecordQuery.All, TestContext.Current.CancellationToken);
-
-        Assert.Equal(new FormIdTextFileImportResult(2, 3), result);
-        Assert.Equal(3, records.Count);
-        Assert.DoesNotContain(records, record => record.Entry is "OldEntry1" or "OldEntry2");
-        Assert.Contains(records, record => record is { Plugin: "PLUGIN1.ESP", FormId: "000010", Entry: "NewEntry1" });
-        Assert.Contains(records, record => record is { Plugin: "plugin1.esp", FormId: "000011", Entry: "NewEntry2" });
-        Assert.Contains(
-            records,
-            record => record is { Plugin: "BrandNewPlugin.esp", FormId: "000020", Entry: "BrandNewEntry" });
+        Assert.Equal(
+            [
+                new FormIdStoredRecord("Untouched.esp", "000003", "UntouchedEntry"),
+                new FormIdStoredRecord("PLUGIN1.ESP", "000010", "NewEntry1"),
+                new FormIdStoredRecord("plugin1.esp", "000011", "NewEntry2"),
+                new FormIdStoredRecord("BrandNewPlugin.esp", "000020", "BrandNewEntry")
+            ],
+            records);
     }
 
     /// <summary>
-    ///     Verifies that a failed Plugin import rolls back its rows while a later Plugin can still commit.
+    ///     Verifies that one Plugin's rows scattered through the stream are committed together, in stream order, before
+    ///     the next Plugin's rows.
     /// </summary>
     [Fact]
-    public async Task ImportFormIdTextFileAsync_PluginCommitFails_RollsBackPluginAndContinues()
+    public async Task WriteTextRowsAsync_ScatteredRowsForOnePlugin_CommitsThePluginTogether()
+    {
+        await InsertTestRecordAsync("First.esp", "000001", "OldFirst");
+        await using var store = await OpenStoreAsync();
+        IFormIdTextRowWriter writer = store;
+
+        await writer.WriteTextRowsAsync(
+            StreamRowsAsync(
+            [
+                new FormIdTextRow("First.esp", "000010", "First1"),
+                new FormIdTextRow("Second.esp", "000020", "Second1"),
+                new FormIdTextRow("FIRST.ESP", "000011", "First2"),
+                new FormIdTextRow("Second.esp", "000021", "Second2"),
+                new FormIdTextRow("first.esp", "000012", "First3")
+            ]),
+            UpdateMode.ReplacePluginRecords,
+            TestContext.Current.CancellationToken);
+
+        var records = await store.ReadRecordsAsync(FormIdRecordQuery.All, TestContext.Current.CancellationToken);
+        Assert.Equal(
+            [
+                new FormIdStoredRecord("First.esp", "000010", "First1"),
+                new FormIdStoredRecord("FIRST.ESP", "000011", "First2"),
+                new FormIdStoredRecord("first.esp", "000012", "First3"),
+                new FormIdStoredRecord("Second.esp", "000020", "Second1"),
+                new FormIdStoredRecord("Second.esp", "000021", "Second2")
+            ],
+            records);
+    }
+
+    /// <summary>
+    ///     Verifies that a stream crossing the 10,000-row staging boundary commits every row.
+    /// </summary>
+    [Fact]
+    public async Task WriteTextRowsAsync_ExceedsStagingBatchSize_CommitsEveryRow()
+    {
+        const int totalRows = 10100;
+        await using var store = await OpenStoreAsync();
+        IFormIdTextRowWriter writer = store;
+
+        await writer.WriteTextRowsAsync(
+            StreamRowsAsync(Enumerable.Range(0, totalRows)
+                .Select(i => new FormIdTextRow("Plugin.esp", $"{i:X6}", $"Entry{i}"))),
+            UpdateMode.Append,
+            TestContext.Current.CancellationToken);
+
+        var records = await store.ReadRecordsAsync(FormIdRecordQuery.All, TestContext.Current.CancellationToken);
+        Assert.Equal(totalRows, records.Count);
+        Assert.Equal(new FormIdStoredRecord("Plugin.esp", "000000", "Entry0"), records[0]);
+        Assert.Equal(new FormIdStoredRecord("Plugin.esp", "002773", "Entry10099"), records[^1]);
+    }
+
+    /// <summary>
+    ///     Verifies that the indexed staging path commits a stream naming many distinct Plugins, one transaction per
+    ///     Plugin, without losing any of them.
+    /// </summary>
+    [Fact]
+    public async Task WriteTextRowsAsync_ManyDistinctPlugins_CommitsEveryPlugin()
+    {
+        const int pluginCount = 512;
+        await using var store = await OpenStoreAsync();
+        IFormIdTextRowWriter writer = store;
+
+        await writer.WriteTextRowsAsync(
+            StreamRowsAsync(Enumerable.Range(0, pluginCount)
+                .Select(i => new FormIdTextRow($"Plugin{i:D4}.esp", $"{i:X6}", $"Entry{i}"))),
+            UpdateMode.Append,
+            TestContext.Current.CancellationToken);
+
+        var records = await store.ReadRecordsAsync(FormIdRecordQuery.All, TestContext.Current.CancellationToken);
+        var plugins = await store.ReadPluginsWithEntriesAsync(TestContext.Current.CancellationToken);
+        Assert.Equal(pluginCount, records.Count);
+        Assert.Equal(pluginCount, plugins.Count);
+        Assert.Equal(new FormIdStoredRecord("Plugin0000.esp", "000000", "Entry0"), records[0]);
+        Assert.Equal(new FormIdStoredRecord("Plugin0511.esp", "0001FF", "Entry511"), records[^1]);
+    }
+
+    /// <summary>
+    ///     Verifies that a failed Plugin commit rolls back that Plugin, including its replacement delete, while the
+    ///     other Plugins still commit and the single failure is rethrown as is.
+    /// </summary>
+    [Fact]
+    public async Task WriteTextRowsAsync_PluginCommitFails_RollsBackThatPluginAndCommitsTheOthers()
     {
         await InsertTestRecordAsync("Plugin1.esp", "000001", "OldPlugin1");
         await InsertTestRecordAsync("Plugin2.esp", "000002", "OldPlugin2");
         await CreateFailingInsertTriggerAsync("BadEntry");
-        var testFile = await WriteFormIdTextFileAsync(
-            "rollback.txt",
-            [
-                "Plugin1.esp|000010|GoodEntry",
-                "Plugin1.esp|000011|BadEntry",
-                "Plugin2.esp|000020|NewPlugin2"
-            ]);
         await using var store = await OpenStoreAsync();
+        IFormIdTextRowWriter writer = store;
 
-        await Assert.ThrowsAsync<SqliteException>(() => store.ImportFormIdTextFileAsync(
-            testFile,
+        await Assert.ThrowsAsync<SqliteException>(() => writer.WriteTextRowsAsync(
+            StreamRowsAsync(
+            [
+                new FormIdTextRow("Plugin1.esp", "000010", "GoodEntry"),
+                new FormIdTextRow("Plugin1.esp", "000011", "BadEntry"),
+                new FormIdTextRow("Plugin2.esp", "000020", "NewPlugin2")
+            ]),
             UpdateMode.ReplacePluginRecords,
-            cancellationToken: TestContext.Current.CancellationToken));
+            TestContext.Current.CancellationToken));
 
         var records = await store.ReadRecordsAsync(FormIdRecordQuery.All, TestContext.Current.CancellationToken);
+        Assert.Equal(
+            [
+                new FormIdStoredRecord("Plugin1.esp", "000001", "OldPlugin1"),
+                new FormIdStoredRecord("Plugin2.esp", "000020", "NewPlugin2")
+            ],
+            records);
+    }
 
-        Assert.Equal(2, records.Count);
-        Assert.Contains(
-            records,
-            record => record is { Plugin: "Plugin1.esp", FormId: "000001", Entry: "OldPlugin1" });
-        Assert.DoesNotContain(records, record => record.Entry is "GoodEntry" or "BadEntry" or "OldPlugin2");
-        Assert.Contains(
-            records,
-            record => record is { Plugin: "Plugin2.esp", FormId: "000020", Entry: "NewPlugin2" });
+    /// <summary>
+    ///     Verifies that when several Plugin commits fail in one call, each failing Plugin rolls back, the failures are
+    ///     aggregated rather than the first one winning, the remaining Plugins still commit, and the next call on the
+    ///     same Store commits no stale staged rows.
+    /// </summary>
+    [Fact]
+    public async Task WriteTextRowsAsync_SeveralPluginCommitsFail_ThrowsAggregateAndReusedStoreCommitsNoStaleRows()
+    {
+        await InsertTestRecordAsync("Plugin1.esp", "000001", "OldPlugin1");
+        await InsertTestRecordAsync("Plugin2.esp", "000002", "OldPlugin2");
+        await CreateFailingInsertTriggerAsync("BadEntry");
+        await using var store = await OpenStoreAsync();
+        IFormIdTextRowWriter writer = store;
+
+        var thrown = await Assert.ThrowsAsync<AggregateException>(() => writer.WriteTextRowsAsync(
+            StreamRowsAsync(
+            [
+                new FormIdTextRow("Plugin1.esp", "000010", "GoodEntry"),
+                new FormIdTextRow("Plugin1.esp", "000011", "BadEntry"),
+                new FormIdTextRow("Plugin2.esp", "000020", "BadEntry"),
+                new FormIdTextRow("Plugin3.esp", "000030", "NewPlugin3")
+            ]),
+            UpdateMode.ReplacePluginRecords,
+            TestContext.Current.CancellationToken));
+
+        Assert.Equal(2, thrown.InnerExceptions.Count);
+        Assert.All(thrown.InnerExceptions, failure => Assert.IsType<SqliteException>(failure));
+
+        await writer.WriteTextRowsAsync(
+            StreamRowsAsync([new FormIdTextRow("Fresh.esp", "FFFFFF", "FreshEntry")]),
+            UpdateMode.Append,
+            TestContext.Current.CancellationToken);
+
+        var records = await store.ReadRecordsAsync(FormIdRecordQuery.All, TestContext.Current.CancellationToken);
+        Assert.Equal(
+            [
+                new FormIdStoredRecord("Plugin1.esp", "000001", "OldPlugin1"),
+                new FormIdStoredRecord("Plugin2.esp", "000002", "OldPlugin2"),
+                new FormIdStoredRecord("Plugin3.esp", "000030", "NewPlugin3"),
+                new FormIdStoredRecord("Fresh.esp", "FFFFFF", "FreshEntry")
+            ],
+            records);
+    }
+
+    /// <summary>
+    ///     Verifies that cancellation after a staging flush commits nothing and leaves no staged rows for the next
+    ///     call on the same Store.
+    /// </summary>
+    [Fact]
+    public async Task WriteTextRowsAsync_CancelledAfterStagingFlush_ReusedStoreCommitsNoStaleRows()
+    {
+        const int rowsBeforeCancellation = 11000;
+        using var cancellationSource = new CancellationTokenSource();
+        await using var store = await OpenStoreAsync();
+        IFormIdTextRowWriter writer = store;
+
+        async IAsyncEnumerable<FormIdTextRow> CancelAfterStagingFlushAsync()
+        {
+            foreach (var row in Enumerable.Range(0, rowsBeforeCancellation)
+                         .Select(i => new FormIdTextRow("Cancelled.esp", $"{i:X6}", $"CancelledEntry{i}")))
+            {
+                await Task.Yield();
+                yield return row;
+            }
+
+            // 11,000 staged rows leave one full batch flushed to TEMP and 1,000 rows managed when cancellation is
+            // requested. The Store observes it when it stages the row yielded next.
+            await cancellationSource.CancelAsync();
+            yield return new FormIdTextRow("Cancelled.esp", "FFFFFE", "AfterCancellation");
+        }
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => writer.WriteTextRowsAsync(
+            CancelAfterStagingFlushAsync(),
+            UpdateMode.Append,
+            cancellationSource.Token));
+
+        Assert.Empty(await store.ReadRecordsAsync(FormIdRecordQuery.All, TestContext.Current.CancellationToken));
+
+        await writer.WriteTextRowsAsync(
+            StreamRowsAsync([new FormIdTextRow("Fresh.esp", "FFFFFF", "FreshEntry")]),
+            UpdateMode.Append,
+            TestContext.Current.CancellationToken);
+
+        var records = await store.ReadRecordsAsync(FormIdRecordQuery.All, TestContext.Current.CancellationToken);
+        Assert.Equal(new FormIdStoredRecord("Fresh.esp", "FFFFFF", "FreshEntry"), Assert.Single(records));
+    }
+
+    /// <summary>
+    ///     Verifies that a stream failing partway through, after a staging flush, propagates its own exception unchanged,
+    ///     commits nothing, and leaves no staged rows for the next call on the same Store.
+    /// </summary>
+    [Fact]
+    public async Task WriteTextRowsAsync_StreamThrowsPartway_PropagatesItsExceptionAndReusedStoreCommitsNoStaleRows()
+    {
+        const int rowsBeforeFailure = 10500;
+        var streamFailure = new IOException("The FormID text file became unreadable.");
+        await using var store = await OpenStoreAsync();
+        IFormIdTextRowWriter writer = store;
+
+        async IAsyncEnumerable<FormIdTextRow> FailAfterStagingFlushAsync()
+        {
+            foreach (var row in Enumerable.Range(0, rowsBeforeFailure)
+                         .Select(i => new FormIdTextRow("Failed.esp", $"{i:X6}", $"FailedEntry{i}")))
+            {
+                await Task.Yield();
+                yield return row;
+            }
+
+            throw streamFailure;
+        }
+
+        var thrown = await Assert.ThrowsAsync<IOException>(() => writer.WriteTextRowsAsync(
+            FailAfterStagingFlushAsync(),
+            UpdateMode.Append,
+            TestContext.Current.CancellationToken));
+        Assert.Same(streamFailure, thrown);
+
+        Assert.Empty(await store.ReadRecordsAsync(FormIdRecordQuery.All, TestContext.Current.CancellationToken));
+
+        await writer.WriteTextRowsAsync(
+            StreamRowsAsync([new FormIdTextRow("Fresh.esp", "FFFFFF", "FreshEntry")]),
+            UpdateMode.Append,
+            TestContext.Current.CancellationToken);
+
+        var records = await store.ReadRecordsAsync(FormIdRecordQuery.All, TestContext.Current.CancellationToken);
+        Assert.Equal(new FormIdStoredRecord("Fresh.esp", "FFFFFF", "FreshEntry"), Assert.Single(records));
     }
 
     private Task<FormIdRecordStore> OpenStoreAsync()
@@ -1133,19 +880,6 @@ public sealed class FormIdRecordStoreTests : IDisposable
             await connection.DisposeAsync();
             throw;
         }
-    }
-
-    /// <summary>
-    ///     Writes a FormID text file into this test's isolated directory.
-    /// </summary>
-    /// <param name="fileName">The file name within the isolated directory.</param>
-    /// <param name="lines">The FormID text rows to write.</param>
-    /// <returns>The absolute path to the written file.</returns>
-    private async Task<string> WriteFormIdTextFileAsync(string fileName, IEnumerable<string> lines)
-    {
-        var path = Path.Combine(_testFilesDirectory, fileName);
-        await File.WriteAllLinesAsync(path, lines, TestContext.Current.CancellationToken);
-        return path;
     }
 
     private async Task InsertTestRecordAsync(string plugin, string formId, string entry)
@@ -1193,11 +927,18 @@ public sealed class FormIdRecordStoreTests : IDisposable
         return records;
     }
 
-    private sealed class SynchronousProgress<T>(Action<T> handler) : IProgress<T>
+    /// <summary>
+    ///     Streams in-memory FormID text rows to the Store's text-row role, yielding before each row so the Store
+    ///     consumes a genuinely asynchronous stream rather than a completed one.
+    /// </summary>
+    /// <param name="rows">The rows to stream, in order.</param>
+    /// <returns>A lazy stream that yields each row once.</returns>
+    private static async IAsyncEnumerable<FormIdTextRow> StreamRowsAsync(IEnumerable<FormIdTextRow> rows)
     {
-        public void Report(T value)
+        foreach (var row in rows)
         {
-            handler(value);
+            await Task.Yield();
+            yield return row;
         }
     }
 }

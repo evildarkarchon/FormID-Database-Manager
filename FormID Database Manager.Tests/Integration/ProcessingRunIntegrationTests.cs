@@ -106,11 +106,17 @@ public sealed class ProcessingRunIntegrationTests : IDisposable
                     .ThenBy(record => record.FormId, StringComparer.Ordinal));
         }
 
-        Assert.Contains(
-            reports,
-            reported => reported is ImportedFormIdText { ImportResult: { PluginCount: 2, RecordCount: 3 } });
+        // An appending run of fewer than a thousand rows reports only the opening and the finished import: no counter
+        // update falls due, and append mode names no Plugin.
+        Assert.Equal(
+            [
+                new OpeningFormIdText(),
+                new ImportedFormIdText(new FormIdTextFileImportResult(2, 3))
+            ],
+            reports);
 
-        // The run's own terminal fact is the returned outcome, carrying the real Store's confirmed counts.
+        // The run's own terminal fact is the returned outcome, carrying the counts the real FormID Text Ingestion read
+        // for the rows the real Store committed.
         Assert.Equal(
             new FormIdTextFileImportResult(2, 3),
             Assert.IsType<FormIdTextRunOutcome>(outcome).ImportResult);
@@ -196,6 +202,7 @@ public sealed class ProcessingRunIntegrationTests : IDisposable
         var pluginIngestion = new PluginIngestion(gameLoadOrders);
         var executor = new ProcessingRunExecutor(
             pluginIngestion,
+            new FormIdTextIngestion(),
             new FormIdRecordStoreSessionOpener());
         var reports = new List<ProcessingRunProgress>();
         var progress = new SynchronousProgress<ProcessingRunProgress>(reports.Add);

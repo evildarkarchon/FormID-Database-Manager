@@ -7,8 +7,8 @@ namespace FormID_Database_Manager.Services;
 /// <remarks>
 ///     <para>
 ///         The run writes no wording at all. What it is doing is reported as <see cref="ProcessingRunProgress" />, a
-///         vocabulary the run defines for itself rather than one borrowed from Plugin Ingestion or the FormID Record
-///         Store, and how it ended is a <see cref="ProcessingRunOutcome" />. Both are turned into words by
+///         vocabulary the run defines for itself rather than one borrowed from Plugin Ingestion or FormID Text
+///         Ingestion, and how it ended is a <see cref="ProcessingRunOutcome" />. Both are turned into words by
 ///         <see cref="ProcessingRunPresentation" />, which lives outside this class.
 ///     </para>
 ///     <para>
@@ -20,30 +20,40 @@ namespace FormID_Database_Manager.Services;
 /// </remarks>
 public sealed class ProcessingRunExecutor : IProcessingRunExecutor
 {
+    private readonly IFormIdTextIngestion _formIdTextIngestion;
     private readonly IPluginIngestion _pluginIngestion;
     private readonly IFormIdRecordStoreSessionOpener _recordStoreOpener;
 
     /// <summary>
-    ///     Creates the production Processing Run module with aggregate Plugin Ingestion and Store session ownership.
+    ///     Creates the production Processing Run module with aggregate Plugin Ingestion, FormID Text Ingestion, and
+    ///     Store session ownership.
     /// </summary>
+    /// <remarks>
+    ///     Production composes the executor in <see cref="UserWorkflow.Create" />; only tests that want the real
+    ///     collaborators use this constructor.
+    /// </remarks>
     public ProcessingRunExecutor()
         : this(
             new PluginIngestion(),
+            new FormIdTextIngestion(),
             new FormIdRecordStoreSessionOpener())
     {
     }
 
     /// <summary>
-    ///     Creates a Processing Run executor from its complete Plugin Ingestion and run-scoped Store seams.
+    ///     Creates a Processing Run executor from its ingestion modules and run-scoped Store seam.
     /// </summary>
     /// <param name="pluginIngestion">The complete selected-Plugin operation.</param>
+    /// <param name="formIdTextIngestion">The complete FormID text-file operation.</param>
     /// <param name="recordStoreOpener">The opener for the Store session owned by each non-dry run.</param>
-    /// <exception cref="ArgumentNullException">Either dependency is null.</exception>
+    /// <exception cref="ArgumentNullException">Any dependency is null.</exception>
     internal ProcessingRunExecutor(
         IPluginIngestion pluginIngestion,
+        IFormIdTextIngestion formIdTextIngestion,
         IFormIdRecordStoreSessionOpener recordStoreOpener)
     {
         _pluginIngestion = pluginIngestion ?? throw new ArgumentNullException(nameof(pluginIngestion));
+        _formIdTextIngestion = formIdTextIngestion ?? throw new ArgumentNullException(nameof(formIdTextIngestion));
         _recordStoreOpener = recordStoreOpener ?? throw new ArgumentNullException(nameof(recordStoreOpener));
     }
 
@@ -151,8 +161,8 @@ public sealed class ProcessingRunExecutor : IProcessingRunExecutor
     ///     Builds the plan a dry run reports instead of doing the work, without opening a FormID Record Store.
     /// </summary>
     /// <param name="request">The validated domain request describing the run.</param>
-    /// <param name="cancellationToken">The caller-owned run token shared with Plugin Ingestion's planning.</param>
-    /// <returns>The planned work for the request kind.</returns>
+    /// <param name="cancellationToken">The caller-owned run token shared with the ingestion module's planning.</param>
+    /// <returns>The planned work for the request kind, built by that kind's ingestion module.</returns>
     /// <exception cref="OperationCanceledException"><paramref name="cancellationToken" /> requests cancellation.</exception>
     /// <exception cref="ArgumentOutOfRangeException">The request kind is unsupported.</exception>
     /// <exception cref="UnresolvableMasterException">
@@ -166,7 +176,9 @@ public sealed class ProcessingRunExecutor : IProcessingRunExecutor
         switch (request)
         {
             case FormIdTextProcessingRunRequest textRequest:
-                return CreateFormIdTextPlan(textRequest);
+                return await _formIdTextIngestion
+                    .PlanAsync(textRequest, cancellationToken)
+                    .ConfigureAwait(false);
 
             case PluginProcessingRunRequest pluginRequest:
                 var plan = await _pluginIngestion
@@ -183,27 +195,8 @@ public sealed class ProcessingRunExecutor : IProcessingRunExecutor
     }
 
     /// <summary>
-    ///     Looks up the two facts a FormID text-file dry run reports about the file it would import.
-    /// </summary>
-    /// <param name="request">The validated FormID text-file request.</param>
-    /// <returns>The planned text-file work, carrying presence and size.</returns>
-    /// <remarks>
-    ///     This is a file-metadata lookup and nothing else: the file is not opened, parsed, or counted, because a row
-    ///     count is what the import itself measures and a plan that measured it would have done the run.
-    /// </remarks>
-    private static FormIdTextRunPlan CreateFormIdTextPlan(FormIdTextProcessingRunRequest request)
-    {
-        var formIdListFile = new FileInfo(request.FormIdListPath);
-
-        // Exists is read before Length because Length throws for a file that is not there, and absence is a fact this
-        // plan reports rather than a failure it raises.
-        return new FormIdTextRunPlan(
-            request.FormIdListPath,
-            formIdListFile.Exists ? formIdListFile.Length : null);
-    }
-
-    /// <summary>
-    ///     Imports one FormID text file, performs explicit successful-run maintenance, and returns the Store's counts.
+    ///     Ingests one FormID text file through the Store's text-row role, performs explicit successful-run
+    ///     maintenance, and returns FormID Text Ingestion's counts.
     /// </summary>
     /// <remarks>
     ///     The import's completion is reported before maintenance and before the cancellation check, which is where the
@@ -213,19 +206,19 @@ public sealed class ProcessingRunExecutor : IProcessingRunExecutor
     /// <param name="request">The validated FormID text-file request.</param>
     /// <param name="recordStore">The already-open Store session owned by the surrounding Processing Run.</param>
     /// <param name="progress">Optional transient Processing Run progress reporter.</param>
-    /// <param name="cancellationToken">The caller-owned run token shared with the import and Store maintenance.</param>
+    /// <param name="cancellationToken">The caller-owned run token shared with ingestion and Store maintenance.</param>
     /// <returns>The completed text-run outcome carrying the import counts.</returns>
     /// <exception cref="OperationCanceledException"><paramref name="cancellationToken" /> requests cancellation.</exception>
-    private static async Task<FormIdTextRunOutcome> ExecuteTextFileRunAsync(
+    private async Task<FormIdTextRunOutcome> ExecuteTextFileRunAsync(
         FormIdTextProcessingRunRequest request,
         IFormIdRecordStoreSession recordStore,
         IProgress<ProcessingRunProgress>? progress,
         CancellationToken cancellationToken)
     {
-        var importResult = await recordStore.ImportFormIdTextFileAsync(
-                request.FormIdListPath,
-                request.UpdateMode,
-                CreateStoreProgress(progress, request.UpdateMode),
+        var importResult = await _formIdTextIngestion.IngestAsync(
+                request,
+                recordStore,
+                CreateFormIdTextIngestionProgress(progress, request.UpdateMode),
                 cancellationToken)
             .ConfigureAwait(false);
 
@@ -273,18 +266,20 @@ public sealed class ProcessingRunExecutor : IProcessingRunExecutor
     }
 
     /// <summary>
-    ///     Creates the reporter that states the FormID Record Store's import counters in this run's own vocabulary.
+    ///     Creates the reporter that states FormID Text Ingestion's facts in this run's own vocabulary.
     /// </summary>
     /// <param name="progress">The run's progress reporter, or <see langword="null" /> when nobody is listening.</param>
     /// <param name="updateMode">The run's update mode, which decides whether a newly seen Plugin is named.</param>
-    /// <returns>The reporter, or <see langword="null" /> so the Store can skip reporting entirely.</returns>
-    private static IProgress<FormIdStoreProgress>? CreateStoreProgress(
+    /// <returns>The reporter, or <see langword="null" /> so FormID Text Ingestion can skip reporting entirely.</returns>
+    private static IProgress<FormIdTextIngestionProgress>? CreateFormIdTextIngestionProgress(
         IProgress<ProcessingRunProgress>? progress,
         UpdateMode updateMode)
     {
         return progress is null
             ? null
-            : new ProjectedProgress<FormIdStoreProgress>(progress, value => ProjectFormIdTextImport(value, updateMode));
+            : new ProjectedProgress<FormIdTextIngestionProgress>(
+                progress,
+                value => ProjectFormIdTextIngestionProgress(value, updateMode));
     }
 
     /// <summary>
@@ -331,32 +326,35 @@ public sealed class ProcessingRunExecutor : IProcessingRunExecutor
     }
 
     /// <summary>
-    ///     Restates one Store fact as the run's own progress without remembering previous reports.
+    ///     Restates one FormID Text Ingestion fact as the run's own progress without remembering previous reports.
     /// </summary>
-    /// <param name="value">The counter update or Plugin first-encounter fact supplied by the Store.</param>
+    /// <param name="value">The opening, counter update, or Plugin first-encounter fact FormID Text Ingestion reported.</param>
     /// <param name="updateMode">The run's update mode, which decides whether a newly seen Plugin is named.</param>
     /// <returns>The run report, or null for a Plugin announcement suppressed in append mode.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="value" /> is null.</exception>
-    /// <exception cref="ArgumentOutOfRangeException">The Store report case is unsupported.</exception>
-    private static ProcessingRunProgress? ProjectFormIdTextImport(
-        FormIdStoreProgress value,
+    /// <exception cref="ArgumentOutOfRangeException">The FormID Text Ingestion progress case is unsupported.</exception>
+    private static ProcessingRunProgress? ProjectFormIdTextIngestionProgress(
+        FormIdTextIngestionProgress value,
         UpdateMode updateMode)
     {
         ArgumentNullException.ThrowIfNull(value);
 
         return value switch
         {
-            // There is deliberately no case for the report that opens an import: a Store report of no records that
-            // names no new Plugin already *is* that report, and saying so is the renderer's decision to make. Adding
-            // a branch here that produced the same value would only let the two disagree about what opens an import.
-            FormIdStoreCounterUpdate => new ImportingFormIdText(value.RecordCount, value.BytesRead, value.TotalBytes,
-                null),
-            // Naming a Plugin is the run's decision, not the Store's. An appending run has never named one, so it
-            // drops the report entirely rather than gaining status updates it does not show today.
-            FormIdStorePluginFirstEncountered plugin => updateMode == UpdateMode.ReplacePluginRecords
-                ? new ImportingFormIdText(value.RecordCount, value.BytesRead, value.TotalBytes, plugin.PluginName)
+            FormIdTextIngestionOpening => new OpeningFormIdText(),
+            FormIdTextIngestionCounterUpdate counters => new ImportingFormIdText(
+                counters.RecordCount,
+                counters.BytesRead,
+                counters.TotalBytes),
+            // Naming a Plugin is the run's decision, not FormID Text Ingestion's. An appending run has never named
+            // one, so it drops the report entirely rather than gaining status updates it does not show today.
+            FormIdTextIngestionPluginFirstEncountered plugin => updateMode == UpdateMode.ReplacePluginRecords
+                ? new ImportingFormIdTextPlugin(plugin.PluginName)
                 : null,
-            _ => throw new ArgumentOutOfRangeException(nameof(value), value, "Unsupported Store progress case.")
+            _ => throw new ArgumentOutOfRangeException(
+                nameof(value),
+                value,
+                "Unsupported FormID Text Ingestion progress case.")
         };
     }
 

@@ -16,9 +16,9 @@ namespace FormID_Database_Manager.Tests.Fakes;
 /// </remarks>
 internal sealed class RecordingRecordStoreSession : IFormIdRecordStoreSession
 {
-    public string? ImportedTextFilePath { get; private set; }
-
-    public UpdateMode? ImportedTextFileUpdateMode { get; private set; }
+    // The session's text-row role is the same recording as the standalone text-row writer fake, so it delegates
+    // rather than repeating the record-and-enumerate loop.
+    private readonly RecordingFormIdTextRowWriter _textRowWriter = new();
 
     public int OptimizeCallCount { get; private set; }
 
@@ -30,13 +30,17 @@ internal sealed class RecordingRecordStoreSession : IFormIdRecordStoreSession
 
     public Exception? DisposeException { get; init; }
 
-    public Action? ImportAction { get; init; }
-
     public Action? OptimizeAction { get; init; }
 
-    public FormIdTextFileImportResult TextFileImportResult { get; init; }
+    /// <summary>
+    ///     The rows the text-row role consumed, in stream order, across every call.
+    /// </summary>
+    public List<FormIdTextRow> WrittenTextRows => _textRowWriter.Rows;
 
-    public IReadOnlyList<FormIdStoreProgress> TextFileProgressReports { get; init; } = [];
+    /// <summary>
+    ///     The Update Mode of the most recent text-row role call, or <see langword="null" /> if it was never called.
+    /// </summary>
+    public UpdateMode? WrittenTextRowsUpdateMode => _textRowWriter.UpdateMode;
 
     public Task<FormIdPluginWriteResult> WritePluginAsync(
         string pluginName,
@@ -48,23 +52,12 @@ internal sealed class RecordingRecordStoreSession : IFormIdRecordStoreSession
     }
 
     /// <inheritdoc />
-    public Task<FormIdTextFileImportResult> ImportFormIdTextFileAsync(
-        string formIdTextFilePath,
+    public Task WriteTextRowsAsync(
+        IAsyncEnumerable<FormIdTextRow> rows,
         UpdateMode updateMode,
-        IProgress<FormIdStoreProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
-        ImportedTextFilePath = formIdTextFilePath;
-        ImportedTextFileUpdateMode = updateMode;
-
-        foreach (var report in TextFileProgressReports)
-        {
-            progress?.Report(report);
-        }
-
-        ImportAction?.Invoke();
-
-        return Task.FromResult(TextFileImportResult);
+        return _textRowWriter.WriteTextRowsAsync(rows, updateMode, cancellationToken);
     }
 
     /// <inheritdoc />

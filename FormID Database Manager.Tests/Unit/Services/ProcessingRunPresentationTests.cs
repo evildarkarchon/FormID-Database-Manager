@@ -60,30 +60,31 @@ public sealed class ProcessingRunPresentationTests
     [Fact]
     public void Render_FormIdTextImportInFlight_ComputesThePercentageFromTheByteCounts()
     {
-        var rendered = ProcessingRunPresentation.Render(new ImportingFormIdText(1_000, 16, 64, null));
+        var rendered = ProcessingRunPresentation.Render(new ImportingFormIdText(1_000, 16, 64));
 
         Assert.Equal(25, rendered.Value);
     }
 
     /// <summary>
-    ///     Verifies that a Store reporting no total bytes yields a zero percentage rather than a division by zero.
+    ///     Verifies that a report of no total bytes yields a zero percentage rather than a division by zero.
     /// </summary>
     [Fact]
     public void Render_FormIdTextImportWithNoTotalBytes_ReportsZeroPercentInsteadOfNaN()
     {
-        var rendered = ProcessingRunPresentation.Render(new ImportingFormIdText(500, 0, 0, null));
+        var rendered = UnderInvariantCulture(() =>
+            ProcessingRunPresentation.Render(new ImportingFormIdText(500, 0, 0)));
 
-        Assert.Equal(0, rendered.Value);
+        Assert.Equal(new RenderedRunProgress("Processing: 0.0% (500 records)", 0), rendered);
         Assert.DoesNotContain("NaN", rendered.Status, StringComparison.Ordinal);
     }
 
     /// <summary>
-    ///     Verifies the status that opens an import — no records counted and no Plugin named.
+    ///     Verifies the status that opens an import, which the run states as its own case rather than as counters.
     /// </summary>
     [Fact]
-    public void Render_FormIdTextImportOpening_ReportsTheStartingStatus()
+    public void Render_OpeningFormIdText_ReportsTheStartingStatusAtZeroPercent()
     {
-        var rendered = ProcessingRunPresentation.Render(new ImportingFormIdText(0, 0, 65_536, null));
+        var rendered = ProcessingRunPresentation.Render(new OpeningFormIdText());
 
         Assert.Equal(new RenderedRunProgress("Starting processing...", 0), rendered);
     }
@@ -96,16 +97,15 @@ public sealed class ProcessingRunPresentationTests
     ///     a null value as "keep the value you have".
     /// </remarks>
     [Fact]
-    public void Render_FormIdTextImportNamingAPlugin_ReportsNoPercentage()
+    public void Render_ImportingFormIdTextPlugin_NamesThePluginWithNoPercentage()
     {
-        var rendered = ProcessingRunPresentation.Render(new ImportingFormIdText(1_000, 16, 64, "PluginA.esp"));
+        var rendered = ProcessingRunPresentation.Render(new ImportingFormIdTextPlugin("PluginA.esp"));
 
-        Assert.Equal("Processing plugin: PluginA.esp", rendered.Status);
-        Assert.Null(rendered.Value);
+        Assert.Equal(new RenderedRunProgress("Processing plugin: PluginA.esp", null), rendered);
     }
 
     /// <summary>
-    ///     Verifies the status a finished import reports, which restates the counts the Store confirmed.
+    ///     Verifies the status a finished import reports, which restates the counts FormID Text Ingestion read.
     /// </summary>
     [Fact]
     public void Render_ImportedFormIdText_ReportsThePluginAndRecordCountsAtFullProgress()
@@ -183,7 +183,7 @@ public sealed class ProcessingRunPresentationTests
     public void Render_FormIdTextImportInFlight_GroupsTheRecordCount()
     {
         var rendered = UnderInvariantCulture(() =>
-            ProcessingRunPresentation.Render(new ImportingFormIdText(2_000, 32, 64, null)));
+            ProcessingRunPresentation.Render(new ImportingFormIdText(2_000, 32, 64)));
 
         Assert.Equal("Processing: 50.0% (2,000 records)", rendered.Status);
     }
@@ -196,7 +196,7 @@ public sealed class ProcessingRunPresentationTests
     public void Render_FormIdTextImportAtAnUnroundPercentage_RoundsTheStatusButNotTheValue()
     {
         var rendered = UnderInvariantCulture(() =>
-            ProcessingRunPresentation.Render(new ImportingFormIdText(2_000, 64_512, 65_536, null)));
+            ProcessingRunPresentation.Render(new ImportingFormIdText(2_000, 64_512, 65_536)));
 
         Assert.Equal("Processing: 98.4% (2,000 records)", rendered.Status);
         Assert.Equal(98.4375, rendered.Value);
@@ -466,7 +466,7 @@ public sealed class ProcessingRunPresentationTests
     }
 
     /// <summary>
-    ///     Verifies the completion status of a FormID text-file run, which reports the counts the Store confirmed.
+    ///     Verifies the completion status of a FormID text-file run, which reports the counts FormID Text Ingestion read.
     /// </summary>
     /// <remarks>
     ///     This is one of the two strings parent #61 changed on purpose: a text run used to end with a flat

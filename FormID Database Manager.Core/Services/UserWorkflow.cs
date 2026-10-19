@@ -123,10 +123,10 @@ public sealed class UserWorkflow : IDisposable
     ///     <para>
     ///         This is the only production composition. It wires Game Installation resolution over the production
     ///         installation probe, one Game Load Orders instance shared by the Plugin List and Plugin Ingestion
-    ///         (ADR-0008), and the Processing Run executor over Plugin Ingestion and the production FormID Record Store
-    ///         session opener, which keeps Store opening and disposal per-run inside the executor (ADR-0001). Every
-    ///         constructor involved only stores its dependencies, so building the graph reads no game installation,
-    ///         load order, or file.
+    ///         (ADR-0008), and the Processing Run executor over Plugin Ingestion, FormID Text Ingestion, and the
+    ///         production FormID Record Store session opener, which keeps Store opening and disposal per-run inside the
+    ///         executor (ADR-0001). Every constructor involved only stores its dependencies, so building the graph reads
+    ///         no game installation, load order, or file.
     ///     </para>
     ///     <para>
     ///         Composition lives here rather than in a separate composition module because such a module fails the
@@ -149,6 +149,7 @@ public sealed class UserWorkflow : IDisposable
         var gameLoadOrders = new GameLoadOrders();
         var processingRunExecutor = new ProcessingRunExecutor(
             new PluginIngestion(gameLoadOrders),
+            new FormIdTextIngestion(),
             new FormIdRecordStoreSessionOpener());
         var pluginList = new PluginList(gameLoadOrders);
 

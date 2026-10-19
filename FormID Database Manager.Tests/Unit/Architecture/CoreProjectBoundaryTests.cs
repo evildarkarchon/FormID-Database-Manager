@@ -212,21 +212,26 @@ public class CoreProjectBoundaryTests
 
     /// <summary>
     ///     Verifies that the wording the FormID Record Store used to write onto its progress path has not come back,
-    ///     leaving both the words and the decision to name a Plugin to whoever renders the counters it reports.
+    ///     neither in the Store nor in FormID Text Ingestion, which now owns that progress, leaving both the words and
+    ///     the decision to name a Plugin to whoever renders the counters it reports.
     /// </summary>
     /// <remarks>
     ///     This pins the three retired sentences by name rather than proving the absence of prose in general, which no
     ///     source-text guard can do. What the app does say is pinned by <c>ProcessingRunPresentationTests</c>, not here.
     /// </remarks>
     [Fact]
-    public void FormIdRecordStore_TextImportProgress_DoesNotContainTheRetiredProgressWording()
+    public void FormIdRecordStoreAndFormIdTextIngestion_TextImportProgress_DoNotContainTheRetiredProgressWording()
     {
-        var storeSource = File.ReadAllText(
-            Path.Combine(GetCoreProjectDirectory(), "Services", "FormIdRecordStore.cs"));
+        var servicesDirectory = Path.Combine(GetCoreProjectDirectory(), "Services");
 
-        Assert.DoesNotContain("Starting processing", storeSource, StringComparison.Ordinal);
-        Assert.DoesNotContain("Processing plugin", storeSource, StringComparison.Ordinal);
-        Assert.DoesNotContain("Completed processing", storeSource, StringComparison.Ordinal);
+        foreach (var sourceFile in new[] { "FormIdRecordStore.cs", "FormIdTextIngestion.cs" })
+        {
+            var source = File.ReadAllText(Path.Combine(servicesDirectory, sourceFile));
+
+            Assert.DoesNotContain("Starting processing", source, StringComparison.Ordinal);
+            Assert.DoesNotContain("Processing plugin", source, StringComparison.Ordinal);
+            Assert.DoesNotContain("Completed processing", source, StringComparison.Ordinal);
+        }
     }
 
     /// <summary>
@@ -307,11 +312,42 @@ public class CoreProjectBoundaryTests
             [
                 nameof(ImportedFormIdText),
                 nameof(ImportingFormIdText),
+                nameof(ImportingFormIdTextPlugin),
                 nameof(IngestingPlugin),
+                nameof(OpeningFormIdText),
                 nameof(PreparingLoadOrder)
             ],
             progressCases);
         Assert.DoesNotContain("Error during processing", presentationSource, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    ///     Verifies that a FormID text import's opening is a case of its own at the run level, and that neither the
+    ///     executor nor Processing Run Presentation reads it out of a zero record count any more.
+    /// </summary>
+    /// <remarks>
+    ///     Issue #112, under parent #108 (ADR-0007, 2026-10-18 note). The counter case no longer names a Plugin, so a
+    ///     report of no records cannot mean anything but counters; this pins the retired decode by its text so it does
+    ///     not creep back beside the explicit case.
+    /// </remarks>
+    [Fact]
+    public void ProcessingRunProgress_FormIdTextOpening_IsAnExplicitCaseNotADecodedRecordCount()
+    {
+        var importingParameters = typeof(ImportingFormIdText).GetConstructors()
+            .Select(static constructor => constructor.GetParameters())
+            .Single(static parameters => parameters.All(static parameter => parameter.ParameterType == typeof(long)))
+            .Select(static parameter => parameter.Name!)
+            .ToArray();
+        var servicesDirectory = Path.Combine(GetCoreProjectDirectory(), "Services");
+        var presentationSource = File.ReadAllText(Path.Combine(servicesDirectory, "ProcessingRunPresentation.cs"));
+        var executorSource = File.ReadAllText(Path.Combine(servicesDirectory, "ProcessingRun.cs"));
+
+        Assert.Equal(["RecordCount", "BytesRead", "TotalBytes"], importingParameters);
+        Assert.DoesNotContain(
+            typeof(OpeningFormIdText).GetProperties(),
+            static property => property.DeclaringType == typeof(OpeningFormIdText));
+        Assert.DoesNotContain("RecordCount == 0", presentationSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("RecordCount == 0", executorSource, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -805,6 +841,109 @@ public class CoreProjectBoundaryTests
         Assert.DoesNotContain("FormIdRecordStore.OpenAsync", pluginIngestionSource, StringComparison.Ordinal);
         Assert.DoesNotContain("OptimizeAsync(", pluginIngestionSource, StringComparison.Ordinal);
         Assert.DoesNotContain("DisposeAsync(", pluginIngestionSource, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    ///     Verifies the text-row writer role and its row type are declared with FormID Text Ingestion's contracts, which
+    ///     own them, and not with the Store that implements the role (ADR-0001, 2026-10-18).
+    /// </summary>
+    [Fact]
+    public void CoreServices_TextRowWriterRole_IsDeclaredWithFormIdTextIngestionContractsNotTheStore()
+    {
+        var servicesDirectory = Path.Combine(GetCoreProjectDirectory(), "Services");
+        var contractsSource =
+            File.ReadAllText(Path.Combine(servicesDirectory, "FormIdTextIngestionContracts.cs"));
+        string[] storeSources =
+        [
+            File.ReadAllText(Path.Combine(servicesDirectory, "FormIdRecordStore.cs")),
+            File.ReadAllText(Path.Combine(servicesDirectory, "FormIdRecordStoreSession.cs"))
+        ];
+
+        Assert.Contains("internal interface IFormIdTextRowWriter", contractsSource, StringComparison.Ordinal);
+        Assert.Contains("internal readonly record struct FormIdTextRow(", contractsSource, StringComparison.Ordinal);
+        Assert.All(storeSources, source =>
+        {
+            Assert.DoesNotContain("interface IFormIdTextRowWriter", source, StringComparison.Ordinal);
+            Assert.DoesNotContain("record struct FormIdTextRow(", source, StringComparison.Ordinal);
+        });
+    }
+
+    /// <summary>
+    ///     Verifies FormID Text Ingestion has one implementation, constructed only by the User Workflow's production
+    ///     composition and the executor's test-only parameterless constructor, and that the Processing Run no longer
+    ///     reads FormID text files itself (issue #110, ADR-0001 2026-10-18).
+    /// </summary>
+    [Fact]
+    public void CoreServices_FormIdTextIngestion_IsComposedByUserWorkflowAndOwnsTextFileReading()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var coreProjectDirectory = GetCoreProjectDirectory();
+        var implementations = typeof(FormIdTextIngestion).Assembly
+            .GetTypes()
+            .Where(type => !type.IsAbstract && typeof(IFormIdTextIngestion).IsAssignableFrom(type))
+            .ToArray();
+        var constructingSources = new[]
+            {
+                coreProjectDirectory,
+                Path.Combine(repositoryRoot, "FormID Database Manager.WinUI")
+            }
+            .SelectMany(directory => Directory.EnumerateFiles(directory, "*.cs", SearchOption.AllDirectories))
+            .Where(path => !IsBuildOutput(path))
+            .Where(path => File.ReadAllText(path).Contains("new FormIdTextIngestion(", StringComparison.Ordinal))
+            .Select(path => Path.GetRelativePath(coreProjectDirectory, path))
+            .OrderBy(static path => path, StringComparer.Ordinal)
+            .ToArray();
+        var processingRunSource =
+            File.ReadAllText(Path.Combine(coreProjectDirectory, "Services", "ProcessingRun.cs"));
+
+        Assert.Equal([typeof(FormIdTextIngestion)], implementations);
+        // ProcessingRun.cs constructs it only in the parameterless constructor tests use; production composes the
+        // executor in UserWorkflow.Create.
+        Assert.Equal(
+            [Path.Combine("Services", "ProcessingRun.cs"), Path.Combine("Services", "UserWorkflow.cs")],
+            constructingSources);
+        Assert.Contains("IFormIdTextIngestion", processingRunSource, StringComparison.Ordinal);
+        Assert.All(
+            ["FileInfo", "FileStream", "StreamReader", "ImportFormIdTextFileAsync", "FormIdStoreProgress"],
+            fileReadingMember =>
+                Assert.DoesNotContain(fileReadingMember, processingRunSource, StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    ///     Verifies the FormID Record Store's FormID text import is retired with no forwarding shim: no import operation
+    ///     on the Store or its run-scoped session, no Store progress hierarchy, no Store line parser or text progress
+    ///     interval, and no FormID text file reading in the Store's sources (issue #111, ADR-0001 2026-10-18).
+    /// </summary>
+    /// <remarks>
+    ///     The retired members are looked up by name because their types no longer exist to be named in code. FormID
+    ///     Text Ingestion is now the only reader of a FormID text file; the Store persists the rows it is handed.
+    /// </remarks>
+    [Fact]
+    public void FormIdRecordStore_AfterFormIdTextIngestion_HasNoTextImportProgressOrLineParser()
+    {
+        const BindingFlags allMembers = BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public |
+                                        BindingFlags.NonPublic | BindingFlags.DeclaredOnly;
+        var coreTypeNames = typeof(FormIdRecordStore).Assembly.GetTypes().Select(type => type.Name).ToHashSet();
+        var servicesDirectory = Path.Combine(GetCoreProjectDirectory(), "Services");
+        string[] storeSources =
+        [
+            File.ReadAllText(Path.Combine(servicesDirectory, "FormIdRecordStore.cs")),
+            File.ReadAllText(Path.Combine(servicesDirectory, "FormIdRecordStoreSession.cs"))
+        ];
+
+        Assert.All(
+            ["FormIdStoreProgress", "FormIdStoreCounterUpdate", "FormIdStorePluginFirstEncountered"],
+            retiredType => Assert.DoesNotContain(retiredType, coreTypeNames));
+        Assert.All(
+            [typeof(FormIdRecordStore), typeof(IFormIdRecordStoreSession)],
+            storeType => Assert.Empty(storeType.GetMember("ImportFormIdTextFileAsync", allMembers)));
+        Assert.All(
+            ["TextProgressInterval", "TryParseFormIdTextLine"],
+            retiredMember => Assert.Empty(typeof(FormIdRecordStore).GetMember(retiredMember, allMembers)));
+        Assert.All(storeSources, source =>
+            Assert.All(
+                ["FileInfo", "FileStream", "StreamReader"],
+                fileReadingMember => Assert.DoesNotContain(fileReadingMember, source, StringComparison.Ordinal)));
     }
 
     /// <summary>
