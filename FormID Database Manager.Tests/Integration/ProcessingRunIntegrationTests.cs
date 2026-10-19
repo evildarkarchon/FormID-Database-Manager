@@ -110,7 +110,7 @@ public sealed class ProcessingRunIntegrationTests : IDisposable
         // update falls due, and append mode names no Plugin.
         Assert.Equal(
             [
-                new ImportingFormIdText(0, 0, new FileInfo(formIdTextFilePath).Length, null),
+                new OpeningFormIdText(),
                 new ImportedFormIdText(new FormIdTextFileImportResult(2, 3))
             ],
             reports);

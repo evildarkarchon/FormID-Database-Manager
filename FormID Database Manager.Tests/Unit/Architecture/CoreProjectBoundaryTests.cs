@@ -307,11 +307,42 @@ public class CoreProjectBoundaryTests
             [
                 nameof(ImportedFormIdText),
                 nameof(ImportingFormIdText),
+                nameof(ImportingFormIdTextPlugin),
                 nameof(IngestingPlugin),
+                nameof(OpeningFormIdText),
                 nameof(PreparingLoadOrder)
             ],
             progressCases);
         Assert.DoesNotContain("Error during processing", presentationSource, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    ///     Verifies that a FormID text import's opening is a case of its own at the run level, and that neither the
+    ///     executor nor Processing Run Presentation reads it out of a zero record count any more.
+    /// </summary>
+    /// <remarks>
+    ///     Issue #112, under parent #108 (ADR-0007, 2026-10-18 note). The counter case no longer names a Plugin, so a
+    ///     report of no records cannot mean anything but counters; this pins the retired decode by its text so it does
+    ///     not creep back beside the explicit case.
+    /// </remarks>
+    [Fact]
+    public void ProcessingRunProgress_FormIdTextOpening_IsAnExplicitCaseNotADecodedRecordCount()
+    {
+        var importingParameters = typeof(ImportingFormIdText).GetConstructors()
+            .Select(static constructor => constructor.GetParameters())
+            .Single(static parameters => parameters.All(static parameter => parameter.ParameterType == typeof(long)))
+            .Select(static parameter => parameter.Name!)
+            .ToArray();
+        var servicesDirectory = Path.Combine(GetCoreProjectDirectory(), "Services");
+        var presentationSource = File.ReadAllText(Path.Combine(servicesDirectory, "ProcessingRunPresentation.cs"));
+        var executorSource = File.ReadAllText(Path.Combine(servicesDirectory, "ProcessingRun.cs"));
+
+        Assert.Equal(["RecordCount", "BytesRead", "TotalBytes"], importingParameters);
+        Assert.DoesNotContain(
+            typeof(OpeningFormIdText).GetProperties(),
+            static property => property.DeclaringType == typeof(OpeningFormIdText));
+        Assert.DoesNotContain("RecordCount == 0", presentationSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("RecordCount == 0", executorSource, StringComparison.Ordinal);
     }
 
     /// <summary>

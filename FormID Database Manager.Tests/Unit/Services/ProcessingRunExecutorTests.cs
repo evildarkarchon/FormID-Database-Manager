@@ -310,16 +310,16 @@ public sealed class ProcessingRunExecutorTests : IDisposable
 
         Assert.Equal(
             [
-                new ImportingFormIdText(0, 0, 64, null),
-                new ImportingFormIdText(1000, 32, 64, null),
+                new OpeningFormIdText(),
+                new ImportingFormIdText(1000, 32, 64),
                 new ImportedFormIdText(new FormIdTextFileImportResult(2, 1001))
             ],
             reports);
     }
 
     /// <summary>
-    ///     Verifies that a replacing text run restates the opening as zero counters naming no Plugin, each counter
-    ///     update without a Plugin, and each first encounter as a report naming that Plugin, in the order FormID Text
+    ///     Verifies that a replacing text run restates the opening as the run's opening case, each counter update as
+    ///     the run's counter case, and each first encounter as the run's named-Plugin case, in the order FormID Text
     ///     Ingestion reported them.
     /// </summary>
     [Fact]
@@ -329,10 +329,10 @@ public sealed class ProcessingRunExecutorTests : IDisposable
 
         Assert.Equal(
             [
-                new ImportingFormIdText(0, 0, 64, null),
-                new ImportingFormIdText(1, 16, 64, "PluginA.esp"),
-                new ImportingFormIdText(1000, 32, 64, null),
-                new ImportingFormIdText(1001, 48, 64, "PluginB.esp"),
+                new OpeningFormIdText(),
+                new ImportingFormIdTextPlugin("PluginA.esp"),
+                new ImportingFormIdText(1000, 32, 64),
+                new ImportingFormIdTextPlugin("PluginB.esp"),
                 new ImportedFormIdText(new FormIdTextFileImportResult(2, 1001))
             ],
             reports);
