@@ -105,7 +105,7 @@ public sealed class ProcessingRunPresentationTests
     }
 
     /// <summary>
-    ///     Verifies the status a finished import reports, which restates the counts the Store confirmed.
+    ///     Verifies the status a finished import reports, which restates the counts FormID Text Ingestion read.
     /// </summary>
     [Fact]
     public void Render_ImportedFormIdText_ReportsThePluginAndRecordCountsAtFullProgress()
@@ -466,7 +466,7 @@ public sealed class ProcessingRunPresentationTests
     }
 
     /// <summary>
-    ///     Verifies the completion status of a FormID text-file run, which reports the counts the Store confirmed.
+    ///     Verifies the completion status of a FormID text-file run, which reports the counts FormID Text Ingestion read.
     /// </summary>
     /// <remarks>
     ///     This is one of the two strings parent #61 changed on purpose: a text run used to end with a flat

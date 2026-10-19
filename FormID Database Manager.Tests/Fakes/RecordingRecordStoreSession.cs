@@ -16,6 +16,10 @@ namespace FormID_Database_Manager.Tests.Fakes;
 /// </remarks>
 internal sealed class RecordingRecordStoreSession : IFormIdRecordStoreSession
 {
+    // The session's text-row role is the same recording as the standalone text-row writer fake, so it delegates
+    // rather than repeating the record-and-enumerate loop.
+    private readonly RecordingFormIdTextRowWriter _textRowWriter = new();
+
     public int OptimizeCallCount { get; private set; }
 
     public CancellationToken? OptimizeCancellationToken { get; private set; }
@@ -31,12 +35,12 @@ internal sealed class RecordingRecordStoreSession : IFormIdRecordStoreSession
     /// <summary>
     ///     The rows the text-row role consumed, in stream order, across every call.
     /// </summary>
-    public List<FormIdTextRow> WrittenTextRows { get; } = [];
+    public List<FormIdTextRow> WrittenTextRows => _textRowWriter.Rows;
 
     /// <summary>
     ///     The Update Mode of the most recent text-row role call, or <see langword="null" /> if it was never called.
     /// </summary>
-    public UpdateMode? WrittenTextRowsUpdateMode { get; private set; }
+    public UpdateMode? WrittenTextRowsUpdateMode => _textRowWriter.UpdateMode;
 
     public Task<FormIdPluginWriteResult> WritePluginAsync(
         string pluginName,
@@ -47,21 +51,13 @@ internal sealed class RecordingRecordStoreSession : IFormIdRecordStoreSession
         return Task.FromResult(new FormIdPluginWriteResult(0));
     }
 
-    /// <summary>
-    ///     Consumes the stream exactly once, as the role's contract requires, recording each row and the Update Mode.
-    /// </summary>
     /// <inheritdoc />
-    public async Task WriteTextRowsAsync(
+    public Task WriteTextRowsAsync(
         IAsyncEnumerable<FormIdTextRow> rows,
         UpdateMode updateMode,
         CancellationToken cancellationToken = default)
     {
-        WrittenTextRowsUpdateMode = updateMode;
-
-        await foreach (var row in rows.WithCancellation(cancellationToken).ConfigureAwait(false))
-        {
-            WrittenTextRows.Add(row);
-        }
+        return _textRowWriter.WriteTextRowsAsync(rows, updateMode, cancellationToken);
     }
 
     /// <inheritdoc />

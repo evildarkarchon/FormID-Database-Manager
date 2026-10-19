@@ -76,7 +76,7 @@ public sealed class FormIdRecordStore : IFormIdRecordStoreSession
     private const string StagingTableName = "temp_formid_record_staging";
 
     private readonly SqliteConnection _connection;
-    private readonly List<(string PluginName, string FormId, string Entry)> _stagingBatch = new(TextStagingBatchSize);
+    private readonly List<FormIdTextRow> _stagingBatch = new(TextStagingBatchSize);
     private readonly string _tableName;
     private SqliteCommand? _stagingInsertCommand;
 
@@ -378,8 +378,7 @@ public sealed class FormIdRecordStore : IFormIdRecordStoreSession
         {
             await foreach (var row in rows.WithCancellation(cancellationToken).ConfigureAwait(false))
             {
-                await StageTextRecordAsync(row.Plugin, row.FormId, row.Entry, cancellationToken)
-                    .ConfigureAwait(false);
+                await StageTextRecordAsync(row, cancellationToken).ConfigureAwait(false);
             }
 
             await CommitStagedTextRecordsAsync(replaceExistingPluginRows, cancellationToken).ConfigureAwait(false);
@@ -387,7 +386,8 @@ public sealed class FormIdRecordStore : IFormIdRecordStoreSession
         catch
         {
             // The Store is reusable, so an aborted import must not expose staged rows to the next import. This covers
-            // a failing stream and cancellation while staging; the commit clears staging itself on its own failures.
+            // a failing stream and cancellation while staging. A failing commit also lands here, after its own finally
+            // has already cleared staging, so clearing again is a harmless repeat rather than the cleanup it relies on.
             _stagingBatch.Clear();
             await ClearStagingTableBestEffortAsync().ConfigureAwait(false);
             throw;
@@ -397,23 +397,19 @@ public sealed class FormIdRecordStore : IFormIdRecordStoreSession
     /// <summary>
     ///     Stages one parsed FormID text row in SQLite for a later plugin-scoped commit.
     /// </summary>
-    /// <param name="pluginName">The Plugin value from the FormID text row.</param>
-    /// <param name="formId">The FormID value from the FormID text row.</param>
-    /// <param name="entry">The Entry value from the FormID text row.</param>
+    /// <param name="row">The FormID text row to stage.</param>
     /// <param name="cancellationToken">Token to monitor for cancellation.</param>
-    private async Task StageTextRecordAsync(
-        string pluginName,
-        string formId,
-        string entry,
-        CancellationToken cancellationToken = default)
+    /// <exception cref="ArgumentNullException">A field of <paramref name="row" /> is null.</exception>
+    private async Task StageTextRecordAsync(FormIdTextRow row, CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(pluginName);
-        ArgumentNullException.ThrowIfNull(formId);
-        ArgumentNullException.ThrowIfNull(entry);
+        // The row is a record struct, so a default row carries null fields despite the non-nullable annotations.
+        ArgumentNullException.ThrowIfNull(row.Plugin);
+        ArgumentNullException.ThrowIfNull(row.FormId);
+        ArgumentNullException.ThrowIfNull(row.Entry);
 
         cancellationToken.ThrowIfCancellationRequested();
 
-        _stagingBatch.Add((pluginName, formId, entry));
+        _stagingBatch.Add(row);
 
         if (_stagingBatch.Count >= TextStagingBatchSize)
         {

@@ -21,8 +21,9 @@ namespace FormID_Database_Manager.Tests.Unit.Services;
 /// </summary>
 /// <remarks>
 ///     Issue #110, under parent #108. These tests use temporary files and a recording text-row writer, and no SQLite:
-///     staging and per-Plugin commits are the FormID Record Store's and are tested there. The parsing, progress, and
-///     plan tests moved here from the executor tests, which now run against a fake FormID Text Ingestion.
+///     staging and per-Plugin commits are the FormID Record Store's and are tested there. The parsing and progress
+///     tests moved here from the FormID Record Store tests, whose text-file import operation was retired. The plan
+///     tests moved here from the executor tests, which now run against a fake FormID Text Ingestion.
 /// </remarks>
 public sealed class FormIdTextIngestionTests : IDisposable
 {

@@ -220,7 +220,7 @@ public class CoreProjectBoundaryTests
     ///     source-text guard can do. What the app does say is pinned by <c>ProcessingRunPresentationTests</c>, not here.
     /// </remarks>
     [Fact]
-    public void FormIdRecordStore_TextImportProgress_DoesNotContainTheRetiredProgressWording()
+    public void FormIdRecordStoreAndFormIdTextIngestion_TextImportProgress_DoNotContainTheRetiredProgressWording()
     {
         var servicesDirectory = Path.Combine(GetCoreProjectDirectory(), "Services");
 

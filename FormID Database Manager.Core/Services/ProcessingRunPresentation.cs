@@ -249,7 +249,7 @@ internal static class ProcessingRunPresentation
     }
 
     /// <summary>
-    ///     Renders the completion status of a FormID text-file run from the counts the Store confirmed.
+    ///     Renders the completion status of a FormID text-file run from the counts FormID Text Ingestion read.
     /// </summary>
     /// <param name="importResult">The distinct Plugin and valid record counts of the import.</param>
     /// <returns>The rendered report for the run.</returns>

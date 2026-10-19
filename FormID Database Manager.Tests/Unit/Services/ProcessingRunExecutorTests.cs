@@ -246,6 +246,7 @@ public sealed class ProcessingRunExecutorTests : IDisposable
         Assert.Equal(0, ingestion.IngestCallCount);
         Assert.Equal(["PluginA.esp"], AssertPlannedPluginNames(outcome));
     }
+
     /// <summary>
     ///     Verifies that a FormID text run opens the Store for the request and hands FormID Text Ingestion the request,
     ///     the opened session's text-row role, and the caller's token; then reports the finished import, optimizes,

@@ -728,6 +728,50 @@ public sealed class FormIdRecordStoreTests : IDisposable
     }
 
     /// <summary>
+    ///     Verifies that when several Plugin commits fail in one call, each failing Plugin rolls back, the failures are
+    ///     aggregated rather than the first one winning, the remaining Plugins still commit, and the next call on the
+    ///     same Store commits no stale staged rows.
+    /// </summary>
+    [Fact]
+    public async Task WriteTextRowsAsync_SeveralPluginCommitsFail_ThrowsAggregateAndReusedStoreCommitsNoStaleRows()
+    {
+        await InsertTestRecordAsync("Plugin1.esp", "000001", "OldPlugin1");
+        await InsertTestRecordAsync("Plugin2.esp", "000002", "OldPlugin2");
+        await CreateFailingInsertTriggerAsync("BadEntry");
+        await using var store = await OpenStoreAsync();
+        IFormIdTextRowWriter writer = store;
+
+        var thrown = await Assert.ThrowsAsync<AggregateException>(() => writer.WriteTextRowsAsync(
+            StreamRowsAsync(
+            [
+                new FormIdTextRow("Plugin1.esp", "000010", "GoodEntry"),
+                new FormIdTextRow("Plugin1.esp", "000011", "BadEntry"),
+                new FormIdTextRow("Plugin2.esp", "000020", "BadEntry"),
+                new FormIdTextRow("Plugin3.esp", "000030", "NewPlugin3")
+            ]),
+            UpdateMode.ReplacePluginRecords,
+            TestContext.Current.CancellationToken));
+
+        Assert.Equal(2, thrown.InnerExceptions.Count);
+        Assert.All(thrown.InnerExceptions, failure => Assert.IsType<SqliteException>(failure));
+
+        await writer.WriteTextRowsAsync(
+            StreamRowsAsync([new FormIdTextRow("Fresh.esp", "FFFFFF", "FreshEntry")]),
+            UpdateMode.Append,
+            TestContext.Current.CancellationToken);
+
+        var records = await store.ReadRecordsAsync(FormIdRecordQuery.All, TestContext.Current.CancellationToken);
+        Assert.Equal(
+            [
+                new FormIdStoredRecord("Plugin1.esp", "000001", "OldPlugin1"),
+                new FormIdStoredRecord("Plugin2.esp", "000002", "OldPlugin2"),
+                new FormIdStoredRecord("Plugin3.esp", "000030", "NewPlugin3"),
+                new FormIdStoredRecord("Fresh.esp", "FFFFFF", "FreshEntry")
+            ],
+            records);
+    }
+
+    /// <summary>
     ///     Verifies that cancellation after a staging flush commits nothing and leaves no staged rows for the next
     ///     call on the same Store.
     /// </summary>
