@@ -39,6 +39,25 @@ public sealed class ProcessingRunControlTests : IDisposable
     private const string PluginName = "User.esp";
 
     /// <summary>
+    ///     How a run ends, for the theory that covers every ending.
+    /// </summary>
+    /// <remarks>Public because a public theory method takes it as a parameter.</remarks>
+    public enum RunEnding
+    {
+        /// <summary>The run completes a FormID text import.</summary>
+        Completed,
+
+        /// <summary>The run observes cancellation and returns the cancelled outcome.</summary>
+        Cancelled,
+
+        /// <summary>The run is a Dry Run and returns its plan.</summary>
+        Planned,
+
+        /// <summary>The run fails with an exception.</summary>
+        Failed
+    }
+
+    /// <summary>
     ///     A default database root that is deliberately never created; admission only computes paths under it.
     /// </summary>
     private readonly string _defaultDatabaseRoot =
@@ -363,6 +382,41 @@ public sealed class ProcessingRunControlTests : IDisposable
     }
 
     /// <summary>
+    ///     Verifies that a press re-entering from the list clear leaves its cancellation-requested activity as the last
+    ///     thing the run shows before it ends: the starting activity is never published after it, which would put the
+    ///     older status back on the channel.
+    /// </summary>
+    [Fact]
+    public async Task PressAsync_PressedFromTheListClear_DoesNotPublishTheStartingActivityAfterTheCancellation()
+    {
+        using var sut = CreateSut();
+        var pressedAgain = false;
+        _sink.OnEntry = entry =>
+        {
+            if (pressedAgain || entry is not MessageListsCleared)
+            {
+                return;
+            }
+
+            pressedAgain = true;
+            sut.PressAsync(TextInputs()).GetAwaiter().GetResult();
+        };
+
+        await sut.PressAsync(TextInputs());
+
+        Assert.True(pressedAgain);
+        Assert.Equal(
+            [
+                new MessageListsCleared(),
+                CancellationRequestedActivity(StartingValue()),
+                .. ProcessingRunPresentation.Render(new CancelledRunOutcome()).InformationMessages
+                    .Select(static message => new InformationMessageAdded(message)),
+                new RunActivityReported(ActivityProjection.None)
+            ],
+            _sink.Entries);
+    }
+
+    /// <summary>
     ///     Verifies the real executor over fake Plugin Ingestion and a fake Store opener: a press during the startup
     ///     window makes the run end as cancelled, and no FormID Record Store is ever opened.
     /// </summary>
@@ -489,8 +543,8 @@ public sealed class ProcessingRunControlTests : IDisposable
     }
 
     /// <summary>
-    ///     Verifies that every failure takes one route to the errors, through Presentation's failure renderer: an
-    ///     Unresolvable Master is shown as its own message, and anything else behind the generic prefix.
+    ///     Verifies that every failure, an Unresolvable Master or any other, takes one route to the errors, through
+    ///     Presentation's failure renderer. How each kind reads is pinned by <see cref="ProcessingRunPresentationTests" />.
     /// </summary>
     /// <param name="unresolvableMaster">Whether the run fails with an Unresolvable Master.</param>
     [Theory]
@@ -509,16 +563,6 @@ public sealed class ProcessingRunControlTests : IDisposable
         var error = Assert.IsType<ErrorMessageAdded>(Assert.Single(_sink.Entries, static entry =>
             entry is ErrorMessageAdded));
         Assert.Equal(ProcessingRunPresentation.RenderFailure(failure), error.Message);
-        if (unresolvableMaster)
-        {
-            Assert.Equal(failure.Message, error.Message);
-        }
-        else
-        {
-            Assert.NotEqual(failure.Message, error.Message);
-            Assert.EndsWith(failure.Message, error.Message, StringComparison.Ordinal);
-        }
-
         Assert.Equal(
             [new MessageListsCleared(), StartingActivity(), error, new RunActivityReported(ActivityProjection.None)],
             _sink.Entries);
@@ -530,23 +574,28 @@ public sealed class ProcessingRunControlTests : IDisposable
     /// </summary>
     /// <param name="ending">How the run ends.</param>
     [Theory]
-    [InlineData("Completed")]
-    [InlineData("Cancelled")]
-    [InlineData("Planned")]
-    [InlineData("Failed")]
-    public async Task PressAsync_AnyRunEnding_ReturnsTheActivityToNone(string ending)
+    [InlineData(RunEnding.Completed)]
+    [InlineData(RunEnding.Cancelled)]
+    [InlineData(RunEnding.Planned)]
+    [InlineData(RunEnding.Failed)]
+    public async Task PressAsync_AnyRunEnding_ReturnsTheActivityToNone(RunEnding ending)
     {
         switch (ending)
         {
-            case "Cancelled":
+            case RunEnding.Completed:
+                _executor.Outcome = new FormIdTextRunOutcome(new FormIdTextFileImportResult(0, 0));
+                break;
+            case RunEnding.Cancelled:
                 _executor.Outcome = new CancelledRunOutcome();
                 break;
-            case "Planned":
+            case RunEnding.Planned:
                 _executor.Outcome = new PlannedRunOutcome(new FormIdTextRunPlan(FormIdListPath, null));
                 break;
-            case "Failed":
+            case RunEnding.Failed:
                 _executor.ExecuteFailure = new InvalidOperationException("store unavailable");
                 break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(ending), ending, "Unsupported run ending.");
         }
 
         using var sut = CreateSut();

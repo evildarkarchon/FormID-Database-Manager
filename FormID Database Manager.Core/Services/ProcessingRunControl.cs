@@ -21,7 +21,6 @@ namespace FormID_Database_Manager.Services;
 /// </remarks>
 internal sealed class ProcessingRunControl : IDisposable
 {
-    private readonly string? _defaultDatabaseRoot;
     private readonly IProcessingRunExecutor _executor;
 
     /// <summary>
@@ -66,6 +65,16 @@ internal sealed class ProcessingRunControl : IDisposable
     private ActivityProjection _runActivity = ActivityProjection.None;
 
     /// <summary>
+    ///     The root admission defaults a real run's database under, or null or blank when composition could not resolve
+    ///     one.
+    /// </summary>
+    /// <remarks>
+    ///     This module is the only holder of the root it was composed with; the User Workflow reads it back from here
+    ///     rather than keeping a copy of its own.
+    /// </remarks>
+    internal string? DefaultDatabaseRoot { get; }
+
+    /// <summary>
     ///     Creates the module that decides presses and owns the active run.
     /// </summary>
     /// <param name="executor">
@@ -84,7 +93,7 @@ internal sealed class ProcessingRunControl : IDisposable
         IProcessingRunControlSink sink)
     {
         _executor = executor ?? throw new ArgumentNullException(nameof(executor));
-        _defaultDatabaseRoot = defaultDatabaseRoot;
+        DefaultDatabaseRoot = defaultDatabaseRoot;
         _sink = sink ?? throw new ArgumentNullException(nameof(sink));
     }
 
@@ -170,11 +179,11 @@ internal sealed class ProcessingRunControl : IDisposable
                 // carries no percentage, so the bar stays where the run left it. The message lists are left alone, so
                 // the user keeps reading the messages of the run being cancelled.
                 var cancelling = ProcessingRunPresentation.Render(new ProcessingRunCancellationRequested());
-                ReportRunActivityLocked(cancelling.Status, cancelling.Value);
+                ReportRunActivityLocked(cancelling);
                 return null;
             }
 
-            var decision = ProcessingRunAdmission.Admit(inputs, _defaultDatabaseRoot);
+            var decision = ProcessingRunAdmission.Admit(inputs, DefaultDatabaseRoot);
             switch (decision)
             {
                 case RefusedRun refused:
@@ -208,11 +217,10 @@ internal sealed class ProcessingRunControl : IDisposable
         // press must find an active run with a token to cancel rather than a run with nothing to cancel yet (#104).
         var cancellationSource = new CancellationTokenSource();
         _runCancellationSource = cancellationSource;
-        // This is the transition into an active run, so it sets IsActive itself rather than going through
-        // ReportRunActivityLocked, which never changes whether a run is active. The starting status renders 0 percent;
-        // the carry-forward only applies if a future render omits one.
-        var rendered = ProcessingRunPresentation.Render(new ProcessingRunStarting());
-        var starting = new ActivityProjection(true, rendered.Status, rendered.Value ?? _runActivity.Value);
+        // This is the transition into an active run, so it sets the activity itself rather than going through
+        // ReportRunActivityLocked, which never changes whether a run is active and reports as it applies. The
+        // starting activity is still built by the same rule every later report uses.
+        var starting = NextActiveRunActivity(ProcessingRunPresentation.Render(new ProcessingRunStarting()));
         _runActivity = starting;
 
         // Every press that does not cancel starts the message lists over first, so what the user reads afterwards is
@@ -319,7 +327,9 @@ internal sealed class ProcessingRunControl : IDisposable
 
             if (rendered.Activity.IsActive)
             {
-                ReportRunActivityLocked(rendered.Activity.Status, rendered.Activity.Value);
+                // A terminal activity is a complete projection with a percentage of its own, so it goes through the
+                // same application path as any other report and the carry-forward never applies to it.
+                ReportRunActivityLocked(new RenderedRunProgress(rendered.Activity.Status, rendered.Activity.Value));
             }
         }
     }
@@ -328,23 +338,26 @@ internal sealed class ProcessingRunControl : IDisposable
     ///     Renders one transient report from a run's progress channel and reports it, unless that run has ended.
     /// </summary>
     /// <param name="runProgress">What the run said it is doing.</param>
-    /// <param name="reportingRun">The cancellation source of the run that reported, which identifies it.</param>
+    /// <param name="reportingRunCancellation">
+    ///     The cancellation source of the run that reported. It is that run's identity: the active run is the one whose
+    ///     source <see cref="_runCancellationSource" /> holds.
+    /// </param>
     /// <remarks>
-    ///     A report from a run that is no longer the active one is dropped, so a finished run never puts a stale status
-    ///     back on the channel.
+    ///     A report whose run is no longer the active one — its source was cleared as it ended, or replaced by a later
+    ///     run's — is dropped, so a finished run never puts a stale status back on the channel.
     /// </remarks>
-    private void ReportProgress(ProcessingRunProgress runProgress, CancellationTokenSource reportingRun)
+    private void ReportProgress(ProcessingRunProgress runProgress, CancellationTokenSource reportingRunCancellation)
     {
         var rendered = ProcessingRunPresentation.Render(runProgress);
 
         lock (_lock)
         {
-            if (!ReferenceEquals(_runCancellationSource, reportingRun))
+            if (!ReferenceEquals(_runCancellationSource, reportingRunCancellation))
             {
                 return;
             }
 
-            ReportRunActivityLocked(rendered.Status, rendered.Value);
+            ReportRunActivityLocked(rendered);
         }
     }
 
@@ -352,20 +365,36 @@ internal sealed class ProcessingRunControl : IDisposable
     ///     Reports new activity for the active run, carrying the last percentage forward when the render omits one,
     ///     with the caller holding <see cref="_lock" />.
     /// </summary>
-    /// <param name="status">The already-rendered status text.</param>
-    /// <param name="value">The rendered percentage, or null to keep the percentage already shown.</param>
+    /// <param name="rendered">The already-rendered status, and its percentage or null to keep the one shown.</param>
     /// <remarks>
     ///     Whether a run is active is never changed here, and nothing is reported while no run is active.
     /// </remarks>
-    private void ReportRunActivityLocked(string status, double? value)
+    private void ReportRunActivityLocked(RenderedRunProgress rendered)
     {
         if (!_runActivity.IsActive)
         {
             return;
         }
 
-        _runActivity = _runActivity with { Status = status, Value = value ?? _runActivity.Value };
+        _runActivity = NextActiveRunActivity(rendered);
         _sink.ReportRunActivity(_runActivity);
+    }
+
+    /// <summary>
+    ///     Builds the active run activity a rendered report implies, with the caller holding <see cref="_lock" />.
+    /// </summary>
+    /// <param name="rendered">The already-rendered status, and its percentage or null to keep the one shown.</param>
+    /// <returns>
+    ///     An active activity with the rendered status, and the rendered percentage or, when the render omits one, the
+    ///     percentage the current activity shows.
+    /// </returns>
+    /// <remarks>
+    ///     This is the only place the carry-forward rule lives, for the starting activity and every later report alike.
+    ///     It reads <see cref="_runActivity" /> but neither changes it nor reports anything.
+    /// </remarks>
+    private ActivityProjection NextActiveRunActivity(RenderedRunProgress rendered)
+    {
+        return new ActivityProjection(true, rendered.Status, rendered.Value ?? _runActivity.Value);
     }
 
     /// <summary>
@@ -379,14 +408,17 @@ internal sealed class ProcessingRunControl : IDisposable
     ///     The progress reporter one run is handed, which tags each report with the run it came from.
     /// </summary>
     /// <param name="owner">The module the run belongs to.</param>
-    /// <param name="run">The run's cancellation source, used as its identity.</param>
-    private sealed class RunProgressReporter(ProcessingRunControl owner, CancellationTokenSource run)
+    /// <param name="runCancellation">
+    ///     The run's cancellation source, used as its identity: a report that arrives once this is no longer the active
+    ///     run's source is dropped by <see cref="ProcessingRunControl.ReportProgress" />.
+    /// </param>
+    private sealed class RunProgressReporter(ProcessingRunControl owner, CancellationTokenSource runCancellation)
         : IProgress<ProcessingRunProgress>
     {
         /// <inheritdoc />
         public void Report(ProcessingRunProgress value)
         {
-            owner.ReportProgress(value, run);
+            owner.ReportProgress(value, runCancellation);
         }
     }
 }

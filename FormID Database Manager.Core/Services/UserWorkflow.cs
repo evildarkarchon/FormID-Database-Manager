@@ -47,9 +47,10 @@ public sealed class UserWorkflow : IDisposable
     /// </summary>
     /// <remarks>
     ///     Resolved once by <see cref="Create" /> from the local application data directory and injected, so no other
-    ///     production code reads that location on its own and tests can supply a root that is never created.
+    ///     production code reads that location on its own and tests can supply a root that is never created. It is read
+    ///     back from the Processing Run Control it was handed to, which is the only holder of it.
     /// </remarks>
-    internal string? DefaultDatabaseRoot { get; }
+    internal string? DefaultDatabaseRoot => _processingRunControl.DefaultDatabaseRoot;
 
     /// <summary>
     ///     Creates a workflow module that coordinates existing Core modules behind one UI-neutral interface.
@@ -99,12 +100,11 @@ public sealed class UserWorkflow : IDisposable
         _pluginList = pluginList ?? throw new ArgumentNullException(nameof(pluginList));
         var checkedProcessingRunExecutor = processingRunExecutor ??
                                            throw new ArgumentNullException(nameof(processingRunExecutor));
-        DefaultDatabaseRoot = defaultDatabaseRoot;
         _gameContext = new GameContext(checkedGameInstallations, _fileDialogService, _pluginList, _viewModel);
         _processingRunControl = new ProcessingRunControl(
             checkedProcessingRunExecutor,
-            DefaultDatabaseRoot,
-            new ViewModelRunReportSink(_viewModel));
+            defaultDatabaseRoot,
+            new ViewModelProcessingRunControlSink(_viewModel));
         _pluginListPresentationAdapter = new PluginListPresentationAdapter(_pluginList, _viewModel, checkedDispatcher);
     }
 
@@ -467,7 +467,7 @@ public sealed class UserWorkflow : IDisposable
     ///     Processing Run Control calls each member while holding its lock, so these writes reach the ViewModel in the
     ///     order they were sequenced (#60). Any of them may raise a notification that re-enters a press.
     /// </remarks>
-    private sealed class ViewModelRunReportSink(MainWindowViewModel viewModel) : IProcessingRunControlSink
+    private sealed class ViewModelProcessingRunControlSink(MainWindowViewModel viewModel) : IProcessingRunControlSink
     {
         /// <inheritdoc />
         public void ClearMessageLists()
