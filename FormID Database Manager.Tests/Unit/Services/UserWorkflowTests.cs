@@ -140,6 +140,107 @@ public class UserWorkflowTests
             Assert.IsType<ConfirmedPluginList>(_pluginList.Current.Confirmed).AdvancedMode);
     }
 
+    /// <summary>
+    /// Verifies the Game Context sink adapter's state write: every field of a reported Game Context state reaches the
+    /// ViewModel's projection, and a later state that clears the selection replaces it whole (ADR-0013).
+    /// </summary>
+    /// <remarks>
+    /// When the Game Context reports a state is its own rule, pinned by <see cref="GameContextTests" />; what reaches
+    /// the ViewModel is this workflow's write. Advanced Mode is turned on first so all four projected fields differ from
+    /// the ViewModel's defaults.
+    /// </remarks>
+    [Fact]
+    public async Task SelectGameReleaseAsync_ReportedGameContextState_ReachesTheViewModelProjection()
+    {
+        const string secondDirectory = @"D:\Games\Skyrim";
+        _gameInstallationProbe.WithInstalledDirectories(GameRelease.SkyrimSE, GameDirectory, secondDirectory);
+        var sut = CreateSut();
+        await sut.SetAdvancedModeAsync(AdvancedMode.On);
+
+        await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
+
+        Assert.Equal(GameRelease.SkyrimSE, _viewModel.SelectedGame);
+        Assert.Equal(GameDirectory, _viewModel.GameDirectory);
+        Assert.Equal([GameDirectory, secondDirectory], _viewModel.DetectedDirectories);
+        Assert.True(_viewModel.AdvancedMode);
+
+        await sut.SelectGameReleaseAsync(null);
+
+        Assert.Null(_viewModel.SelectedGame);
+        Assert.Empty(_viewModel.GameDirectory);
+        Assert.Empty(_viewModel.DetectedDirectories);
+        Assert.True(_viewModel.AdvancedMode);
+    }
+
+    /// <summary>
+    /// Verifies that a picker-failure notice reaches the list Game Context Presentation chooses, with the text it
+    /// renders.
+    /// </summary>
+    [Fact]
+    public async Task BrowseGameDirectoryAsync_PickerFailure_AddsTheRenderedNoticeToItsList()
+    {
+        _fileDialogService.Setup(x => x.SelectGameDirectory())
+            .ReturnsAsync(FileDialogResult.Failure("picker unavailable"));
+        var sut = CreateSut();
+        var before = CaptureMessageLists();
+
+        await sut.BrowseGameDirectoryAsync();
+
+        AssertNoticeAddedToItsList(new GameDirectoryPickerFailed("picker unavailable"), before);
+    }
+
+    /// <summary>
+    /// Verifies that a no-installed-locations notice reaches the list Game Context Presentation chooses, with the text
+    /// it renders.
+    /// </summary>
+    [Fact]
+    public async Task SelectGameReleaseAsync_NoInstalledLocations_AddsTheRenderedNoticeToItsList()
+    {
+        // No install records are declared for Fallout4, so the lookup answers with nothing recorded.
+        var sut = CreateSut();
+        var before = CaptureMessageLists();
+
+        await sut.SelectGameReleaseAsync(GameRelease.Fallout4);
+
+        AssertNoticeAddedToItsList(new NoInstalledLocationsFound(GameRelease.Fallout4), before);
+    }
+
+    /// <summary>
+    /// Verifies that a refused-directory notice reaches the list Game Context Presentation chooses, with the text it
+    /// renders.
+    /// </summary>
+    [Fact]
+    public async Task BrowseGameDirectoryAsync_DetectionCannotReadTheDirectory_AddsTheRenderedNoticeToItsList()
+    {
+        _gameInstallationProbe.BeforeProbe = _ => throw new IOException("drive not ready");
+        _fileDialogService.Setup(x => x.SelectGameDirectory())
+            .ReturnsAsync(FileDialogResult.Success(GameDirectory));
+        var sut = CreateSut();
+        var before = CaptureMessageLists();
+
+        await sut.BrowseGameDirectoryAsync();
+
+        AssertNoticeAddedToItsList(new DirectoryRefused("drive not ready"), before);
+    }
+
+    /// <summary>
+    /// Verifies that a no-game-detected notice reaches the list Game Context Presentation chooses, with the text it
+    /// renders.
+    /// </summary>
+    [Fact]
+    public async Task BrowseGameDirectoryAsync_NoDetectableGame_AddsTheRenderedNoticeToItsList()
+    {
+        // Nothing is declared under the browsed directory, so detection finds no known game master.
+        _fileDialogService.Setup(x => x.SelectGameDirectory())
+            .ReturnsAsync(FileDialogResult.Success(GameDirectory));
+        var sut = CreateSut();
+        var before = CaptureMessageLists();
+
+        await sut.BrowseGameDirectoryAsync();
+
+        AssertNoticeAddedToItsList(new NoGameDetected(), before);
+    }
+
     [Fact]
     public async Task SelectDatabaseAsync_PickerFailure_LeavesStateUnchangedAndRecordsWorkflowError()
     {
@@ -1146,6 +1247,38 @@ public class UserWorkflowTests
             _pluginList,
             _processingRunExecutor,
             _defaultDatabaseRoot);
+    }
+
+    /// <summary>
+    /// Copies the ViewModel's error and information lists, so a test can tell what one intent added to each.
+    /// </summary>
+    /// <returns>The two lists as they are now.</returns>
+    private (string[] Errors, string[] Information) CaptureMessageLists()
+    {
+        return (_viewModel.ErrorMessages.ToArray(), _viewModel.InformationMessages.ToArray());
+    }
+
+    /// <summary>
+    /// Asserts that exactly one message was added since <paramref name="before" />: the text Game Context Presentation
+    /// renders for <paramref name="notice" />, in the list Presentation chose, with the other list left alone.
+    /// </summary>
+    /// <param name="notice">The notice the Game Context is expected to have reported.</param>
+    /// <param name="before">The lists captured before the intent.</param>
+    /// <remarks>The expected text and list come from Presentation, so no sentence is restated here.</remarks>
+    private void AssertNoticeAddedToItsList(
+        GameContextNotice notice,
+        (string[] Errors, string[] Information) before)
+    {
+        var rendered = GameContextPresentation.Render(notice);
+        string[] expectedErrors = rendered.List == GameContextMessageList.Error
+            ? [.. before.Errors, rendered.Text]
+            : before.Errors;
+        string[] expectedInformation = rendered.List == GameContextMessageList.Information
+            ? [.. before.Information, rendered.Text]
+            : before.Information;
+
+        Assert.Equal(expectedErrors, _viewModel.ErrorMessages);
+        Assert.Equal(expectedInformation, _viewModel.InformationMessages);
     }
 
     /// <summary>

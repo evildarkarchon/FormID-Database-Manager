@@ -357,9 +357,10 @@ public class CoreProjectBoundaryTests
     /// </summary>
     /// <param name="sourceFileName">The Core service source that must hold no refusal wording.</param>
     /// <remarks>
-    ///     Each sentence is pinned in full. The Game Context legitimately tells a Browse user it "Could not detect game
-    ///     from directory. Please select a game from the dropdown.", so only the complete refusal sentence, ending in
-    ///     "first.", is forbidden. What a refusal does say is pinned by <c>ProcessingRunPresentationTests</c>. Issue
+    ///     Each sentence is pinned in full. A Browse with no detectable game legitimately asks the user to select a
+    ///     game from the dropdown, in wording <c>GameContextPresentation</c> owns, so only the complete refusal
+    ///     sentence, ending in "first.", is forbidden. What a refusal does say is pinned by
+    ///     <c>ProcessingRunPresentationTests</c>. Issue
     ///     #105 moved the refusal report from the User Workflow to Processing Run Control, which is the row that
     ///     matters now. The User Workflow row still guards something real: the workflow captures every press before
     ///     Processing Run Control sees it and writes its own picker errors straight to the ViewModel, so it is the one
@@ -442,6 +443,35 @@ public class CoreProjectBoundaryTests
             .ToArray();
 
         // Guards the guard: the module's own unreachable-case diagnostic proves the scanner still reads this file.
+        Assert.Contains(literals, static literal => literal.IsExceptionArgument);
+        Assert.Empty(unexpectedLiterals);
+    }
+
+    /// <summary>
+    ///     Verifies that Game Context holds no user-facing sentence at all: the only string literals it may contain are
+    ///     exception diagnostics (ADR-0013).
+    /// </summary>
+    /// <remarks>
+    ///     Issue #115, under parent #114, mirroring the Processing Run Control guard above. Game Context reports typed
+    ///     notices and <c>GameContextPresentation</c> renders them, so the permitted set outside exception constructors
+    ///     is empty: any new literal fails until a reviewer decides whether it is wording, which belongs in
+    ///     Presentation, or something that earns a place in this list.
+    /// </remarks>
+    [Fact]
+    public void GameContext_StringLiterals_AreOnlyExceptionDiagnostics()
+    {
+        var gameContextSource = File.ReadAllText(
+            Path.Combine(GetCoreProjectDirectory(), "Services", "GameContext.cs"));
+        string[] permittedLiterals = [];
+
+        var literals = SourceStringLiterals.Extract(gameContextSource);
+        var unexpectedLiterals = literals
+            .Where(static literal => !literal.IsExceptionArgument)
+            .Select(static literal => literal.Text)
+            .Where(text => !permittedLiterals.Contains(text, StringComparer.Ordinal))
+            .ToArray();
+
+        // Guards the guard: the unsupported Advanced Mode diagnostic proves the scanner still reads this file.
         Assert.Contains(literals, static literal => literal.IsExceptionArgument);
         Assert.Empty(unexpectedLiterals);
     }
@@ -717,14 +747,16 @@ public class CoreProjectBoundaryTests
     }
 
     /// <summary>
-    ///     Verifies that the Game Context is the only Core writer of the ViewModel's Game Context projection.
+    ///     Verifies that the User Workflow is the only Core writer of the ViewModel's Game Context projection: the Game
+    ///     Context reports its state to a sink, and the User Workflow's sink adapter writes it (ADR-0013).
     /// </summary>
     /// <remarks>
     ///     The ViewModel's own file defines the member and is the other legitimate mention. Tests call it directly to
-    ///     exercise the ViewModel, which is why only Core sources are scanned.
+    ///     exercise the ViewModel, which is why only Core sources are scanned. Issue #116, under parent #114, moved the
+    ///     write out of <c>GameContext.cs</c>.
     /// </remarks>
     [Fact]
-    public void CoreSources_GameContextProjection_IsWrittenOnlyByTheGameContext()
+    public void CoreSources_GameContextProjection_IsWrittenOnlyByTheUserWorkflow()
     {
         var projectionWriters = Directory
             .EnumerateFiles(GetCoreProjectDirectory(), "*.cs", SearchOption.AllDirectories)
@@ -734,7 +766,33 @@ public class CoreProjectBoundaryTests
             .OrderBy(static fileName => fileName, StringComparer.Ordinal)
             .ToArray();
 
-        Assert.Equal(["GameContext.cs", "MainWindowViewModel.cs"], projectionWriters);
+        Assert.Equal(["MainWindowViewModel.cs", "UserWorkflow.cs"], projectionWriters);
+    }
+
+    /// <summary>
+    ///     Verifies that the Game Context references neither <see cref="MainWindowViewModel" /> nor the ViewModels
+    ///     namespace: it reports to a sink the User Workflow implements, and writes nothing itself (ADR-0013).
+    /// </summary>
+    /// <remarks>
+    ///     Issue #116, under parent #114. The check is on raw source text, comments included, as
+    ///     <see cref="GameContextSource_ProcessingRunTypes_AreNotReferenced" /> is, because a <c>cref</c> or a
+    ///     <c>using</c> directive is a reference too. Both names are matched as whole words, so the module's prose may
+    ///     still say "ViewModel" when it explains what the sink's adapter does with a report.
+    /// </remarks>
+    [Fact]
+    public void GameContextSource_ViewModel_IsNotReferenced()
+    {
+        var gameContextSource = File.ReadAllText(Path.Combine(GetCoreProjectDirectory(), "Services", "GameContext.cs"));
+        var viewModelNamespace = typeof(MainWindowViewModel).Namespace!;
+        var forbiddenNames = new[] { nameof(MainWindowViewModel), viewModelNamespace.Split('.')[^1] };
+
+        // Guards the guard: the names are taken from the type, so a rename cannot leave this test searching for a ghost.
+        Assert.Equal("ViewModels", forbiddenNames[1]);
+        var referencedNames = forbiddenNames
+            .Where(name => Regex.IsMatch(gameContextSource, $@"\b{Regex.Escape(name)}\b"))
+            .ToArray();
+
+        Assert.Empty(referencedNames);
     }
 
     /// <summary>
