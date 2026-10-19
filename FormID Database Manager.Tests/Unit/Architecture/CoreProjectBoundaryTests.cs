@@ -357,9 +357,10 @@ public class CoreProjectBoundaryTests
     /// </summary>
     /// <param name="sourceFileName">The Core service source that must hold no refusal wording.</param>
     /// <remarks>
-    ///     Each sentence is pinned in full. A Browse with no detectable game legitimately asks the user to select a game
-    ///     from the dropdown, in wording <c>GameContextPresentation</c> owns, so only the complete refusal sentence,
-    ///     ending in "first.", is forbidden. What a refusal does say is pinned by <c>ProcessingRunPresentationTests</c>. Issue
+    ///     Each sentence is pinned in full. A Browse with no detectable game legitimately asks the user to select a
+    ///     game from the dropdown, in wording <c>GameContextPresentation</c> owns, so only the complete refusal
+    ///     sentence, ending in "first.", is forbidden. What a refusal does say is pinned by
+    ///     <c>ProcessingRunPresentationTests</c>. Issue
     ///     #105 moved the refusal report from the User Workflow to Processing Run Control, which is the row that
     ///     matters now. The User Workflow row still guards something real: the workflow captures every press before
     ///     Processing Run Control sees it and writes its own picker errors straight to the ViewModel, so it is the one
