@@ -4,13 +4,14 @@ using FormID_Database_Manager.ViewModels;
 namespace FormID_Database_Manager.Services;
 
 /// <summary>
-///     Renders everything a Processing Run says to the user: its transient progress, how it ended, why Processing Run
-///     Admission refused to start it, and the generic message for a failure nothing anticipated.
+///     Renders everything a Processing Run says to the user: that it is starting, its transient progress, that its
+///     cancellation was requested, how it ended, why Processing Run Admission refused to start it, and the message for
+///     a failure that ended it.
 /// </summary>
 /// <remarks>
 ///     <para>
-///         This is a pure renderer: it takes a progress report, an outcome, a refusal reason or an unexpected failure,
-///         returns what that value implies, writes nothing, and holds no state. Every ViewModel write stays with the
+///         This is a pure renderer: it takes a starting or cancellation-requested fact, a progress report, an outcome,
+///         a refusal reason or a failure, returns what that value implies, writes nothing, and holds no state. Every ViewModel write stays with the
 ///         User Workflow, which also keeps the run activity and the lock that orders it — both carry comments
 ///         explaining races (issue #60, and the window between workflow commitment and the executor's cancellation
 ///         source) that a change about locality of wording has no business relocating.
@@ -57,6 +58,40 @@ internal static class ProcessingRunPresentation
                 progress,
                 "Unsupported Processing Run progress.")
         };
+    }
+
+    /// <summary>
+    ///     Renders the status an admitted press shows the moment it becomes a Processing Run, before the run has
+    ///     reported any progress of its own.
+    /// </summary>
+    /// <param name="starting">The fact that a run was just admitted and is starting.</param>
+    /// <returns>The starting status, at zero percent so the bar starts over for the new run.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="starting" /> is <see langword="null" />.</exception>
+    internal static RenderedRunProgress Render(ProcessingRunStarting starting)
+    {
+        ArgumentNullException.ThrowIfNull(starting);
+
+        return new RenderedRunProgress("Initializing...", 0);
+    }
+
+    /// <summary>
+    ///     Renders the status a press shows when it asks the active Processing Run to cancel.
+    /// </summary>
+    /// <param name="cancellationRequested">The fact that cancellation of the active run was requested.</param>
+    /// <returns>The cancellation-requested status, with no percentage so the bar stays where the run left it.</returns>
+    /// <exception cref="ArgumentNullException">
+    ///     <paramref name="cancellationRequested" /> is <see langword="null" />.
+    /// </exception>
+    /// <remarks>
+    ///     This is what the run is doing now, not how it ended, so it is transient progress. It is deliberately not the
+    ///     cancellation acknowledgement, which a <see cref="CancelledRunOutcome" /> renders to the information messages
+    ///     because the progress channel is handed back as the run ends (#60).
+    /// </remarks>
+    internal static RenderedRunProgress Render(ProcessingRunCancellationRequested cancellationRequested)
+    {
+        ArgumentNullException.ThrowIfNull(cancellationRequested);
+
+        return new RenderedRunProgress("Cancelling...", null);
     }
 
     /// <summary>
@@ -115,24 +150,31 @@ internal static class ProcessingRunPresentation
     }
 
     /// <summary>
-    ///     Renders a failure nothing anticipated into the one generic error message its caller should show.
+    ///     Renders any failure that ended a Processing Run into the one error message its caller should show.
     /// </summary>
     /// <param name="failure">
     ///     The failure that ended a run, whose message is the only detail available about it. Admission has no failure
     ///     to render: a press it does not admit is a refusal (ADR-0010, ADR-0011).
     /// </param>
-    /// <returns>The failure's message behind the legacy "Error processing FormIDs" prefix.</returns>
+    /// <returns>
+    ///     An <see cref="UnresolvableMasterException" />'s own message, unwrapped; for anything else, the failure's
+    ///     message behind the legacy "Error processing FormIDs" prefix.
+    /// </returns>
     /// <exception cref="ArgumentNullException"><paramref name="failure" /> is <see langword="null" />.</exception>
     /// <remarks>
     ///     A failure stays an exception rather than becoming an outcome (ADR-0007), but its wording still lives here
-    ///     with every other sentence about a run (ADR-0010). An Unresolvable Master is deliberately not rendered here:
-    ///     its own message already says what to do, and this prefix would only bury it (ADR-0006).
+    ///     with every other sentence about a run (ADR-0010). This is the one place that decides which failure is shown
+    ///     unwrapped, so every caller routes every failure through it rather than catching the special case itself: an
+    ///     Unresolvable Master's own message already names the missing master and what to do, and the generic prefix
+    ///     would only bury it (ADR-0006).
     /// </remarks>
-    internal static string RenderUnexpectedFailure(Exception failure)
+    internal static string RenderFailure(Exception failure)
     {
         ArgumentNullException.ThrowIfNull(failure);
 
-        return $"Error processing FormIDs: {failure.Message}";
+        return failure is UnresolvableMasterException unresolvableMaster
+            ? unresolvableMaster.Message
+            : $"Error processing FormIDs: {failure.Message}";
     }
 
     /// <summary>
@@ -369,8 +411,8 @@ internal static class ProcessingRunPresentation
     /// <remarks>
     ///     The acknowledgement is a terminal fact and stays off the transient channel for the same reason the plan
     ///     does: the channel is cleared as the run ends, so an acknowledgement written there is erased before the user
-    ///     can read it (#60). "Cancelling..." — what the run is doing rather than how it ended — remains the User
-    ///     Workflow's to report, and is not this module's to render.
+    ///     can read it (#60). The cancellation-requested status — what the run is doing rather than how it ended — is
+    ///     rendered separately, from <see cref="ProcessingRunCancellationRequested" />, as transient progress.
     /// </remarks>
     private static RenderedRunReport RenderCancellation()
     {
@@ -493,6 +535,26 @@ internal static class ProcessingRunPresentation
 ///     is exactly what a Plugin-named text-import report does.
 /// </remarks>
 internal readonly record struct RenderedRunProgress(string Status, double? Value);
+
+/// <summary>
+///     The fact that a press was just admitted and its Processing Run is starting, before the run has reported any
+///     progress of its own.
+/// </summary>
+/// <remarks>
+///     This is not a <see cref="ProcessingRunProgress" /> case, because the run never reports it: whoever admitted the
+///     press does, and the fact carries no data because there is nothing about the run to say yet.
+/// </remarks>
+internal sealed record ProcessingRunStarting;
+
+/// <summary>
+///     The fact that a press asked the active Processing Run to cancel.
+/// </summary>
+/// <remarks>
+///     Like <see cref="ProcessingRunStarting" />, this is reported by whoever owns the active run, not by the run
+///     itself, so it is not a <see cref="ProcessingRunProgress" /> case. It says cancellation was requested, not that
+///     the run has stopped: how the run ended is still the <see cref="ProcessingRunOutcome" /> it returns.
+/// </remarks>
+internal sealed record ProcessingRunCancellationRequested;
 
 /// <summary>
 ///     Everything one Processing Run outcome has to say to the user, rendered but not yet written anywhere.

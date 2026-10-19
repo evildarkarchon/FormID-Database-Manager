@@ -439,7 +439,7 @@ public sealed class UserWorkflow : IDisposable
         }
         catch (Exception ex)
         {
-            _viewModel.AddErrorMessage(ProcessingRunPresentation.RenderUnexpectedFailure(ex));
+            _viewModel.AddErrorMessage(ProcessingRunPresentation.RenderFailure(ex));
         }
         finally
         {

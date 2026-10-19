@@ -262,8 +262,8 @@ public sealed class ProcessingRunContractTests
     /// </summary>
     /// <remarks>
     ///     ADR-0006, issue #52. The wording deliberately stays on the Data directory rather than the Plugin, because
-    ///     pointing the user at the Plugin would send them to fix something that is not broken. The User Workflow shows
-    ///     this message unwrapped for the same reason: burying it behind the generic prefix would waste the one piece
+    ///     pointing the user at the Plugin would send them to fix something that is not broken. Processing Run
+    ///     Presentation renders this message unwrapped for the same reason: burying it behind the generic prefix would waste the one piece
     ///     of information the failure exists to deliver.
     /// </remarks>
     [Fact]
