@@ -8,7 +8,6 @@ using System.Threading.Tasks;
 using FormID_Database_Manager.Services;
 using FormID_Database_Manager.TestUtilities.Mocks;
 using FormID_Database_Manager.Tests.Fakes;
-using FormID_Database_Manager.ViewModels;
 using Moq;
 using Mutagen.Bethesda;
 using Xunit;
@@ -17,12 +16,19 @@ namespace FormID_Database_Manager.Tests.Unit.Services;
 
 /// <summary>
 /// Drives the Game Context through its own interface over a real Plugin List, an in-memory installation probe, a
-/// mocked picker and a real ViewModel, and asserts only what a caller can observe: the ViewModel projection and
-/// messages, the Plugin List's state, and which sources the Plugin List was asked to discover.
+/// mocked picker and a recording sink, and asserts only what a caller can observe: the states and notices reported to
+/// the sink, in order, the Plugin List's state, and which sources the Plugin List was asked to discover.
 /// </summary>
 /// <remarks>
+/// <para>
 /// No Plugin List presentation adapter is attached here, because the Game Context does not own one. A discovery
 /// failure is therefore observed as the Plugin List's failed state rather than as the adapter's rendered message.
+/// </para>
+/// <para>
+/// No ViewModel is involved either: the Game Context reports to a sink, and what the User Workflow's adapter writes
+/// from those reports is covered by <see cref="UserWorkflowTests" /> (ADR-0013). Notices are compared as value records,
+/// so no sentence is restated here; the wording is pinned by <see cref="GameContextPresentationTests" />.
+/// </para>
 /// </remarks>
 public sealed class GameContextTests : IDisposable
 {
@@ -30,10 +36,11 @@ public sealed class GameContextTests : IDisposable
 
     private readonly Mock<IFileDialogService> _fileDialogService = new();
     private readonly InMemoryGameInstallationProbe _gameInstallationProbe = new();
-    private readonly MainWindowViewModel _viewModel = new(new SynchronousThreadDispatcher());
+    private readonly RecordingGameContextSink _sink = new();
     private ScriptedGameLoadOrders _loadOrders = ScriptedGameLoadOrders.Fixed();
     private PluginList? _pluginList;
     private int _refreshMark;
+    private int _reportMark;
 
     /// <summary>
     /// Gets the Plugin List the Game Context under test borrows.
@@ -42,9 +49,27 @@ public sealed class GameContextTests : IDisposable
         _pluginList ?? throw new InvalidOperationException("Create the Game Context before reading its Plugin List.");
 
     /// <summary>
-    /// Gets the sources the Plugin List was asked to discover since the last <see cref="ForgetRefreshes" />.
+    /// Gets the sources the Plugin List was asked to discover since the last <see cref="ForgetSetup" />.
     /// </summary>
     private IReadOnlyList<PluginListSource> Refreshes => _loadOrders.DiscoveredSources.Skip(_refreshMark).ToArray();
+
+    /// <summary>
+    /// Gets everything the Game Context reported since the last <see cref="ForgetSetup" />, in report order.
+    /// </summary>
+    private IReadOnlyList<GameContextSinkEntry> Reports => _sink.Entries.Skip(_reportMark).ToArray();
+
+    /// <summary>
+    /// Gets the notices the Game Context reported since the last <see cref="ForgetSetup" />, in report order.
+    /// </summary>
+    private IReadOnlyList<GameContextNotice> ReportedNotices =>
+        Reports.OfType<NoticeReported>().Select(static entry => entry.Notice).ToArray();
+
+    /// <summary>
+    /// Gets the most recent state the Game Context reported, ever, or the empty state when it has reported none. This is
+    /// the state a sink adapter would be showing.
+    /// </summary>
+    private GameContextState LastReportedState =>
+        _sink.Entries.OfType<StateReported>().LastOrDefault()?.State ?? GameContextState.Empty;
 
     /// <summary>
     /// Disposes the Plugin List, which the Game Context borrows and so never disposes itself.
@@ -55,7 +80,8 @@ public sealed class GameContextTests : IDisposable
     }
 
     /// <summary>
-    /// Verifies that an explicit release intent clears stale source state before installed-location lookup completes.
+    /// Verifies that an explicit release intent reports a state with no directory before installed-location lookup
+    /// completes, and then reports the ordered locations with the first one adopted.
     /// </summary>
     [Fact]
     public async Task SelectGameReleaseAsync_ChangedRelease_ImmediatelyClearsStateThenPublishesOrderedLocations()
@@ -70,22 +96,24 @@ public sealed class GameContextTests : IDisposable
             ScriptedDiscovery.Completes()));
         await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
         Assert.NotNull(PluginList.Current.Confirmed);
-        ForgetRefreshes();
+        ForgetSetup();
         GateInstalledLocationLookup(GameRelease.Fallout4, lookupStarted, allowLookupToFinish);
 
         var selection = sut.SelectGameReleaseAsync(GameRelease.Fallout4);
         await lookupStarted.Task;
 
-        Assert.Equal(GameRelease.Fallout4, _viewModel.SelectedGame);
-        Assert.Empty(_viewModel.GameDirectory);
-        Assert.Empty(_viewModel.DetectedDirectories);
+        AssertReports(Reported(State(GameRelease.Fallout4, null)));
         Assert.IsType<PluginListNoSourceState>(PluginList.Current);
 
         allowLookupToFinish.SetResult();
         await selection;
 
-        Assert.Equal(@"C:\Games\Fallout4", _viewModel.GameDirectory);
-        Assert.Equal([@"C:\Games\Fallout4", @"D:\Games\Fallout4"], _viewModel.DetectedDirectories.ToArray());
+        AssertReports(
+            Reported(State(GameRelease.Fallout4, null)),
+            Reported(State(
+                GameRelease.Fallout4,
+                @"C:\Games\Fallout4",
+                [@"C:\Games\Fallout4", @"D:\Games\Fallout4"])));
         Assert.Empty(Assert.IsType<ConfirmedPluginList>(PluginList.Current.Confirmed).Entries);
         AssertSingleRefresh(@"C:\Games\Fallout4", GameRelease.Fallout4, AdvancedMode.Off);
     }
@@ -112,11 +140,11 @@ public sealed class GameContextTests : IDisposable
         allowLookupToFinish.SetResult();
         await selection;
 
-        Assert.Equal(GameDirectory, _viewModel.GameDirectory);
+        Assert.Equal(GameDirectory, LastReportedState.SelectedGameDirectory);
     }
 
     /// <summary>
-    /// Verifies that an empty current lookup retains the explicit release and presents Browse guidance.
+    /// Verifies that an empty current lookup retains the explicit release and reports the Browse guidance notice.
     /// </summary>
     [Fact]
     public async Task SelectGameReleaseAsync_WithoutInstalledFolders_RetainsIncompleteContextAndRecordsGuidance()
@@ -126,19 +154,16 @@ public sealed class GameContextTests : IDisposable
 
         await sut.SelectGameReleaseAsync(GameRelease.Fallout4);
 
-        Assert.Equal(GameRelease.Fallout4, _viewModel.SelectedGame);
-        Assert.Empty(_viewModel.GameDirectory);
-        Assert.Empty(_viewModel.DetectedDirectories);
+        AssertReports(
+            Reported(State(GameRelease.Fallout4, null)),
+            Reported(new NoInstalledLocationsFound(GameRelease.Fallout4)));
         Assert.Equal(GameRelease.Fallout4, sut.Current.SelectedGameRelease);
         Assert.Null(sut.Current.SelectedGameDirectory);
-        Assert.Contains(
-            Rendered(new NoInstalledLocationsFound(GameRelease.Fallout4)),
-            _viewModel.InformationMessages);
         Assert.Empty(Refreshes);
     }
 
     /// <summary>
-    /// Verifies that an equal explicit release event performs no duplicate lookup or refresh work.
+    /// Verifies that an equal explicit release event performs no duplicate lookup, report or refresh work.
     /// </summary>
     [Fact]
     public async Task SelectGameReleaseAsync_EqualRelease_IsNoOp()
@@ -146,15 +171,14 @@ public sealed class GameContextTests : IDisposable
         _gameInstallationProbe.WithInstalledDirectories(GameRelease.SkyrimSE, GameDirectory);
         var sut = CreateSut();
         await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
-        ForgetRefreshes();
+        ForgetSetup();
 
         await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
 
         // One lookup across both calls: the repeat did not start a second one.
         Assert.Equal([GameRelease.SkyrimSE], _gameInstallationProbe.InstalledDirectoryLookups);
         Assert.Empty(Refreshes);
-        Assert.Equal(GameDirectory, _viewModel.GameDirectory);
-        Assert.Equal([GameDirectory], _viewModel.DetectedDirectories);
+        Assert.Empty(Reports);
     }
 
     /// <summary>
@@ -168,8 +192,9 @@ public sealed class GameContextTests : IDisposable
 
         await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
 
-        Assert.Equal(GameDirectory, _viewModel.GameDirectory);
-        Assert.Equal([GameDirectory], _viewModel.DetectedDirectories);
+        AssertReports(
+            Reported(State(GameRelease.SkyrimSE, null)),
+            Reported(State(GameRelease.SkyrimSE, GameDirectory, [GameDirectory])));
         Assert.Equal(GameRelease.SkyrimSE, sut.Current.SelectedGameRelease);
         Assert.Equal(GameDirectory, sut.Current.SelectedGameDirectory);
         Assert.Equal([GameDirectory], sut.Current.AvailableDirectories);
@@ -177,7 +202,7 @@ public sealed class GameContextTests : IDisposable
     }
 
     /// <summary>
-    /// Verifies that only the latest of two controlled release lookups can publish guidance, state, or refresh work.
+    /// Verifies that only the latest of two controlled release lookups can report guidance or state, or refresh.
     /// </summary>
     [Fact]
     public async Task SelectGameReleaseAsync_OverlappingSelections_AppliesLatestSelectionOnly()
@@ -199,11 +224,11 @@ public sealed class GameContextTests : IDisposable
         allowOlderToFinish.SetResult();
         await Task.WhenAll(olderSelection, newerSelection);
 
-        Assert.Equal(@"C:\NewFallout", _viewModel.GameDirectory);
+        AssertReports(
+            Reported(State(GameRelease.SkyrimSE, null)),
+            Reported(State(GameRelease.Fallout4, null)),
+            Reported(State(GameRelease.Fallout4, @"C:\NewFallout", [@"C:\NewFallout"])));
         AssertSingleRefresh(@"C:\NewFallout", GameRelease.Fallout4, AdvancedMode.Off);
-        Assert.DoesNotContain(
-            Rendered(new NoInstalledLocationsFound(GameRelease.SkyrimSE)),
-            _viewModel.InformationMessages);
     }
 
     /// <summary>
@@ -231,15 +256,14 @@ public sealed class GameContextTests : IDisposable
         allowOlderToFail.SetResult();
         await Task.WhenAll(olderSelection, newerSelection);
 
-        Assert.Equal(GameRelease.Fallout4, _viewModel.SelectedGame);
-        Assert.Equal(@"C:\NewFallout", _viewModel.GameDirectory);
+        AssertStateEqual(State(GameRelease.Fallout4, @"C:\NewFallout", [@"C:\NewFallout"]), LastReportedState);
         AssertSingleRefresh(@"C:\NewFallout", GameRelease.Fallout4, AdvancedMode.Off);
-        Assert.DoesNotContain(_viewModel.ErrorMessages, message => message.Contains("obsolete", StringComparison.Ordinal));
+        Assert.Empty(ReportedNotices);
     }
 
     /// <summary>
     /// Verifies that a current installed-location failure is not swallowed: it propagates to the caller, which in the
-    /// shell is the final unexpected-error boundary.
+    /// shell is the final unexpected-error boundary, after the release itself was reported.
     /// </summary>
     [Fact]
     public async Task SelectGameReleaseAsync_CurrentLookupFailure_Propagates()
@@ -251,12 +275,13 @@ public sealed class GameContextTests : IDisposable
             () => sut.SelectGameReleaseAsync(GameRelease.SkyrimSE));
 
         Assert.Equal("lookup failed", thrown.Message);
-        Assert.Equal(GameRelease.SkyrimSE, _viewModel.SelectedGame);
+        AssertReports(Reported(State(GameRelease.SkyrimSE, null)));
         Assert.Empty(Refreshes);
     }
 
     /// <summary>
-    /// Verifies that the directory projected from a current lookup does not request a duplicate refresh.
+    /// Verifies that picking the directory a current lookup already adopted reports nothing and requests no duplicate
+    /// refresh.
     /// </summary>
     [Fact]
     public async Task SelectDetectedDirectoryAsync_EqualDetectedDirectory_DoesNotDuplicateRefresh()
@@ -266,14 +291,16 @@ public sealed class GameContextTests : IDisposable
         var sut = CreateSut();
 
         await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
+        var reportsBeforePick = _sink.Entries.Count;
         await sut.SelectDetectedDirectoryAsync(GameDirectory);
 
         AssertSingleRefresh(GameDirectory, GameRelease.SkyrimSE, AdvancedMode.Off);
+        Assert.Equal(reportsBeforePick, _sink.Entries.Count);
     }
 
     /// <summary>
     /// Verifies that picking the current installation through an equivalent spelling — its Data directory rather than
-    /// its game root — changes nothing: the displayed directory, the Plugin List and its selection are all kept.
+    /// its game root — changes nothing: nothing is reported, and the Plugin List and its selection are kept.
     /// </summary>
     [Fact]
     public async Task SelectDetectedDirectoryAsync_EquivalentSpellingOfCurrentDirectory_KeepsPluginListAndSelection()
@@ -284,19 +311,19 @@ public sealed class GameContextTests : IDisposable
         SelectPlugin("User.esp");
         var stateBeforePick = sut.Current;
         var pluginListBeforePick = PluginList.Current;
-        ForgetRefreshes();
+        ForgetSetup();
 
         await sut.SelectDetectedDirectoryAsync(Path.Combine(GameDirectory, "Data"));
 
         Assert.Same(stateBeforePick, sut.Current);
         Assert.Same(pluginListBeforePick, PluginList.Current);
         Assert.Equal(["User.esp"], PluginList.Current.Confirmed!.SelectedPluginNames);
-        Assert.Equal(GameDirectory, _viewModel.GameDirectory);
+        Assert.Empty(Reports);
         Assert.Empty(Refreshes);
     }
 
     /// <summary>
-    /// Verifies that a directory pick that cannot become a Plugin List Source is refused with the one path message and
+    /// Verifies that a directory pick that cannot become a Plugin List Source is refused with the one refusal notice and
     /// leaves the previous directory, the source and the Plugin List as they were.
     /// </summary>
     [Fact]
@@ -307,46 +334,29 @@ public sealed class GameContextTests : IDisposable
         await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
         var stateBeforePick = sut.Current;
         var pluginListBeforePick = PluginList.Current;
-        ForgetRefreshes();
+        ForgetSetup();
 
         await sut.SelectDetectedDirectoryAsync("C:\\Games\\Sky\0rim");
 
         Assert.Same(stateBeforePick, sut.Current);
         Assert.Same(pluginListBeforePick, PluginList.Current);
-        Assert.Equal(GameDirectory, _viewModel.GameDirectory);
-        Assert.Equal(
-            [RenderedRefusal(() => PluginListSource.Create(GameRelease.SkyrimSE, "C:\\Games\\Sky\0rim"))],
-            _viewModel.ErrorMessages);
+        AssertReports(Reported(RefusalOf(() => PluginListSource.Create(GameRelease.SkyrimSE, "C:\\Games\\Sky\0rim"))));
         Assert.Empty(Refreshes);
     }
 
     /// <summary>
-    /// Verifies the Game Context invariant at every projection across a run of transitions: the displayed directory
+    /// Verifies the Game Context invariant in every reported state across a run of transitions: the displayed directory
     /// and the Plugin List Source are both present or both absent, both require a GameRelease, and the source is the
     /// one the displayed directory makes.
     /// </summary>
     [Fact]
-    public async Task Current_EveryProjectedTransition_HoldsDirectoryAndSourceTogether()
+    public async Task Current_EveryReportedState_HoldsDirectoryAndSourceTogether()
     {
-        const string browsedDirectory = @"E:\Games\Fallout4";
-        _gameInstallationProbe
-            .WithInstalledDirectories(GameRelease.SkyrimSE, GameDirectory, @"D:\Games\Skyrim")
-            .WithFile(Path.Combine(browsedDirectory, "Data", "Fallout4.esm"));
-        _fileDialogService.Setup(x => x.SelectGameDirectory())
-            .ReturnsAsync(FileDialogResult.Success(browsedDirectory));
-        var sut = CreateSut();
-        var observedStates = new List<GameContextState>();
-        _viewModel.PropertyChanged += (_, _) => observedStates.Add(sut.Current);
+        var sut = await RunEveryKindOfTransitionAsync();
 
-        await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
-        await sut.SelectDetectedDirectoryAsync(@"D:\Games\Skyrim");
-        await sut.SetAdvancedModeAsync(AdvancedMode.On);
-        await sut.SelectDetectedDirectoryAsync(null);
-        await sut.SelectGameReleaseAsync(null);
-        await sut.BrowseGameDirectoryAsync();
-
-        Assert.NotEmpty(observedStates);
-        Assert.All(observedStates, state =>
+        var reportedStates = _sink.Entries.OfType<StateReported>().Select(static entry => entry.State).ToArray();
+        Assert.NotEmpty(reportedStates);
+        Assert.All(reportedStates, state =>
         {
             Assert.Equal(state.SelectedGameDirectory is null, state.PluginListSource is null);
             if (state.SelectedGameDirectory is { } directory)
@@ -356,7 +366,36 @@ public sealed class GameContextTests : IDisposable
             }
         });
         Assert.Equal(GameRelease.Fallout4, sut.Current.SelectedGameRelease);
-        Assert.Equal(PluginListSource.Create(GameRelease.Fallout4, browsedDirectory), sut.Current.PluginListSource);
+        Assert.Equal(PluginListSource.Create(GameRelease.Fallout4, @"E:\Games\Fallout4"), sut.Current.PluginListSource);
+    }
+
+    /// <summary>
+    /// Verifies the publish step's order across a run of transitions: the Game Context writes each state before it
+    /// reports it, so a sink that reads <see cref="GameContext.Current" /> from inside the report reads the very state
+    /// being reported. That order is what makes a re-entrant ComboBox echo a no-op (ADR-0013).
+    /// </summary>
+    [Fact]
+    public async Task Current_AtEveryReport_IsTheReportedState()
+    {
+        GameContext? observed = null;
+        var mismatches = new List<GameContextState>();
+        var reportedStates = 0;
+        _sink.OnEntry = entry =>
+        {
+            if (entry is StateReported { State: var state })
+            {
+                reportedStates++;
+                if (!ReferenceEquals(state, observed!.Current))
+                {
+                    mismatches.Add(state);
+                }
+            }
+        };
+
+        await RunEveryKindOfTransitionAsync(sut => observed = sut);
+
+        Assert.True(reportedStates > 0);
+        Assert.Empty(mismatches);
     }
 
     /// <summary>
@@ -376,17 +415,17 @@ public sealed class GameContextTests : IDisposable
 
         await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
 
-        Assert.Equal([GameDirectory, secondDirectory], _viewModel.DetectedDirectories);
-        Assert.Equal(GameDirectory, _viewModel.GameDirectory);
+        AssertReports(
+            Reported(State(GameRelease.SkyrimSE, null)),
+            Reported(State(GameRelease.SkyrimSE, GameDirectory, [GameDirectory, secondDirectory])));
         Assert.Equal([GameDirectory, secondDirectory], sut.Current.AvailableDirectories);
         Assert.Equal(PluginListSource.Create(GameRelease.SkyrimSE, GameDirectory), sut.Current.PluginListSource);
-        Assert.Empty(_viewModel.ErrorMessages);
         AssertSingleRefresh(GameDirectory, GameRelease.SkyrimSE, AdvancedMode.Off);
     }
 
     /// <summary>
-    /// Verifies that when no install-record directory can become a Plugin List Source, the user sees the existing
-    /// Browse guidance and the Game Context holds no directory.
+    /// Verifies that when no install-record directory can become a Plugin List Source, the Game Context reports the
+    /// Browse guidance notice and holds no directory.
     /// </summary>
     [Fact]
     public async Task SelectGameReleaseAsync_NoUsableInstallRecordDirectory_RecordsNoInstalledLocationsGuidance()
@@ -400,17 +439,14 @@ public sealed class GameContextTests : IDisposable
         Assert.Null(sut.Current.SelectedGameDirectory);
         Assert.Null(sut.Current.PluginListSource);
         Assert.Empty(sut.Current.AvailableDirectories);
-        Assert.Empty(_viewModel.GameDirectory);
-        Assert.Empty(_viewModel.DetectedDirectories);
-        Assert.Equal(
-            [Rendered(new NoInstalledLocationsFound(GameRelease.SkyrimSE))],
-            _viewModel.InformationMessages);
-        Assert.Empty(_viewModel.ErrorMessages);
+        AssertReports(
+            Reported(State(GameRelease.SkyrimSE, null)),
+            Reported(new NoInstalledLocationsFound(GameRelease.SkyrimSE)));
         Assert.Empty(Refreshes);
     }
 
     /// <summary>
-    /// Verifies that an explicit changed directory is projected while preserving the ordered suggestions.
+    /// Verifies that an explicit changed directory is reported while preserving the ordered suggestions.
     /// </summary>
     [Fact]
     public async Task SelectDetectedDirectoryAsync_ChangedDirectory_RefreshesPluginListForExplicitValue()
@@ -418,12 +454,11 @@ public sealed class GameContextTests : IDisposable
         _gameInstallationProbe.WithInstalledDirectories(GameRelease.SkyrimSE, GameDirectory, @"D:\Games\Skyrim");
         var sut = CreateSut();
         await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
-        ForgetRefreshes();
+        ForgetSetup();
 
         await sut.SelectDetectedDirectoryAsync(@"D:\Games\Skyrim");
 
-        Assert.Equal(@"D:\Games\Skyrim", _viewModel.GameDirectory);
-        Assert.Equal([GameDirectory, @"D:\Games\Skyrim"], _viewModel.DetectedDirectories);
+        AssertReports(Reported(State(GameRelease.SkyrimSE, @"D:\Games\Skyrim", [GameDirectory, @"D:\Games\Skyrim"])));
         Assert.Equal(@"D:\Games\Skyrim", sut.Current.SelectedGameDirectory);
         AssertSingleRefresh(@"D:\Games\Skyrim", GameRelease.SkyrimSE, AdvancedMode.Off);
     }
@@ -444,35 +479,37 @@ public sealed class GameContextTests : IDisposable
         _gameInstallationProbe.WithInstalledDirectories(GameRelease.SkyrimSE, @"C:\Automatic\Skyrim");
         GateInstalledLocationLookup(GameRelease.SkyrimSE, lookupStarted, allowLookupToFinish);
         var sut = CreateSut(ScriptedGameLoadOrders.Sequenced(discovery));
+        GameContextSinkEntry[] expectedReports =
+        [
+            Reported(State(GameRelease.SkyrimSE, null)),
+            Reported(State(GameRelease.SkyrimSE, manualDirectory))
+        ];
 
         var releaseSelection = sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
         await lookupStarted.Task;
 
         var directorySelection = sut.SelectDetectedDirectoryAsync(manualDirectory);
 
-        Assert.Equal(GameRelease.SkyrimSE, _viewModel.SelectedGame);
-        Assert.Equal(manualDirectory, _viewModel.GameDirectory);
-        Assert.Empty(_viewModel.DetectedDirectories);
+        AssertReports(expectedReports);
         Assert.Equal(@"D:\Games\Skyrim\Data", Assert.Single(Refreshes).DataDirectory);
 
         allowLookupToFinish.SetResult();
         await releaseSelection;
 
-        Assert.Equal(manualDirectory, _viewModel.GameDirectory);
+        AssertReports(expectedReports);
         Assert.Single(Refreshes);
 
         discovery.Release();
         await directorySelection;
 
-        Assert.Equal(GameRelease.SkyrimSE, _viewModel.SelectedGame);
-        Assert.Equal(manualDirectory, _viewModel.GameDirectory);
+        AssertReports(expectedReports);
         var failed = Assert.IsType<PluginListFailedState>(PluginList.Current);
         Assert.Null(failed.Confirmed);
         Assert.Equal("selected release does not match directory", failed.ErrorMessage);
     }
 
     /// <summary>
-    /// Verifies that incomplete Game Context explicitly invalidates the confirmed Plugin List.
+    /// Verifies that incomplete Game Context is reported and explicitly invalidates the confirmed Plugin List.
     /// </summary>
     [Fact]
     public async Task SelectDetectedDirectoryAsync_ClearedSelection_InvalidatesConfirmedPluginList()
@@ -481,12 +518,13 @@ public sealed class GameContextTests : IDisposable
         var sut = CreateSut(ScriptedGameLoadOrders.Fixed("Old.esp"));
         await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
         Assert.NotNull(PluginList.Current.Confirmed);
+        ForgetSetup();
 
         await sut.SelectDetectedDirectoryAsync(null);
 
         Assert.Null(PluginList.Current.Confirmed);
         Assert.IsType<PluginListNoSourceState>(PluginList.Current);
-        Assert.Empty(_viewModel.GameDirectory);
+        AssertReports(Reported(State(GameRelease.SkyrimSE, null, [GameDirectory])));
         Assert.Null(sut.Current.SelectedGameDirectory);
     }
 
@@ -507,9 +545,9 @@ public sealed class GameContextTests : IDisposable
 
         await sut.SetAdvancedModeAsync(AdvancedMode.On);
 
-        Assert.Equal(GameRelease.Fallout4, _viewModel.SelectedGame);
-        Assert.Empty(_viewModel.GameDirectory);
-        Assert.True(_viewModel.AdvancedMode);
+        AssertReports(
+            Reported(State(GameRelease.Fallout4, null)),
+            Reported(State(GameRelease.Fallout4, null, advancedMode: AdvancedMode.On)));
         Assert.Equal(AdvancedMode.On, sut.Current.AdvancedMode);
         Assert.Empty(Refreshes);
         Assert.Null(PluginList.Current.Confirmed);
@@ -517,12 +555,15 @@ public sealed class GameContextTests : IDisposable
         allowLookupToFinish.SetResult();
         await releaseSelection;
 
-        Assert.Equal(@"C:\Games\Fallout4", _viewModel.GameDirectory);
+        AssertReports(
+            Reported(State(GameRelease.Fallout4, null)),
+            Reported(State(GameRelease.Fallout4, null, advancedMode: AdvancedMode.On)),
+            Reported(State(GameRelease.Fallout4, @"C:\Games\Fallout4", [@"C:\Games\Fallout4"], AdvancedMode.On)));
         AssertSingleRefresh(@"C:\Games\Fallout4", GameRelease.Fallout4, AdvancedMode.On);
     }
 
     /// <summary>
-    /// Verifies that an equal Advanced Mode event does not request duplicate Plugin List work.
+    /// Verifies that an equal Advanced Mode event reports nothing and does not request duplicate Plugin List work.
     /// </summary>
     [Fact]
     public async Task SetAdvancedModeAsync_EqualValue_IsNoOp()
@@ -531,7 +572,7 @@ public sealed class GameContextTests : IDisposable
 
         await sut.SetAdvancedModeAsync(AdvancedMode.Off);
 
-        Assert.False(_viewModel.AdvancedMode);
+        Assert.Empty(Reports);
         Assert.Empty(Refreshes);
     }
 
@@ -546,11 +587,12 @@ public sealed class GameContextTests : IDisposable
         await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => sut.SetAdvancedModeAsync((AdvancedMode)42));
 
         Assert.Equal(GameContextState.Empty, sut.Current);
+        Assert.Empty(Reports);
         Assert.Empty(Refreshes);
     }
 
     /// <summary>
-    /// Verifies that a changed Advanced Mode value is projected before same-source Plugin List refresh completes.
+    /// Verifies that a changed Advanced Mode value is reported before same-source Plugin List refresh completes.
     /// </summary>
     [Fact]
     public async Task SetAdvancedModeAsync_ChangedCompleteContext_ProjectsAndRefreshesCurrentSource()
@@ -559,11 +601,11 @@ public sealed class GameContextTests : IDisposable
         _gameInstallationProbe.WithInstalledDirectories(GameRelease.SkyrimSE, GameDirectory);
         var sut = CreateSut(ScriptedGameLoadOrders.Sequenced(ScriptedDiscovery.Completes(), refresh));
         await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
-        ForgetRefreshes();
+        ForgetSetup();
 
         var modeChange = sut.SetAdvancedModeAsync(AdvancedMode.On);
 
-        Assert.True(_viewModel.AdvancedMode);
+        AssertReports(Reported(State(GameRelease.SkyrimSE, GameDirectory, [GameDirectory], AdvancedMode.On)));
         Assert.Equal(PluginListSource.Create(GameRelease.SkyrimSE, GameDirectory), Assert.Single(Refreshes));
 
         refresh.Release();
@@ -601,7 +643,7 @@ public sealed class GameContextTests : IDisposable
         allowDetectionToFinish.SetResult();
         await browse;
 
-        Assert.Equal(GameRelease.SkyrimSE, _viewModel.SelectedGame);
+        Assert.Equal(GameRelease.SkyrimSE, LastReportedState.SelectedGameRelease);
         AssertSingleRefresh(GameDirectory, GameRelease.SkyrimSE, AdvancedMode.Off);
     }
 
@@ -635,18 +677,13 @@ public sealed class GameContextTests : IDisposable
         allowLookupToFinish.SetResult();
         await releaseSelection;
 
-        Assert.Equal(GameRelease.SkyrimSE, _viewModel.SelectedGame);
-        Assert.Empty(_viewModel.GameDirectory);
-        Assert.Empty(_viewModel.DetectedDirectories);
+        AssertReports(Reported(State(GameRelease.SkyrimSE, null)));
         Assert.Empty(Refreshes);
 
         pickerCompletion.SetResult(FileDialogResult.Cancelled());
         await browse;
 
-        Assert.Equal(GameRelease.SkyrimSE, _viewModel.SelectedGame);
-        Assert.Empty(_viewModel.GameDirectory);
-        Assert.Empty(_viewModel.DetectedDirectories);
-        Assert.Empty(_viewModel.ErrorMessages);
+        AssertReports(Reported(State(GameRelease.SkyrimSE, null)));
         Assert.Empty(Refreshes);
     }
 
@@ -667,7 +704,8 @@ public sealed class GameContextTests : IDisposable
             .Returns(newerPicker.Task);
         var sut = CreateSut();
         await sut.SelectGameReleaseAsync(GameRelease.Fallout4);
-        ForgetRefreshes();
+        var stateBeforeBrowse = sut.Current;
+        ForgetSetup();
 
         var olderBrowse = sut.BrowseGameDirectoryAsync();
         var newerBrowse = sut.BrowseGameDirectoryAsync();
@@ -676,16 +714,14 @@ public sealed class GameContextTests : IDisposable
         olderPicker.SetResult(FileDialogResult.Success(GameDirectory));
         await olderBrowse;
 
-        Assert.Equal(GameRelease.Fallout4, _viewModel.SelectedGame);
-        Assert.Equal(@"C:\Existing", _viewModel.GameDirectory);
-        Assert.Equal([@"C:\Existing", @"D:\Suggested"], _viewModel.DetectedDirectories);
-        Assert.Empty(_viewModel.ErrorMessages);
+        Assert.Same(stateBeforeBrowse, sut.Current);
+        Assert.Empty(Reports);
         Assert.Empty(Refreshes);
         Assert.Empty(_gameInstallationProbe.ProbedPaths);
     }
 
     /// <summary>
-    /// Verifies that only the latest of two controlled Browse pickers can publish its selected directory.
+    /// Verifies that only the latest of two controlled Browse pickers can report its selected directory.
     /// </summary>
     /// <returns>A task that completes after both controlled picker operations settle.</returns>
     [Fact]
@@ -709,15 +745,13 @@ public sealed class GameContextTests : IDisposable
         olderPicker.SetResult(FileDialogResult.Success(GameDirectory));
         await olderBrowse;
 
-        Assert.Equal(GameRelease.Fallout4, _viewModel.SelectedGame);
-        Assert.Equal(latestDirectory, _viewModel.GameDirectory);
-        Assert.Empty(_viewModel.DetectedDirectories);
+        AssertReports(Reported(State(GameRelease.Fallout4, latestDirectory)));
         AssertSingleRefresh(latestDirectory, GameRelease.Fallout4, AdvancedMode.Off);
         Assert.False(_gameInstallationProbe.ProbedAnythingUnder(GameDirectory));
     }
 
     /// <summary>
-    /// Verifies that a newer release intent prevents an older picker result from publishing any Browse state.
+    /// Verifies that a newer release intent prevents an older picker result from reporting any Browse state.
     /// </summary>
     /// <returns>A task that completes after the release intent and controlled picker settle.</returns>
     [Fact]
@@ -735,15 +769,15 @@ public sealed class GameContextTests : IDisposable
         pickerCompletion.SetResult(FileDialogResult.Success(GameDirectory));
         await Task.WhenAll(browse, releaseSelection);
 
-        Assert.Equal(GameRelease.Fallout4, _viewModel.SelectedGame);
-        Assert.Equal(latestDirectory, _viewModel.GameDirectory);
-        Assert.Equal([latestDirectory], _viewModel.DetectedDirectories);
+        AssertReports(
+            Reported(State(GameRelease.Fallout4, null)),
+            Reported(State(GameRelease.Fallout4, latestDirectory, [latestDirectory])));
         AssertSingleRefresh(latestDirectory, GameRelease.Fallout4, AdvancedMode.Off);
         Assert.Empty(_gameInstallationProbe.ProbedPaths);
     }
 
     /// <summary>
-    /// Verifies that a newer explicit directory suppresses an older picker failure and its error message.
+    /// Verifies that a newer explicit directory suppresses an older picker failure and its notice.
     /// </summary>
     /// <returns>A task that completes after the directory intent and controlled picker settle.</returns>
     [Fact]
@@ -756,20 +790,15 @@ public sealed class GameContextTests : IDisposable
         _fileDialogService.Setup(x => x.SelectGameDirectory()).Returns(pickerCompletion.Task);
         var sut = CreateSut();
         await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
-        ForgetRefreshes();
+        ForgetSetup();
 
         var browse = sut.BrowseGameDirectoryAsync();
         await sut.SelectDetectedDirectoryAsync(latestDirectory);
         pickerCompletion.SetResult(FileDialogResult.Failure("obsolete picker failure"));
         await browse;
 
-        Assert.Equal(GameRelease.SkyrimSE, _viewModel.SelectedGame);
-        Assert.Equal(latestDirectory, _viewModel.GameDirectory);
-        Assert.Equal([GameDirectory, latestDirectory], _viewModel.DetectedDirectories);
+        AssertReports(Reported(State(GameRelease.SkyrimSE, latestDirectory, [GameDirectory, latestDirectory])));
         AssertSingleRefresh(latestDirectory, GameRelease.SkyrimSE, AdvancedMode.Off);
-        Assert.DoesNotContain(
-            _viewModel.ErrorMessages,
-            message => message.Contains("obsolete picker failure", StringComparison.Ordinal));
     }
 
     /// <summary>
@@ -787,9 +816,7 @@ public sealed class GameContextTests : IDisposable
 
         await sut.BrowseGameDirectoryAsync();
 
-        Assert.Equal(GameDirectory, _viewModel.GameDirectory);
-        Assert.Equal(GameRelease.SkyrimSE, _viewModel.SelectedGame);
-        Assert.Empty(_viewModel.DetectedDirectories);
+        AssertReports(Reported(State(GameRelease.SkyrimSE, GameDirectory)));
         Assert.Equal(GameRelease.SkyrimSE, sut.Current.SelectedGameRelease);
         Assert.Equal(GameDirectory, sut.Current.SelectedGameDirectory);
         Assert.Empty(_gameInstallationProbe.InstalledDirectoryLookups);
@@ -797,7 +824,8 @@ public sealed class GameContextTests : IDisposable
     }
 
     /// <summary>
-    /// Verifies that a newer release intent prevents an older Browse detection result from publishing context or refresh.
+    /// Verifies that a newer release intent prevents an older Browse detection result from reporting context or
+    /// refreshing.
     /// </summary>
     /// <returns>A task that completes after the controlled detection and newer release intent settle.</returns>
     [Fact]
@@ -827,9 +855,9 @@ public sealed class GameContextTests : IDisposable
         allowDetectionToFinish.SetResult();
         await Task.WhenAll(browse, newerRelease);
 
-        Assert.Equal(GameRelease.Fallout4, _viewModel.SelectedGame);
-        Assert.Equal(@"C:\Games\Fallout4", _viewModel.GameDirectory);
-        Assert.Equal([@"C:\Games\Fallout4"], _viewModel.DetectedDirectories);
+        AssertReports(
+            Reported(State(GameRelease.Fallout4, null)),
+            Reported(State(GameRelease.Fallout4, @"C:\Games\Fallout4", [@"C:\Games\Fallout4"])));
         AssertSingleRefresh(@"C:\Games\Fallout4", GameRelease.Fallout4, AdvancedMode.Off);
     }
 
@@ -862,15 +890,15 @@ public sealed class GameContextTests : IDisposable
         allowDetectionToFail.SetResult();
         await Task.WhenAll(browse, newerRelease);
 
-        Assert.Equal(GameRelease.Fallout4, _viewModel.SelectedGame);
-        Assert.Equal(@"C:\Games\Fallout4", _viewModel.GameDirectory);
-        Assert.Empty(_viewModel.ErrorMessages);
+        AssertReports(
+            Reported(State(GameRelease.Fallout4, null)),
+            Reported(State(GameRelease.Fallout4, @"C:\Games\Fallout4", [@"C:\Games\Fallout4"])));
         AssertSingleRefresh(@"C:\Games\Fallout4", GameRelease.Fallout4, AdvancedMode.Off);
     }
 
     /// <summary>
     /// Verifies that browsing to an equivalent spelling of the current source while its Plugin List loaded fine is a
-    /// no-op: the same source is the same directory, so nothing is invalidated, reloaded or re-projected.
+    /// no-op: the same source is the same directory, so nothing is invalidated, reloaded or reported.
     /// </summary>
     /// <returns>A task that completes after the Browse is handled.</returns>
     [Fact]
@@ -882,7 +910,7 @@ public sealed class GameContextTests : IDisposable
         SelectPlugin("User.esp");
         var stateBeforeBrowse = sut.Current;
         var pluginListBeforeBrowse = PluginList.Current;
-        ForgetRefreshes();
+        ForgetSetup();
         _fileDialogService.Setup(x => x.SelectGameDirectory())
             .ReturnsAsync(FileDialogResult.Success(Path.Combine(GameDirectory, "Data")));
 
@@ -891,14 +919,14 @@ public sealed class GameContextTests : IDisposable
         Assert.Same(stateBeforeBrowse, sut.Current);
         Assert.Same(pluginListBeforeBrowse, PluginList.Current);
         Assert.Equal(["User.esp"], PluginList.Current.Confirmed!.SelectedPluginNames);
-        Assert.Equal(GameDirectory, _viewModel.GameDirectory);
-        Assert.Empty(_viewModel.ErrorMessages);
+        Assert.Empty(Reports);
         Assert.Empty(Refreshes);
     }
 
     /// <summary>
     /// Verifies that browsing to the current source while its Plugin List is in the failed state is the user's
-    /// explicit retry: the Plugin List is invalidated and then refreshed again, and the Game Context is unchanged.
+    /// explicit retry: the Plugin List is invalidated and then refreshed again, and the Game Context is unchanged and
+    /// reports nothing.
     /// </summary>
     /// <returns>A task that completes after the retried discovery finishes.</returns>
     [Fact]
@@ -911,7 +939,7 @@ public sealed class GameContextTests : IDisposable
         await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
         Assert.IsType<PluginListFailedState>(PluginList.Current);
         var stateBeforeBrowse = sut.Current;
-        ForgetRefreshes();
+        ForgetSetup();
         var publishedStates = RecordPluginListStates();
         _fileDialogService.Setup(x => x.SelectGameDirectory())
             .ReturnsAsync(FileDialogResult.Success(Path.Combine(GameDirectory, "Data")));
@@ -920,8 +948,7 @@ public sealed class GameContextTests : IDisposable
 
         Assert.IsType<PluginListNoSourceState>(publishedStates[0]);
         Assert.Same(stateBeforeBrowse, sut.Current);
-        Assert.Equal(GameDirectory, _viewModel.GameDirectory);
-        Assert.Equal([GameDirectory, @"D:\Games\Skyrim"], _viewModel.DetectedDirectories);
+        Assert.Empty(Reports);
         Assert.Equal(PluginListSource.Create(GameRelease.SkyrimSE, GameDirectory), Assert.Single(Refreshes));
         Assert.Equal(["Retried.esp"], PluginList.Current.Confirmed!.Entries.Select(static entry => entry.Name));
         Assert.Empty(_gameInstallationProbe.ProbedPaths);
@@ -939,7 +966,7 @@ public sealed class GameContextTests : IDisposable
         _gameInstallationProbe.WithInstalledDirectories(GameRelease.SkyrimSE, GameDirectory);
         var sut = CreateSut(ScriptedGameLoadOrders.Fixed("User.esp"));
         await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
-        ForgetRefreshes();
+        ForgetSetup();
         var publishedStates = RecordPluginListStates();
         _fileDialogService.Setup(x => x.SelectGameDirectory())
             .ReturnsAsync(FileDialogResult.Success(browsedDirectory));
@@ -947,8 +974,7 @@ public sealed class GameContextTests : IDisposable
         await sut.BrowseGameDirectoryAsync();
 
         Assert.IsType<PluginListNoSourceState>(publishedStates[0]);
-        Assert.Equal(browsedDirectory, _viewModel.GameDirectory);
-        Assert.Equal([GameDirectory], _viewModel.DetectedDirectories);
+        AssertReports(Reported(State(GameRelease.SkyrimSE, browsedDirectory, [GameDirectory])));
         Assert.Equal(browsedDirectory, sut.Current.SelectedGameDirectory);
         Assert.Equal(PluginListSource.Create(GameRelease.SkyrimSE, browsedDirectory), sut.Current.PluginListSource);
         AssertSingleRefresh(browsedDirectory, GameRelease.SkyrimSE, AdvancedMode.Off);
@@ -956,9 +982,9 @@ public sealed class GameContextTests : IDisposable
 
     /// <summary>
     /// Verifies that a Browse with no GameRelease whose directory holds no detectable game is refused with the
-    /// detection guidance and keeps nothing: the directory is not held, and the Plugin List is not touched.
+    /// detection notice and keeps nothing: the directory is not held, and the Plugin List is not touched.
     /// </summary>
-    /// <returns>A task that completes after detection failure is presented.</returns>
+    /// <returns>A task that completes after detection failure is reported.</returns>
     /// <remarks>
     /// The Plugin List is driven only through the Game Context: a confirmed list is loaded, then the release is
     /// cleared, which is the only way the Game Context reaches "no release" after a confirmation. A directory is only
@@ -974,18 +1000,16 @@ public sealed class GameContextTests : IDisposable
         await sut.SelectGameReleaseAsync(null);
         var stateBeforeBrowse = sut.Current;
         var pluginListBeforeBrowse = PluginList.Current;
-        ForgetRefreshes();
+        ForgetSetup();
         _fileDialogService.Setup(x => x.SelectGameDirectory())
             .ReturnsAsync(FileDialogResult.Success(GameDirectory));
         // Only install records are declared, so detection finds no known game master — its one reason to return null.
 
         await sut.BrowseGameDirectoryAsync();
 
-        Assert.Empty(_viewModel.GameDirectory);
-        Assert.Null(_viewModel.SelectedGame);
         Assert.Same(stateBeforeBrowse, sut.Current);
         Assert.Same(pluginListBeforeBrowse, PluginList.Current);
-        Assert.Equal([Rendered(new NoGameDetected())], _viewModel.ErrorMessages);
+        AssertReports(Reported(new NoGameDetected()));
         Assert.Empty(Refreshes);
     }
 
@@ -993,7 +1017,7 @@ public sealed class GameContextTests : IDisposable
     /// Verifies that a path detection cannot use at all is reported as the path problem it is, rather than as a
     /// missing game the user is asked to supply from the dropdown, and that the refused path is not kept.
     /// </summary>
-    /// <returns>A task that completes after the malformed path is presented.</returns>
+    /// <returns>A task that completes after the malformed path is reported.</returns>
     [Fact]
     public async Task BrowseGameDirectoryAsync_MalformedDirectoryWithoutGameRelease_RefusesWithPathErrorAndKeepsNothing()
     {
@@ -1005,22 +1029,19 @@ public sealed class GameContextTests : IDisposable
 
         await sut.BrowseGameDirectoryAsync();
 
-        Assert.Null(_viewModel.SelectedGame);
-        Assert.Empty(_viewModel.GameDirectory);
         Assert.Equal(GameContextState.Empty, sut.Current);
         Assert.Same(pluginListBeforeBrowse, PluginList.Current);
         var detection = new GameInstallations(new InMemoryGameInstallationProbe());
-        Assert.Equal(
-            [RenderedRefusal(() => detection.Detect(malformedDirectory))],
-            _viewModel.ErrorMessages);
+        AssertReports(Reported(RefusalOf(() => detection.Detect(malformedDirectory))));
         Assert.Empty(Refreshes);
     }
 
     /// <summary>
     /// Verifies that a Browse with a GameRelease already selected refuses a directory that cannot become a Plugin List
-    /// Source with the one path message, and leaves the previous directory, the source and the Plugin List as they were.
+    /// Source with the one refusal notice, and leaves the previous directory, the source and the Plugin List as they
+    /// were.
     /// </summary>
-    /// <returns>A task that completes after the refusal is presented.</returns>
+    /// <returns>A task that completes after the refusal is reported.</returns>
     /// <remarks>
     /// Detection is skipped when a GameRelease is selected, so building the source is the only thing that can notice
     /// the path is unusable. It used to throw out of the Plugin List refresh into the shell's "Unexpected error".
@@ -1033,28 +1054,24 @@ public sealed class GameContextTests : IDisposable
         await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
         var stateBeforeBrowse = sut.Current;
         var pluginListBeforeBrowse = PluginList.Current;
-        ForgetRefreshes();
+        ForgetSetup();
         _fileDialogService.Setup(x => x.SelectGameDirectory())
             .ReturnsAsync(FileDialogResult.Success("C:\\Games\\Sky\0rim"));
 
         await sut.BrowseGameDirectoryAsync();
 
-        Assert.Equal(GameRelease.SkyrimSE, _viewModel.SelectedGame);
-        Assert.Equal(GameDirectory, _viewModel.GameDirectory);
         Assert.Same(stateBeforeBrowse, sut.Current);
         Assert.Same(pluginListBeforeBrowse, PluginList.Current);
-        Assert.Equal(
-            [RenderedRefusal(() => PluginListSource.Create(GameRelease.SkyrimSE, "C:\\Games\\Sky\0rim"))],
-            _viewModel.ErrorMessages);
+        AssertReports(Reported(RefusalOf(() => PluginListSource.Create(GameRelease.SkyrimSE, "C:\\Games\\Sky\0rim"))));
         Assert.Empty(Refreshes);
         Assert.Empty(_gameInstallationProbe.ProbedPaths);
     }
 
     /// <summary>
     /// Verifies that a Browse with no GameRelease whose detection throws for a reason other than the path's shape is
-    /// refused with the path message and keeps nothing.
+    /// refused with the refusal notice and keeps nothing.
     /// </summary>
-    /// <returns>A task that completes after the refusal is presented.</returns>
+    /// <returns>A task that completes after the refusal is reported.</returns>
     [Fact]
     public async Task BrowseGameDirectoryAsync_DetectionThrowsWithoutGameRelease_RefusesAndKeepsNothing()
     {
@@ -1066,17 +1083,16 @@ public sealed class GameContextTests : IDisposable
 
         await sut.BrowseGameDirectoryAsync();
 
-        Assert.Empty(_viewModel.GameDirectory);
         Assert.Equal(GameContextState.Empty, sut.Current);
         Assert.Same(pluginListBeforeBrowse, PluginList.Current);
-        Assert.Equal([Rendered(new DirectoryRefused("drive not ready"))], _viewModel.ErrorMessages);
+        AssertReports(Reported(new DirectoryRefused("drive not ready")));
         Assert.Empty(Refreshes);
     }
 
     /// <summary>
-    /// Verifies that current picker failure leaves the existing Game Context unchanged and reports the failure.
+    /// Verifies that current picker failure leaves the existing Game Context unchanged and reports the failure notice.
     /// </summary>
-    /// <returns>A task that completes after picker failure is presented.</returns>
+    /// <returns>A task that completes after picker failure is reported.</returns>
     [Fact]
     public async Task BrowseGameDirectoryAsync_CurrentPickerFailure_LeavesSnapshotUnchangedAndRecordsError()
     {
@@ -1086,20 +1102,17 @@ public sealed class GameContextTests : IDisposable
         var sut = CreateSut();
         await sut.SelectGameReleaseAsync(GameRelease.Fallout4);
         var stateBeforeBrowse = sut.Current;
-        ForgetRefreshes();
+        ForgetSetup();
 
         await sut.BrowseGameDirectoryAsync();
 
-        Assert.Equal(GameRelease.Fallout4, _viewModel.SelectedGame);
-        Assert.Equal(@"C:\Existing", _viewModel.GameDirectory);
-        Assert.Equal([@"C:\Existing", @"D:\Suggested"], _viewModel.DetectedDirectories);
         Assert.Same(stateBeforeBrowse, sut.Current);
-        Assert.Contains(Rendered(new GameDirectoryPickerFailed("picker unavailable")), _viewModel.ErrorMessages);
+        AssertReports(Reported(new GameDirectoryPickerFailed("picker unavailable")));
         Assert.Empty(Refreshes);
     }
 
     /// <summary>
-    /// Verifies that picker cancellation leaves an existing Game Context unchanged without adding an error.
+    /// Verifies that picker cancellation leaves an existing Game Context unchanged and reports nothing.
     /// </summary>
     /// <returns>A task that completes after picker cancellation is observed.</returns>
     [Fact]
@@ -1111,48 +1124,50 @@ public sealed class GameContextTests : IDisposable
 
         var sut = CreateSut();
         await sut.SelectGameReleaseAsync(GameRelease.Fallout4);
-        ForgetRefreshes();
+        var stateBeforeBrowse = sut.Current;
+        ForgetSetup();
 
         await sut.BrowseGameDirectoryAsync();
 
-        Assert.Equal(@"C:\Existing", _viewModel.GameDirectory);
-        Assert.Equal(GameRelease.Fallout4, _viewModel.SelectedGame);
-        Assert.Empty(_viewModel.ErrorMessages);
+        Assert.Same(stateBeforeBrowse, sut.Current);
+        Assert.Empty(Reports);
         Assert.Empty(Refreshes);
     }
 
     /// <summary>
-    /// Verifies that the shell's ComboBoxes echoing a release selection's own projection back as intents change
-    /// nothing: the game and directory ComboBoxes are bound one-way and forward every selection change, including the
-    /// ones the projection itself causes.
+    /// Verifies that a sink echoing a release selection's own reported states back as intents changes nothing, as the
+    /// shell's game and directory ComboBoxes do: they are bound one-way and forward every selection change, including
+    /// the ones the projection of a report itself causes.
     /// </summary>
     /// <remarks>
-    /// A release selection projects both the GameRelease and, once lookup finishes, the first detected directory, so
-    /// both ComboBoxes echo. Every echo must complete synchronously as a no-op, and only the real intent may reach the
-    /// Plugin List.
+    /// A release selection reports both the GameRelease and, once lookup finishes, the first detected directory, so
+    /// both kinds of echo happen. Every echo must complete synchronously as a no-op, and only the real intent may reach
+    /// the Plugin List.
     /// </remarks>
     [Fact]
     public async Task SelectGameReleaseAsync_ProjectionEchoedBackAsIntent_IsANoOp()
     {
         _gameInstallationProbe.WithInstalledDirectories(GameRelease.SkyrimSE, GameDirectory, @"D:\Games\Skyrim");
         var sut = CreateSut(ScriptedGameLoadOrders.Fixed("User.esp"));
-        var echoes = EchoProjectionBackAsIntents(sut);
+        var echoes = EchoReportsBackAsIntents(sut);
 
         await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
 
-        Assert.Contains(nameof(MainWindowViewModel.SelectedGame), echoes.Select(static echo => echo.Property));
-        Assert.Contains(nameof(MainWindowViewModel.GameDirectory), echoes.Select(static echo => echo.Property));
+        Assert.Contains(EchoedSelection.GameRelease, echoes.Select(static echo => echo.Selection));
+        Assert.Contains(EchoedSelection.Directory, echoes.Select(static echo => echo.Selection));
         Assert.All(echoes, echo => Assert.True(echo.Intent.IsCompletedSuccessfully));
         Assert.Equal([PluginListSource.Create(GameRelease.SkyrimSE, GameDirectory)], Refreshes);
         Assert.Equal(
             PluginListSource.Create(GameRelease.SkyrimSE, GameDirectory),
             Assert.IsType<ConfirmedPluginList>(PluginList.Current.Confirmed).Source);
         Assert.Equal(GameDirectory, sut.Current.SelectedGameDirectory);
+        AssertReports(
+            Reported(State(GameRelease.SkyrimSE, null)),
+            Reported(State(GameRelease.SkyrimSE, GameDirectory, [GameDirectory, @"D:\Games\Skyrim"])));
     }
 
     /// <summary>
-    /// Verifies that the directory ComboBox echoing a detected-directory pick's own projection back as an intent
-    /// changes nothing.
+    /// Verifies that a sink echoing a detected-directory pick's own reported state back as an intent changes nothing.
     /// </summary>
     /// <remarks>
     /// Every echo must complete synchronously as a no-op, and only the real pick may reach the Plugin List after the
@@ -1165,22 +1180,24 @@ public sealed class GameContextTests : IDisposable
         _gameInstallationProbe.WithInstalledDirectories(GameRelease.SkyrimSE, GameDirectory, secondDirectory);
         var sut = CreateSut(ScriptedGameLoadOrders.Fixed("User.esp"));
         await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
-        ForgetRefreshes();
-        var echoes = EchoProjectionBackAsIntents(sut);
+        ForgetSetup();
+        var echoes = EchoReportsBackAsIntents(sut);
 
         await sut.SelectDetectedDirectoryAsync(secondDirectory);
 
-        Assert.Contains(nameof(MainWindowViewModel.GameDirectory), echoes.Select(static echo => echo.Property));
+        Assert.Contains(EchoedSelection.Directory, echoes.Select(static echo => echo.Selection));
         Assert.All(echoes, echo => Assert.True(echo.Intent.IsCompletedSuccessfully));
         Assert.Equal([PluginListSource.Create(GameRelease.SkyrimSE, secondDirectory)], Refreshes);
         Assert.Equal(
             PluginListSource.Create(GameRelease.SkyrimSE, secondDirectory),
             Assert.IsType<ConfirmedPluginList>(PluginList.Current.Confirmed).Source);
         Assert.Equal(secondDirectory, sut.Current.SelectedGameDirectory);
+        AssertReports(Reported(State(GameRelease.SkyrimSE, secondDirectory, [GameDirectory, secondDirectory])));
     }
 
     /// <summary>
-    /// Verifies that disposal prevents a late installed-location result from projecting directories or refreshing Plugins.
+    /// Verifies that disposal prevents a late installed-location result from reporting directories or refreshing
+    /// Plugins.
     /// </summary>
     [Fact]
     public async Task Dispose_DuringInstalledLocationLookup_RetiresLateProjectionAndRefresh()
@@ -1197,14 +1214,12 @@ public sealed class GameContextTests : IDisposable
         allowLookupToFinish.SetResult();
         await selection;
 
-        Assert.Equal(GameRelease.Fallout4, _viewModel.SelectedGame);
-        Assert.Empty(_viewModel.GameDirectory);
-        Assert.Empty(_viewModel.DetectedDirectories);
+        AssertReports(Reported(State(GameRelease.Fallout4, null)));
         Assert.Empty(Refreshes);
     }
 
     /// <summary>
-    /// Verifies that disposal prevents a late folder-picker failure from publishing an obsolete error.
+    /// Verifies that disposal prevents a late folder-picker failure from reporting an obsolete notice.
     /// </summary>
     [Fact]
     public async Task Dispose_DuringFolderPicker_RetiresLateFailureMessage()
@@ -1226,7 +1241,7 @@ public sealed class GameContextTests : IDisposable
         allowPickerToFinish.SetResult(FileDialogResult.Failure("picker unavailable"));
         await browse;
 
-        Assert.Empty(_viewModel.ErrorMessages);
+        Assert.Empty(Reports);
         Assert.Empty(Refreshes);
     }
 
@@ -1246,7 +1261,8 @@ public sealed class GameContextTests : IDisposable
     }
 
     /// <summary>
-    /// Builds the Game Context under test over a real Plugin List driven by the given scripted load orders.
+    /// Builds the Game Context under test over a real Plugin List driven by the given scripted load orders, reporting
+    /// to the recording sink.
     /// </summary>
     /// <param name="loadOrders">The discovery script; defaults to every discovery confirming an empty Plugin set.</param>
     private GameContext CreateSut(ScriptedGameLoadOrders? loadOrders = null)
@@ -1257,15 +1273,44 @@ public sealed class GameContextTests : IDisposable
             new GameInstallations(_gameInstallationProbe),
             _fileDialogService.Object,
             _pluginList,
-            _viewModel);
+            _sink);
     }
 
     /// <summary>
-    /// Starts counting refreshes afresh, so a test's setup discoveries do not count against what it asserts.
+    /// Drives one Game Context through every kind of transition that reports a state: a release selection, a
+    /// detected-directory pick, an Advanced Mode change, a cleared directory, a cleared release and a Browse that
+    /// detects a different game.
     /// </summary>
-    private void ForgetRefreshes()
+    /// <param name="onCreated">Run with the Game Context as soon as it exists, before any transition.</param>
+    /// <returns>The Game Context, after the last transition.</returns>
+    private async Task<GameContext> RunEveryKindOfTransitionAsync(Action<GameContext>? onCreated = null)
+    {
+        const string browsedDirectory = @"E:\Games\Fallout4";
+        _gameInstallationProbe
+            .WithInstalledDirectories(GameRelease.SkyrimSE, GameDirectory, @"D:\Games\Skyrim")
+            .WithFile(Path.Combine(browsedDirectory, "Data", "Fallout4.esm"));
+        _fileDialogService.Setup(x => x.SelectGameDirectory())
+            .ReturnsAsync(FileDialogResult.Success(browsedDirectory));
+        var sut = CreateSut();
+        onCreated?.Invoke(sut);
+
+        await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
+        await sut.SelectDetectedDirectoryAsync(@"D:\Games\Skyrim");
+        await sut.SetAdvancedModeAsync(AdvancedMode.On);
+        await sut.SelectDetectedDirectoryAsync(null);
+        await sut.SelectGameReleaseAsync(null);
+        await sut.BrowseGameDirectoryAsync();
+
+        return sut;
+    }
+
+    /// <summary>
+    /// Starts counting refreshes and reports afresh, so a test's setup does not count against what it asserts.
+    /// </summary>
+    private void ForgetSetup()
     {
         _refreshMark = _loadOrders.DiscoveredSources.Count;
+        _reportMark = _sink.Entries.Count;
     }
 
     /// <summary>
@@ -1281,29 +1326,34 @@ public sealed class GameContextTests : IDisposable
     }
 
     /// <summary>
-    /// Wires ViewModel change handlers that mirror the shell's one-way ComboBoxes, forwarding each projected selection
-    /// back to the Game Context as an intent, and records every intent they forward.
+    /// Makes the recording sink mirror the shell's one-way ComboBoxes, forwarding each reported selection back to the
+    /// Game Context as an intent from inside the report, and records every intent it forwards.
     /// </summary>
     /// <param name="sut">The Game Context that receives the echoed intents.</param>
-    /// <returns>The list that receives each echoed property name and the task its forwarded intent returned.</returns>
+    /// <returns>The list that receives each echoed selection and the task its forwarded intent returned.</returns>
     /// <remarks>
-    /// A game selection forwards the projected GameRelease, and a directory selection forwards the projected directory
-    /// only while it is one of the detected directories, because the directory ComboBox has no item to select
-    /// otherwise.
+    /// Every reported GameRelease is echoed, and a reported directory is echoed only while it is one of the available
+    /// directories, because the directory ComboBox has no item to select otherwise. Echoing on every report rather than
+    /// only on a change is stricter than the shell, which only forwards what changed.
     /// </remarks>
-    private List<(string Property, Task Intent)> EchoProjectionBackAsIntents(GameContext sut)
+    private List<(EchoedSelection Selection, Task Intent)> EchoReportsBackAsIntents(GameContext sut)
     {
-        var echoes = new List<(string Property, Task Intent)>();
-        _viewModel.PropertyChanged += (_, args) =>
+        var echoes = new List<(EchoedSelection Selection, Task Intent)>();
+        _sink.OnEntry = entry =>
         {
-            if (args.PropertyName == nameof(MainWindowViewModel.SelectedGame) && _viewModel.SelectedGame is { } game)
+            if (entry is not StateReported { State: var state })
             {
-                echoes.Add((args.PropertyName, sut.SelectGameReleaseAsync(game)));
+                return;
             }
-            else if (args.PropertyName == nameof(MainWindowViewModel.GameDirectory) &&
-                     _viewModel.DetectedDirectories.Contains(_viewModel.GameDirectory))
+
+            if (state.SelectedGameRelease is { } game)
             {
-                echoes.Add((args.PropertyName, sut.SelectDetectedDirectoryAsync(_viewModel.GameDirectory)));
+                echoes.Add((EchoedSelection.GameRelease, sut.SelectGameReleaseAsync(game)));
+            }
+
+            if (state.SelectedGameDirectory is { } directory && state.AvailableDirectories.Contains(directory))
+            {
+                echoes.Add((EchoedSelection.Directory, sut.SelectDetectedDirectoryAsync(directory)));
             }
         };
 
@@ -1367,7 +1417,7 @@ public sealed class GameContextTests : IDisposable
     }
 
     /// <summary>
-    /// Asserts one canonical discovery source since the last <see cref="ForgetRefreshes" /> and the confirmed Advanced
+    /// Asserts one canonical discovery source since the last <see cref="ForgetSetup" /> and the confirmed Advanced
     /// Mode produced by that refresh.
     /// </summary>
     private void AssertSingleRefresh(string gameDirectory, GameRelease gameRelease, AdvancedMode advancedMode)
@@ -1378,26 +1428,106 @@ public sealed class GameContextTests : IDisposable
     }
 
     /// <summary>
-    /// Returns the text Game Context Presentation renders for a notice, so these tests never restate a sentence.
+    /// Asserts that exactly the given reports were made since the last <see cref="ForgetSetup" />, in that order.
     /// </summary>
-    /// <param name="notice">The notice the Game Context is expected to have reported.</param>
-    /// <returns>The rendered text the ViewModel should hold.</returns>
-    private static string Rendered(GameContextNotice notice)
+    /// <param name="expected">The expected reports.</param>
+    /// <remarks>
+    /// States are compared field by field through <see cref="AssertStateEqual" />, because record equality would
+    /// compare their available directories by reference. Notices are value records and are compared directly.
+    /// </remarks>
+    private void AssertReports(params GameContextSinkEntry[] expected)
     {
-        return GameContextPresentation.Render(notice).Text;
+        var actual = Reports;
+        Assert.True(
+            expected.Length == actual.Count,
+            $"Expected {expected.Length} reports but the sink recorded {actual.Count}: {string.Join(", ", actual)}");
+        for (var index = 0; index < expected.Length; index++)
+        {
+            if (expected[index] is StateReported { State: var expectedState })
+            {
+                AssertStateEqual(expectedState, Assert.IsType<StateReported>(actual[index]).State);
+            }
+            else
+            {
+                Assert.Equal(expected[index], actual[index]);
+            }
+        }
     }
 
     /// <summary>
-    /// Returns the text of the refusal a directory pick should produce, built from the failure the unusable path
-    /// actually raises in the module that rejects it.
+    /// Asserts that two Game Context states hold the same values, comparing the available directories by content.
+    /// </summary>
+    /// <param name="expected">The expected state.</param>
+    /// <param name="actual">The reported state.</param>
+    private static void AssertStateEqual(GameContextState expected, GameContextState actual)
+    {
+        Assert.Equal(expected.SelectedGameRelease, actual.SelectedGameRelease);
+        Assert.Equal(expected.SelectedGameDirectory, actual.SelectedGameDirectory);
+        Assert.Equal(expected.PluginListSource, actual.PluginListSource);
+        Assert.Equal(expected.AvailableDirectories.ToArray(), actual.AvailableDirectories.ToArray());
+        Assert.Equal(expected.AdvancedMode, actual.AdvancedMode);
+    }
+
+    /// <summary>
+    /// Builds the Game Context state a transition is expected to report, with the Plugin List Source the displayed
+    /// directory makes, so the invariant holds in every expected state too.
+    /// </summary>
+    /// <param name="gameRelease">The expected GameRelease.</param>
+    /// <param name="directory">The expected displayed directory, or null when none is held.</param>
+    /// <param name="availableDirectories">The expected available directories; none when omitted.</param>
+    /// <param name="advancedMode">The expected Advanced Mode.</param>
+    /// <returns>The expected state.</returns>
+    private static GameContextState State(
+        GameRelease? gameRelease,
+        string? directory,
+        string[]? availableDirectories = null,
+        AdvancedMode advancedMode = AdvancedMode.Off)
+    {
+        var source = gameRelease is { } release && directory is not null
+            ? PluginListSource.Create(release, directory)
+            : null;
+        return new GameContextState(gameRelease, directory, source, [.. availableDirectories ?? []], advancedMode);
+    }
+
+    /// <summary>
+    /// Wraps an expected state as the report it should arrive in.
+    /// </summary>
+    private static GameContextSinkEntry Reported(GameContextState state)
+    {
+        return new StateReported(state);
+    }
+
+    /// <summary>
+    /// Wraps an expected notice as the report it should arrive in.
+    /// </summary>
+    private static GameContextSinkEntry Reported(GameContextNotice notice)
+    {
+        return new NoticeReported(notice);
+    }
+
+    /// <summary>
+    /// Returns the refusal notice a directory pick should produce, built from the failure the unusable path actually
+    /// raises in the module that rejects it.
     /// </summary>
     /// <param name="rejectPath">The call that rejects the path the same way the Game Context's own call does.</param>
-    /// <returns>The rendered refusal text the ViewModel should hold.</returns>
+    /// <returns>The expected refusal notice.</returns>
     /// <remarks>
     /// The failure's message comes from the runtime's path handling, so it is captured here rather than written down.
     /// </remarks>
-    private static string RenderedRefusal(Action rejectPath)
+    private static DirectoryRefused RefusalOf(Action rejectPath)
     {
-        return Rendered(new DirectoryRefused(Assert.ThrowsAny<Exception>(rejectPath).Message));
+        return new DirectoryRefused(Assert.ThrowsAny<Exception>(rejectPath).Message);
+    }
+
+    /// <summary>
+    /// Which ComboBox an echoed intent came from.
+    /// </summary>
+    private enum EchoedSelection
+    {
+        /// <summary>The game ComboBox, echoing a reported GameRelease.</summary>
+        GameRelease,
+
+        /// <summary>The directory ComboBox, echoing a reported directory.</summary>
+        Directory
     }
 }

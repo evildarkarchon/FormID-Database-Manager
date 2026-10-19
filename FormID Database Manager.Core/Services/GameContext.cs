@@ -1,6 +1,5 @@
 using System.Collections.Immutable;
 using System.Diagnostics.CodeAnalysis;
-using FormID_Database_Manager.ViewModels;
 using Mutagen.Bethesda;
 
 namespace FormID_Database_Manager.Services;
@@ -16,7 +15,8 @@ namespace FormID_Database_Manager.Services;
 ///         used. Browse and a detected-directory pick share one adoption step: build the source; if that fails, refuse
 ///         with a <see cref="DirectoryRefused" /> notice and change nothing; if the source equals the current one, do
 ///         nothing; otherwise adopt it and refresh. "The same directory" therefore means source equality, so a game
-///         root and its Data directory are one pick, and the ComboBox echo of this module's own projection is a no-op.
+///         root and its Data directory are one pick, and the ComboBox echo of this module's own reported state is a
+///         no-op.
 ///     </para>
 ///     <para>
 ///         Browse alone has one exception to the equal-source no-op: when the Plugin List for that source is in its
@@ -31,9 +31,10 @@ namespace FormID_Database_Manager.Services;
 ///     </para>
 ///     <para>
 ///         The Plugin List is borrowed: whoever constructs this module owns the Plugin List's lifetime, and
-///         <see cref="Dispose" /> leaves it alone. This module writes the ViewModel's Game Context projection directly,
-///         and adds its messages directly too, but holds no wording: it reports a typed <see cref="GameContextNotice" />
-///         that <see cref="GameContextPresentation" /> renders (ADR-0013).
+///         <see cref="Dispose" /> leaves it alone. This module writes nothing the user sees: it reports every
+///         published state and every typed <see cref="GameContextNotice" /> to an <see cref="IGameContextSink" />,
+///         which the User Workflow implements, and it holds no wording, because <see cref="GameContextPresentation" />
+///         renders the notices (ADR-0013).
 ///     </para>
 /// </remarks>
 internal sealed class GameContext : IDisposable
@@ -41,7 +42,7 @@ internal sealed class GameContext : IDisposable
     private readonly IFileDialogService _fileDialogService;
     private readonly GameInstallations _gameInstallations;
     private readonly PluginList _pluginList;
-    private readonly MainWindowViewModel _viewModel;
+    private readonly IGameContextSink _sink;
 
     private GameContextState _current = GameContextState.Empty;
     private int _gameContextVersion;
@@ -52,19 +53,19 @@ internal sealed class GameContext : IDisposable
     /// <param name="gameInstallations">The Game Installation resolution module, used for detection and location.</param>
     /// <param name="fileDialogService">The platform picker adapter Browse opens.</param>
     /// <param name="pluginList">The Plugin List this module refreshes and invalidates, borrowed rather than owned.</param>
-    /// <param name="viewModel">The ViewModel that receives the Game Context projection and its messages.</param>
+    /// <param name="sink">Where every published state and every notice is reported.</param>
     /// <exception cref="ArgumentNullException">Any dependency is null.</exception>
-    /// <remarks>Construction projects nothing and touches neither the installation probe nor the Plugin List.</remarks>
+    /// <remarks>Construction reports nothing and touches neither the installation probe nor the Plugin List.</remarks>
     internal GameContext(
         GameInstallations gameInstallations,
         IFileDialogService fileDialogService,
         PluginList pluginList,
-        MainWindowViewModel viewModel)
+        IGameContextSink sink)
     {
         _gameInstallations = gameInstallations ?? throw new ArgumentNullException(nameof(gameInstallations));
         _fileDialogService = fileDialogService ?? throw new ArgumentNullException(nameof(fileDialogService));
         _pluginList = pluginList ?? throw new ArgumentNullException(nameof(pluginList));
-        _viewModel = viewModel ?? throw new ArgumentNullException(nameof(viewModel));
+        _sink = sink ?? throw new ArgumentNullException(nameof(sink));
     }
 
     /// <summary>
@@ -78,7 +79,7 @@ internal sealed class GameContext : IDisposable
     internal GameContextState Current => _current;
 
     /// <summary>
-    ///     Retires the current generation so late lookup, detection or picker work cannot publish state or messages.
+    ///     Retires the current generation so late lookup, detection or picker work cannot report a state or a notice.
     /// </summary>
     /// <remarks>
     ///     The borrowed Plugin List is not disposed here. Repeated calls only retire again, which is harmless.
@@ -100,7 +101,7 @@ internal sealed class GameContext : IDisposable
     internal async Task SelectGameReleaseAsync(GameRelease? selectedGameRelease)
     {
         // An equal release is a no-op, which is also what makes the game ComboBox's echo of this module's own
-        // projection harmless.
+        // reported state harmless.
         if (_current.SelectedGameRelease == selectedGameRelease)
         {
             return;
@@ -136,7 +137,7 @@ internal sealed class GameContext : IDisposable
     ///         Adoption builds the Plugin List Source first. A directory that cannot become one is refused with a
     ///         <see cref="DirectoryRefused" /> notice and changes nothing; a source equal to the current one is a no-op, which
     ///         is what makes an equivalent spelling (game root or Data directory) and the directory ComboBox's echo of
-    ///         this module's own projection harmless. Install-record directories were checked when they were listed,
+    ///         this module's own reported state harmless. Install-record directories were checked when they were listed,
     ///         so a pick from the detected list is never refused.
     ///     </para>
     ///     <para>
@@ -190,7 +191,7 @@ internal sealed class GameContext : IDisposable
     /// <exception cref="AggregateException">A registered Plugin List refresh cancellation callback throws.</exception>
     /// <exception cref="ObjectDisposedException">The borrowed Plugin List has been disposed.</exception>
     /// <remarks>
-    ///     The authoritative snapshot is projected before discovery starts. Programming and fatal discovery failures propagate
+    ///     The authoritative snapshot is reported before discovery starts. Programming and fatal discovery failures propagate
     ///     unchanged, and Plugin List discovery may continue off the caller thread.
     /// </remarks>
     internal Task SetAdvancedModeAsync(AdvancedMode advancedMode)
@@ -242,7 +243,7 @@ internal sealed class GameContext : IDisposable
             {
                 // A failure result always carries its text; the fallback only satisfies the nullable property's type
                 // and renders exactly what the old interpolation of a null did.
-                Report(new GameDirectoryPickerFailed(result.ErrorMessage ?? string.Empty));
+                _sink.ReportNotice(new GameDirectoryPickerFailed(result.ErrorMessage ?? string.Empty));
             }
 
             return;
@@ -290,7 +291,7 @@ internal sealed class GameContext : IDisposable
 
         if (usable.Count == 0)
         {
-            Report(new NoInstalledLocationsFound(selectedGame));
+            _sink.ReportNotice(new NoInstalledLocationsFound(selectedGame));
             return;
         }
 
@@ -357,7 +358,7 @@ internal sealed class GameContext : IDisposable
             if (detectedGame is null)
             {
                 // A directory is only adopted once a GameRelease is known, so this one is refused rather than kept.
-                Report(new NoGameDetected());
+                _sink.ReportNotice(new NoGameDetected());
                 return;
             }
 
@@ -385,7 +386,7 @@ internal sealed class GameContext : IDisposable
         if (source != _current.PluginListSource)
         {
             Adopt(path, source, gameRelease.Value);
-            // Projection handlers can re-enter and start a newer intent, so the generation is checked again.
+            // A report can re-enter and start a newer intent, so the generation is checked again.
             if (!IsLatestIntentGeneration(gameContextVersion))
             {
                 return;
@@ -498,41 +499,12 @@ internal sealed class GameContext : IDisposable
     /// <param name="failure">Why the directory cannot be used.</param>
     private void RefuseDirectory(Exception failure)
     {
-        Report(new DirectoryRefused(failure.Message));
-    }
-
-    /// <summary>
-    ///     Renders one Game Context notice through <see cref="GameContextPresentation" /> and adds it to the message
-    ///     list Presentation chose.
-    /// </summary>
-    /// <param name="notice">What Game Context has to tell the user.</param>
-    /// <remarks>
-    ///     This is the one place Game Context still writes a message, and it holds no wording of its own. Issue #116
-    ///     moves the write behind a sink the User Workflow implements (ADR-0013).
-    /// </remarks>
-    /// <exception cref="ArgumentOutOfRangeException">Presentation names a message list this module cannot write.</exception>
-    private void Report(GameContextNotice notice)
-    {
-        var rendered = GameContextPresentation.Render(notice);
-        switch (rendered.List)
-        {
-            case GameContextMessageList.Error:
-                _viewModel.AddErrorMessage(rendered.Text);
-                break;
-            case GameContextMessageList.Information:
-                _viewModel.AddInformationMessage(rendered.Text);
-                break;
-            default:
-                throw new ArgumentOutOfRangeException(
-                    nameof(notice),
-                    rendered.List,
-                    "Unsupported Game Context message list.");
-        }
+        _sink.ReportNotice(new DirectoryRefused(failure.Message));
     }
 
     /// <summary>
     ///     Makes a directory and the source built from it authoritative together, with the GameRelease that built it, and
-    ///     projects the result.
+    ///     reports the result.
     /// </summary>
     /// <param name="displayedDirectory">The directory as picked, which is what the UI shows.</param>
     /// <param name="source">The source built from that directory.</param>
@@ -540,7 +512,7 @@ internal sealed class GameContext : IDisposable
     /// <remarks>
     ///     Directory and source are written in one step so the invariant — both present or both absent, and both only
     ///     with a GameRelease — holds in every published state. Callers check their generation afterwards, because
-    ///     projection handlers can re-enter and start a newer intent.
+    ///     a report can re-enter and start a newer intent.
     /// </remarks>
     private void Adopt(string displayedDirectory, PluginListSource source, GameRelease gameRelease)
     {
@@ -597,31 +569,57 @@ internal sealed class GameContext : IDisposable
     }
 
     /// <summary>
-    ///     Makes a new Game Context authoritative and projects it, in that order, as one step.
+    ///     Makes a new Game Context authoritative and reports it, in that order, as one step.
     /// </summary>
     /// <param name="next">The complete next state, usually <c>_current with { … }</c>.</param>
     /// <remarks>
-    ///     The state is written before projecting so a projection handler that re-enters reads the new state, which is
-    ///     what makes the ComboBox echo a no-op. Projection handlers can also start a newer intent, so callers keep
-    ///     their own generation checks after this returns; none happen inside it.
+    ///     The state is written before reporting so a report that re-enters reads the new state, which is what makes
+    ///     the ComboBox echo a no-op. A report can also start a newer intent, so callers keep their own generation
+    ///     checks after this returns; none happen inside it.
     /// </remarks>
     private void Publish(GameContextState next)
     {
         _current = next;
-        ProjectGameContext();
+        _sink.ReportState(_current);
     }
+}
+
+/// <summary>
+///     Where Game Context reports what the user selected, and why a pick was refused or nothing was found (ADR-0013).
+/// </summary>
+/// <remarks>
+///     <para>
+///         The contract is UI-thread-affine, like the rest of Game Context: every report is made from the UI thread,
+///         and no lock is held while reporting. Game Context has no ordering to protect across threads, unlike
+///         Processing Run Control's sink.
+///     </para>
+///     <para>
+///         The User Workflow implements it over the ViewModel, and tests implement it by recording, so the seam has
+///         two adapters.
+///     </para>
+/// </remarks>
+internal interface IGameContextSink
+{
+    /// <summary>
+    ///     Receives the complete authoritative Game Context, on every publication.
+    /// </summary>
+    /// <param name="state">
+    ///     The state just made authoritative, including the Plugin List Source, which nothing shows the user.
+    /// </param>
+    /// <remarks>
+    ///     Game Context has already written <paramref name="state" /> when this is called, so an implementation whose
+    ///     handlers re-enter Game Context, such as a ComboBox echoing the projected selection back as an intent, reads
+    ///     the new state, and the echo is a no-op. A re-entrant call may also start a newer intent; Game Context checks
+    ///     its generation again after this returns.
+    /// </remarks>
+    void ReportState(GameContextState state);
 
     /// <summary>
-    ///     Publishes the complete authoritative Game Context through the ViewModel's one restricted projection seam.
+    ///     Receives one thing Game Context has to tell the user, as facts rather than wording.
     /// </summary>
-    private void ProjectGameContext()
-    {
-        _viewModel.ApplyGameContextProjection(
-            _current.SelectedGameRelease,
-            _current.SelectedGameDirectory,
-            _current.AvailableDirectories,
-            _current.AdvancedMode);
-    }
+    /// <param name="notice">The notice, which <see cref="GameContextPresentation" /> renders.</param>
+    /// <remarks>Retired work reports no notice, so every notice belongs to the latest intent.</remarks>
+    void ReportNotice(GameContextNotice notice);
 }
 
 /// <summary>
