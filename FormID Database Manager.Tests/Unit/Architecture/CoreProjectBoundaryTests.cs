@@ -357,9 +357,9 @@ public class CoreProjectBoundaryTests
     /// </summary>
     /// <param name="sourceFileName">The Core service source that must hold no refusal wording.</param>
     /// <remarks>
-    ///     Each sentence is pinned in full. The Game Context legitimately tells a Browse user it "Could not detect game
-    ///     from directory. Please select a game from the dropdown.", so only the complete refusal sentence, ending in
-    ///     "first.", is forbidden. What a refusal does say is pinned by <c>ProcessingRunPresentationTests</c>. Issue
+    ///     Each sentence is pinned in full. A Browse with no detectable game legitimately asks the user to select a game
+    ///     from the dropdown, in wording <c>GameContextPresentation</c> owns, so only the complete refusal sentence,
+    ///     ending in "first.", is forbidden. What a refusal does say is pinned by <c>ProcessingRunPresentationTests</c>. Issue
     ///     #105 moved the refusal report from the User Workflow to Processing Run Control, which is the row that
     ///     matters now. The User Workflow row still guards something real: the workflow captures every press before
     ///     Processing Run Control sees it and writes its own picker errors straight to the ViewModel, so it is the one
@@ -442,6 +442,35 @@ public class CoreProjectBoundaryTests
             .ToArray();
 
         // Guards the guard: the module's own unreachable-case diagnostic proves the scanner still reads this file.
+        Assert.Contains(literals, static literal => literal.IsExceptionArgument);
+        Assert.Empty(unexpectedLiterals);
+    }
+
+    /// <summary>
+    ///     Verifies that Game Context holds no user-facing sentence at all: the only string literals it may contain are
+    ///     exception diagnostics (ADR-0013).
+    /// </summary>
+    /// <remarks>
+    ///     Issue #115, under parent #114, mirroring the Processing Run Control guard above. Game Context reports typed
+    ///     notices and <c>GameContextPresentation</c> renders them, so the permitted set outside exception constructors
+    ///     is empty: any new literal fails until a reviewer decides whether it is wording, which belongs in
+    ///     Presentation, or something that earns a place in this list.
+    /// </remarks>
+    [Fact]
+    public void GameContext_StringLiterals_AreOnlyExceptionDiagnostics()
+    {
+        var gameContextSource = File.ReadAllText(
+            Path.Combine(GetCoreProjectDirectory(), "Services", "GameContext.cs"));
+        string[] permittedLiterals = [];
+
+        var literals = SourceStringLiterals.Extract(gameContextSource);
+        var unexpectedLiterals = literals
+            .Where(static literal => !literal.IsExceptionArgument)
+            .Select(static literal => literal.Text)
+            .Where(text => !permittedLiterals.Contains(text, StringComparer.Ordinal))
+            .ToArray();
+
+        // Guards the guard: the unsupported Advanced Mode diagnostic proves the scanner still reads this file.
         Assert.Contains(literals, static literal => literal.IsExceptionArgument);
         Assert.Empty(unexpectedLiterals);
     }
