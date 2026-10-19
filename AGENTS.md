@@ -36,14 +36,17 @@ renaming Core members or changing project boundaries. In particular:
 - `FormIdRecordStore.cs` is the only production source file that may reference `Microsoft.Data.Sqlite`.
 - `ProcessingRun` owns Store opening, optimization, and disposal; `PluginIngestion` owns load-order, overlay, and
   Data-path adapters.
-- `ProcessingRun.cs` contains no user-facing wording. A run reports typed `ProcessingRunProgress` and returns a typed
-  `ProcessingRunOutcome`; `ProcessingRunPresentation` renders both (ADR-0007). The retired sentences are pinned by
-  name, and `"Would process"` must not reappear anywhere in Core.
+- `ProcessingRun.cs` and `ProcessingRunControl.cs` contain no user-facing wording. A run reports typed
+  `ProcessingRunProgress` and returns a typed `ProcessingRunOutcome`; `ProcessingRunPresentation` renders both, along
+  with refusals, failures, and the starting and cancellation-requested facts (ADR-0007, ADR-0012). The retired
+  sentences are pinned by name, and `"Would process"` must not reappear anywhere in Core.
 - `UserWorkflow.Create` is the only production composition. The WinUI shell supplies the ViewModel, thread
   dispatcher, and file dialog adapter and constructs no Core collaborator. `UserWorkflow` owns the
   `PluginListPresentationAdapter`'s lifetime and detaches it first on dispose.
 - `GameContext` owns Game Context state, its transitions, and the Plugin List Source built from it. `UserWorkflow`
   constructs it and forwards Game Context intents to it.
+- `ProcessingRunControl` is the single owner of whether a Processing Run is active (ADR-0012). `UserWorkflow` constructs
+  it, and it owns the executor. It reads no Game Context, Plugin List, or ViewModel.
 - Projected `MainWindowViewModel` state is read-only to consumers, and retired APIs must not be reintroduced.
 
 ## Engineering conventions
@@ -52,10 +55,22 @@ renaming Core members or changing project boundaries. In particular:
 - Keep `GameInstallations.CanonicalizeDataDirectory()` as the only production implementation of the game-root-or-Data
   rule (ADR-0002).
 - Resolve Store table names only through the closed `SupportedGameReleases` table (ADR-0003).
-- `ProcessingRunExecutor` executes one typed Processing Run request, reports its transient progress, and returns how it
-  ended. It owns active-run cancellation: because the token is executor-owned, cancellation is returned as a
-  `CancelledRunOutcome`, while `UnresolvableMasterException` and unexpected internal failures propagate as exceptions
-  rather than becoming outcomes (ADR-0007). Mutagen's `CreateFromBinaryOverlay` is synchronous and cannot be cancelled.
+- Processing Run Control decides each press of the run button:
+  - starts the run Processing Run Admission admits, reports a refusal, or cancels the active run (ADR-0012);
+  - takes the `ProcessingRunInputs` that `UserWorkflow` captured;
+  - creates the run's cancellation token inside its gate the moment it admits the run, before reporting anything, so a
+    cancel pressed during startup is never dropped;
+  - reports rendered activity and messages to a sink that `UserWorkflow` implements over the ViewModel, and calls the
+    sink while holding its lock to keep the #60 ordering;
+  - throws `ObjectDisposedException` for a press after disposal rather than rendering it.
+- `ProcessingRunExecutor` executes one typed Processing Run request with the cancellation token Processing Run Control
+  hands it, reports its transient progress, and returns how it ended. It holds no run state:
+  - it has no cancellation slot, `Cancel()`, or `Dispose`;
+  - cancellation of the token it was given is returned as a `CancelledRunOutcome`;
+  - `UnresolvableMasterException` and unexpected internal failures propagate as exceptions rather than becoming
+    outcomes (ADR-0007).
+
+  Mutagen's `CreateFromBinaryOverlay` is synchronous and cannot be cancelled.
 - Processing Run Admission decides, before a run exists, whether a button press starts one (ADR-0010). It is pure: a
   refusal is a typed `RunRejectionReason` that `ProcessingRunPresentation` renders, not an exception, and admission
   creates no directory. The Store creates the database's parent directory when it opens. The selected-Plugin request
@@ -64,9 +79,11 @@ renaming Core members or changing project boundaries. In particular:
   from the request's Plugin List Source, prepares the load order, and opens each Plugin's overlay, so it reports
   would-ingest and would-skip per Plugin rather than echoing the selection. A FormID text dry run reports the file's presence and size, and neither opens nor parses
   it — counting rows is what an import does.
-- `ProcessingRunPresentation` is a pure renderer and writes nothing. `UserWorkflow` keeps the run activity, its
-  ordering lock, and every ViewModel write, so do not move them there for symmetry with
-  `PluginListPresentationAdapter` (ADR-0007).
+- `ProcessingRunPresentation` is a pure renderer and writes nothing (ADR-0007, ADR-0012).
+  - Processing Run Control keeps the run activity and its ordering lock.
+  - `UserWorkflow`'s sink adapter performs every ViewModel write.
+  - Do not move either into Presentation for symmetry with `PluginListPresentationAdapter`.
+  - Test run wording only in `ProcessingRunPresentationTests`. Other tests compare against Presentation's output.
 - Open databases through `FormIdRecordStore.OpenAsync`. Use raw SQLite only for workload generation, failure
   injection, or persisted-state inspection.
 - Tests must not depend on an installed game. Supply an in-memory `IGameInstallationProbe`.

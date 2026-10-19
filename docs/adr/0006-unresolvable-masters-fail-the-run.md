@@ -63,6 +63,12 @@ Run Admission now refuses such a request before any run exists, and `ProcessingR
 reason. `UnresolvableMasterException` is therefore the only failure `UserWorkflow` shows unwrapped. The generic "Error
 processing FormIDs" sentence it bypasses is now rendered by `ProcessingRunPresentation` too.
 
+### One failure renderer (2026-10-18, ADR-0012)
+
+Point 3 no longer lives in a catch clause in `UserWorkflow`. `ProcessingRunPresentation.RenderFailure` makes the choice:
+an `UnresolvableMasterException` is shown unwrapped, and anything else gets the "Error processing FormIDs" prefix.
+Processing Run Control calls it for every failure. What the user reads is unchanged.
+
 ## Why not the alternatives
 
 - **Add the two failures to the adapter's classification list, making them one Failed Plugin.** Cheapest, and wrong on

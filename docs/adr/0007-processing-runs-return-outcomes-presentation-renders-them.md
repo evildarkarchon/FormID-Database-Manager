@@ -67,6 +67,11 @@ attributable: catching it cannot swallow an unrelated cancellation coming from s
 else for one to come from. A run that stops this way is a normal terminal state, and modelling it as a value removes the
 `catch (OperationCanceledException)` block `UserWorkflow` needed in order to know a run had been cancelled at all.
 
+> Note (2026-10-18, ADR-0012): The token is no longer executor-owned. Processing Run Control creates it when it admits a
+> run and passes it to `ExecuteAsync`. The attribution argument above still holds, one level up: Processing Run Control
+> creates every token and is the executor's only production caller, so a cancellation the executor observes on that
+> token is still exactly the one that was requested.
+
 **Failure stays an exception** because there is no equivalent way to be precise about it. Building a `Failed` outcome
 would require catching `Exception` broadly, and ADR-0006 and `MutagenPluginOverlayReader` deliberately avoid exactly
 that: the overlay reader's expected-failure list is kept narrow (issue #49) so an unexpected internal failure aborts
@@ -82,6 +87,10 @@ value that the caller would report as a normal ending. So `ProcessingRunValidati
 This does leave a failing run with something to say and no outcome to say it with, which is why
 `ProcessingRunFailure` is a *progress* case: the last thing a failing run reports goes out on the transient channel,
 like everything else it says while running, before the exception leaves.
+
+> Note (2026-10-18, ADR-0012): `ProcessingRunFailure` has been deleted. The run's caller cleared the transient channel as
+> soon as the exception arrived, so the status could only ever be shown for a single notification. A failure is now
+> rendered once, by `ProcessingRunPresentation.RenderFailure`, into the error messages.
 
 ### Admission refusals (2026-10-17, ADR-0010)
 
@@ -107,6 +116,13 @@ explaining non-obvious races — the ordering fix behind issue #60, and the wind
 run and the executor's cancellation source existing. A change about the *locality of wording* has no business also
 relocating concurrency invariants into a module whose entire job is string construction; a stateless renderer that can
 be tested by calling it with a value is worth more here than symmetry with the Plugin List adapter.
+
+> Note (2026-10-18, ADR-0012): The run activity, its lock, and the gate now belong to Processing Run Control, a module
+> of their own, and are still not in the renderer. The reasoning above argued against moving them into Presentation,
+> and that still holds. Leaving them in `UserWorkflow` gave the "one active run" rule two owners, and the window this
+> paragraph describes became a cancellation that was silently dropped. `UserWorkflow` still performs every ViewModel
+> write, now through the sink adapter it gives Processing Run Control. The ordering choice in the next paragraph moves
+> with the activity.
 
 The same split decides ordering. Because the renderer only returns, `UserWorkflow` chooses that the message lists are
 written before the transient status, matching the order the executor used to report them in. An inactive projection

@@ -59,6 +59,11 @@ carrying a closed `RunRejectionReason`. It reads nothing from disk, creates noth
   therefore never becomes an active run, and never flashes "Initializing...". The refusal message, and writing a
   defaulted database path back to the ViewModel, both happen after the gate in `UserWorkflow`, which keeps every
   ViewModel write (ADR-0007).
+
+  > Note (2026-10-18, ADR-0012): The gate now belongs to Processing Run Control, and admission runs inside it.
+  > `UserWorkflow` captures the inputs before the press reaches Processing Run Control. The refusal message and the
+  > defaulted-path write-back reach the ViewModel through the sink adapter `UserWorkflow` implements. Admission itself
+  > is unchanged: it is still pure, and it still runs before any activity is published.
 - **The default root is configuration.** `UserWorkflow.Create` resolves the local application data directory once and
   passes it in. Admission only computes the path. `DefaultDatabasePathProvider` is folded into admission, because
   without its directory side effect it is one path computation with one caller.
