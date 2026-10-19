@@ -315,18 +315,21 @@ public class CoreProjectBoundaryTests
     }
 
     /// <summary>
-    ///     Verifies that neither Processing Run Admission, the User Workflow nor the Game Context writes a refusal
-    ///     sentence of its own: admission returns a typed reason and <c>ProcessingRunPresentation</c> alone renders it
-    ///     (ADR-0010).
+    ///     Verifies that neither Processing Run Admission, Processing Run Control, the User Workflow nor the Game Context
+    ///     writes a refusal sentence of its own: admission returns a typed reason and <c>ProcessingRunPresentation</c>
+    ///     alone renders it (ADR-0010).
     /// </summary>
     /// <param name="sourceFileName">The Core service source that must hold no refusal wording.</param>
     /// <remarks>
     ///     Each sentence is pinned in full. The Game Context legitimately tells a Browse user it "Could not detect game
     ///     from directory. Please select a game from the dropdown.", so only the complete refusal sentence, ending in
-    ///     "first.", is forbidden. What a refusal does say is pinned by <c>ProcessingRunPresentationTests</c>.
+    ///     "first.", is forbidden. What a refusal does say is pinned by <c>ProcessingRunPresentationTests</c>. Issue
+    ///     #105 moved the refusal report from the User Workflow to Processing Run Control, which is the row that
+    ///     matters now; the User Workflow row stays so the sentences cannot drift back.
     /// </remarks>
     [Theory]
     [InlineData("ProcessingRunAdmission.cs")]
+    [InlineData("ProcessingRunControl.cs")]
     [InlineData("UserWorkflow.cs")]
     [InlineData("GameContext.cs")]
     public void RunAdmissionCallers_RefusalReasons_ContainNoRefusalSentence(string sourceFileName)
@@ -348,26 +351,108 @@ public class CoreProjectBoundaryTests
     }
 
     /// <summary>
-    ///     Verifies that the User Workflow writes neither the starting nor the cancellation-requested status itself, and
-    ///     does not decide which run failure is shown unwrapped: <c>ProcessingRunPresentation</c> renders all three
-    ///     (ADR-0006, ADR-0012).
+    ///     Verifies that neither the User Workflow nor Processing Run Control writes the starting or the
+    ///     cancellation-requested status itself, or decides which run failure is shown unwrapped:
+    ///     <c>ProcessingRunPresentation</c> renders all three (ADR-0006, ADR-0012).
     /// </summary>
+    /// <param name="sourceFileName">The Core service source that reports run statuses and failures.</param>
     /// <remarks>
-    ///     Issue #103, under parent #102. The statuses are searched for among the string literals rather than in the
-    ///     raw text, so a comment may still quote them. The failure rule is pinned as the absence of a catch clause for
+    ///     Issue #103, under parent #102; issue #105 added Processing Run Control, which now reports all three. The
+    ///     statuses are searched for among the string literals rather than in the raw text, so a comment may still
+    ///     quote them. The failure rule is pinned as the absence of a catch clause for
     ///     <see cref="UnresolvableMasterException" />, because such a clause is exactly how the rule used to live in the
     ///     User Workflow. What the user reads is pinned by <c>ProcessingRunPresentationTests</c>.
     /// </remarks>
-    [Fact]
-    public void UserWorkflow_RunStatusesAndFailures_AreRenderedOnlyByProcessingRunPresentation()
+    [Theory]
+    [InlineData("UserWorkflow.cs")]
+    [InlineData("ProcessingRunControl.cs")]
+    public void RunReporters_RunStatusesAndFailures_AreRenderedOnlyByProcessingRunPresentation(string sourceFileName)
     {
-        var userWorkflowSource = File.ReadAllText(Path.Combine(GetCoreProjectDirectory(), "Services", "UserWorkflow.cs"));
+        var source = File.ReadAllText(Path.Combine(GetCoreProjectDirectory(), "Services", sourceFileName));
 
-        var literals = SourceStringLiterals.Extract(userWorkflowSource).Select(static literal => literal.Text).ToArray();
+        var literals = SourceStringLiterals.Extract(source).Select(static literal => literal.Text).ToArray();
 
         Assert.DoesNotContain("Initializing...", literals);
         Assert.DoesNotContain("Cancelling...", literals);
-        Assert.DoesNotMatch(@"catch\s*\(\s*UnresolvableMasterException\b", userWorkflowSource);
+        Assert.DoesNotMatch(@"catch\s*\(\s*UnresolvableMasterException\b", source);
+    }
+
+    /// <summary>
+    ///     Verifies that Processing Run Control holds no user-facing sentence at all: the only string literals it may
+    ///     contain are exception diagnostics (ADR-0012).
+    /// </summary>
+    /// <remarks>
+    ///     Issue #105, under parent #102. Like the admission guard below, this closes the set rather than pattern-matching
+    ///     wording. The permitted set outside exception constructors is empty, so any new literal fails until a reviewer
+    ///     decides whether it is wording, which belongs in <c>ProcessingRunPresentation</c>, or something that earns a
+    ///     place in this list. A literal passed straight to an exception constructor is diagnostic text for a
+    ///     programming error, not something a run says.
+    /// </remarks>
+    [Fact]
+    public void ProcessingRunControl_StringLiterals_AreOnlyExceptionDiagnostics()
+    {
+        var controlSource = File.ReadAllText(
+            Path.Combine(GetCoreProjectDirectory(), "Services", "ProcessingRunControl.cs"));
+        string[] permittedLiterals = [];
+
+        var literals = SourceStringLiterals.Extract(controlSource);
+        var unexpectedLiterals = literals
+            .Where(static literal => !literal.IsExceptionArgument)
+            .Select(static literal => literal.Text)
+            .Where(text => !permittedLiterals.Contains(text, StringComparer.Ordinal))
+            .ToArray();
+
+        // Guards the guard: the module's own unreachable-case diagnostic proves the scanner still reads this file.
+        Assert.Contains(literals, static literal => literal.IsExceptionArgument);
+        Assert.Empty(unexpectedLiterals);
+    }
+
+    /// <summary>
+    ///     Verifies that Processing Run Control reads no Game Context, Plugin List, or ViewModel: it takes inputs the
+    ///     User Workflow already captured and reports through its sink (ADR-0012).
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         Issue #105, under parent #102. Two checks, because either alone has a gap. Reflection over every field of
+    ///         the module and its nested types shows it holds none of them. The source text, comments included, shows it
+    ///         names none of them, so it cannot reach one through a parameter or a static either.
+    ///     </para>
+    ///     <para>
+    ///         The text search is on whole type names. The captured inputs legitimately carry a
+    ///         <c>PluginListState</c> and a <c>PluginListSource</c>, which are values, and run activity is an
+    ///         <see cref="ActivityProjection" /> from the ViewModels namespace, so neither "PluginList" as a prefix nor
+    ///         the namespace can be forbidden.
+    ///     </para>
+    /// </remarks>
+    [Fact]
+    public void ProcessingRunControl_References_NoGameContextPluginListOrViewModel()
+    {
+        Type[] forbiddenTypes =
+        [
+            typeof(GameContext),
+            typeof(PluginList),
+            typeof(PluginListPresentationAdapter),
+            typeof(MainWindowViewModel),
+            typeof(UserWorkflow)
+        ];
+        const BindingFlags allFields = BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public |
+                                       BindingFlags.NonPublic | BindingFlags.DeclaredOnly;
+        var fieldTypes = new[] { typeof(ProcessingRunControl) }
+            .Concat(typeof(ProcessingRunControl).GetNestedTypes(BindingFlags.Public | BindingFlags.NonPublic))
+            .SelectMany(type => type.GetFields(allFields))
+            .Select(static field => field.FieldType)
+            .ToArray();
+        var controlSource = File.ReadAllText(
+            Path.Combine(GetCoreProjectDirectory(), "Services", "ProcessingRunControl.cs"));
+
+        // Guards the guard: if reflection stopped finding fields, the field assertion would pass vacuously.
+        Assert.Contains(typeof(IProcessingRunExecutor), fieldTypes);
+        Assert.Empty(fieldTypes.Intersect(forbiddenTypes));
+        var namedTypes = forbiddenTypes
+            .Select(static type => type.Name)
+            .Where(name => Regex.IsMatch(controlSource, $@"\b{Regex.Escape(name)}\b"))
+            .ToArray();
+        Assert.Empty(namedTypes);
     }
 
     /// <summary>
@@ -497,8 +582,8 @@ public class CoreProjectBoundaryTests
 
     /// <summary>
     ///     Verifies that <see cref="UserWorkflow.Dispose" /> detaches the Plugin List presentation adapter, then retires
-    ///     the Game Context, then cancels the active Processing Run, then disposes the Plugin List, in that order (#98),
-    ///     and that no teardown step reaches the executor (#104).
+    ///     the Game Context, then retires Processing Run Control, which cancels the active Processing Run, then disposes
+    ///     the Plugin List, in that order (#98, #105), and that no teardown step reaches the executor (#104).
     /// </summary>
     /// <remarks>
     ///     <para>
@@ -513,13 +598,13 @@ public class CoreProjectBoundaryTests
     ///         duplicated or relocated call cannot satisfy the order by accident.
     ///     </para>
     ///     <para>
-    ///         Issue #104, under parent #102. The executor is stateless and no longer disposable, so the run's
-    ///         cancellation step cancels the workflow's own source rather than calling the executor, and the body may
-    ///         not mention the executor at all.
+    ///         Issue #104, under parent #102. The executor is stateless and no longer disposable, so the body may not
+    ///         mention the executor at all. Issue #105 moved the run's cancellation into Processing Run Control, which
+    ///         owns the executor, so the third step is now retiring that module.
     ///     </para>
     /// </remarks>
     [Fact]
-    public void UserWorkflowDispose_TeardownOrder_DetachesPresentationThenRetiresGameContextThenCancelsTheRun()
+    public void UserWorkflowDispose_TeardownOrder_RetiresPresentationGameContextProcessingRunControlThenPluginList()
     {
         var userWorkflowSource = File.ReadAllText(Path.Combine(GetCoreProjectDirectory(), "Services", "UserWorkflow.cs"));
         const string disposeSignature = "public void Dispose()";
@@ -534,7 +619,7 @@ public class CoreProjectBoundaryTests
         [
             "RetireCollaborator(_pluginListPresentationAdapter.Dispose,",
             "RetireCollaborator(_gameContext.Dispose,",
-            "RetireCollaborator(CancelActiveRun,",
+            "RetireCollaborator(_processingRunControl.Dispose,",
             "RetireCollaborator(_pluginList.Dispose,"
         ];
 
@@ -555,13 +640,15 @@ public class CoreProjectBoundaryTests
 
     /// <summary>
     ///     Verifies that the Game Context references no Processing Run type: it decides which Plugin List can be loaded,
-    ///     and the User Workflow alone joins that to admission and runs (ADR-0011).
+    ///     and the User Workflow alone captures that for Processing Run Control, which admits and runs (ADR-0011,
+    ///     ADR-0012).
     /// </summary>
     /// <remarks>
     ///     <para>
     ///         The run types are not listed by hand. Every Core type whose name contains the word "Run" — a "Run"
     ///         followed by an upper-case letter or nothing, so <c>ProcessingRunAdmission</c>, <c>AdmittedRun</c> and
-    ///         <c>RunPress</c> count — is found by reflection, so a new run type is covered the day it is added.
+    ///         <c>ProcessingRunControl</c> count — is found by reflection, so a new run type is covered the day it is
+    ///         added.
     ///     </para>
     ///     <para>
     ///         The check is on raw source text, comments included, because a <c>cref</c> in a doc comment is a
@@ -581,7 +668,7 @@ public class CoreProjectBoundaryTests
 
         // Guards the guard: if reflection stopped finding run types, the assertion below would pass vacuously.
         Assert.Contains(nameof(ProcessingRunAdmission), runTypeNames);
-        Assert.Contains("RunPress", runTypeNames);
+        Assert.Contains(nameof(ProcessingRunControl), runTypeNames);
         var referencedRunTypes = runTypeNames
             .Where(name => Regex.IsMatch(gameContextSource, $@"\b{Regex.Escape(name)}\b"))
             .OrderBy(static name => name, StringComparer.Ordinal)

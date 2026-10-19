@@ -11,10 +11,11 @@ namespace FormID_Database_Manager.Services;
 /// <remarks>
 ///     <para>
 ///         This is a pure renderer: it takes a starting or cancellation-requested fact, a progress report, an outcome,
-///         a refusal reason or a failure, returns what that value implies, writes nothing, and holds no state. Every ViewModel write stays with the
-///         User Workflow, which also keeps the run activity, the lock that orders it, and the run's cancellation
-///         source — all carry comments explaining races (issue #60, and a cancel pressed during startup, #104) that a
-///         change about locality of wording has no business relocating.
+///         a refusal reason or a failure, returns what that value implies, writes nothing, and holds no state.
+///         Processing Run Control keeps the run activity, the lock that orders it, and the run's cancellation source,
+///         and every ViewModel write stays with the User Workflow's sink adapter — all carry comments explaining races
+///         (issue #60, and a cancel pressed during startup, #104) that a change about locality of wording has no
+///         business relocating (ADR-0012).
 ///     </para>
 ///     <para>
 ///         That makes this a role-only mirror of <see cref="PluginListPresentationAdapter" />, deliberately: the

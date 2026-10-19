@@ -655,6 +655,32 @@ public class UserWorkflowTests
     }
 
     /// <summary>
+    /// Verifies the sink adapter's guard on the defaulted path: an edit made from the list-clear notification, the first
+    /// report an admitted press makes, survives the default being reported, while the run itself still uses the
+    /// default.
+    /// </summary>
+    /// <remarks>
+    /// Issue #105, under parent #102. Processing Run Control reports the defaulted path together with the captured one;
+    /// writing it back only while the box still holds the capture is the User Workflow's own rule.
+    /// </remarks>
+    [Fact]
+    public async Task ProcessFormIdsAsync_DatabasePathEditedDuringTheListClear_KeepsTheEditOverTheDefault()
+    {
+        var sut = CreateSut();
+        var confirmed = await ConfirmPluginListAsync(sut, ["User.esp"]);
+        sut.SetPluginSelection(confirmed.MembershipVersion, "User.esp", true);
+        _viewModel.DatabasePath = string.Empty;
+        _viewModel.WarningMessages.CollectionChanged += (_, _) => _viewModel.DatabasePath = DatabasePath;
+
+        await sut.ProcessFormIdsAsync();
+
+        Assert.Equal(DatabasePath, _viewModel.DatabasePath);
+        Assert.Equal(
+            Path.Combine(_defaultDatabaseRoot, "FormID Database Manager", "Databases", "SkyrimSE.db"),
+            Assert.Single(_processingRuns).DatabasePath);
+    }
+
+    /// <summary>
     /// Verifies that a refused press writes no default database path: only an admitted run gets one.
     /// </summary>
     [Fact]
@@ -967,7 +993,7 @@ public class UserWorkflowTests
         OnRunStatus("Ingesting plugin 2 of 5: User.esp", () =>
         {
             buttonTextDuringRun = _viewModel.ProcessButtonText;
-            // The second press: the workflow's own run state, not the ViewModel, decides this means cancel.
+            // The second press: Processing Run Control's run state, not the ViewModel, decides this means cancel.
             sut.ProcessFormIdsAsync().GetAwaiter().GetResult();
             statusDuringCancellation = _viewModel.ProgressStatus;
         });
@@ -1021,8 +1047,8 @@ public class UserWorkflowTests
     }
 
     /// <summary>
-    ///     Verifies the window this workflow owns run state to close: a press landing after the run was admitted but
-    ///     before the executor has been handed the run cancels that run rather than launching a second one, and the
+    ///     Verifies the window Processing Run Control owns run state to close: a press landing after the run was admitted
+    ///     but before the executor has been handed the run cancels that run rather than launching a second one, and the
     ///     cancel really reaches it.
     /// </summary>
     /// <remarks>
@@ -1190,9 +1216,9 @@ public class UserWorkflowTests
     /// the run is still held in flight, the token the run was handed is cancelled, and a repeated disposal is a no-op.
     /// </summary>
     /// <remarks>
-    /// Issue #104, under parent #102. The run's cancellation is this workflow's own now, so it is the token the run
-    /// observes, not a call on the executor, that shows the run was cancelled. The run is released afterwards and ends
-    /// as cancelled, as the real executor would end it.
+    /// Issue #104, under parent #102. The run's cancellation belongs to the Processing Run Control this workflow
+    /// composes and retires (#105), so it is the token the run observes, not a call on the executor, that shows the run
+    /// was cancelled. The run is released afterwards and ends as cancelled, as the real executor would end it.
     /// </remarks>
     [Fact]
     public async Task Dispose_DuringARun_CancelsTheRunWithoutWaitingForIt()
@@ -1258,7 +1284,7 @@ public class UserWorkflowTests
     /// <see cref="Dispose_QueuedPluginListProjection_DetachesPresentationBeforeCancellingTheRun" />. Retiring the Game
     /// Context has no effect at the moment it runs, only on later work, so its order relative to the adapter is
     /// not observable and is kept by the source order alone, which
-    /// <c>CoreProjectBoundaryTests.UserWorkflowDispose_TeardownOrder_DetachesPresentationThenRetiresGameContextThenCancelsTheRun</c>
+    /// <c>CoreProjectBoundaryTests.UserWorkflowDispose_TeardownOrder_RetiresPresentationGameContextProcessingRunControlThenPluginList</c>
     /// pins.
     /// </remarks>
     [Fact]
@@ -1525,121 +1551,6 @@ public class UserWorkflowTests
         _viewModel.DatabasePath = DatabasePath;
         var confirmed = await ConfirmPluginListAsync(sut, ["User.esp"]);
         sut.SetPluginSelection(confirmed.MembershipVersion, "User.esp", true);
-    }
-
-    /// <summary>
-    ///     Records every run it is handed, together with the cancellation token that came with it, and ends each run
-    ///     the way the real executor would: cancelled when that token was cancelled by the time the run ends, and
-    ///     otherwise with the configured failure or outcome.
-    /// </summary>
-    /// <remarks>
-    ///     Issue #104, under parent #102. Tests observe cancellation through the token the run received rather than by
-    ///     counting calls, so a test passes only if the cancel really reached the run. A run can be held at
-    ///     <see cref="Gate" /> so a test can act — press again, dispose — while it is still in flight.
-    /// </remarks>
-    private sealed class RecordingProcessingRunExecutor(List<ProcessingRunRequest> processingRuns)
-        : IProcessingRunExecutor
-    {
-        /// <summary>
-        ///     The cancellation token each run was handed, in run order.
-        /// </summary>
-        public List<CancellationToken> ReceivedTokens { get; } = [];
-
-        /// <summary>
-        ///     When set, each run reports its progress and then waits for this task before ending, so it stays in
-        ///     flight until the test completes it.
-        /// </summary>
-        public Task? Gate { get; set; }
-
-        /// <summary>
-        ///     Work run inside each run after its progress is reported and before it waits at <see cref="Gate" />, with
-        ///     the run's token — for example to register a cancellation callback on it.
-        /// </summary>
-        public Action<CancellationToken>? OnExecute { get; set; }
-
-        /// <summary>
-        ///     The failure raised by <see cref="ExecuteAsync" /> after any configured events are reported, standing in
-        ///     for a run that ends in a terminal failure rather than an outcome.
-        /// </summary>
-        public Exception? ExecuteFailure { get; set; }
-
-        /// <summary>
-        ///     How the run ends when it does not fail.
-        /// </summary>
-        /// <remarks>
-        ///     The default is an empty text import, which adds no messages. Plans now require a non-empty
-        ///     authoritative selection, so an empty plan cannot stand in for an uneventful outcome.
-        /// </remarks>
-        public ProcessingRunOutcome Outcome { get; set; } =
-            new FormIdTextRunOutcome(new FormIdTextFileImportResult(0, 0));
-
-        public List<ProcessingRunProgress> ProgressToReport { get; } = [];
-
-        /// <inheritdoc />
-        public Task<ProcessingRunOutcome> ExecuteAsync(
-            ProcessingRunRequest request,
-            IProgress<ProcessingRunProgress>? progress,
-            CancellationToken cancellationToken)
-        {
-            processingRuns.Add(request);
-            ReceivedTokens.Add(cancellationToken);
-            foreach (var runEvent in ProgressToReport)
-            {
-                progress?.Report(runEvent);
-            }
-
-            OnExecute?.Invoke(cancellationToken);
-
-            if (Gate is { } gate)
-            {
-                return EndAfterGateAsync(gate, cancellationToken);
-            }
-
-            // A failure is returned as a faulted task rather than thrown, as an async executor would surface it.
-            try
-            {
-                return Task.FromResult(End(cancellationToken));
-            }
-            catch (Exception ex)
-            {
-                return Task.FromException<ProcessingRunOutcome>(ex);
-            }
-        }
-
-        /// <summary>
-        ///     Ends a held run once its gate opens.
-        /// </summary>
-        /// <param name="gate">The task the run waits for.</param>
-        /// <param name="cancellationToken">The run's token, read only once the gate has opened.</param>
-        /// <returns>How the run ended.</returns>
-        private async Task<ProcessingRunOutcome> EndAfterGateAsync(Task gate, CancellationToken cancellationToken)
-        {
-            // The gate ignores the token on purpose: the test, not the cancel, decides when the run ends, so a cancel
-            // that never reached the token shows up as a completed outcome rather than as a hang.
-            await gate.ConfigureAwait(false);
-            return End(cancellationToken);
-        }
-
-        /// <summary>
-        ///     Decides how a run ends, cancellation first, exactly as the real executor attributes it (ADR-0007).
-        /// </summary>
-        /// <param name="cancellationToken">The token the run was handed.</param>
-        /// <returns>The cancelled outcome, or the configured outcome.</returns>
-        /// <exception cref="Exception">The configured <see cref="ExecuteFailure" />, when the run was not cancelled.</exception>
-        private ProcessingRunOutcome End(CancellationToken cancellationToken)
-        {
-            if (cancellationToken.IsCancellationRequested)
-            {
-                return new CancelledRunOutcome();
-            }
-
-            if (ExecuteFailure is { } failure)
-            {
-                throw failure;
-            }
-
-            return Outcome;
-        }
     }
 
     /// <summary>

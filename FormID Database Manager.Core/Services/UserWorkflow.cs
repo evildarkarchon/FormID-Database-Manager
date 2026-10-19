@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.ExceptionServices;
 using FormID_Database_Manager.ViewModels;
@@ -7,12 +6,14 @@ using Mutagen.Bethesda;
 namespace FormID_Database_Manager.Services;
 
 /// <summary>
-///     Owns the UI-neutral user workflow, Plugin List lifetime, and Processing Run coordination, and forwards Game
-///     Context intents to the Game Context it composes.
+///     Owns the UI-neutral user workflow and the Plugin List's lifetime, forwards Game Context intents to the Game
+///     Context it composes, and captures each Process FormIDs press for the Processing Run Control it composes.
 /// </summary>
 /// <remarks>
 ///     Game Context state, its transitions and its Game Installation resolution live in <see cref="GameContext" />
-///     (ADR-0011). This workflow reads that state once, inside the run gate, when it decides a button press.
+///     (ADR-0011). Whether a Processing Run is active, and everything a run reports, live in
+///     <see cref="ProcessingRunControl" /> (ADR-0012); this workflow captures the press's inputs and performs every
+///     ViewModel write that module reports, through its sink adapter.
 /// </remarks>
 public sealed class UserWorkflow : IDisposable
 {
@@ -32,45 +33,14 @@ public sealed class UserWorkflow : IDisposable
     /// </summary>
     private readonly PluginListPresentationAdapter _pluginListPresentationAdapter;
 
-    private readonly IProcessingRunExecutor _processingRunExecutor;
-
     /// <summary>
-    ///     Guards the run activity this workflow holds as its state of record, and the active run's cancellation source,
-    ///     because a Processing Run reports its progress from whatever thread the executor is on while the UI thread
-    ///     reads it to decide what a button press means.
+    ///     The single owner of whether a Processing Run is active, built in the constructor from the executor and the
+    ///     default database root, and retired in <see cref="Dispose" />. It owns the executor.
     /// </summary>
-    private readonly Lock _runActivityLock = new();
+    private readonly ProcessingRunControl _processingRunControl;
 
     private readonly MainWindowViewModel _viewModel;
     private bool _disposed;
-
-    /// <summary>
-    ///     The Processing Run's Workflow Activity, owned here rather than read back off the ViewModel.
-    /// </summary>
-    /// <remarks>
-    ///     This has to be the source of truth: an admitted run publishes activity, clears the message lists and writes a
-    ///     defaulted database path back before the executor is handed the run, and any of those notifications can
-    ///     re-enter a press. Owning the fact means a second button press inside that window cancels instead of starting
-    ///     a second run. A press that Processing Run Admission refuses never sets it.
-    /// </remarks>
-    private ActivityProjection _runActivity = ActivityProjection.None;
-
-    /// <summary>
-    ///     The active Processing Run's cancellation source, or null while no run is active. Guarded by
-    ///     <see cref="_runActivityLock" />.
-    /// </summary>
-    /// <remarks>
-    ///     <para>
-    ///         It is created inside the run gate the moment admission admits a press, before anything about the run is
-    ///         published, so a press re-entering from any startup notification finds a token to cancel and the run
-    ///         really is cancelled (#104). It is cancelled only while the lock is held, and released by the run that
-    ///         owns it only after clearing it under the lock, so a cancel can never reach a disposed source.
-    ///     </para>
-    ///     <para>
-    ///         This is an interim home: Processing Run Control takes it over unchanged (ADR-0012).
-    ///     </para>
-    /// </remarks>
-    private CancellationTokenSource? _runCancellationSource;
 
     /// <summary>
     ///     The default database root this workflow was composed with, or null or blank when none could be resolved.
@@ -96,7 +66,8 @@ public sealed class UserWorkflow : IDisposable
     /// </param>
     /// <param name="pluginList">The authoritative Plugin List whose lifetime transfers to this workflow.</param>
     /// <param name="processingRunExecutor">
-    ///     The stateless Processing Run executor each admitted run is handed to, with the token this workflow owns.
+    ///     The stateless Processing Run executor, handed straight to the Processing Run Control built here, which owns
+    ///     it and hands each admitted run its token; this workflow keeps no reference to it.
     /// </param>
     /// <param name="defaultDatabaseRoot">
     ///     The root under which a real run with no chosen database path gets its default database, or null or blank when
@@ -105,11 +76,11 @@ public sealed class UserWorkflow : IDisposable
     /// <exception cref="ArgumentNullException">Any dependency is null.</exception>
     /// <remarks>
     ///     The Plugin List stays a parameter rather than being built here because tests observe it directly through its
-    ///     own public interface. The Game Context is built after every argument check and before the adapter; it only
-    ///     stores its dependencies, so building it subscribes to nothing. The presentation adapter subscribes to the
-    ///     Plugin List, and queues its first projection, as the last construction step, so a failed argument check
-    ///     never leaves a subscribed adapter behind. An unresolved default root is accepted rather than rejected, because
-    ///     it only matters to a run that needs a default, and that run reports it.
+    ///     own public interface. The Game Context and Processing Run Control are built after every argument check and
+    ///     before the adapter; they only store their dependencies, so building them subscribes to nothing. The
+    ///     presentation adapter subscribes to the Plugin List, and queues its first projection, as the last construction
+    ///     step, so a failed argument check never leaves a subscribed adapter behind. An unresolved default root is
+    ///     accepted rather than rejected, because it only matters to a run that needs a default, and that run reports it.
     /// </remarks>
     internal UserWorkflow(
         MainWindowViewModel viewModel,
@@ -126,10 +97,14 @@ public sealed class UserWorkflow : IDisposable
         var checkedGameInstallations =
             gameInstallations ?? throw new ArgumentNullException(nameof(gameInstallations));
         _pluginList = pluginList ?? throw new ArgumentNullException(nameof(pluginList));
-        _processingRunExecutor = processingRunExecutor ??
-                                 throw new ArgumentNullException(nameof(processingRunExecutor));
+        var checkedProcessingRunExecutor = processingRunExecutor ??
+                                           throw new ArgumentNullException(nameof(processingRunExecutor));
         DefaultDatabaseRoot = defaultDatabaseRoot;
         _gameContext = new GameContext(checkedGameInstallations, _fileDialogService, _pluginList, _viewModel);
+        _processingRunControl = new ProcessingRunControl(
+            checkedProcessingRunExecutor,
+            DefaultDatabaseRoot,
+            new ViewModelRunReportSink(_viewModel));
         _pluginListPresentationAdapter = new PluginListPresentationAdapter(_pluginList, _viewModel, checkedDispatcher);
     }
 
@@ -224,12 +199,12 @@ public sealed class UserWorkflow : IDisposable
     ///     Detaches Plugin List presentation, cancels processing, and releases resources owned by the workflow.
     /// </summary>
     /// <remarks>
-    ///     The steps run in a fixed order: detach the Plugin List presentation adapter, retire the Game Context, cancel
-    ///     the active Processing Run, then dispose the Plugin List. Cancelling does not wait for the run to end, so
-    ///     closing the window cannot hang on it; the run still releases its own cancellation source as it ends. Every
-    ///     owned collaborator is retired even when an earlier step fails. Cleanup after a failure is best-effort,
-    ///     matching Plugin ingestion overlay cleanup: the first failure keeps its identity, and a standalone cleanup
-    ///     failure still propagates because no other path reports it.
+    ///     The steps run in a fixed order: detach the Plugin List presentation adapter, retire the Game Context, retire
+    ///     Processing Run Control, which cancels the active Processing Run, then dispose the Plugin List. Cancelling does
+    ///     not wait for the run to end, so closing the window cannot hang on it; the run still releases its own
+    ///     cancellation source as it ends. Every owned collaborator is retired even when an earlier step fails. Cleanup
+    ///     after a failure is best-effort, matching Plugin ingestion overlay cleanup: the first failure keeps its
+    ///     identity, and a standalone cleanup failure still propagates because no other path reports it.
     /// </remarks>
     /// <exception cref="AggregateException">A registered Processing Run cancellation callback throws.</exception>
     public void Dispose()
@@ -251,7 +226,7 @@ public sealed class UserWorkflow : IDisposable
         // Retire the Game Context before cancelling the run and disposing the Plugin List so late lookup or picker
         // work cannot publish into torn-down state. It borrows the Plugin List, so retiring it disposes nothing.
         RetireCollaborator(_gameContext.Dispose, ref primaryException);
-        RetireCollaborator(CancelActiveRun, ref primaryException);
+        RetireCollaborator(_processingRunControl.Dispose, ref primaryException);
         RetireCollaborator(_pluginList.Dispose, ref primaryException);
         if (primaryException is not null)
         {
@@ -383,223 +358,31 @@ public sealed class UserWorkflow : IDisposable
     ///     Starts processing or requests cancellation for the active processing run.
     /// </summary>
     /// <returns>A task that completes after processing starts, finishes, fails, or observes cancellation.</returns>
+    /// <exception cref="ObjectDisposedException">The workflow has been disposed.</exception>
     /// <remarks>
-    ///     Inputs are fixed when this workflow accepts the run, before any startup notification can edit them.
-    ///     How the run ended — cancelled or failed — is reported to the message lists, never to the progress channel,
-    ///     because this method's own cleanup hands that channel back as soon as the run ends.
+    ///     Inputs are fixed here, before Processing Run Control publishes anything about the press, so an edit made
+    ///     from a startup notification belongs to the next run. Whether the press starts a run, is refused, or cancels
+    ///     the active run is Processing Run Control's decision (ADR-0012); what it reports reaches the ViewModel through
+    ///     this workflow's sink adapter.
     /// </remarks>
     public async Task ProcessFormIdsAsync()
     {
-        // The run-active check, Processing Run Admission and the transition into an active run happen together, so a
-        // second press arriving before the executor has the run cancels the run in flight rather than starting another.
-        // A press that finds a run active has already cancelled its token inside the gate by the time it returns.
-        var press = DecideRunPress();
-        if (press is RunPress.CancelActiveRun)
-        {
-            // The cancellation-requested status is what the run is doing now, not how it ended, so it belongs on the
-            // transient channel: it is deliberately not the acknowledgement, which the cancelled outcome renders to the
-            // message lists instead (#60). It carries no percentage, so the bar stays where the run left it.
-            var cancelling = ProcessingRunPresentation.Render(new ProcessingRunCancellationRequested());
-            ReportRunActivity(cancelling.Status, cancelling.Value);
-            return;
-        }
+        // Capture needs no lock: every press arrives on the UI thread, and a press re-entering from a notification
+        // only has to find the run active, which Processing Run Control decides under its own lock. The whole Plugin
+        // List state is captured, not just its confirmation, so admission can tell a list still loading from one that
+        // failed to load. The Game Context is read once, so the release and Plugin List Source always come from the
+        // same state.
+        var gameContext = _gameContext.Current;
+        var inputs = new ProcessingRunInputs(
+            gameContext.SelectedGameRelease,
+            gameContext.PluginListSource,
+            _pluginList.Current,
+            _viewModel.FormIdListPath,
+            _viewModel.DatabasePath,
+            _viewModel.UpdateMode ? UpdateMode.ReplacePluginRecords : UpdateMode.Append,
+            _viewModel.DryRun);
 
-        // Every press that does not cancel starts the message lists over, whether it is refused or becomes a run, so
-        // what the user reads afterwards is only what this press produced.
-        _viewModel.ErrorMessages.Clear();
-        _viewModel.WarningMessages.Clear();
-
-        switch (press)
-        {
-            case RunPress.Refused refused:
-                // A refused press never became a run, so it took no ownership of the gate and has no activity to hand
-                // back: the rendered reason is the only thing it leaves behind (ADR-0010).
-                _viewModel.AddErrorMessage(ProcessingRunPresentation.Render(refused.Reason));
-                return;
-            case RunPress.Admitted admitted:
-                await ExecuteAdmittedRunAsync(admitted);
-                return;
-            default:
-                throw new UnreachableException($"Unsupported run press: {press}.");
-        }
-    }
-
-    /// <summary>
-    ///     Executes a run this workflow has already admitted and published activity for, reports how it ended, and
-    ///     hands the progress channel back.
-    /// </summary>
-    /// <param name="admitted">The admitted run and the database path captured with it.</param>
-    /// <returns>A task that completes after the run finishes, fails, or observes cancellation.</returns>
-    /// <remarks>
-    ///     The caller must already own the run gate's activity and the run's cancellation source: this method's
-    ///     <c>finally</c> clears both and releases the source, which is only correct for the press that created them.
-    /// </remarks>
-    private async Task ExecuteAdmittedRunAsync(RunPress.Admitted admitted)
-    {
-        try
-        {
-            // The admitted run still uses its default, but a reentrant edit made during startup notifications must
-            // survive for the next run, so the default is written back only while the box still holds the capture.
-            if (admitted.Run.DefaultedDatabasePath is { } defaultedDatabasePath &&
-                string.Equals(_viewModel.DatabasePath, admitted.CapturedDatabasePath, StringComparison.Ordinal))
-            {
-                _viewModel.DatabasePath = defaultedDatabasePath;
-            }
-
-            var progress = new ProcessingRunProgressAdapter(ApplyProcessingRunProgress);
-
-            // The token may already be cancelled by a press that re-entered during startup; the executor still enters
-            // its worker and returns the cancelled outcome, so that press ends with the normal acknowledgement.
-            var outcome = await _processingRunExecutor.ExecuteAsync(
-                admitted.Run.Request,
-                progress,
-                admitted.CancellationSource.Token);
-            ApplyProcessingRunOutcome(outcome);
-        }
-        // Every run failure takes this one route. Which failure is shown unwrapped — an Unresolvable Master, whose own
-        // message already says what to do — is the failure renderer's decision, not a catch clause's (ADR-0006).
-        catch (Exception ex)
-        {
-            _viewModel.AddErrorMessage(ProcessingRunPresentation.RenderFailure(ex));
-        }
-        finally
-        {
-            lock (_runActivityLock)
-            {
-                // Clearing run activity hands the progress channel back rather than blanking it: a Plugin List refresh
-                // still scanning underneath this run keeps showing its own progress, by the ViewModel's precedence rule.
-                ProjectRunActivityLocked(ActivityProjection.None);
-                // Cleared together with the activity, so no press can find the run inactive yet still holding a source,
-                // nor cancel the source after the release below.
-                _runCancellationSource = null;
-            }
-
-            // Released only after the executor has returned, so nothing still reads the token, and outside the lock
-            // because every cancel happens under it and now finds no source.
-            admitted.CancellationSource.Dispose();
-        }
-    }
-
-    /// <summary>
-    ///     Decides what one press of Process FormIDs is, inside the run gate: a cancellation request when a run is
-    ///     already active, and otherwise whatever Processing Run Admission makes of the inputs captured now.
-    /// </summary>
-    /// <returns>
-    ///     <see cref="RunPress.CancelActiveRun" /> when a run was already active, whose token is now cancelled;
-    ///     <see cref="RunPress.Refused" /> when admission refused the press; or <see cref="RunPress.Admitted" />, the
-    ///     only case in which a cancellation source was created and run activity published, and the caller now owns a
-    ///     new run.
-    /// </returns>
-    /// <remarks>
-    ///     Capture, admission, the run's cancellation source and activity publication share the run gate, so nothing
-    ///     published in between can change what was admitted, and a refused press never becomes an active run. Nothing
-    ///     is caught here: admission has no exception mode for a directory (ADR-0011), so anything it or a re-entrant
-    ///     activity notification throws is a programming error and propagates rather than being shown as a
-    ///     user-facing failure.
-    /// </remarks>
-    private RunPress DecideRunPress()
-    {
-        lock (_runActivityLock)
-        {
-            if (_runActivity.IsActive)
-            {
-                // Cancelled inside the gate, so the run this press found active is the run it cancels. A press after
-                // cancellation was already requested cancels an already-cancelled source, which changes nothing.
-                CancelActiveRun();
-                return new RunPress.CancelActiveRun();
-            }
-
-            // Both activity and message-list notifications can re-enter the workflow. Capture every input before
-            // either is published so later edits belong to the next run, including changes to the Plugin List source.
-            // The whole Plugin List state is captured, not just its confirmation, so admission can tell a list still
-            // loading from one that failed to load. The Game Context is read once, so the release and Plugin List Source
-            // always come from the same state.
-            var gameContext = _gameContext.Current;
-            var inputs = new ProcessingRunInputs(
-                gameContext.SelectedGameRelease,
-                gameContext.PluginListSource,
-                _pluginList.Current,
-                _viewModel.FormIdListPath,
-                _viewModel.DatabasePath,
-                _viewModel.UpdateMode ? UpdateMode.ReplacePluginRecords : UpdateMode.Append,
-                _viewModel.DryRun);
-            var decision = ProcessingRunAdmission.Admit(inputs, DefaultDatabaseRoot);
-
-            switch (decision)
-            {
-                case AdmittedRun admitted:
-                    // The run's token exists before anything about the run is published: the starting activity, the
-                    // list clears and the defaulted path all raise notifications that can re-enter a press, and that
-                    // press must find a token to cancel rather than a run with nothing to cancel yet (#104).
-                    var cancellationSource = new CancellationTokenSource();
-                    _runCancellationSource = cancellationSource;
-                    // This projection is the transition into an active run, so it sets IsActive itself rather than
-                    // going through ReportRunActivity, which never changes whether a run is active. The starting
-                    // status renders 0 percent; the carry-forward only applies if a future render omits one.
-                    var starting = ProcessingRunPresentation.Render(new ProcessingRunStarting());
-                    ProjectRunActivityLocked(new ActivityProjection(
-                        true,
-                        starting.Status,
-                        starting.Value ?? _runActivity.Value));
-                    return new RunPress.Admitted(admitted, inputs.DatabasePath, cancellationSource);
-                case RefusedRun refused:
-                    return new RunPress.Refused(refused.Reason);
-                default:
-                    throw new UnreachableException($"Unsupported admission decision: {decision}.");
-            }
-        }
-    }
-
-    /// <summary>
-    ///     Requests cancellation of the active Processing Run, if one is active, without waiting for it to end.
-    /// </summary>
-    /// <exception cref="AggregateException">A callback registered on the run's token throws.</exception>
-    /// <remarks>
-    ///     The source is cancelled while the lock is held, which is what keeps a cancel from racing the run that
-    ///     releases it: the run clears the slot under the same lock before disposing the source. The lock is
-    ///     reentrant, so a press re-entering from a startup notification inside the gate can still cancel.
-    /// </remarks>
-    private void CancelActiveRun()
-    {
-        lock (_runActivityLock)
-        {
-            _runCancellationSource?.Cancel();
-        }
-    }
-
-    /// <summary>
-    ///     Publishes new run activity, carrying the last reported progress value forward when the report omits one.
-    /// </summary>
-    /// <param name="status">The already-rendered status text for the run.</param>
-    /// <param name="value">The reported progress percentage, or null to keep the value already on screen.</param>
-    /// <remarks>
-    ///     Whether the run is active is never changed here: a report arriving after the run has ended stays inactive and
-    ///     therefore stays off the channel.
-    /// </remarks>
-    private void ReportRunActivity(string status, double? value)
-    {
-        lock (_runActivityLock)
-        {
-            ProjectRunActivityLocked(_runActivity with { Status = status, Value = value ?? _runActivity.Value });
-        }
-    }
-
-    /// <summary>
-    ///     Stores one run report and projects it, with the caller already holding <see cref="_runActivityLock" />.
-    /// </summary>
-    /// <param name="runActivity">The complete run report that becomes authoritative.</param>
-    /// <remarks>
-    ///     The projection happens under the lock on purpose. Releasing first would let two reports racing from the UI
-    ///     thread and the executor thread reach the ViewModel in the opposite order to which they were sequenced here,
-    ///     leaving a stale status on the channel. Holding it across the call is safe because a projection either posts to
-    ///     the dispatcher without running anything else, or runs on the dispatcher and raises notifications whose handlers
-    ///     may re-enter this workflow — and the lock is reentrant, so a handler pressing the process button still sees the
-    ///     run it is nested inside as active.
-    /// </remarks>
-    private void ProjectRunActivityLocked(ActivityProjection runActivity)
-    {
-        _runActivity = runActivity;
-        _viewModel.ApplyRunActivityProjection(runActivity);
+        await _processingRunControl.PressAsync(inputs);
     }
 
     /// <summary>
@@ -676,96 +459,58 @@ public sealed class UserWorkflow : IDisposable
     }
 
     /// <summary>
-    ///     Renders how the run ended and performs every ViewModel write that outcome implies.
+    ///     The User Workflow's adapter on the Processing Run Control sink: it performs every ViewModel write a Processing
+    ///     Run reports (ADR-0012).
     /// </summary>
-    /// <param name="outcome">The outcome returned by the Processing Run this workflow started.</param>
+    /// <param name="viewModel">The ViewModel the reports are written to.</param>
     /// <remarks>
-    ///     <see cref="ProcessingRunPresentation" /> is a pure renderer, so the order the run's terminal facts reach the
-    ///     user is decided here: the message lists first and the transient status last, matching the order the executor
-    ///     reported them in before it stopped doing its own wording. An inactive projection means the outcome has nothing
-    ///     to say on that channel — a cancelled run's acknowledgement is a terminal fact, and writing it here would only
-    ///     have it erased by this method's caller as it hands the channel back (#60).
+    ///     Processing Run Control calls each member while holding its lock, so these writes reach the ViewModel in the
+    ///     order they were sequenced (#60). Any of them may raise a notification that re-enters a press.
     /// </remarks>
-    private void ApplyProcessingRunOutcome(ProcessingRunOutcome outcome)
+    private sealed class ViewModelRunReportSink(MainWindowViewModel viewModel) : IProcessingRunControlSink
     {
-        var rendered = ProcessingRunPresentation.Render(outcome);
-
-        foreach (var message in rendered.WarningMessages)
+        /// <inheritdoc />
+        public void ClearMessageLists()
         {
-            _viewModel.AddWarningMessage(message);
+            viewModel.ErrorMessages.Clear();
+            viewModel.WarningMessages.Clear();
         }
 
-        foreach (var message in rendered.ErrorMessages)
+        /// <inheritdoc />
+        /// <remarks>
+        ///     The admitted run still uses its default, but a re-entrant edit made during startup notifications must
+        ///     survive for the next run, so the default is written back only while the box still holds the capture.
+        /// </remarks>
+        public void ReportDefaultedDatabasePath(string defaultedDatabasePath, string? capturedDatabasePath)
         {
-            _viewModel.AddErrorMessage(message);
+            if (string.Equals(viewModel.DatabasePath, capturedDatabasePath, StringComparison.Ordinal))
+            {
+                viewModel.DatabasePath = defaultedDatabasePath;
+            }
         }
 
-        foreach (var message in rendered.InformationMessages)
+        /// <inheritdoc />
+        public void ReportRunActivity(ActivityProjection runActivity)
         {
-            _viewModel.AddInformationMessage(message);
+            viewModel.ApplyRunActivityProjection(runActivity);
         }
 
-        if (rendered.Activity.IsActive)
+        /// <inheritdoc />
+        public void AddWarningMessage(string message)
         {
-            ReportRunActivity(rendered.Activity.Status, rendered.Activity.Value);
-        }
-    }
-
-    /// <summary>
-    ///     Renders one transient report from the run's progress channel and applies it.
-    /// </summary>
-    /// <param name="runProgress">What the run said it is doing.</param>
-    /// <remarks>
-    ///     A run reports transient progress here and nothing else: how it ended is rendered from the outcome it returns.
-    ///     Applying the render through <see cref="ReportRunActivity" /> is what keeps a report arriving after the run has
-    ///     ended off the channel, and what carries the last percentage forward for a report that implies no new one.
-    /// </remarks>
-    private void ApplyProcessingRunProgress(ProcessingRunProgress runProgress)
-    {
-        var rendered = ProcessingRunPresentation.Render(runProgress);
-        ReportRunActivity(rendered.Status, rendered.Value);
-    }
-
-    /// <summary>
-    ///     What one press of Process FormIDs turned out to be once the run gate decided it.
-    /// </summary>
-    /// <remarks>
-    ///     The constructor is private, so the three cases nested here are the only ones and the caller's default branch is
-    ///     unreachable. Only <see cref="Admitted" /> means run activity was published and the caller owns a new run.
-    /// </remarks>
-    private abstract record RunPress
-    {
-        private RunPress()
-        {
+            viewModel.AddWarningMessage(message);
         }
 
-        /// <summary>A run was already active, so the press requests its cancellation instead.</summary>
-        public sealed record CancelActiveRun : RunPress;
-
-        /// <summary>Processing Run Admission refused the press before any run existed.</summary>
-        /// <param name="Reason">Why the press was refused.</param>
-        public sealed record Refused(RunRejectionReason Reason) : RunPress;
-
-        /// <summary>Processing Run Admission admitted the press, and run activity has been published for it.</summary>
-        /// <param name="Run">The admitted request and any database path admission defaulted.</param>
-        /// <param name="CapturedDatabasePath">
-        ///     The database path captured with the press, which guards writing a defaulted path back to the ViewModel.
-        /// </param>
-        /// <param name="CancellationSource">
-        ///     The run's cancellation source, created inside the gate and released by the press that executes the run.
-        /// </param>
-        public sealed record Admitted(
-            AdmittedRun Run,
-            string? CapturedDatabasePath,
-            CancellationTokenSource CancellationSource) : RunPress;
-    }
-
-    private sealed class ProcessingRunProgressAdapter(Action<ProcessingRunProgress> handler)
-        : IProgress<ProcessingRunProgress>
-    {
-        public void Report(ProcessingRunProgress value)
+        /// <inheritdoc />
+        public void AddErrorMessage(string message)
         {
-            handler(value);
+            viewModel.AddErrorMessage(message);
+        }
+
+        /// <inheritdoc />
+        public void AddInformationMessage(string message)
+        {
+            viewModel.AddInformationMessage(message);
         }
     }
 }
