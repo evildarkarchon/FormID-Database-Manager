@@ -107,6 +107,7 @@ public class WinUiPlatformServiceSourceTests
     [InlineData("GameLoadOrders")]
     [InlineData("PluginIngestion")]
     [InlineData("ProcessingRunExecutor")]
+    [InlineData("ProcessingRunControl")]
     [InlineData("GameInstallations")]
     [InlineData("GameContext")]
     [InlineData("GameInstallationProbe")]

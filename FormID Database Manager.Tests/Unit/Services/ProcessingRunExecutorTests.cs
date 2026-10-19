@@ -7,6 +7,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using FormID_Database_Manager.Services;
+using FormID_Database_Manager.Tests.Fakes;
 using Mutagen.Bethesda;
 using Xunit;
 
@@ -47,6 +48,83 @@ public sealed class ProcessingRunExecutorTests : IDisposable
     }
 
     /// <summary>
+    ///     Pins that neither the executor nor its seam interface holds run state a caller could reach: there is no
+    ///     cancellation request and no disposal, because the caller owns the run's cancellation token.
+    /// </summary>
+    /// <remarks>
+    ///     Issue #104, under parent #102. Processing Run Control owns whether a run is active and creates its token the
+    ///     moment admission admits a press (ADR-0012); an executor that also held a cancellation slot would reopen the
+    ///     startup window in which a cancel was dropped.
+    /// </remarks>
+    [Fact]
+    public void Type_ExposesNoCancelAndNoDispose()
+    {
+        foreach (var type in new[] { typeof(ProcessingRunExecutor), typeof(IProcessingRunExecutor) })
+        {
+            Assert.False(typeof(IDisposable).IsAssignableFrom(type), $"{type.Name} must not be disposable.");
+            Assert.False(typeof(IAsyncDisposable).IsAssignableFrom(type), $"{type.Name} must not be disposable.");
+            Assert.DoesNotContain(
+                type.GetMethods(),
+                method => method.Name is "Cancel" or "Dispose" or "DisposeAsync");
+        }
+    }
+
+    /// <summary>
+    ///     Verifies that a token cancelled before the run starts still enters the worker and ends the run as a
+    ///     cancelled outcome, without opening a FormID Record Store.
+    /// </summary>
+    /// <remarks>
+    ///     Issue #104, under parent #102. Returning the outcome rather than throwing is the observation that the worker
+    ///     ran: had the token been handed to <see cref="Task.Run(Func{Task})" /> scheduling, the task would have been
+    ///     cancelled before the worker started and awaiting it would throw instead. This is the case a cancel pressed
+    ///     during startup produces, so the user still gets the normal cancellation acknowledgement.
+    /// </remarks>
+    [Fact]
+    public async Task ExecuteAsync_PreCancelledToken_ReturnsCancelledFromTheWorkerWithoutOpeningAStore()
+    {
+        var opener = new RecordingRecordStoreSessionOpener(new RecordingRecordStoreSession());
+        var sut = new ProcessingRunExecutor(new UnexpectedPluginIngestion(), opener);
+        var reports = new List<ProcessingRunProgress>();
+        var progress = new SynchronousProgress<ProcessingRunProgress>(reports.Add);
+
+        var outcome = await sut.ExecuteAsync(
+            CreateTextFileRequest("pre-cancelled.txt"),
+            progress,
+            new CancellationToken(canceled: true));
+
+        Assert.IsType<CancelledRunOutcome>(outcome);
+        Assert.Empty(opener.OpenCalls);
+        Assert.Empty(reports);
+    }
+
+    /// <summary>
+    ///     Verifies that the token the caller supplies is the one the run cancels on: cancelling it while the run is
+    ///     inside its import ends the run as a cancelled outcome without optimization.
+    /// </summary>
+    /// <remarks>
+    ///     Issue #104, under parent #102. The cancel is issued from inside the import, so where the run is when it
+    ///     arrives is fixed by construction rather than by how quickly the thread pool schedules the worker.
+    /// </remarks>
+    [Fact]
+    public async Task ExecuteAsync_CallerTokenCancelledMidRun_ReturnsCancelled()
+    {
+        using var cancellation = new CancellationTokenSource();
+        var recordStore = new RecordingRecordStoreSession { ImportAction = cancellation.Cancel };
+        var opener = new RecordingRecordStoreSessionOpener(recordStore);
+        var sut = new ProcessingRunExecutor(new UnexpectedPluginIngestion(), opener);
+
+        var outcome = await sut.ExecuteAsync(
+            CreateTextFileRequest("cancelled-mid-run.txt"),
+            null,
+            cancellation.Token);
+
+        Assert.IsType<CancelledRunOutcome>(outcome);
+        Assert.Equal(cancellation.Token, opener.OpenCalls.Single().CancellationToken);
+        Assert.Equal(0, recordStore.OptimizeCallCount);
+        Assert.True(recordStore.Disposed);
+    }
+
+    /// <summary>
     ///     Verifies that a FormID text-file dry run reports the file's presence and size without opening a FormID
     ///     Record Store and without reading a single row.
     /// </summary>
@@ -60,7 +138,7 @@ public sealed class ProcessingRunExecutorTests : IDisposable
             TestContext.Current.CancellationToken);
         var ingestion = new PlanningPluginIngestion();
         var opener = new RecordingRecordStoreSessionOpener(new RecordingRecordStoreSession());
-        using var sut = new ProcessingRunExecutor(ingestion, opener);
+        var sut = new ProcessingRunExecutor(ingestion, opener);
         var reports = new List<ProcessingRunProgress>();
         var progress = new SynchronousProgress<ProcessingRunProgress>(reports.Add);
         var request = new FormIdTextProcessingRunRequest(
@@ -70,7 +148,7 @@ public sealed class ProcessingRunExecutorTests : IDisposable
             UpdateMode.Append,
             dryRun: true);
 
-        var outcome = await sut.ExecuteAsync(request, progress);
+        var outcome = await sut.ExecuteAsync(request, progress, CancellationToken.None);
 
         Assert.Empty(opener.OpenCalls);
         Assert.Empty(ingestion.PlanCalls);
@@ -92,7 +170,7 @@ public sealed class ProcessingRunExecutorTests : IDisposable
     {
         var formIdListPath = CreateTempFilePath("missing-formids.txt");
         var opener = new RecordingRecordStoreSessionOpener(new RecordingRecordStoreSession());
-        using var sut = new ProcessingRunExecutor(new PlanningPluginIngestion(), opener);
+        var sut = new ProcessingRunExecutor(new PlanningPluginIngestion(), opener);
         var request = new FormIdTextProcessingRunRequest(
             formIdListPath,
             string.Empty,
@@ -100,7 +178,7 @@ public sealed class ProcessingRunExecutorTests : IDisposable
             UpdateMode.Append,
             dryRun: true);
 
-        var outcome = await sut.ExecuteAsync(request);
+        var outcome = await sut.ExecuteAsync(request, null, CancellationToken.None);
 
         Assert.Empty(opener.OpenCalls);
         var plan = Assert.IsType<FormIdTextRunPlan>(Assert.IsType<PlannedRunOutcome>(outcome).Plan);
@@ -109,30 +187,8 @@ public sealed class ProcessingRunExecutorTests : IDisposable
     }
 
     /// <summary>
-    ///     Verifies that idle and between-run cancellation never carries into a later Processing Run.
-    /// </summary>
-    [Fact]
-    public async Task Cancel_IdleAndRepeatedBetweenRuns_DoesNotCancelLaterRuns()
-    {
-        var ingestion = new PlanningPluginIngestion();
-        using var sut = new ProcessingRunExecutor(
-            ingestion,
-            new RecordingRecordStoreSessionOpener(new RecordingRecordStoreSession()));
-
-        sut.Cancel();
-        var firstOutcome = await sut.ExecuteAsync(CreateDryRunRequest("First.esp"));
-
-        sut.Cancel();
-        sut.Cancel();
-        var secondOutcome = await sut.ExecuteAsync(CreateDryRunRequest("Second.esp"));
-
-        Assert.Equal(["First.esp"], AssertPlannedPluginNames(firstOutcome));
-        Assert.Equal(["Second.esp"], AssertPlannedPluginNames(secondOutcome));
-    }
-
-    /// <summary>
     ///     Verifies a selected-Plugin dry run plans through Plugin Ingestion, carrying the captured selection and the
-    ///     run's own cancellation token, without opening a Store or ingesting anything.
+    ///     caller's cancellation token, without opening a Store or ingesting anything.
     /// </summary>
     [Fact]
     public async Task ExecuteAsync_DryRunPluginRun_PlansThroughPluginIngestionWithoutOpeningDatabase()
@@ -140,7 +196,8 @@ public sealed class ProcessingRunExecutorTests : IDisposable
         var databasePath = CreateTempFilePath("dry-run.db");
         var ingestion = new PlanningPluginIngestion();
         var opener = new RecordingRecordStoreSessionOpener(new RecordingRecordStoreSession());
-        using var sut = new ProcessingRunExecutor(ingestion, opener);
+        using var cancellation = new CancellationTokenSource();
+        var sut = new ProcessingRunExecutor(ingestion, opener);
         var reports = new List<ProcessingRunProgress>();
         var progress = new SynchronousProgress<ProcessingRunProgress>(reports.Add);
 
@@ -151,7 +208,7 @@ public sealed class ProcessingRunExecutorTests : IDisposable
             UpdateMode.Append,
             dryRun: true);
 
-        var outcome = await sut.ExecuteAsync(request, progress);
+        var outcome = await sut.ExecuteAsync(request, progress, cancellation.Token);
 
         Assert.False(File.Exists(databasePath));
         Assert.Empty(opener.OpenCalls);
@@ -159,7 +216,7 @@ public sealed class ProcessingRunExecutorTests : IDisposable
         Assert.Empty(reports);
         var planCall = Assert.Single(ingestion.PlanCalls);
         Assert.Same(request, planCall.Request);
-        Assert.True(planCall.CancellationToken.CanBeCanceled);
+        Assert.Equal(cancellation.Token, planCall.CancellationToken);
         Assert.Equal(["PluginA.esp", "PluginB.esp"], AssertPlannedPluginNames(outcome));
     }
 
@@ -173,12 +230,12 @@ public sealed class ProcessingRunExecutorTests : IDisposable
         var failure = new UnresolvableMasterException("Patch.esp", "Starfield.esm");
         var ingestion = new PlanningPluginIngestion { PlanFailure = failure };
         var opener = new RecordingRecordStoreSessionOpener(new RecordingRecordStoreSession());
-        using var sut = new ProcessingRunExecutor(ingestion, opener);
+        var sut = new ProcessingRunExecutor(ingestion, opener);
         var reports = new List<ProcessingRunProgress>();
         var progress = new SynchronousProgress<ProcessingRunProgress>(reports.Add);
 
         var thrown = await Assert.ThrowsAsync<UnresolvableMasterException>(() =>
-            sut.ExecuteAsync(CreateDryRunRequest("Patch.esp"), progress));
+            sut.ExecuteAsync(CreateDryRunRequest("Patch.esp"), progress, CancellationToken.None));
 
         Assert.Same(failure, thrown);
         Assert.Empty(opener.OpenCalls);
@@ -192,7 +249,7 @@ public sealed class ProcessingRunExecutorTests : IDisposable
     {
         var ingestion = new PlanningPluginIngestion();
         var opener = new RecordingRecordStoreSessionOpener(new RecordingRecordStoreSession());
-        using var sut = new ProcessingRunExecutor(ingestion, opener);
+        var sut = new ProcessingRunExecutor(ingestion, opener);
         var reports = new List<ProcessingRunProgress>();
         var progress = new SynchronousProgress<ProcessingRunProgress>(reports.Add);
 
@@ -203,7 +260,7 @@ public sealed class ProcessingRunExecutorTests : IDisposable
             UpdateMode.Append,
             dryRun: true);
 
-        var outcome = await sut.ExecuteAsync(request, progress);
+        var outcome = await sut.ExecuteAsync(request, progress, CancellationToken.None);
 
         Assert.Empty(opener.OpenCalls);
         Assert.Equal(0, ingestion.IngestCallCount);
@@ -238,7 +295,7 @@ public sealed class ProcessingRunExecutorTests : IDisposable
             GameRelease.SkyrimSE,
             UpdateMode.Append);
 
-        var outcome = await sut.ExecuteAsync(request, progress);
+        var outcome = await sut.ExecuteAsync(request, progress, CancellationToken.None);
 
         Assert.Equal(databasePath, opener.OpenCalls.Single().DatabasePath);
         Assert.Equal(GameRelease.SkyrimSE, opener.OpenCalls.Single().GameRelease);
@@ -351,14 +408,14 @@ public sealed class ProcessingRunExecutorTests : IDisposable
             ]
         };
         var opener = new RecordingRecordStoreSessionOpener(recordStore);
-        using var sut = new ProcessingRunExecutor(new UnexpectedPluginIngestion(), opener);
+        var sut = new ProcessingRunExecutor(new UnexpectedPluginIngestion(), opener);
         var request = new FormIdTextProcessingRunRequest(
             @"C:\FormIds\formids.txt",
             @"C:\FormIds\formids.db",
             GameRelease.SkyrimSE,
             updateMode);
 
-        await sut.ExecuteAsync(request, new SynchronousProgress<ProcessingRunProgress>(reports.Add));
+        await sut.ExecuteAsync(request, new SynchronousProgress<ProcessingRunProgress>(reports.Add), CancellationToken.None);
         return reports;
     }
 
@@ -375,20 +432,18 @@ public sealed class ProcessingRunExecutorTests : IDisposable
             OptimizeException = optimizationFailure,
             DisposeException = cleanupFailure
         };
-        using var sut = new ProcessingRunExecutor(
+        var sut = new ProcessingRunExecutor(
             new UnexpectedPluginIngestion(),
             new RecordingRecordStoreSessionOpener(recordStore));
         var reports = new List<ProcessingRunProgress>();
         var progress = new SynchronousProgress<ProcessingRunProgress>(reports.Add);
 
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            sut.ExecuteAsync(CreateTextFileRequest("optimization-failure.txt"), progress));
+            sut.ExecuteAsync(CreateTextFileRequest("optimization-failure.txt"), progress, CancellationToken.None));
 
         Assert.Same(optimizationFailure, exception);
         Assert.Equal(1, recordStore.OptimizeCallCount);
         Assert.True(recordStore.Disposed);
-        AssertReportedFailure(reports, optimizationFailure);
-        AssertDidNotReportFailure(reports, cleanupFailure);
     }
 
     /// <summary>
@@ -398,26 +453,23 @@ public sealed class ProcessingRunExecutorTests : IDisposable
     [Fact]
     public async Task ExecuteAsync_CancelledAfterTextImport_ReturnsCancelledWithoutOptimization()
     {
-        ProcessingRunExecutor? sut = null;
+        using var cancellation = new CancellationTokenSource();
         var recordStore = new RecordingRecordStoreSession
         {
-            ImportAction = () => sut!.Cancel()
+            ImportAction = cancellation.Cancel
         };
-        sut = new ProcessingRunExecutor(
+        var sut = new ProcessingRunExecutor(
             new UnexpectedPluginIngestion(),
             new RecordingRecordStoreSessionOpener(recordStore));
-        using (sut)
-        {
-            var reports = new List<ProcessingRunProgress>();
-            var progress = new SynchronousProgress<ProcessingRunProgress>(reports.Add);
 
-            var outcome = await sut.ExecuteAsync(CreateTextFileRequest("cancel-after-import.txt"), progress);
+        var outcome = await sut.ExecuteAsync(
+            CreateTextFileRequest("cancel-after-import.txt"),
+            null,
+            cancellation.Token);
 
-            Assert.IsType<CancelledRunOutcome>(outcome);
-            Assert.Equal(0, recordStore.OptimizeCallCount);
-            Assert.True(recordStore.Disposed);
-            AssertNoCancellationReportedOnTheProgressChannel(reports);
-        }
+        Assert.IsType<CancelledRunOutcome>(outcome);
+        Assert.Equal(0, recordStore.OptimizeCallCount);
+        Assert.True(recordStore.Disposed);
     }
 
     /// <summary>
@@ -427,26 +479,23 @@ public sealed class ProcessingRunExecutorTests : IDisposable
     [Fact]
     public async Task ExecuteAsync_CancelledAfterTextOptimization_ReturnsCancelledRatherThanTheImportResult()
     {
-        ProcessingRunExecutor? sut = null;
+        using var cancellation = new CancellationTokenSource();
         var recordStore = new RecordingRecordStoreSession
         {
-            OptimizeAction = () => sut!.Cancel()
+            OptimizeAction = cancellation.Cancel
         };
-        sut = new ProcessingRunExecutor(
+        var sut = new ProcessingRunExecutor(
             new UnexpectedPluginIngestion(),
             new RecordingRecordStoreSessionOpener(recordStore));
-        using (sut)
-        {
-            var reports = new List<ProcessingRunProgress>();
-            var progress = new SynchronousProgress<ProcessingRunProgress>(reports.Add);
 
-            var outcome = await sut.ExecuteAsync(CreateTextFileRequest("cancel-after-optimize.txt"), progress);
+        var outcome = await sut.ExecuteAsync(
+            CreateTextFileRequest("cancel-after-optimize.txt"),
+            null,
+            cancellation.Token);
 
-            Assert.IsType<CancelledRunOutcome>(outcome);
-            Assert.Equal(1, recordStore.OptimizeCallCount);
-            Assert.True(recordStore.Disposed);
-            AssertNoCancellationReportedOnTheProgressChannel(reports);
-        }
+        Assert.IsType<CancelledRunOutcome>(outcome);
+        Assert.Equal(1, recordStore.OptimizeCallCount);
+        Assert.True(recordStore.Disposed);
     }
 
     /// <summary>
@@ -469,9 +518,10 @@ public sealed class ProcessingRunExecutorTests : IDisposable
                 [new IngestedPlugin("First.esp", 2), new IngestedPlugin("Second.esp", 3)]));
         });
         var opener = new RecordingRecordStoreSessionOpener(recordStore);
-        using var sut = new ProcessingRunExecutor(
+        var sut = new ProcessingRunExecutor(
             ingestion,
             opener);
+        using var cancellation = new CancellationTokenSource();
         var progress = new SynchronousProgress<ProcessingRunProgress>(reports.Add);
         var request = new PluginProcessingRunRequest(
             PluginListSource.Create(GameRelease.SkyrimSE, gameDirectory),
@@ -479,7 +529,7 @@ public sealed class ProcessingRunExecutorTests : IDisposable
             ["First.esp", "Second.esp"],
             UpdateMode.ReplacePluginRecords);
 
-        var outcome = await sut.ExecuteAsync(request, progress);
+        var outcome = await sut.ExecuteAsync(request, progress, cancellation.Token);
 
         var call = Assert.Single(ingestion.Calls);
         Assert.Same(request, call.Request);
@@ -489,7 +539,7 @@ public sealed class ProcessingRunExecutorTests : IDisposable
         Assert.Equal(UpdateMode.ReplacePluginRecords, call.Request.UpdateMode);
         Assert.Same(recordStore, call.RecordStore);
         Assert.NotNull(call.Progress);
-        Assert.True(call.CancellationToken.CanBeCanceled);
+        Assert.Equal(cancellation.Token, call.CancellationToken);
         Assert.Equal(opener.OpenCalls.Single().CancellationToken, call.CancellationToken);
         Assert.Equal(call.CancellationToken, recordStore.OptimizeCancellationToken);
         Assert.Equal(1, recordStore.OptimizeCallCount);
@@ -509,37 +559,33 @@ public sealed class ProcessingRunExecutorTests : IDisposable
     [Fact]
     public async Task ExecuteAsync_CancelledAsPluginReportReturns_ReturnsCancelledWithoutOptimizing()
     {
-        ProcessingRunExecutor? sut = null;
+        using var cancellation = new CancellationTokenSource();
         var ingestion = new RecordingReportPluginIngestion((request, _, _, _) =>
         {
-            sut!.Cancel();
+            cancellation.Cancel();
             return Task.FromResult(new PluginIngestionReport(
                 request,
                 [new IngestedPlugin("Plugin.esp", 1)]));
         });
         var recordStore = new RecordingRecordStoreSession();
-        sut = new ProcessingRunExecutor(
+        var sut = new ProcessingRunExecutor(
             ingestion,
             new RecordingRecordStoreSessionOpener(recordStore));
-        using (sut)
-        {
-            var reports = new List<ProcessingRunProgress>();
-            var progress = new SynchronousProgress<ProcessingRunProgress>(reports.Add);
-            var request = new PluginProcessingRunRequest(
-                PluginListSource.Create(GameRelease.SkyrimSE, CreateTempDirectory()),
-                @"C:\Databases\formids.db",
-                ["Plugin.esp"],
-                UpdateMode.Append);
+        var reports = new List<ProcessingRunProgress>();
+        var progress = new SynchronousProgress<ProcessingRunProgress>(reports.Add);
+        var request = new PluginProcessingRunRequest(
+            PluginListSource.Create(GameRelease.SkyrimSE, CreateTempDirectory()),
+            @"C:\Databases\formids.db",
+            ["Plugin.esp"],
+            UpdateMode.Append);
 
-            var outcome = await sut.ExecuteAsync(request, progress);
+        var outcome = await sut.ExecuteAsync(request, progress, cancellation.Token);
 
-            Assert.IsType<CancelledRunOutcome>(outcome);
-            Assert.Single(ingestion.Calls);
-            Assert.Equal(0, recordStore.OptimizeCallCount);
-            Assert.True(recordStore.Disposed);
-            AssertNoCancellationReportedOnTheProgressChannel(reports);
-            AssertNoTerminalReportOnTheProgressChannel(reports);
-        }
+        Assert.IsType<CancelledRunOutcome>(outcome);
+        Assert.Single(ingestion.Calls);
+        Assert.Equal(0, recordStore.OptimizeCallCount);
+        Assert.True(recordStore.Disposed);
+        AssertNoTerminalReportOnTheProgressChannel(reports);
     }
 
     /// <summary>
@@ -549,7 +595,7 @@ public sealed class ProcessingRunExecutorTests : IDisposable
     [Fact]
     public async Task ExecuteAsync_CancelledAfterPluginOptimization_ReturnsCancelledRatherThanTheReport()
     {
-        ProcessingRunExecutor? sut = null;
+        using var cancellation = new CancellationTokenSource();
         var ingestion = new RecordingReportPluginIngestion((request, _, _, _) =>
             Task.FromResult(new PluginIngestionReport(
                 request,
@@ -562,30 +608,26 @@ public sealed class ProcessingRunExecutorTests : IDisposable
                 ])));
         var recordStore = new RecordingRecordStoreSession
         {
-            OptimizeAction = () => sut!.Cancel()
+            OptimizeAction = cancellation.Cancel
         };
-        sut = new ProcessingRunExecutor(
+        var sut = new ProcessingRunExecutor(
             ingestion,
             new RecordingRecordStoreSessionOpener(recordStore));
-        using (sut)
-        {
-            var reports = new List<ProcessingRunProgress>();
-            var progress = new SynchronousProgress<ProcessingRunProgress>(reports.Add);
-            var request = new PluginProcessingRunRequest(
-                PluginListSource.Create(GameRelease.SkyrimSE, CreateTempDirectory()),
-                @"C:\Databases\formids.db",
-                ["Warned.esp", "Skipped.esp", "Failed.esp"],
-                UpdateMode.Append);
+        var reports = new List<ProcessingRunProgress>();
+        var progress = new SynchronousProgress<ProcessingRunProgress>(reports.Add);
+        var request = new PluginProcessingRunRequest(
+            PluginListSource.Create(GameRelease.SkyrimSE, CreateTempDirectory()),
+            @"C:\Databases\formids.db",
+            ["Warned.esp", "Skipped.esp", "Failed.esp"],
+            UpdateMode.Append);
 
-            var outcome = await sut.ExecuteAsync(request, progress);
+        var outcome = await sut.ExecuteAsync(request, progress, cancellation.Token);
 
-            Assert.IsType<CancelledRunOutcome>(outcome);
-            Assert.Single(ingestion.Calls);
-            Assert.Equal(1, recordStore.OptimizeCallCount);
-            Assert.True(recordStore.Disposed);
-            AssertNoCancellationReportedOnTheProgressChannel(reports);
-            AssertNoTerminalReportOnTheProgressChannel(reports);
-        }
+        Assert.IsType<CancelledRunOutcome>(outcome);
+        Assert.Single(ingestion.Calls);
+        Assert.Equal(1, recordStore.OptimizeCallCount);
+        Assert.True(recordStore.Disposed);
+        AssertNoTerminalReportOnTheProgressChannel(reports);
     }
 
     /// <summary>
@@ -615,7 +657,7 @@ public sealed class ProcessingRunExecutorTests : IDisposable
             OptimizeException = optimizationFailure,
             DisposeException = cleanupFailure
         };
-        using var sut = new ProcessingRunExecutor(
+        var sut = new ProcessingRunExecutor(
             ingestion,
             new RecordingRecordStoreSessionOpener(recordStore));
         var reports = new List<ProcessingRunProgress>();
@@ -626,17 +668,15 @@ public sealed class ProcessingRunExecutorTests : IDisposable
             ["Warned.esp", "Skipped.esp", "Failed.esp"],
             UpdateMode.Append);
 
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => sut.ExecuteAsync(request, progress));
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => sut.ExecuteAsync(request, progress, CancellationToken.None));
 
         Assert.Same(optimizationFailure, exception);
         Assert.Single(ingestion.Calls);
         Assert.Equal(1, recordStore.OptimizeCallCount);
         Assert.True(recordStore.Disposed);
-        AssertReportedFailure(reports, optimizationFailure);
         AssertNoTerminalReportOnTheProgressChannel(reports);
-        // No Plugin from the withheld report reached the channel, and neither did the cleanup failure.
+        // No Plugin from the withheld report reached the channel.
         Assert.DoesNotContain(reports, reported => reported is IngestingPlugin);
-        AssertDidNotReportFailure(reports, cleanupFailure);
     }
 
     /// <summary>
@@ -668,7 +708,7 @@ public sealed class ProcessingRunExecutorTests : IDisposable
         {
             OptimizeAction = () => optimizedBeforeReturning = true
         };
-        using var sut = new ProcessingRunExecutor(
+        var sut = new ProcessingRunExecutor(
             ingestion,
             new RecordingRecordStoreSessionOpener(recordStore));
         var progress = new SynchronousProgress<ProcessingRunProgress>(reports.Add);
@@ -678,7 +718,7 @@ public sealed class ProcessingRunExecutorTests : IDisposable
             ["Warned.esp", "Skipped.esp", "Bad.esp", "Good.esp"],
             UpdateMode.Append);
 
-        var outcome = await sut.ExecuteAsync(request, progress);
+        var outcome = await sut.ExecuteAsync(request, progress, CancellationToken.None);
 
         Assert.Single(ingestion.Calls);
         Assert.Equal(1, recordStore.OptimizeCallCount);
@@ -710,7 +750,7 @@ public sealed class ProcessingRunExecutorTests : IDisposable
         {
             DisposeException = cleanupFailure
         };
-        using var sut = new ProcessingRunExecutor(
+        var sut = new ProcessingRunExecutor(
             ingestion,
             new RecordingRecordStoreSessionOpener(recordStore));
         var reports = new List<ProcessingRunProgress>();
@@ -721,28 +761,26 @@ public sealed class ProcessingRunExecutorTests : IDisposable
             ["Bad.esp", "Never.esp"],
             UpdateMode.Append);
 
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => sut.ExecuteAsync(request, progress));
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => sut.ExecuteAsync(request, progress, CancellationToken.None));
 
         Assert.Same(ingestionFailure, exception);
         Assert.Equal(1, ingestion.CallCount);
         Assert.Equal(0, recordStore.OptimizeCallCount);
         Assert.True(recordStore.Disposed);
-        AssertReportedFailure(reports, ingestionFailure);
         AssertNoTerminalReportOnTheProgressChannel(reports);
-        AssertDidNotReportFailure(reports, cleanupFailure);
     }
 
     /// <summary>
-    ///     Verifies a cancellation this executor never requested still propagates unchanged, and cannot be replaced by
-    ///     Store cleanup failure.
+    ///     Verifies a cancellation raised while the caller's token is not cancelled still propagates unchanged, and
+    ///     cannot be replaced by Store cleanup failure.
     /// </summary>
     /// <remarks>
-    ///     Only the cancellation this executor asked for becomes an outcome, and this one was not: the run's own token
-    ///     was never cancelled. Reinterpreting a collaborator's unexplained cancellation as a cancelled run would
-    ///     claim the user pressed something they did not.
+    ///     Only the cancellation the caller asked for becomes an outcome, and this one was not: the token the caller
+    ///     handed the run is live and was never cancelled (ADR-0007). Reinterpreting a collaborator's unexplained
+    ///     cancellation as a cancelled run would claim the user pressed something they did not.
     /// </remarks>
     [Fact]
-    public async Task ExecuteAsync_CancellationNobodyRequested_PropagatesWithoutBecomingACancelledOutcome()
+    public async Task ExecuteAsync_CancellationWhileTheGivenTokenIsNotCancelled_PropagatesWithoutBecomingACancelledOutcome()
     {
         var gameDirectory = CreateTempDirectory();
         var databasePath = Path.Combine(gameDirectory, "plugins.db");
@@ -754,9 +792,12 @@ public sealed class ProcessingRunExecutorTests : IDisposable
         {
             DisposeException = cleanupFailure
         };
-        using var sut = new ProcessingRunExecutor(
+        var sut = new ProcessingRunExecutor(
             ingestion,
             new RecordingRecordStoreSessionOpener(recordStore));
+        // A live token that could be cancelled but is not, so the propagation is decided by its state rather than by
+        // the token being uncancellable.
+        using var callerCancellation = new CancellationTokenSource();
         var reports = new List<ProcessingRunProgress>();
         var progress = new SynchronousProgress<ProcessingRunProgress>(reports.Add);
         var request = new PluginProcessingRunRequest(
@@ -765,20 +806,20 @@ public sealed class ProcessingRunExecutorTests : IDisposable
             ["Done.esp", "Cancelled.esp"],
             UpdateMode.Append);
 
-        var exception = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sut.ExecuteAsync(request, progress));
+        var exception = await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            sut.ExecuteAsync(request, progress, callerCancellation.Token));
 
         Assert.Same(cancellation, exception);
+        Assert.False(callerCancellation.IsCancellationRequested);
         Assert.Equal(1, ingestion.CallCount);
         Assert.Equal(0, recordStore.OptimizeCallCount);
         Assert.True(recordStore.Disposed);
-        AssertNoCancellationReportedOnTheProgressChannel(reports);
         AssertNoTerminalReportOnTheProgressChannel(reports);
-        AssertDidNotReportFailure(reports, cleanupFailure);
     }
 
     /// <summary>
-    ///     Verifies active-run cancellation reaches the Plugin Ingestion interface token, prevents Store optimization,
-    ///     and ends the run as a cancelled outcome.
+    ///     Verifies that cancelling the caller's token reaches the Plugin Ingestion interface token, prevents Store
+    ///     optimization, and ends the run as a cancelled outcome.
     /// </summary>
     [Fact]
     public async Task ExecuteAsync_CancelledDuringPluginIngestion_StopsBeforeOptimizationAndReturnsCancelled()
@@ -787,83 +828,23 @@ public sealed class ProcessingRunExecutorTests : IDisposable
         var databasePath = Path.Combine(gameDirectory, "cancel.db");
         var ingestion = new CancellationObservingPluginIngestion();
         var recordStore = new RecordingRecordStoreSession();
-        using var sut = new ProcessingRunExecutor(
+        var sut = new ProcessingRunExecutor(
             ingestion,
             new RecordingRecordStoreSessionOpener(recordStore));
+        using var cancellation = new CancellationTokenSource();
 
         // Cancelling from inside ingestion pins where the run is when cancellation arrives, with no wait on the test
         // thread for the worker to get there.
-        ingestion.OnIngestionStarted = sut.Cancel;
-        var reports = new List<ProcessingRunProgress>();
-        var progress = new SynchronousProgress<ProcessingRunProgress>(reports.Add);
+        ingestion.OnIngestionStarted = cancellation.Cancel;
         var request = new PluginProcessingRunRequest(
             PluginListSource.Create(GameRelease.SkyrimSE, gameDirectory),
             databasePath,
             ["Plugin.esp"],
             UpdateMode.Append);
 
-        Assert.IsType<CancelledRunOutcome>(await sut.ExecuteAsync(request, progress));
+        Assert.IsType<CancelledRunOutcome>(await sut.ExecuteAsync(request, null, cancellation.Token));
         Assert.Equal(0, recordStore.OptimizeCallCount);
         Assert.True(recordStore.Disposed);
-        AssertNoCancellationReportedOnTheProgressChannel(reports);
-    }
-
-    /// <summary>
-    ///     Verifies that supersession cancels the older run without disposing its source and keeps the newer run active.
-    /// </summary>
-    /// <remarks>
-    ///     Both runs ending as a cancelled outcome rather than an <see cref="ObjectDisposedException" /> is the whole
-    ///     assertion: a source disposed out from under a still-running execution would surface as the latter.
-    /// </remarks>
-    [Fact]
-    public async Task ExecuteAsync_SecondRunSupersedesFirst_OlderCompletionCannotClearNewerActiveRun()
-    {
-        var opener = new InterceptingRecordStoreSessionOpener();
-        using var sut = new ProcessingRunExecutor(new UnexpectedPluginIngestion(), opener);
-        var releaseSecondImport = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        Task<ProcessingRunOutcome>? secondTask = null;
-        opener.OnOpen = openNumber =>
-        {
-            if (openNumber == 1)
-            {
-                // Run one is inside initialization holding the token it captured, so starting run two here supersedes
-                // a run that is still executing, and run one cannot finish until run two owns the active slot.
-                secondTask = sut.ExecuteAsync(CreateTextFileRequest("second.txt"));
-                return new CancellationAwareRecordStoreSession();
-            }
-
-            return new CancellationAwareRecordStoreSession(releaseSecondImport.Task);
-        };
-
-        var firstOutcome = await sut.ExecuteAsync(CreateTextFileRequest("first.txt"));
-
-        // The older run has finished after the newer run took the active slot; cancellation must still target run two,
-        // which is held inside its import until the gate opens and so cannot have finished yet.
-        sut.Cancel();
-        releaseSecondImport.SetResult();
-        var secondOutcome = await secondTask!;
-
-        Assert.IsType<CancelledRunOutcome>(firstOutcome);
-        Assert.IsType<CancelledRunOutcome>(secondOutcome);
-    }
-
-    /// <summary>
-    ///     Verifies that disposal cancels the active run without disposing its source out from under that run.
-    /// </summary>
-    [Fact]
-    public async Task Dispose_ActiveRun_CancelsRunAndCanBeRepeated()
-    {
-        var opener = new InterceptingRecordStoreSessionOpener();
-        using var sut = new ProcessingRunExecutor(new UnexpectedPluginIngestion(), opener);
-        opener.OnOpen = _ =>
-        {
-            // Disposing from inside initialization guarantees the run is active and has captured its token.
-            sut.Dispose();
-            sut.Dispose();
-            return new CancellationAwareRecordStoreSession();
-        };
-
-        Assert.IsType<CancelledRunOutcome>(await sut.ExecuteAsync(CreateTextFileRequest("dispose.txt")));
     }
 
     /// <summary>
@@ -874,7 +855,7 @@ public sealed class ProcessingRunExecutorTests : IDisposable
     public async Task ExecuteAsync_SynchronousRecordStoreInitialization_DoesNotRunOnCallersStack()
     {
         var opener = new InterceptingRecordStoreSessionOpener();
-        using var sut = new ProcessingRunExecutor(new UnexpectedPluginIngestion(), opener);
+        var sut = new ProcessingRunExecutor(new UnexpectedPluginIngestion(), opener);
         var openedOnCallersStack = true;
         opener.OnOpen = _ =>
         {
@@ -886,7 +867,7 @@ public sealed class ProcessingRunExecutorTests : IDisposable
         _executeCallInProgressOnThisThread = true;
         try
         {
-            processingTask = sut.ExecuteAsync(CreateTextFileRequest("offloaded.txt"));
+            processingTask = sut.ExecuteAsync(CreateTextFileRequest("offloaded.txt"), null, CancellationToken.None);
         }
         finally
         {
@@ -898,8 +879,15 @@ public sealed class ProcessingRunExecutorTests : IDisposable
         Assert.False(openedOnCallersStack);
     }
 
+    /// <summary>
+    ///     Verifies that a Store that cannot be opened fails the run by propagating that failure unchanged.
+    /// </summary>
+    /// <remarks>
+    ///     Issue #104, under parent #102. The run no longer restates a failure on the progress channel before
+    ///     rethrowing it: a failure reaches the user once, through the caller's failure renderer (ADR-0007).
+    /// </remarks>
     [Fact]
-    public async Task ExecuteAsync_FatalInitializationError_ReportsStatusOnlyAndRethrows()
+    public async Task ExecuteAsync_FatalInitializationError_PropagatesTheFailure()
     {
         var initializationFailure = new InvalidOperationException("open failed");
         var sut = new ProcessingRunExecutor(
@@ -914,9 +902,10 @@ public sealed class ProcessingRunExecutorTests : IDisposable
             ["Plugin.esp"],
             UpdateMode.Append);
 
-        await Assert.ThrowsAnyAsync<Exception>(() => sut.ExecuteAsync(request, progress));
+        var thrown = await Assert.ThrowsAnyAsync<Exception>(() =>
+            sut.ExecuteAsync(request, progress, CancellationToken.None));
 
-        AssertReportedFailure(reports, initializationFailure);
+        Assert.Same(initializationFailure, thrown);
         AssertNoTerminalReportOnTheProgressChannel(reports);
     }
 
@@ -967,21 +956,6 @@ public sealed class ProcessingRunExecutorTests : IDisposable
     }
 
     /// <summary>
-    ///     Asserts that a cancelled Processing Run reported nothing about the cancellation on the progress channel.
-    /// </summary>
-    /// <param name="reports">The complete progress reported by the executor.</param>
-    /// <remarks>
-    ///     Issue #60. The progress channel is transient and is cleared as soon as the run ends, so an acknowledgement
-    ///     written here is erased before the user can read it. The cancellation acknowledgement is an information
-    ///     message rendered from the outcome instead, and the run's progress vocabulary cannot express it at all now —
-    ///     which leaves this to check what remains expressible and wrong: a cancelled run reporting itself as failing.
-    /// </remarks>
-    private static void AssertNoCancellationReportedOnTheProgressChannel(IReadOnlyList<ProcessingRunProgress> reports)
-    {
-        Assert.DoesNotContain(reports, reported => reported is ProcessingRunFailure);
-    }
-
-    /// <summary>
     ///     Asserts that a run said nothing about how it ended on the progress channel.
     /// </summary>
     /// <param name="reports">The complete progress reported by the executor.</param>
@@ -994,33 +968,6 @@ public sealed class ProcessingRunExecutorTests : IDisposable
     private static void AssertNoTerminalReportOnTheProgressChannel(IReadOnlyList<ProcessingRunProgress> reports)
     {
         Assert.DoesNotContain(reports, reported => reported is ImportedFormIdText);
-    }
-
-    /// <summary>
-    ///     Asserts that the run restated one failure on the progress channel before rethrowing it.
-    /// </summary>
-    /// <param name="reports">The complete progress reported by the executor.</param>
-    /// <param name="failure">The failure the run was expected to report.</param>
-    /// <remarks>
-    ///     Matched against the failure's own message rather than a literal, because what is being asserted is
-    ///     <em>which</em> failure survived, not how it reads: the run reports the message unprefixed, and the
-    ///     "Error during processing" wording belongs to <c>ProcessingRunPresentation</c> and its own suite.
-    /// </remarks>
-    private static void AssertReportedFailure(IReadOnlyList<ProcessingRunProgress> reports, Exception failure)
-    {
-        Assert.Contains(reports, reported => reported is ProcessingRunFailure(var message) &&
-                                             message == failure.Message);
-    }
-
-    /// <summary>
-    ///     Asserts that the run did not restate one failure on the progress channel.
-    /// </summary>
-    /// <param name="reports">The complete progress reported by the executor.</param>
-    /// <param name="failure">The failure the run was expected to keep to itself.</param>
-    private static void AssertDidNotReportFailure(IReadOnlyList<ProcessingRunProgress> reports, Exception failure)
-    {
-        Assert.DoesNotContain(reports, reported => reported is ProcessingRunFailure(var message) &&
-                                                   message == failure.Message);
     }
 
     /// <summary>
@@ -1102,33 +1049,6 @@ public sealed class ProcessingRunExecutorTests : IDisposable
             PluginProcessingRunRequest request,
             CancellationToken cancellationToken = default)
         {
-            return Task.FromException<PluginIngestionPlan>(
-                new InvalidOperationException("Planning was not expected for this Processing Run."));
-        }
-    }
-
-    private sealed class UnexpectedPluginIngestion : IPluginIngestion
-    {
-        public int CallCount { get; private set; }
-
-        /// <inheritdoc />
-        public Task<PluginIngestionReport> IngestAsync(
-            PluginProcessingRunRequest request,
-            IPluginFormIdRecordWriter recordStore,
-            IProgress<PluginIngestionProgress>? progress = null,
-            CancellationToken cancellationToken = default)
-        {
-            CallCount++;
-            return Task.FromException<PluginIngestionReport>(
-                new InvalidOperationException("Plugin Ingestion was not expected for this Processing Run."));
-        }
-
-        /// <inheritdoc />
-        public Task<PluginIngestionPlan> PlanAsync(
-            PluginProcessingRunRequest request,
-            CancellationToken cancellationToken = default)
-        {
-            CallCount++;
             return Task.FromException<PluginIngestionPlan>(
                 new InvalidOperationException("Planning was not expected for this Processing Run."));
         }
@@ -1320,24 +1240,6 @@ public sealed class ProcessingRunExecutorTests : IDisposable
         }
     }
 
-    private sealed class RecordingRecordStoreSessionOpener(IFormIdRecordStoreSession recordStore)
-        : IFormIdRecordStoreSessionOpener
-    {
-        public List<(
-            string DatabasePath,
-            GameRelease GameRelease,
-            CancellationToken CancellationToken)> OpenCalls { get; } = [];
-
-        public Task<IFormIdRecordStoreSession> OpenAsync(
-            string databasePath,
-            GameRelease gameRelease,
-            CancellationToken cancellationToken = default)
-        {
-            OpenCalls.Add((databasePath, gameRelease, cancellationToken));
-            return Task.FromResult(recordStore);
-        }
-    }
-
     private sealed class ThrowingRecordStoreSessionOpener(Exception exception) : IFormIdRecordStoreSessionOpener
     {
         public Task<IFormIdRecordStoreSession> OpenAsync(
@@ -1346,80 +1248,6 @@ public sealed class ProcessingRunExecutorTests : IDisposable
             CancellationToken cancellationToken = default)
         {
             return Task.FromException<IFormIdRecordStoreSession>(exception);
-        }
-    }
-
-    private sealed class RecordingRecordStoreSession : IFormIdRecordStoreSession
-    {
-        public string? ImportedTextFilePath { get; private set; }
-
-        public UpdateMode? ImportedTextFileUpdateMode { get; private set; }
-
-        public int OptimizeCallCount { get; private set; }
-
-        public CancellationToken? OptimizeCancellationToken { get; private set; }
-
-        public bool Disposed { get; private set; }
-
-        public Exception? OptimizeException { get; init; }
-
-        public Exception? DisposeException { get; init; }
-
-        public Action? ImportAction { get; init; }
-
-        public Action? OptimizeAction { get; init; }
-
-        public FormIdTextFileImportResult TextFileImportResult { get; init; }
-
-        public IReadOnlyList<FormIdStoreProgress> TextFileProgressReports { get; init; } = [];
-
-        public Task<FormIdPluginWriteResult> WritePluginAsync(
-            string pluginName,
-            IEnumerable<FormIdRecord> records,
-            UpdateMode updateMode,
-            CancellationToken cancellationToken = default)
-        {
-            return Task.FromResult(new FormIdPluginWriteResult(0));
-        }
-
-        /// <inheritdoc />
-        public Task<FormIdTextFileImportResult> ImportFormIdTextFileAsync(
-            string formIdTextFilePath,
-            UpdateMode updateMode,
-            IProgress<FormIdStoreProgress>? progress = null,
-            CancellationToken cancellationToken = default)
-        {
-            ImportedTextFilePath = formIdTextFilePath;
-            ImportedTextFileUpdateMode = updateMode;
-
-            foreach (var report in TextFileProgressReports)
-            {
-                progress?.Report(report);
-            }
-
-            ImportAction?.Invoke();
-
-            return Task.FromResult(TextFileImportResult);
-        }
-
-        /// <inheritdoc />
-        public Task OptimizeAsync(CancellationToken cancellationToken = default)
-        {
-            OptimizeCallCount++;
-            OptimizeCancellationToken = cancellationToken;
-            OptimizeAction?.Invoke();
-            return OptimizeException is null
-                ? Task.CompletedTask
-                : Task.FromException(OptimizeException);
-        }
-
-        /// <inheritdoc />
-        public ValueTask DisposeAsync()
-        {
-            Disposed = true;
-            return DisposeException is null
-                ? ValueTask.CompletedTask
-                : ValueTask.FromException(DisposeException);
         }
     }
 }

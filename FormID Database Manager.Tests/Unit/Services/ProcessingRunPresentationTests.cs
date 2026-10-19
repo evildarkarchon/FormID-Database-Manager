@@ -119,15 +119,36 @@ public sealed class ProcessingRunPresentationTests
     }
 
     /// <summary>
-    ///     Verifies that a failing run's status carries no percentage either, so the bar stays where the run left it.
+    ///     Pins the status an admitted press shows the moment it becomes a run, before the run has reported anything of
+    ///     its own, and the zero percentage that resets the bar for it.
     /// </summary>
+    /// <remarks>
+    ///     Issue #103, under parent #102. A characterization of the sentence the User Workflow used to write itself,
+    ///     pinned byte-for-byte before it moved here.
+    /// </remarks>
     [Fact]
-    public void Render_ProcessingRunFailure_ReportsThePrefixedMessageWithoutAPercentage()
+    public void Render_ProcessingRunStarting_ReportsTheInitializingStatusAtZeroPercent()
     {
-        var rendered = ProcessingRunPresentation.Render(new ProcessingRunFailure("store unavailable"));
+        var rendered = ProcessingRunPresentation.Render(new ProcessingRunStarting());
 
-        Assert.Equal("Error during processing: store unavailable", rendered.Status);
-        Assert.Null(rendered.Value);
+        Assert.Equal(new RenderedRunProgress("Initializing...", 0), rendered);
+    }
+
+    /// <summary>
+    ///     Pins the status a press shows when it asks the active run to cancel, and that it implies no new percentage,
+    ///     so the bar stays where the run left it.
+    /// </summary>
+    /// <remarks>
+    ///     Issue #103, under parent #102. Like the starting status this is a characterization of a sentence the User
+    ///     Workflow used to write itself. It is what the run is doing now rather than how it ended, so it is transient
+    ///     progress, not the cancellation acknowledgement a cancelled outcome renders (#60).
+    /// </remarks>
+    [Fact]
+    public void Render_ProcessingRunCancellationRequested_ReportsTheCancellingStatusWithoutAPercentage()
+    {
+        var rendered = ProcessingRunPresentation.Render(new ProcessingRunCancellationRequested());
+
+        Assert.Equal(new RenderedRunProgress("Cancelling...", null), rendered);
     }
 
     /// <summary>
@@ -465,8 +486,8 @@ public sealed class ProcessingRunPresentationTests
     /// </summary>
     /// <remarks>
     ///     Issue #60. The acknowledgement is terminal and stays off the transient channel, which is handed back as the
-    ///     run ends and would erase it. "Cancelling..." — what the run is doing rather than how it ended — remains the
-    ///     User Workflow's to report and is not rendered here.
+    ///     run ends and would erase it. "Cancelling..." — what the run is doing rather than how it ended — is rendered
+    ///     from the cancellation-requested fact instead, as transient progress.
     /// </remarks>
     [Fact]
     public void Render_CancelledRun_RendersTheAcknowledgementAsAnInformationMessageOnly()
@@ -668,21 +689,42 @@ public sealed class ProcessingRunPresentationTests
     ///     legacy "Error processing FormIDs" prefix.
     /// </summary>
     [Fact]
-    public void RenderUnexpectedFailure_AnyException_PrefixesTheFailureMessage()
+    public void RenderFailure_AnyOtherException_PrefixesTheFailureMessage()
     {
-        var rendered = ProcessingRunPresentation.RenderUnexpectedFailure(
-            new InvalidOperationException("store unavailable"));
+        var rendered = ProcessingRunPresentation.RenderFailure(new InvalidOperationException("store unavailable"));
 
         Assert.Equal("Error processing FormIDs: store unavailable", rendered);
+    }
+
+    /// <summary>
+    ///     Pins that an Unresolvable Master reaches the user as its own message, unwrapped, because that message already
+    ///     names the missing master and the directory that must supply it (ADR-0006).
+    /// </summary>
+    /// <remarks>
+    ///     Issue #103, under parent #102. The expected sentence is written out rather than read back from the exception,
+    ///     so this pins the whole sentence the user reads and cannot pass because the renderer echoed whatever it was
+    ///     given. The exception's own wording is pinned by <c>ProcessingRunContractTests</c>.
+    /// </remarks>
+    [Fact]
+    public void RenderFailure_UnresolvableMaster_RendersTheExceptionMessageUnwrapped()
+    {
+        var rendered = ProcessingRunPresentation.RenderFailure(
+            new UnresolvableMasterException("User.esp", "Starfield.esm"));
+
+        Assert.Equal(
+            "Could not resolve 'Starfield.esm', a master file declared by User.esp. This game separates master " +
+            "files by type in the load order, so that master must be present in the Data directory being " +
+            "processed before any selected plugin can be read.",
+            rendered);
     }
 
     /// <summary>
     ///     Verifies that rendering a missing failure is refused rather than rendered as a message about nothing.
     /// </summary>
     [Fact]
-    public void RenderUnexpectedFailure_NullFailure_Throws()
+    public void RenderFailure_NullFailure_Throws()
     {
-        Assert.Throws<ArgumentNullException>(() => ProcessingRunPresentation.RenderUnexpectedFailure(null!));
+        Assert.Throws<ArgumentNullException>(() => ProcessingRunPresentation.RenderFailure(null!));
     }
 
     /// <summary>
