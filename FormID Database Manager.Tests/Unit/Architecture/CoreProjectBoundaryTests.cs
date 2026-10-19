@@ -317,6 +317,29 @@ public class CoreProjectBoundaryTests
     }
 
     /// <summary>
+    ///     Verifies that the User Workflow writes neither the starting nor the cancellation-requested status itself, and
+    ///     does not decide which run failure is shown unwrapped: <c>ProcessingRunPresentation</c> renders all three
+    ///     (ADR-0006, ADR-0012).
+    /// </summary>
+    /// <remarks>
+    ///     Issue #103, under parent #102. The statuses are searched for among the string literals rather than in the
+    ///     raw text, so a comment may still quote them. The failure rule is pinned as the absence of a catch clause for
+    ///     <see cref="UnresolvableMasterException" />, because such a clause is exactly how the rule used to live in the
+    ///     User Workflow. What the user reads is pinned by <c>ProcessingRunPresentationTests</c>.
+    /// </remarks>
+    [Fact]
+    public void UserWorkflow_RunStatusesAndFailures_AreRenderedOnlyByProcessingRunPresentation()
+    {
+        var userWorkflowSource = File.ReadAllText(Path.Combine(GetCoreProjectDirectory(), "Services", "UserWorkflow.cs"));
+
+        var literals = SourceStringLiterals.Extract(userWorkflowSource).Select(static literal => literal.Text).ToArray();
+
+        Assert.DoesNotContain("Initializing...", literals);
+        Assert.DoesNotContain("Cancelling...", literals);
+        Assert.DoesNotMatch(@"catch\s*\(\s*UnresolvableMasterException\b", userWorkflowSource);
+    }
+
+    /// <summary>
     ///     Verifies that Processing Run Admission holds no user-facing sentence at all, not only none of the known
     ///     refusals: every string literal it contains is either a default-path segment or exception diagnostic text
     ///     (issue #89, ADR-0010).

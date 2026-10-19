@@ -377,9 +377,11 @@ public sealed class UserWorkflow : IDisposable
         var press = DecideRunPress();
         if (press is RunPress.CancelActiveRun)
         {
-            // "Cancelling..." is what the run is doing now, not how it ended, so it belongs on the transient channel:
-            // it is deliberately not the acknowledgement, which the cancellation handler below writes instead (#60).
-            ReportRunActivity("Cancelling...", null);
+            // The cancellation-requested status is what the run is doing now, not how it ended, so it belongs on the
+            // transient channel: it is deliberately not the acknowledgement, which the cancelled outcome renders to the
+            // message lists instead (#60). It carries no percentage, so the bar stays where the run left it.
+            var cancelling = ProcessingRunPresentation.Render(new ProcessingRunCancellationRequested());
+            ReportRunActivity(cancelling.Status, cancelling.Value);
             _processingRunExecutor.Cancel();
             return;
         }
@@ -431,12 +433,8 @@ public sealed class UserWorkflow : IDisposable
             var outcome = await _processingRunExecutor.ExecuteAsync(admitted.Run.Request, progress);
             ApplyProcessingRunOutcome(outcome);
         }
-        // The failure whose own message already tells the user what is wrong and what to do about it, shown
-        // unwrapped: the generic "Error processing FormIDs" prefix below would only bury it (ADR-0006).
-        catch (UnresolvableMasterException ex)
-        {
-            _viewModel.AddErrorMessage(ex.Message);
-        }
+        // Every run failure takes this one route. Which failure is shown unwrapped — an Unresolvable Master, whose own
+        // message already says what to do — is the failure renderer's decision, not a catch clause's (ADR-0006).
         catch (Exception ex)
         {
             _viewModel.AddErrorMessage(ProcessingRunPresentation.RenderFailure(ex));
@@ -492,7 +490,14 @@ public sealed class UserWorkflow : IDisposable
             switch (decision)
             {
                 case AdmittedRun admitted:
-                    ProjectRunActivityLocked(new ActivityProjection(true, "Initializing...", 0));
+                    // This projection is the transition into an active run, so it sets IsActive itself rather than
+                    // going through ReportRunActivity, which never changes whether a run is active. The starting
+                    // status renders 0 percent; the carry-forward only applies if a future render omits one.
+                    var starting = ProcessingRunPresentation.Render(new ProcessingRunStarting());
+                    ProjectRunActivityLocked(new ActivityProjection(
+                        true,
+                        starting.Status,
+                        starting.Value ?? _runActivity.Value));
                     return new RunPress.Admitted(admitted, inputs.DatabasePath);
                 case RefusedRun refused:
                     return new RunPress.Refused(refused.Reason);
