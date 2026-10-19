@@ -26,6 +26,9 @@ internal static class PerformanceProcessingRunFactory
         var gameLoadOrders = new GameLoadOrders(
             new FixtureGameLoadOrderEnvironment(pluginNames.ToArray()));
         var pluginIngestion = new PluginIngestion(gameLoadOrders);
-        return new ProcessingRunExecutor(pluginIngestion, new FormIdRecordStoreSessionOpener());
+        return new ProcessingRunExecutor(
+            pluginIngestion,
+            new FormIdTextIngestion(),
+            new FormIdRecordStoreSessionOpener());
     }
 }

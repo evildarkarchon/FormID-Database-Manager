@@ -431,7 +431,7 @@ public sealed class ProcessingRunControlTests : IDisposable
         var ingestion = new UnexpectedPluginIngestion();
         var opener = new RecordingRecordStoreSessionOpener(new RecordingRecordStoreSession());
         using var sut = new ProcessingRunControl(
-            new ProcessingRunExecutor(ingestion, opener),
+            new ProcessingRunExecutor(ingestion, new UnexpectedFormIdTextIngestion(), opener),
             _defaultDatabaseRoot,
             _sink);
         var pressedAgain = false;

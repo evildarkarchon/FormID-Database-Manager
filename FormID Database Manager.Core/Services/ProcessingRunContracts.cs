@@ -289,9 +289,11 @@ public abstract record ProcessingRunOutcome
 internal sealed record PluginRunOutcome(PluginIngestionReport Report) : ProcessingRunOutcome;
 
 /// <summary>
-///     A FormID text-file Processing Run that reached its terminal state, carrying the Store's import counts.
+///     A FormID text-file Processing Run that reached its terminal state, carrying the import counts.
 /// </summary>
-/// <param name="ImportResult">The distinct Plugin and valid record counts the Store confirmed.</param>
+/// <param name="ImportResult">
+///     The distinct Plugin and valid record counts FormID Text Ingestion read, all of which the Store committed.
+/// </param>
 internal sealed record FormIdTextRunOutcome(FormIdTextFileImportResult ImportResult) : ProcessingRunOutcome;
 
 /// <summary>
@@ -340,8 +342,8 @@ internal sealed record FormIdTextRunPlan(string FormIdListPath, long? SizeInByte
 /// </summary>
 /// <remarks>
 ///     <para>
-///         This is the run's own vocabulary, not a collaborator's forwarded on: Plugin Ingestion's stage enum and the
-///         FormID Record Store's counters are both translated into these cases, so the run says what it is doing in
+///         This is the run's own vocabulary, not a collaborator's forwarded on: Plugin Ingestion's stage enum and
+///         FormID Text Ingestion's facts are both translated into these cases, so the run says what it is doing in
 ///         terms of its own work rather than in terms of whichever collaborator happens to be doing it.
 ///     </para>
 ///     <para>
@@ -377,15 +379,16 @@ internal sealed record PreparingLoadOrder(int TotalPluginCount) : ProcessingRunP
 internal sealed record IngestingPlugin(string PluginName, int Position, int TotalPluginCount) : ProcessingRunProgress;
 
 /// <summary>
-///     A FormID text file is being imported, reported as the counters the Store measured.
+///     A FormID text file is being imported, reported as the counters FormID Text Ingestion measured.
 /// </summary>
 /// <param name="RecordCount">The number of valid FormID text rows counted so far.</param>
 /// <param name="BytesRead">How far into the file the reader has pulled, in bytes.</param>
 /// <param name="TotalBytes">The total size of the FormID text file, in bytes.</param>
 /// <param name="MostRecentPlugin">
 ///     The Plugin this report is about, or <see langword="null" /> when the report is about the file's progress
-///     instead. Naming a Plugin is the run's decision and not the Store's: the Store reports every Plugin the first
-///     time it sees one, and the run populates this only for the reports it wants shown by name.
+///     instead. Naming a Plugin is the run's decision and not FormID Text Ingestion's: FormID Text Ingestion reports
+///     every Plugin the first time it sees one, and the run populates this only for the reports it wants shown by
+///     name.
 /// </param>
 /// <remarks>
 ///     The three things an import has to say are told apart by the counters rather than by three cases, and this is
@@ -401,7 +404,7 @@ internal sealed record ImportingFormIdText(
     string? MostRecentPlugin) : ProcessingRunProgress;
 
 /// <summary>
-///     A FormID text import has finished, carrying the counts the Store confirmed.
+///     A FormID text import has finished, carrying the counts FormID Text Ingestion read.
 /// </summary>
 /// <param name="ImportResult">The distinct Plugin and valid record counts of the finished import.</param>
 /// <remarks>

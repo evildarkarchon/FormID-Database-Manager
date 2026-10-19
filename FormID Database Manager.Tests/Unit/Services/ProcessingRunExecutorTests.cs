@@ -83,7 +83,8 @@ public sealed class ProcessingRunExecutorTests : IDisposable
     public async Task ExecuteAsync_PreCancelledToken_ReturnsCancelledFromTheWorkerWithoutOpeningAStore()
     {
         var opener = new RecordingRecordStoreSessionOpener(new RecordingRecordStoreSession());
-        var sut = new ProcessingRunExecutor(new UnexpectedPluginIngestion(), opener);
+        var textIngestion = new UnexpectedFormIdTextIngestion();
+        var sut = new ProcessingRunExecutor(new UnexpectedPluginIngestion(), textIngestion, opener);
         var reports = new List<ProcessingRunProgress>();
         var progress = new SynchronousProgress<ProcessingRunProgress>(reports.Add);
 
@@ -94,6 +95,7 @@ public sealed class ProcessingRunExecutorTests : IDisposable
 
         Assert.IsType<CancelledRunOutcome>(outcome);
         Assert.Empty(opener.OpenCalls);
+        Assert.Equal(0, textIngestion.CallCount);
         Assert.Empty(reports);
     }
 
@@ -109,9 +111,10 @@ public sealed class ProcessingRunExecutorTests : IDisposable
     public async Task ExecuteAsync_CallerTokenCancelledMidRun_ReturnsCancelled()
     {
         using var cancellation = new CancellationTokenSource();
-        var recordStore = new RecordingRecordStoreSession { ImportAction = cancellation.Cancel };
+        var recordStore = new RecordingRecordStoreSession();
         var opener = new RecordingRecordStoreSessionOpener(recordStore);
-        var sut = new ProcessingRunExecutor(new UnexpectedPluginIngestion(), opener);
+        var textIngestion = new RecordingFormIdTextIngestion { IngestAction = cancellation.Cancel };
+        var sut = new ProcessingRunExecutor(new UnexpectedPluginIngestion(), textIngestion, opener);
 
         var outcome = await sut.ExecuteAsync(
             CreateTextFileRequest("cancelled-mid-run.txt"),
@@ -120,70 +123,47 @@ public sealed class ProcessingRunExecutorTests : IDisposable
 
         Assert.IsType<CancelledRunOutcome>(outcome);
         Assert.Equal(cancellation.Token, opener.OpenCalls.Single().CancellationToken);
+        Assert.Equal(cancellation.Token, textIngestion.IngestCalls.Single().CancellationToken);
         Assert.Equal(0, recordStore.OptimizeCallCount);
         Assert.True(recordStore.Disposed);
     }
 
     /// <summary>
-    ///     Verifies that a FormID text-file dry run reports the file's presence and size without opening a FormID
-    ///     Record Store and without reading a single row.
+    ///     Verifies that a FormID text-file dry run plans through FormID Text Ingestion, carrying the request and the
+    ///     caller's token, and returns that plan without opening a FormID Record Store or ingesting anything.
     /// </summary>
+    /// <remarks>
+    ///     Issue #110. What the plan says about the file — its presence and size, and that it is never opened — is
+    ///     FormID Text Ingestion's to decide and is pinned by <see cref="FormIdTextIngestionTests" />.
+    /// </remarks>
     [Fact]
-    public async Task ExecuteAsync_DryRunFormIdTextFile_ReportsFilePresenceAndSizeWithoutOpeningRecordStore()
+    public async Task ExecuteAsync_DryRunFormIdTextFile_PlansThroughFormIdTextIngestionWithoutOpeningAStore()
     {
-        var formIdListPath = CreateTempFilePath("formids.txt");
-        await File.WriteAllTextAsync(
-            formIdListPath,
-            "Skyrim.esm|000001|Entry",
-            TestContext.Current.CancellationToken);
-        var ingestion = new PlanningPluginIngestion();
+        var expectedPlan = new FormIdTextRunPlan(@"C:\Imports\formids.txt", 23);
+        var pluginIngestion = new PlanningPluginIngestion();
+        var textIngestion = new RecordingFormIdTextIngestion { Plan = expectedPlan };
         var opener = new RecordingRecordStoreSessionOpener(new RecordingRecordStoreSession());
-        var sut = new ProcessingRunExecutor(ingestion, opener);
+        using var cancellation = new CancellationTokenSource();
+        var sut = new ProcessingRunExecutor(pluginIngestion, textIngestion, opener);
         var reports = new List<ProcessingRunProgress>();
         var progress = new SynchronousProgress<ProcessingRunProgress>(reports.Add);
         var request = new FormIdTextProcessingRunRequest(
-            formIdListPath,
+            @"C:\Imports\formids.txt",
             string.Empty,
             GameRelease.SkyrimSE,
             UpdateMode.Append,
             dryRun: true);
 
-        var outcome = await sut.ExecuteAsync(request, progress, CancellationToken.None);
+        var outcome = await sut.ExecuteAsync(request, progress, cancellation.Token);
 
         Assert.Empty(opener.OpenCalls);
-        Assert.Empty(ingestion.PlanCalls);
+        Assert.Empty(pluginIngestion.PlanCalls);
+        Assert.Empty(textIngestion.IngestCalls);
         Assert.Empty(reports);
-        var plan = Assert.IsType<FormIdTextRunPlan>(Assert.IsType<PlannedRunOutcome>(outcome).Plan);
-        Assert.Equal(formIdListPath, plan.FormIdListPath);
-        Assert.Equal(new FileInfo(formIdListPath).Length, plan.SizeInBytes);
-    }
-
-    /// <summary>
-    ///     Verifies that a FormID text-file dry run reports absence rather than failing when no file is there.
-    /// </summary>
-    /// <remarks>
-    ///     Telling the user the file is missing is the point of looking it up, so absence is a reportable fact and not
-    ///     a failure the run raises.
-    /// </remarks>
-    [Fact]
-    public async Task ExecuteAsync_DryRunFormIdTextFileThatDoesNotExist_ReportsAbsenceWithoutASize()
-    {
-        var formIdListPath = CreateTempFilePath("missing-formids.txt");
-        var opener = new RecordingRecordStoreSessionOpener(new RecordingRecordStoreSession());
-        var sut = new ProcessingRunExecutor(new PlanningPluginIngestion(), opener);
-        var request = new FormIdTextProcessingRunRequest(
-            formIdListPath,
-            string.Empty,
-            GameRelease.SkyrimSE,
-            UpdateMode.Append,
-            dryRun: true);
-
-        var outcome = await sut.ExecuteAsync(request, null, CancellationToken.None);
-
-        Assert.Empty(opener.OpenCalls);
-        var plan = Assert.IsType<FormIdTextRunPlan>(Assert.IsType<PlannedRunOutcome>(outcome).Plan);
-        Assert.Equal(formIdListPath, plan.FormIdListPath);
-        Assert.Null(plan.SizeInBytes);
+        var planCall = Assert.Single(textIngestion.PlanCalls);
+        Assert.Same(request, planCall.Request);
+        Assert.Equal(cancellation.Token, planCall.CancellationToken);
+        Assert.Same(expectedPlan, Assert.IsType<PlannedRunOutcome>(outcome).Plan);
     }
 
     /// <summary>
@@ -197,7 +177,7 @@ public sealed class ProcessingRunExecutorTests : IDisposable
         var ingestion = new PlanningPluginIngestion();
         var opener = new RecordingRecordStoreSessionOpener(new RecordingRecordStoreSession());
         using var cancellation = new CancellationTokenSource();
-        var sut = new ProcessingRunExecutor(ingestion, opener);
+        var sut = new ProcessingRunExecutor(ingestion, new UnexpectedFormIdTextIngestion(), opener);
         var reports = new List<ProcessingRunProgress>();
         var progress = new SynchronousProgress<ProcessingRunProgress>(reports.Add);
 
@@ -230,7 +210,7 @@ public sealed class ProcessingRunExecutorTests : IDisposable
         var failure = new UnresolvableMasterException("Patch.esp", "Starfield.esm");
         var ingestion = new PlanningPluginIngestion { PlanFailure = failure };
         var opener = new RecordingRecordStoreSessionOpener(new RecordingRecordStoreSession());
-        var sut = new ProcessingRunExecutor(ingestion, opener);
+        var sut = new ProcessingRunExecutor(ingestion, new UnexpectedFormIdTextIngestion(), opener);
         var reports = new List<ProcessingRunProgress>();
         var progress = new SynchronousProgress<ProcessingRunProgress>(reports.Add);
 
@@ -249,7 +229,7 @@ public sealed class ProcessingRunExecutorTests : IDisposable
     {
         var ingestion = new PlanningPluginIngestion();
         var opener = new RecordingRecordStoreSessionOpener(new RecordingRecordStoreSession());
-        var sut = new ProcessingRunExecutor(ingestion, opener);
+        var sut = new ProcessingRunExecutor(ingestion, new UnexpectedFormIdTextIngestion(), opener);
         var reports = new List<ProcessingRunProgress>();
         var progress = new SynchronousProgress<ProcessingRunProgress>(reports.Add);
 
@@ -266,44 +246,51 @@ public sealed class ProcessingRunExecutorTests : IDisposable
         Assert.Equal(0, ingestion.IngestCallCount);
         Assert.Equal(["PluginA.esp"], AssertPlannedPluginNames(outcome));
     }
-
+    /// <summary>
+    ///     Verifies that a FormID text run opens the Store for the request and hands FormID Text Ingestion the request,
+    ///     the opened session's text-row role, and the caller's token; then reports the finished import, optimizes,
+    ///     disposes, and returns the counts ingestion returned.
+    /// </summary>
     [Fact]
-    public async Task ExecuteAsync_FormIdTextRun_ImportsRecordsAndReturnsTheStoreCounts()
+    public async Task ExecuteAsync_FormIdTextRun_HandsTheStoresTextRowRoleToIngestionThenOptimizes()
     {
-        var directory = CreateTempDirectory();
-        var databasePath = Path.Combine(directory, "formids.db");
-        var textFilePath = Path.Combine(directory, "formids.txt");
-        await File.WriteAllLinesAsync(
-            textFilePath,
-            [
-                "PluginA.esp|000001|First Entry",
-                "PluginB.esp|000002|Second Entry"
-            ],
-            TestContext.Current.CancellationToken);
-
-        var reports = new List<ProcessingRunProgress>();
-        var recordStore = new RecordingRecordStoreSession
-        {
-            TextFileImportResult = new FormIdTextFileImportResult(2, 2)
-        };
+        var events = new List<string>();
+        var recordStore = new RecordingRecordStoreSession { OptimizeAction = () => events.Add("optimize") };
         var opener = new RecordingRecordStoreSessionOpener(recordStore);
-        var sut = new ProcessingRunExecutor(new UnexpectedPluginIngestion(), opener);
-        var progress = new SynchronousProgress<ProcessingRunProgress>(reports.Add);
+        var textIngestion = new RecordingFormIdTextIngestion
+        {
+            Result = new FormIdTextFileImportResult(2, 2),
+            IngestAction = () => events.Add("ingest")
+        };
+        using var cancellation = new CancellationTokenSource();
+        var sut = new ProcessingRunExecutor(new UnexpectedPluginIngestion(), textIngestion, opener);
+        var reports = new List<ProcessingRunProgress>();
+        var progress = new SynchronousProgress<ProcessingRunProgress>(report =>
+        {
+            reports.Add(report);
+            events.Add("report");
+        });
         var request = new FormIdTextProcessingRunRequest(
-            textFilePath,
-            databasePath,
+            @"C:\Imports\formids.txt",
+            @"C:\Databases\formids.db",
             GameRelease.SkyrimSE,
             UpdateMode.Append);
 
-        var outcome = await sut.ExecuteAsync(request, progress, CancellationToken.None);
+        var outcome = await sut.ExecuteAsync(request, progress, cancellation.Token);
 
-        Assert.Equal(databasePath, opener.OpenCalls.Single().DatabasePath);
-        Assert.Equal(GameRelease.SkyrimSE, opener.OpenCalls.Single().GameRelease);
-        Assert.Equal(textFilePath, recordStore.ImportedTextFilePath);
-        Assert.Equal(UpdateMode.Append, recordStore.ImportedTextFileUpdateMode);
+        var openCall = Assert.Single(opener.OpenCalls);
+        Assert.Equal(@"C:\Databases\formids.db", openCall.DatabasePath);
+        Assert.Equal(GameRelease.SkyrimSE, openCall.GameRelease);
+        var ingestCall = Assert.Single(textIngestion.IngestCalls);
+        Assert.Same(request, ingestCall.Request);
+        Assert.Same(recordStore, ingestCall.RecordStore);
+        Assert.Equal(cancellation.Token, ingestCall.CancellationToken);
+        Assert.Empty(textIngestion.PlanCalls);
+        // The finished import is reported before maintenance: the counts describe the import, not the run.
+        Assert.Equal(["ingest", "report", "optimize"], events);
         Assert.Equal(1, recordStore.OptimizeCallCount);
         Assert.True(recordStore.Disposed);
-        // The Store reports counts and the run restates them; neither writes the sentence the user finally reads.
+        // FormID Text Ingestion counts and the run restates them; neither writes the sentence the user finally reads.
         Assert.Equal(
             [new ImportedFormIdText(new FormIdTextFileImportResult(2, 2))],
             reports);
@@ -313,102 +300,71 @@ public sealed class ProcessingRunExecutorTests : IDisposable
     }
 
     /// <summary>
-    ///     Verifies that an appending text run restates the Store's counters without naming any Plugin, which is the
-    ///     mode that has never shown Plugin-named status updates.
+    ///     Verifies that an appending text run restates FormID Text Ingestion's opening and counter updates and drops
+    ///     every Plugin first encounter, because append mode has never shown Plugin-named status updates.
     /// </summary>
     [Fact]
-    public async Task ExecuteAsync_FormIdTextRunInAppendMode_RestatesStoreCountersWithoutNamingAPlugin()
+    public async Task ExecuteAsync_FormIdTextRunInAppendMode_RestatesOpeningAndCountersAndDropsFirstEncounters()
     {
-        var reports = await ExecuteTextRunWithStoreProgressAsync(UpdateMode.Append);
+        var reports = await ExecuteTextRunWithIngestionProgressAsync(UpdateMode.Append);
 
         Assert.Equal(
             [
                 new ImportingFormIdText(0, 0, 64, null),
-                new ImportedFormIdText(new FormIdTextFileImportResult(2, 2))
+                new ImportingFormIdText(1000, 32, 64, null),
+                new ImportedFormIdText(new FormIdTextFileImportResult(2, 1001))
             ],
             reports);
     }
 
     /// <summary>
-    ///     Verifies that a replacing text run names each Plugin the Store reports seeing for the first time, in the
-    ///     order the Store reported them.
+    ///     Verifies that a replacing text run restates the opening as zero counters naming no Plugin, each counter
+    ///     update without a Plugin, and each first encounter as a report naming that Plugin, in the order FormID Text
+    ///     Ingestion reported them.
     /// </summary>
     [Fact]
-    public async Task ExecuteAsync_FormIdTextRunInReplaceMode_NamesEachPluginTheStoreReportsSeeing()
+    public async Task ExecuteAsync_FormIdTextRunInReplaceMode_RestatesEveryCaseAndNamesEachFirstEncounteredPlugin()
     {
-        var reports = await ExecuteTextRunWithStoreProgressAsync(UpdateMode.ReplacePluginRecords);
+        var reports = await ExecuteTextRunWithIngestionProgressAsync(UpdateMode.ReplacePluginRecords);
 
         Assert.Equal(
             [
                 new ImportingFormIdText(0, 0, 64, null),
                 new ImportingFormIdText(1, 16, 64, "PluginA.esp"),
-                new ImportingFormIdText(2, 32, 64, "PluginB.esp"),
-                new ImportedFormIdText(new FormIdTextFileImportResult(2, 2))
+                new ImportingFormIdText(1000, 32, 64, null),
+                new ImportingFormIdText(1001, 48, 64, "PluginB.esp"),
+                new ImportedFormIdText(new FormIdTextFileImportResult(2, 1001))
             ],
             reports);
     }
 
     /// <summary>
-    ///     Verifies that a counter update following a first-encounter fact reports file progress without naming a Plugin.
-    /// </summary>
-    /// <param name="updateMode">The mode controlling whether the preceding Plugin announcement is shown.</param>
-    [Theory]
-    [InlineData(UpdateMode.Append)]
-    [InlineData(UpdateMode.ReplacePluginRecords)]
-    public async Task ExecuteAsync_FormIdTextRunCounterAfterFirstEncounter_ReportsCountersWithoutNamingAPlugin(
-        UpdateMode updateMode)
-    {
-        var reports = await ExecuteTextRunWithStoreProgressAsync(
-            updateMode,
-            [
-                new FormIdStoreCounterUpdate(0, 0, 64),
-                new FormIdStorePluginFirstEncountered(1, 16, 64, "PluginA.esp"),
-                new FormIdStoreCounterUpdate(500, 32, 64)
-            ]);
-
-        ProcessingRunProgress[] expected = updateMode == UpdateMode.Append
-            ?
-            [
-                new ImportingFormIdText(0, 0, 64, null),
-                new ImportingFormIdText(500, 32, 64, null),
-                new ImportedFormIdText(new FormIdTextFileImportResult(2, 2))
-            ]
-            :
-            [
-                new ImportingFormIdText(0, 0, 64, null),
-                new ImportingFormIdText(1, 16, 64, "PluginA.esp"),
-                new ImportingFormIdText(500, 32, 64, null),
-                new ImportedFormIdText(new FormIdTextFileImportResult(2, 2))
-            ];
-        Assert.Equal(expected, reports);
-    }
-
-    /// <summary>
-    ///     Executes one FormID text-file run against a Store that reports a fixed sequence of counters, and collects
-    ///     the progress the run restated them as.
+    ///     Executes one FormID text-file run against FormID Text Ingestion that reports a fixed sequence of facts, and
+    ///     collects the progress the run restated them as.
     /// </summary>
     /// <param name="updateMode">The update mode the run applies, which decides whether Plugins are named.</param>
-    /// <param name="storeProgressReports">
-    ///     The counters the Store reports, defaulting to an opening report followed by two newly seen Plugins.
-    /// </param>
     /// <returns>The run's own progress reports, in report order.</returns>
-    private static async Task<IReadOnlyList<ProcessingRunProgress>> ExecuteTextRunWithStoreProgressAsync(
-        UpdateMode updateMode,
-        IReadOnlyList<FormIdStoreProgress>? storeProgressReports = null)
+    /// <remarks>
+    ///     The sequence holds one of each case: the opening, a first encounter, a counter update, and a second first
+    ///     encounter after it.
+    /// </remarks>
+    private static async Task<IReadOnlyList<ProcessingRunProgress>> ExecuteTextRunWithIngestionProgressAsync(
+        UpdateMode updateMode)
     {
         var reports = new List<ProcessingRunProgress>();
-        var recordStore = new RecordingRecordStoreSession
+        var textIngestion = new RecordingFormIdTextIngestion
         {
-            TextFileImportResult = new FormIdTextFileImportResult(2, 2),
-            TextFileProgressReports = storeProgressReports ??
+            Result = new FormIdTextFileImportResult(2, 1001),
+            ProgressReports =
             [
-                new FormIdStoreCounterUpdate(0, 0, 64),
-                new FormIdStorePluginFirstEncountered(1, 16, 64, "PluginA.esp"),
-                new FormIdStorePluginFirstEncountered(2, 32, 64, "PluginB.esp")
+                new FormIdTextIngestionOpening(64),
+                new FormIdTextIngestionPluginFirstEncountered(1, 16, 64, "PluginA.esp"),
+                new FormIdTextIngestionCounterUpdate(1000, 32, 64),
+                new FormIdTextIngestionPluginFirstEncountered(1001, 48, 64, "PluginB.esp")
             ]
         };
-        var opener = new RecordingRecordStoreSessionOpener(recordStore);
-        var sut = new ProcessingRunExecutor(new UnexpectedPluginIngestion(), opener);
+        var opener = new RecordingRecordStoreSessionOpener(new RecordingRecordStoreSession());
+        var sut = new ProcessingRunExecutor(new UnexpectedPluginIngestion(), textIngestion, opener);
         var request = new FormIdTextProcessingRunRequest(
             @"C:\FormIds\formids.txt",
             @"C:\FormIds\formids.db",
@@ -434,6 +390,7 @@ public sealed class ProcessingRunExecutorTests : IDisposable
         };
         var sut = new ProcessingRunExecutor(
             new UnexpectedPluginIngestion(),
+            new RecordingFormIdTextIngestion(),
             new RecordingRecordStoreSessionOpener(recordStore));
         var reports = new List<ProcessingRunProgress>();
         var progress = new SynchronousProgress<ProcessingRunProgress>(reports.Add);
@@ -447,19 +404,17 @@ public sealed class ProcessingRunExecutorTests : IDisposable
     }
 
     /// <summary>
-    ///     Verifies that cancellation observed after text import ends the Processing Run as cancelled, without
-    ///     optimization and without a completed outcome.
+    ///     Verifies that cancellation observed after FormID Text Ingestion returns ends the Processing Run as
+    ///     cancelled, without optimization and without a completed outcome.
     /// </summary>
     [Fact]
-    public async Task ExecuteAsync_CancelledAfterTextImport_ReturnsCancelledWithoutOptimization()
+    public async Task ExecuteAsync_CancelledAfterTextIngestion_ReturnsCancelledWithoutOptimization()
     {
         using var cancellation = new CancellationTokenSource();
-        var recordStore = new RecordingRecordStoreSession
-        {
-            ImportAction = cancellation.Cancel
-        };
+        var recordStore = new RecordingRecordStoreSession();
         var sut = new ProcessingRunExecutor(
             new UnexpectedPluginIngestion(),
+            new RecordingFormIdTextIngestion { IngestAction = cancellation.Cancel },
             new RecordingRecordStoreSessionOpener(recordStore));
 
         var outcome = await sut.ExecuteAsync(
@@ -486,6 +441,7 @@ public sealed class ProcessingRunExecutorTests : IDisposable
         };
         var sut = new ProcessingRunExecutor(
             new UnexpectedPluginIngestion(),
+            new RecordingFormIdTextIngestion(),
             new RecordingRecordStoreSessionOpener(recordStore));
 
         var outcome = await sut.ExecuteAsync(
@@ -520,6 +476,7 @@ public sealed class ProcessingRunExecutorTests : IDisposable
         var opener = new RecordingRecordStoreSessionOpener(recordStore);
         var sut = new ProcessingRunExecutor(
             ingestion,
+            new UnexpectedFormIdTextIngestion(),
             opener);
         using var cancellation = new CancellationTokenSource();
         var progress = new SynchronousProgress<ProcessingRunProgress>(reports.Add);
@@ -570,6 +527,7 @@ public sealed class ProcessingRunExecutorTests : IDisposable
         var recordStore = new RecordingRecordStoreSession();
         var sut = new ProcessingRunExecutor(
             ingestion,
+            new UnexpectedFormIdTextIngestion(),
             new RecordingRecordStoreSessionOpener(recordStore));
         var reports = new List<ProcessingRunProgress>();
         var progress = new SynchronousProgress<ProcessingRunProgress>(reports.Add);
@@ -612,6 +570,7 @@ public sealed class ProcessingRunExecutorTests : IDisposable
         };
         var sut = new ProcessingRunExecutor(
             ingestion,
+            new UnexpectedFormIdTextIngestion(),
             new RecordingRecordStoreSessionOpener(recordStore));
         var reports = new List<ProcessingRunProgress>();
         var progress = new SynchronousProgress<ProcessingRunProgress>(reports.Add);
@@ -659,6 +618,7 @@ public sealed class ProcessingRunExecutorTests : IDisposable
         };
         var sut = new ProcessingRunExecutor(
             ingestion,
+            new UnexpectedFormIdTextIngestion(),
             new RecordingRecordStoreSessionOpener(recordStore));
         var reports = new List<ProcessingRunProgress>();
         var progress = new SynchronousProgress<ProcessingRunProgress>(reports.Add);
@@ -710,6 +670,7 @@ public sealed class ProcessingRunExecutorTests : IDisposable
         };
         var sut = new ProcessingRunExecutor(
             ingestion,
+            new UnexpectedFormIdTextIngestion(),
             new RecordingRecordStoreSessionOpener(recordStore));
         var progress = new SynchronousProgress<ProcessingRunProgress>(reports.Add);
         var request = new PluginProcessingRunRequest(
@@ -752,6 +713,7 @@ public sealed class ProcessingRunExecutorTests : IDisposable
         };
         var sut = new ProcessingRunExecutor(
             ingestion,
+            new UnexpectedFormIdTextIngestion(),
             new RecordingRecordStoreSessionOpener(recordStore));
         var reports = new List<ProcessingRunProgress>();
         var progress = new SynchronousProgress<ProcessingRunProgress>(reports.Add);
@@ -794,6 +756,7 @@ public sealed class ProcessingRunExecutorTests : IDisposable
         };
         var sut = new ProcessingRunExecutor(
             ingestion,
+            new UnexpectedFormIdTextIngestion(),
             new RecordingRecordStoreSessionOpener(recordStore));
         // A live token that could be cancelled but is not, so the propagation is decided by its state rather than by
         // the token being uncancellable.
@@ -830,6 +793,7 @@ public sealed class ProcessingRunExecutorTests : IDisposable
         var recordStore = new RecordingRecordStoreSession();
         var sut = new ProcessingRunExecutor(
             ingestion,
+            new UnexpectedFormIdTextIngestion(),
             new RecordingRecordStoreSessionOpener(recordStore));
         using var cancellation = new CancellationTokenSource();
 
@@ -855,7 +819,7 @@ public sealed class ProcessingRunExecutorTests : IDisposable
     public async Task ExecuteAsync_SynchronousRecordStoreInitialization_DoesNotRunOnCallersStack()
     {
         var opener = new InterceptingRecordStoreSessionOpener();
-        var sut = new ProcessingRunExecutor(new UnexpectedPluginIngestion(), opener);
+        var sut = new ProcessingRunExecutor(new UnexpectedPluginIngestion(), new RecordingFormIdTextIngestion(), opener);
         var openedOnCallersStack = true;
         opener.OnOpen = _ =>
         {
@@ -892,6 +856,7 @@ public sealed class ProcessingRunExecutorTests : IDisposable
         var initializationFailure = new InvalidOperationException("open failed");
         var sut = new ProcessingRunExecutor(
             new UnexpectedPluginIngestion(),
+            new UnexpectedFormIdTextIngestion(),
             new ThrowingRecordStoreSessionOpener(initializationFailure));
         var databasePath = Path.Combine(CreateTempDirectory(), "fatal.db");
         var reports = new List<ProcessingRunProgress>();

@@ -833,6 +833,47 @@ public class CoreProjectBoundaryTests
     }
 
     /// <summary>
+    ///     Verifies FormID Text Ingestion has one implementation, constructed only by the User Workflow's production
+    ///     composition and the executor's test-only parameterless constructor, and that the Processing Run no longer
+    ///     reads FormID text files itself (issue #110, ADR-0001 2026-10-18).
+    /// </summary>
+    [Fact]
+    public void CoreServices_FormIdTextIngestion_IsComposedByUserWorkflowAndOwnsTextFileReading()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var coreProjectDirectory = GetCoreProjectDirectory();
+        var implementations = typeof(FormIdTextIngestion).Assembly
+            .GetTypes()
+            .Where(type => !type.IsAbstract && typeof(IFormIdTextIngestion).IsAssignableFrom(type))
+            .ToArray();
+        var constructingSources = new[]
+            {
+                coreProjectDirectory,
+                Path.Combine(repositoryRoot, "FormID Database Manager.WinUI")
+            }
+            .SelectMany(directory => Directory.EnumerateFiles(directory, "*.cs", SearchOption.AllDirectories))
+            .Where(path => !IsBuildOutput(path))
+            .Where(path => File.ReadAllText(path).Contains("new FormIdTextIngestion(", StringComparison.Ordinal))
+            .Select(path => Path.GetRelativePath(coreProjectDirectory, path))
+            .OrderBy(static path => path, StringComparer.Ordinal)
+            .ToArray();
+        var processingRunSource =
+            File.ReadAllText(Path.Combine(coreProjectDirectory, "Services", "ProcessingRun.cs"));
+
+        Assert.Equal([typeof(FormIdTextIngestion)], implementations);
+        // ProcessingRun.cs constructs it only in the parameterless constructor tests use; production composes the
+        // executor in UserWorkflow.Create.
+        Assert.Equal(
+            [Path.Combine("Services", "ProcessingRun.cs"), Path.Combine("Services", "UserWorkflow.cs")],
+            constructingSources);
+        Assert.Contains("IFormIdTextIngestion", processingRunSource, StringComparison.Ordinal);
+        Assert.All(
+            ["FileInfo", "FileStream", "StreamReader", "ImportFormIdTextFileAsync", "FormIdStoreProgress"],
+            fileReadingMember =>
+                Assert.DoesNotContain(fileReadingMember, processingRunSource, StringComparison.Ordinal));
+    }
+
+    /// <summary>
     ///     Verifies the Core assembly exposes only the aggregate implementation and no retired one-Plugin transport.
     /// </summary>
     [Fact]
