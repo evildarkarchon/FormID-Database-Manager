@@ -46,7 +46,9 @@ renaming Core members or changing project boundaries. In particular:
   dispatcher, and file dialog adapter and constructs no Core collaborator. `UserWorkflow` owns the
   `PluginListPresentationAdapter`'s lifetime and detaches it first on dispose.
 - `GameContext` owns Game Context state, its transitions, and the Plugin List Source built from it. `UserWorkflow`
-  constructs it and forwards Game Context intents to it.
+  constructs it and forwards Game Context intents to it. `GameContext.cs` contains no user-facing wording and names no
+  ViewModel: it reports each state and typed notice to an `IGameContextSink` that `UserWorkflow` implements
+  (ADR-0013).
 - `ProcessingRunControl` is the single owner of whether a Processing Run is active (ADR-0012). `UserWorkflow` constructs
   it, and it owns the executor. It reads no Game Context, Plugin List, or ViewModel.
 - Projected `MainWindowViewModel` state is read-only to consumers, and retired APIs must not be reintroduced.
@@ -86,6 +88,9 @@ renaming Core members or changing project boundaries. In particular:
   - `UserWorkflow`'s sink adapter performs every ViewModel write.
   - Do not move either into Presentation for symmetry with `PluginListPresentationAdapter`.
   - Test run wording only in `ProcessingRunPresentationTests`. Other tests compare against Presentation's output.
+- `GameContextPresentation` is a pure renderer and writes nothing (ADR-0013). It renders each Game Context notice and
+  chooses its message list; `UserWorkflow`'s Game Context sink adapter performs every ViewModel write. Test Game
+  Context wording only in `GameContextPresentationTests`. `GameContextTests` record what the sink receives.
 - Open databases through `FormIdRecordStore.OpenAsync`. Use raw SQLite only for workload generation, failure
   injection, or persisted-state inspection.
 - Tests must not depend on an installed game. Supply an in-memory `IGameInstallationProbe`.

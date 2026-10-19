@@ -746,14 +746,16 @@ public class CoreProjectBoundaryTests
     }
 
     /// <summary>
-    ///     Verifies that the Game Context is the only Core writer of the ViewModel's Game Context projection.
+    ///     Verifies that the User Workflow is the only Core writer of the ViewModel's Game Context projection: the Game
+    ///     Context reports its state to a sink, and the User Workflow's sink adapter writes it (ADR-0013).
     /// </summary>
     /// <remarks>
     ///     The ViewModel's own file defines the member and is the other legitimate mention. Tests call it directly to
-    ///     exercise the ViewModel, which is why only Core sources are scanned.
+    ///     exercise the ViewModel, which is why only Core sources are scanned. Issue #116, under parent #114, moved the
+    ///     write out of <c>GameContext.cs</c>.
     /// </remarks>
     [Fact]
-    public void CoreSources_GameContextProjection_IsWrittenOnlyByTheGameContext()
+    public void CoreSources_GameContextProjection_IsWrittenOnlyByTheUserWorkflow()
     {
         var projectionWriters = Directory
             .EnumerateFiles(GetCoreProjectDirectory(), "*.cs", SearchOption.AllDirectories)
@@ -763,7 +765,33 @@ public class CoreProjectBoundaryTests
             .OrderBy(static fileName => fileName, StringComparer.Ordinal)
             .ToArray();
 
-        Assert.Equal(["GameContext.cs", "MainWindowViewModel.cs"], projectionWriters);
+        Assert.Equal(["MainWindowViewModel.cs", "UserWorkflow.cs"], projectionWriters);
+    }
+
+    /// <summary>
+    ///     Verifies that the Game Context references neither <see cref="MainWindowViewModel" /> nor the ViewModels
+    ///     namespace: it reports to a sink the User Workflow implements, and writes nothing itself (ADR-0013).
+    /// </summary>
+    /// <remarks>
+    ///     Issue #116, under parent #114. The check is on raw source text, comments included, as
+    ///     <see cref="GameContextSource_ProcessingRunTypes_AreNotReferenced" /> is, because a <c>cref</c> or a
+    ///     <c>using</c> directive is a reference too. Both names are matched as whole words, so the module's prose may
+    ///     still say "ViewModel" when it explains what the sink's adapter does with a report.
+    /// </remarks>
+    [Fact]
+    public void GameContextSource_ViewModel_IsNotReferenced()
+    {
+        var gameContextSource = File.ReadAllText(Path.Combine(GetCoreProjectDirectory(), "Services", "GameContext.cs"));
+        var viewModelNamespace = typeof(MainWindowViewModel).Namespace!;
+        var forbiddenNames = new[] { nameof(MainWindowViewModel), viewModelNamespace.Split('.')[^1] };
+
+        // Guards the guard: the names are taken from the type, so a rename cannot leave this test searching for a ghost.
+        Assert.Equal("ViewModels", forbiddenNames[1]);
+        var referencedNames = forbiddenNames
+            .Where(name => Regex.IsMatch(gameContextSource, $@"\b{Regex.Escape(name)}\b"))
+            .ToArray();
+
+        Assert.Empty(referencedNames);
     }
 
     /// <summary>

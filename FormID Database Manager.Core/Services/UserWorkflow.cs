@@ -11,7 +11,8 @@ namespace FormID_Database_Manager.Services;
 /// </summary>
 /// <remarks>
 ///     Game Context state, its transitions and its Game Installation resolution live in <see cref="GameContext" />
-///     (ADR-0011). Whether a Processing Run is active, and everything a run reports, live in
+///     (ADR-0011); this workflow performs every ViewModel write the Game Context reports, through its own sink adapter
+///     (ADR-0013). Whether a Processing Run is active, and everything a run reports, live in
 ///     <see cref="ProcessingRunControl" /> (ADR-0012); this workflow captures the press's inputs and performs every
 ///     ViewModel write that module reports, through its sink adapter.
 /// </remarks>
@@ -100,7 +101,11 @@ public sealed class UserWorkflow : IDisposable
         _pluginList = pluginList ?? throw new ArgumentNullException(nameof(pluginList));
         var checkedProcessingRunExecutor = processingRunExecutor ??
                                            throw new ArgumentNullException(nameof(processingRunExecutor));
-        _gameContext = new GameContext(checkedGameInstallations, _fileDialogService, _pluginList, _viewModel);
+        _gameContext = new GameContext(
+            checkedGameInstallations,
+            _fileDialogService,
+            _pluginList,
+            new ViewModelGameContextSink(_viewModel));
         _processingRunControl = new ProcessingRunControl(
             checkedProcessingRunExecutor,
             defaultDatabaseRoot,
@@ -512,6 +517,60 @@ public sealed class UserWorkflow : IDisposable
         public void AddInformationMessage(string message)
         {
             viewModel.AddInformationMessage(message);
+        }
+    }
+
+    /// <summary>
+    ///     The User Workflow's adapter on the Game Context sink: it performs every ViewModel write the Game Context
+    ///     reports (ADR-0013).
+    /// </summary>
+    /// <param name="viewModel">The ViewModel the reports are written to.</param>
+    /// <remarks>
+    ///     <para>
+    ///         Game Context reports from the UI thread and holds no lock, so these writes need none either. It is a
+    ///         separate class from <see cref="ViewModelProcessingRunControlSink" /> because the two sinks have different
+    ///         ordering contracts: that one is called under Processing Run Control's lock, this one is UI-thread-affine.
+    ///     </para>
+    ///     <para>
+    ///         A write may raise a notification that re-enters a Game Context intent, such as a ComboBox echoing the
+    ///         projected selection. Game Context has already written the state it reports, so the echo reads it.
+    ///     </para>
+    /// </remarks>
+    private sealed class ViewModelGameContextSink(MainWindowViewModel viewModel) : IGameContextSink
+    {
+        /// <inheritdoc />
+        /// <remarks>
+        ///     One projection call carries all four shown fields, so observers never see fields from two states. The
+        ///     Plugin List Source is not shown, and the ViewModel's own dispatch handles a call from off the UI thread.
+        /// </remarks>
+        public void ReportState(GameContextState state)
+        {
+            viewModel.ApplyGameContextProjection(
+                state.SelectedGameRelease,
+                state.SelectedGameDirectory,
+                state.AvailableDirectories,
+                state.AdvancedMode);
+        }
+
+        /// <inheritdoc />
+        /// <exception cref="ArgumentOutOfRangeException">Presentation names a message list this adapter cannot write.</exception>
+        public void ReportNotice(GameContextNotice notice)
+        {
+            var rendered = GameContextPresentation.Render(notice);
+            switch (rendered.List)
+            {
+                case GameContextMessageList.Error:
+                    viewModel.AddErrorMessage(rendered.Text);
+                    break;
+                case GameContextMessageList.Information:
+                    viewModel.AddInformationMessage(rendered.Text);
+                    break;
+                default:
+                    throw new ArgumentOutOfRangeException(
+                        nameof(notice),
+                        rendered.List,
+                        "Unsupported Game Context message list.");
+            }
         }
     }
 }
