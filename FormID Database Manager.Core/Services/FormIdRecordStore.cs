@@ -1,5 +1,4 @@
 using System.Runtime.ExceptionServices;
-using System.Text;
 using Microsoft.Data.Sqlite;
 using Mutagen.Bethesda;
 
@@ -58,71 +57,6 @@ public sealed record FormIdRecordQuery
 }
 
 /// <summary>
-///     A counter update or a Plugin first-encounter fact reported while importing a FormID text file.
-/// </summary>
-/// <remarks>
-///     The Store reports facts and never words: there is no message and no percentage here, because how far along a
-///     percentage makes the run look, and whether the Plugin is worth naming at all, are presentation decisions that
-///     belong to whoever renders these counters.
-///     Derivation is closed to this assembly; the base is public because the Store's import operation is public.
-/// </remarks>
-public abstract record FormIdStoreProgress
-{
-    /// <summary>
-    ///     Captures the import counters shared by both report cases; they describe reading, not committed records.
-    /// </summary>
-    /// <param name="recordCount">The number of valid FormID text rows counted so far.</param>
-    /// <param name="bytesRead">How far into the file the reader has pulled, in bytes.</param>
-    /// <param name="totalBytes">The total size of the FormID text file, in bytes.</param>
-    private protected FormIdStoreProgress(long recordCount, long bytesRead, long totalBytes)
-    {
-        RecordCount = recordCount;
-        BytesRead = bytesRead;
-        TotalBytes = totalBytes;
-    }
-
-    /// <summary>The number of valid FormID text rows counted so far.</summary>
-    public long RecordCount { get; init; }
-
-    /// <summary>How far into the file the reader has pulled, in bytes.</summary>
-    public long BytesRead { get; init; }
-
-    /// <summary>The total size of the FormID text file, in bytes.</summary>
-    public long TotalBytes { get; init; }
-}
-
-/// <summary>
-///     The initial zero-count report or a periodic counter update, without a Plugin announcement.
-/// </summary>
-/// <param name="RecordCount">The number of valid FormID text rows counted so far.</param>
-/// <param name="BytesRead">How far into the file the reader has pulled, in bytes.</param>
-/// <param name="TotalBytes">The total size of the FormID text file, in bytes.</param>
-internal sealed record FormIdStoreCounterUpdate(
-    long RecordCount,
-    long BytesRead,
-    long TotalBytes) : FormIdStoreProgress(RecordCount, BytesRead, TotalBytes);
-
-/// <summary>
-///     A Plugin's first valid row, matched case-insensitively and reported before that row is staged.
-/// </summary>
-/// <param name="RecordCount">The number of valid FormID text rows counted so far.</param>
-/// <param name="BytesRead">How far into the file the reader has pulled, in bytes.</param>
-/// <param name="TotalBytes">The total size of the FormID text file, in bytes.</param>
-/// <param name="PluginName">The Plugin name with the casing of its first valid row.</param>
-internal sealed record FormIdStorePluginFirstEncountered(
-    long RecordCount,
-    long BytesRead,
-    long TotalBytes,
-    string PluginName) : FormIdStoreProgress(RecordCount, BytesRead, TotalBytes);
-
-/// <summary>
-///     Result of importing a FormID text file into the store.
-/// </summary>
-/// <param name="PluginCount">The number of distinct Plugins encountered, matched case-insensitively.</param>
-/// <param name="RecordCount">The number of valid FormID text rows imported.</param>
-public readonly record struct FormIdTextFileImportResult(int PluginCount, int RecordCount);
-
-/// <summary>
 ///     Result of writing one Plugin's FormID records into the store.
 /// </summary>
 /// <param name="RecordCount">The number of FormID records inserted for the Plugin.</param>
@@ -138,7 +72,6 @@ public readonly record struct FormIdPluginWriteResult(int RecordCount);
 public sealed class FormIdRecordStore : IFormIdRecordStoreSession
 {
     private const int PluginBatchSize = 1000;
-    private const int TextProgressInterval = 1000;
     private const int TextStagingBatchSize = 10000;
     private const string StagingTableName = "temp_formid_record_staging";
 
@@ -172,95 +105,6 @@ public sealed class FormIdRecordStore : IFormIdRecordStoreSession
             records,
             ShouldReplacePluginRows(updateMode),
             cancellationToken);
-    }
-
-    /// <summary>
-    ///     Imports a FormID text file into the store using store-owned staging and Plugin-scoped commits.
-    /// </summary>
-    /// <param name="formIdTextFilePath">The FormID text file to import.</param>
-    /// <param name="updateMode">Controls whether rows are appended or replace existing rows for each encountered Plugin.</param>
-    /// <param name="progress">
-    ///     Optional reporter for counter updates and Plugin first-encounter facts. The Store reports every Plugin the
-    ///     first time it sees it; whether that Plugin should be shown to the user is the caller's decision.
-    /// </param>
-    /// <param name="cancellationToken">Token to monitor for cancellation.</param>
-    /// <returns>Counts describing the imported valid records and distinct Plugins.</returns>
-    /// <remarks>
-    ///     The file is parsed into a lazy row stream that feeds the same text-row role FormID Text Ingestion uses, so
-    ///     staging, per-Plugin commits, and cleanup have one implementation.
-    /// </remarks>
-    public async Task<FormIdTextFileImportResult> ImportFormIdTextFileAsync(
-        string formIdTextFilePath,
-        UpdateMode updateMode,
-        IProgress<FormIdStoreProgress>? progress = null,
-        CancellationToken cancellationToken = default)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(formIdTextFilePath);
-
-        var processedPlugins = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var recordCount = 0;
-
-        // Use stream position for progress tracking; it avoids per-line UTF-8 byte counting on large files.
-        var fileInfo = new FileInfo(formIdTextFilePath);
-        var totalBytes = fileInfo.Length;
-
-        progress?.Report(new FormIdStoreCounterUpdate(0, 0, totalBytes));
-
-        await using var stream =
-            new FileStream(formIdTextFilePath, FileMode.Open, FileAccess.Read, FileShare.Read, 81920);
-        using var reader = new StreamReader(stream, Encoding.UTF8);
-
-        // The role consumes the stream once and clears staging however it ends, so no cleanup is needed here.
-        await WriteTextRowsCoreAsync(ReadValidRowsAsync(), updateMode, cancellationToken).ConfigureAwait(false);
-
-        // The completed import is reported as counts rather than a final progress message, so the caller that renders
-        // the run's status decides how a finished import is worded.
-        return new FormIdTextFileImportResult(processedPlugins.Count, recordCount);
-
-        // Counts and progress are updated as each row is read, before it is yielded, so every report still precedes
-        // the staging of the row it describes.
-        async IAsyncEnumerable<FormIdTextRow> ReadValidRowsAsync()
-        {
-            while (true)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-
-                var line = await reader.ReadLineAsync(cancellationToken).ConfigureAwait(false);
-                if (line == null)
-                {
-                    break;
-                }
-
-                var bytesRead = stream.Position;
-
-                if (string.IsNullOrWhiteSpace(line))
-                {
-                    continue;
-                }
-
-                if (!TryParseFormIdTextLine(line, out var pluginName, out var formId, out var entry))
-                {
-                    continue;
-                }
-
-                recordCount++;
-
-                if (recordCount % TextProgressInterval == 0)
-                {
-                    // A coincident first encounter follows this report, preserving the order the user sees.
-                    progress?.Report(new FormIdStoreCounterUpdate(recordCount, bytesRead, totalBytes));
-                }
-
-                if (processedPlugins.Add(pluginName))
-                {
-                    // Report the fact in both modes: whether to show a Plugin announcement belongs to the run.
-                    progress?.Report(
-                        new FormIdStorePluginFirstEncountered(recordCount, bytesRead, totalBytes, pluginName));
-                }
-
-                yield return new FormIdTextRow(pluginName, formId, entry);
-            }
-        }
     }
 
     /// <inheritdoc />
@@ -750,47 +594,6 @@ public sealed class FormIdRecordStore : IFormIdRecordStoreSession
             CREATE INDEX IF NOT EXISTS temp.{StagingTableName}_plugin_key_id_idx
             ON {StagingTableName} (plugin_key COLLATE NOCASE, id);";
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-    }
-
-    private static bool TryParseFormIdTextLine(
-        string line,
-        out string pluginName,
-        out string formId,
-        out string entry)
-    {
-        var span = line.AsSpan();
-        var firstPipe = span.IndexOf('|');
-        if (firstPipe < 0)
-        {
-            pluginName = string.Empty;
-            formId = string.Empty;
-            entry = string.Empty;
-            return false;
-        }
-
-        var rest = span[(firstPipe + 1)..];
-        var secondPipe = rest.IndexOf('|');
-        if (secondPipe < 0)
-        {
-            pluginName = string.Empty;
-            formId = string.Empty;
-            entry = string.Empty;
-            return false;
-        }
-
-        var afterSecond = rest[(secondPipe + 1)..];
-        if (afterSecond.IndexOf('|') >= 0)
-        {
-            pluginName = string.Empty;
-            formId = string.Empty;
-            entry = string.Empty;
-            return false;
-        }
-
-        pluginName = span[..firstPipe].Trim().ToString();
-        formId = rest[..secondPipe].Trim().ToString();
-        entry = afterSecond.Trim().ToString();
-        return true;
     }
 
     private static bool ShouldReplacePluginRows(UpdateMode updateMode)

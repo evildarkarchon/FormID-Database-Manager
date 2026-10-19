@@ -16,10 +16,6 @@ namespace FormID_Database_Manager.Tests.Fakes;
 /// </remarks>
 internal sealed class RecordingRecordStoreSession : IFormIdRecordStoreSession
 {
-    public string? ImportedTextFilePath { get; private set; }
-
-    public UpdateMode? ImportedTextFileUpdateMode { get; private set; }
-
     public int OptimizeCallCount { get; private set; }
 
     public CancellationToken? OptimizeCancellationToken { get; private set; }
@@ -30,13 +26,7 @@ internal sealed class RecordingRecordStoreSession : IFormIdRecordStoreSession
 
     public Exception? DisposeException { get; init; }
 
-    public Action? ImportAction { get; init; }
-
     public Action? OptimizeAction { get; init; }
-
-    public FormIdTextFileImportResult TextFileImportResult { get; init; }
-
-    public IReadOnlyList<FormIdStoreProgress> TextFileProgressReports { get; init; } = [];
 
     /// <summary>
     ///     The rows the text-row role consumed, in stream order, across every call.
@@ -55,26 +45,6 @@ internal sealed class RecordingRecordStoreSession : IFormIdRecordStoreSession
         CancellationToken cancellationToken = default)
     {
         return Task.FromResult(new FormIdPluginWriteResult(0));
-    }
-
-    /// <inheritdoc />
-    public Task<FormIdTextFileImportResult> ImportFormIdTextFileAsync(
-        string formIdTextFilePath,
-        UpdateMode updateMode,
-        IProgress<FormIdStoreProgress>? progress = null,
-        CancellationToken cancellationToken = default)
-    {
-        ImportedTextFilePath = formIdTextFilePath;
-        ImportedTextFileUpdateMode = updateMode;
-
-        foreach (var report in TextFileProgressReports)
-        {
-            progress?.Report(report);
-        }
-
-        ImportAction?.Invoke();
-
-        return Task.FromResult(TextFileImportResult);
     }
 
     /// <summary>

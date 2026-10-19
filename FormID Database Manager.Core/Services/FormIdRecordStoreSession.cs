@@ -7,12 +7,6 @@ namespace FormID_Database_Manager.Services;
 /// </summary>
 internal interface IFormIdRecordStoreSession : IPluginFormIdRecordWriter, IFormIdTextRowWriter, IAsyncDisposable
 {
-    Task<FormIdTextFileImportResult> ImportFormIdTextFileAsync(
-        string formIdTextFilePath,
-        UpdateMode updateMode,
-        IProgress<FormIdStoreProgress>? progress = null,
-        CancellationToken cancellationToken = default);
-
     Task OptimizeAsync(CancellationToken cancellationToken = default);
 }
 

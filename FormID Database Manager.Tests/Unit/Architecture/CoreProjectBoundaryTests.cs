@@ -212,7 +212,8 @@ public class CoreProjectBoundaryTests
 
     /// <summary>
     ///     Verifies that the wording the FormID Record Store used to write onto its progress path has not come back,
-    ///     leaving both the words and the decision to name a Plugin to whoever renders the counters it reports.
+    ///     neither in the Store nor in FormID Text Ingestion, which now owns that progress, leaving both the words and
+    ///     the decision to name a Plugin to whoever renders the counters it reports.
     /// </summary>
     /// <remarks>
     ///     This pins the three retired sentences by name rather than proving the absence of prose in general, which no
@@ -221,12 +222,16 @@ public class CoreProjectBoundaryTests
     [Fact]
     public void FormIdRecordStore_TextImportProgress_DoesNotContainTheRetiredProgressWording()
     {
-        var storeSource = File.ReadAllText(
-            Path.Combine(GetCoreProjectDirectory(), "Services", "FormIdRecordStore.cs"));
+        var servicesDirectory = Path.Combine(GetCoreProjectDirectory(), "Services");
 
-        Assert.DoesNotContain("Starting processing", storeSource, StringComparison.Ordinal);
-        Assert.DoesNotContain("Processing plugin", storeSource, StringComparison.Ordinal);
-        Assert.DoesNotContain("Completed processing", storeSource, StringComparison.Ordinal);
+        foreach (var sourceFile in new[] { "FormIdRecordStore.cs", "FormIdTextIngestion.cs" })
+        {
+            var source = File.ReadAllText(Path.Combine(servicesDirectory, sourceFile));
+
+            Assert.DoesNotContain("Starting processing", source, StringComparison.Ordinal);
+            Assert.DoesNotContain("Processing plugin", source, StringComparison.Ordinal);
+            Assert.DoesNotContain("Completed processing", source, StringComparison.Ordinal);
+        }
     }
 
     /// <summary>
@@ -871,6 +876,43 @@ public class CoreProjectBoundaryTests
             ["FileInfo", "FileStream", "StreamReader", "ImportFormIdTextFileAsync", "FormIdStoreProgress"],
             fileReadingMember =>
                 Assert.DoesNotContain(fileReadingMember, processingRunSource, StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    ///     Verifies the FormID Record Store's FormID text import is retired with no forwarding shim: no import operation
+    ///     on the Store or its run-scoped session, no Store progress hierarchy, no Store line parser or text progress
+    ///     interval, and no FormID text file reading in the Store's sources (issue #111, ADR-0001 2026-10-18).
+    /// </summary>
+    /// <remarks>
+    ///     The retired members are looked up by name because their types no longer exist to be named in code. FormID
+    ///     Text Ingestion is now the only reader of a FormID text file; the Store persists the rows it is handed.
+    /// </remarks>
+    [Fact]
+    public void FormIdRecordStore_AfterFormIdTextIngestion_HasNoTextImportProgressOrLineParser()
+    {
+        const BindingFlags allMembers = BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public |
+                                        BindingFlags.NonPublic | BindingFlags.DeclaredOnly;
+        var coreTypeNames = typeof(FormIdRecordStore).Assembly.GetTypes().Select(type => type.Name).ToHashSet();
+        var servicesDirectory = Path.Combine(GetCoreProjectDirectory(), "Services");
+        string[] storeSources =
+        [
+            File.ReadAllText(Path.Combine(servicesDirectory, "FormIdRecordStore.cs")),
+            File.ReadAllText(Path.Combine(servicesDirectory, "FormIdRecordStoreSession.cs"))
+        ];
+
+        Assert.All(
+            ["FormIdStoreProgress", "FormIdStoreCounterUpdate", "FormIdStorePluginFirstEncountered"],
+            retiredType => Assert.DoesNotContain(retiredType, coreTypeNames));
+        Assert.All(
+            [typeof(FormIdRecordStore), typeof(IFormIdRecordStoreSession)],
+            storeType => Assert.Empty(storeType.GetMember("ImportFormIdTextFileAsync", allMembers)));
+        Assert.All(
+            ["TextProgressInterval", "TryParseFormIdTextLine"],
+            retiredMember => Assert.Empty(typeof(FormIdRecordStore).GetMember(retiredMember, allMembers)));
+        Assert.All(storeSources, source =>
+            Assert.All(
+                ["FileInfo", "FileStream", "StreamReader"],
+                fileReadingMember => Assert.DoesNotContain(fileReadingMember, source, StringComparison.Ordinal)));
     }
 
     /// <summary>

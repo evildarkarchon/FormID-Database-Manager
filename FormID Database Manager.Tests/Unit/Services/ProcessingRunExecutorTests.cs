@@ -824,7 +824,7 @@ public sealed class ProcessingRunExecutorTests : IDisposable
         opener.OnOpen = _ =>
         {
             openedOnCallersStack = _executeCallInProgressOnThisThread;
-            return new CancellationAwareRecordStoreSession();
+            return new RecordingRecordStoreSession();
         };
 
         Task<ProcessingRunOutcome> processingTask;
@@ -1114,71 +1114,6 @@ public sealed class ProcessingRunExecutorTests : IDisposable
         {
             var onOpen = OnOpen ?? throw new InvalidOperationException("The test did not configure OnOpen.");
             return Task.FromResult(onOpen(Interlocked.Increment(ref _openCount)));
-        }
-    }
-
-    /// <summary>
-    ///     A Store session whose import ends cancelled exactly when its run's token has been cancelled by the time the
-    ///     import checks it, and otherwise completes with empty counts.
-    /// </summary>
-    /// <param name="importGate">
-    ///     Optional gate the import waits on before checking the token. It deliberately ignores the token, so the run
-    ///     cannot finish before the test opens it, and a cancellation that never reached the token shows up as a
-    ///     completed outcome rather than as a hang.
-    /// </param>
-    private sealed class CancellationAwareRecordStoreSession(Task? importGate = null) : IFormIdRecordStoreSession
-    {
-        /// <inheritdoc />
-        public Task<FormIdPluginWriteResult> WritePluginAsync(
-            string pluginName,
-            IEnumerable<FormIdRecord> records,
-            UpdateMode updateMode,
-            CancellationToken cancellationToken = default)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            return Task.FromResult(new FormIdPluginWriteResult(0));
-        }
-
-        /// <inheritdoc />
-        public async Task<FormIdTextFileImportResult> ImportFormIdTextFileAsync(
-            string formIdTextFilePath,
-            UpdateMode updateMode,
-            IProgress<FormIdStoreProgress>? progress = null,
-            CancellationToken cancellationToken = default)
-        {
-            if (importGate is not null)
-            {
-                await importGate.ConfigureAwait(false);
-            }
-
-            cancellationToken.ThrowIfCancellationRequested();
-            return new FormIdTextFileImportResult(0, 0);
-        }
-
-        /// <inheritdoc />
-        public async Task WriteTextRowsAsync(
-            IAsyncEnumerable<FormIdTextRow> rows,
-            UpdateMode updateMode,
-            CancellationToken cancellationToken = default)
-        {
-            // Drain the stream under the token so a cancellation that reached the role surfaces as cancellation.
-            await foreach (var _ in rows.WithCancellation(cancellationToken).ConfigureAwait(false))
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-            }
-        }
-
-        /// <inheritdoc />
-        public Task OptimizeAsync(CancellationToken cancellationToken = default)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            return Task.CompletedTask;
-        }
-
-        /// <inheritdoc />
-        public ValueTask DisposeAsync()
-        {
-            return ValueTask.CompletedTask;
         }
     }
 

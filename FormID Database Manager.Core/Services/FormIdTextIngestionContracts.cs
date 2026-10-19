@@ -52,6 +52,18 @@ internal interface IFormIdTextRowWriter
 }
 
 /// <summary>
+///     Result of importing a FormID text file into the store, as counted by FormID Text Ingestion while it read the
+///     file.
+/// </summary>
+/// <param name="PluginCount">The number of distinct Plugins encountered, matched case-insensitively.</param>
+/// <param name="RecordCount">The number of valid FormID text rows imported.</param>
+/// <remarks>
+///     The counts describe rows read, not rows the Store confirmed. The name predates FormID Text Ingestion and is
+///     kept because ADR-0007 cites it.
+/// </remarks>
+public readonly record struct FormIdTextFileImportResult(int PluginCount, int RecordCount);
+
+/// <summary>
 ///     Defines the complete FormID text-file phase used by a Processing Run: everything about reading one FormID text
 ///     file, from its Dry Run plan to the rows it hands the FormID Record Store.
 /// </summary>

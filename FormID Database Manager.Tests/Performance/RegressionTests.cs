@@ -323,18 +323,24 @@ public class RegressionTests : IDisposable
         }
 
         var baseline = _performanceBaselines[baselineKey];
+        var request = new FormIdTextProcessingRunRequest(formIdFile, dbPath, GameRelease.SkyrimSE, UpdateMode.Append);
+        var formIdTextIngestion = new FormIdTextIngestion();
 
         // Act
+        // FormID Text Ingestion reads the file and feeds a real Store's text-row role, the only production path a
+        // FormID text file takes into the database (ADR-0001, 2026-10-18).
         var stopwatch = Stopwatch.StartNew();
         await using (var recordStore = await FormIdRecordStore.OpenAsync(
                          dbPath,
                          GameRelease.SkyrimSE,
                          TestContext.Current.CancellationToken))
         {
-            await recordStore.ImportFormIdTextFileAsync(
-                formIdFile,
-                UpdateMode.Append,
+            var result = await formIdTextIngestion.IngestAsync(
+                request,
+                recordStore,
                 cancellationToken: TestContext.Current.CancellationToken);
+
+            Assert.Equal(new FormIdTextFileImportResult(1, lineCount), result);
         }
 
         stopwatch.Stop();
