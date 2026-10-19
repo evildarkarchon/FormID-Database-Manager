@@ -7,6 +7,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using FormID_Database_Manager.Services;
+using FormID_Database_Manager.Tests.Fakes;
 using Mutagen.Bethesda;
 using Xunit;
 
@@ -1053,33 +1054,6 @@ public sealed class ProcessingRunExecutorTests : IDisposable
         }
     }
 
-    private sealed class UnexpectedPluginIngestion : IPluginIngestion
-    {
-        public int CallCount { get; private set; }
-
-        /// <inheritdoc />
-        public Task<PluginIngestionReport> IngestAsync(
-            PluginProcessingRunRequest request,
-            IPluginFormIdRecordWriter recordStore,
-            IProgress<PluginIngestionProgress>? progress = null,
-            CancellationToken cancellationToken = default)
-        {
-            CallCount++;
-            return Task.FromException<PluginIngestionReport>(
-                new InvalidOperationException("Plugin Ingestion was not expected for this Processing Run."));
-        }
-
-        /// <inheritdoc />
-        public Task<PluginIngestionPlan> PlanAsync(
-            PluginProcessingRunRequest request,
-            CancellationToken cancellationToken = default)
-        {
-            CallCount++;
-            return Task.FromException<PluginIngestionPlan>(
-                new InvalidOperationException("Planning was not expected for this Processing Run."));
-        }
-    }
-
     /// <summary>
     ///     Plugin Ingestion that only plans: it reports every selected Plugin as one that would be ingested, or raises
     ///     the configured planning failure, and fails loudly if a run reaches its ingestion path.
@@ -1266,24 +1240,6 @@ public sealed class ProcessingRunExecutorTests : IDisposable
         }
     }
 
-    private sealed class RecordingRecordStoreSessionOpener(IFormIdRecordStoreSession recordStore)
-        : IFormIdRecordStoreSessionOpener
-    {
-        public List<(
-            string DatabasePath,
-            GameRelease GameRelease,
-            CancellationToken CancellationToken)> OpenCalls { get; } = [];
-
-        public Task<IFormIdRecordStoreSession> OpenAsync(
-            string databasePath,
-            GameRelease gameRelease,
-            CancellationToken cancellationToken = default)
-        {
-            OpenCalls.Add((databasePath, gameRelease, cancellationToken));
-            return Task.FromResult(recordStore);
-        }
-    }
-
     private sealed class ThrowingRecordStoreSessionOpener(Exception exception) : IFormIdRecordStoreSessionOpener
     {
         public Task<IFormIdRecordStoreSession> OpenAsync(
@@ -1292,80 +1248,6 @@ public sealed class ProcessingRunExecutorTests : IDisposable
             CancellationToken cancellationToken = default)
         {
             return Task.FromException<IFormIdRecordStoreSession>(exception);
-        }
-    }
-
-    private sealed class RecordingRecordStoreSession : IFormIdRecordStoreSession
-    {
-        public string? ImportedTextFilePath { get; private set; }
-
-        public UpdateMode? ImportedTextFileUpdateMode { get; private set; }
-
-        public int OptimizeCallCount { get; private set; }
-
-        public CancellationToken? OptimizeCancellationToken { get; private set; }
-
-        public bool Disposed { get; private set; }
-
-        public Exception? OptimizeException { get; init; }
-
-        public Exception? DisposeException { get; init; }
-
-        public Action? ImportAction { get; init; }
-
-        public Action? OptimizeAction { get; init; }
-
-        public FormIdTextFileImportResult TextFileImportResult { get; init; }
-
-        public IReadOnlyList<FormIdStoreProgress> TextFileProgressReports { get; init; } = [];
-
-        public Task<FormIdPluginWriteResult> WritePluginAsync(
-            string pluginName,
-            IEnumerable<FormIdRecord> records,
-            UpdateMode updateMode,
-            CancellationToken cancellationToken = default)
-        {
-            return Task.FromResult(new FormIdPluginWriteResult(0));
-        }
-
-        /// <inheritdoc />
-        public Task<FormIdTextFileImportResult> ImportFormIdTextFileAsync(
-            string formIdTextFilePath,
-            UpdateMode updateMode,
-            IProgress<FormIdStoreProgress>? progress = null,
-            CancellationToken cancellationToken = default)
-        {
-            ImportedTextFilePath = formIdTextFilePath;
-            ImportedTextFileUpdateMode = updateMode;
-
-            foreach (var report in TextFileProgressReports)
-            {
-                progress?.Report(report);
-            }
-
-            ImportAction?.Invoke();
-
-            return Task.FromResult(TextFileImportResult);
-        }
-
-        /// <inheritdoc />
-        public Task OptimizeAsync(CancellationToken cancellationToken = default)
-        {
-            OptimizeCallCount++;
-            OptimizeCancellationToken = cancellationToken;
-            OptimizeAction?.Invoke();
-            return OptimizeException is null
-                ? Task.CompletedTask
-                : Task.FromException(OptimizeException);
-        }
-
-        /// <inheritdoc />
-        public ValueTask DisposeAsync()
-        {
-            Disposed = true;
-            return DisposeException is null
-                ? ValueTask.CompletedTask
-                : ValueTask.FromException(DisposeException);
         }
     }
 }
