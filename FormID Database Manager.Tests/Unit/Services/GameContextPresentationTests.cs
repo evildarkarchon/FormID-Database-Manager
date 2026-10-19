@@ -76,4 +76,23 @@ public sealed class GameContextPresentationTests
     {
         Assert.Throws<ArgumentNullException>(() => GameContextPresentation.Render(null!));
     }
+
+    /// <summary>
+    ///     Verifies that a notice this module does not know is refused rather than rendered as empty text, so adding a
+    ///     notice without wording fails loudly instead of showing the user nothing.
+    /// </summary>
+    [Fact]
+    public void Render_UnknownNotice_ThrowsArgumentOutOfRangeException()
+    {
+        var exception = Assert.Throws<ArgumentOutOfRangeException>(
+            () => GameContextPresentation.Render(new UnknownNotice()));
+
+        Assert.Equal("notice", exception.ParamName);
+    }
+
+    /// <summary>
+    ///     A notice outside the closed set Presentation renders. The base record's implicit constructor is protected,
+    ///     so a test can derive one without Core exposing anything for it.
+    /// </summary>
+    private sealed record UnknownNotice : GameContextNotice;
 }

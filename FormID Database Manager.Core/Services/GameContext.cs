@@ -135,10 +135,10 @@ internal sealed class GameContext : IDisposable
     /// <remarks>
     ///     <para>
     ///         Adoption builds the Plugin List Source first. A directory that cannot become one is refused with a
-    ///         <see cref="DirectoryRefused" /> notice and changes nothing; a source equal to the current one is a no-op, which
-    ///         is what makes an equivalent spelling (game root or Data directory) and the directory ComboBox's echo of
-    ///         this module's own reported state harmless. Install-record directories were checked when they were listed,
-    ///         so a pick from the detected list is never refused.
+    ///         <see cref="DirectoryRefused" /> notice and changes nothing; a source equal to the current one is a
+    ///         no-op, which is what makes an equivalent spelling (game root or Data directory) and the directory
+    ///         ComboBox's echo of this module's own reported state harmless. Install-record directories were checked
+    ///         when they were listed, so a pick from the detected list is never refused.
     ///     </para>
     ///     <para>
     ///         With no GameRelease there is nothing to build a source with and no detected list to pick from, so a
@@ -191,8 +191,8 @@ internal sealed class GameContext : IDisposable
     /// <exception cref="AggregateException">A registered Plugin List refresh cancellation callback throws.</exception>
     /// <exception cref="ObjectDisposedException">The borrowed Plugin List has been disposed.</exception>
     /// <remarks>
-    ///     The authoritative snapshot is reported before discovery starts. Programming and fatal discovery failures propagate
-    ///     unchanged, and Plugin List discovery may continue off the caller thread.
+    ///     The authoritative snapshot is reported before discovery starts. Programming and fatal discovery failures
+    ///     propagate unchanged, and Plugin List discovery may continue off the caller thread.
     /// </remarks>
     internal Task SetAdvancedModeAsync(AdvancedMode advancedMode)
     {
@@ -313,8 +313,9 @@ internal sealed class GameContext : IDisposable
     ///     <para>
     ///         Nothing changes until a GameRelease is known and the source is built: a path detection or the source
     ///         cannot use is refused with a <see cref="DirectoryRefused" /> notice, and a directory with no detectable
-    ///         game is refused with a <see cref="NoGameDetected" /> notice, both leaving the Game Context and the Plugin List as they
-    ///         were. Other current unexpected detection and fatal discovery failures propagate unchanged.
+    ///         game is refused with a <see cref="NoGameDetected" /> notice, both leaving the Game Context and the
+    ///         Plugin List as they were. Other current unexpected detection and fatal discovery failures propagate
+    ///         unchanged.
     ///     </para>
     ///     <para>
     ///         An accepted Browse whose source equals the current one is a no-op, exactly like a detected-directory

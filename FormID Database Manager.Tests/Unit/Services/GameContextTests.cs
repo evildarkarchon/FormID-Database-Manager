@@ -824,6 +824,58 @@ public sealed class GameContextTests : IDisposable
     }
 
     /// <summary>
+    /// Verifies that Game Context keeps its latest-intent generation check after a report returns: when the report of a
+    /// Browse's adopted directory re-enters and starts a newer release selection, the Browse is retired, reports
+    /// nothing further and never refreshes the Plugin List with the source it adopted.
+    /// </summary>
+    /// <returns>A task that completes after the retired Browse and the newer release selection settle.</returns>
+    /// <remarks>
+    /// The newer selection's installed-location lookup is held open until the Browse has finished, so whatever the
+    /// Browse does after its report is observed before the newer intent can report or refresh anything of its own.
+    /// </remarks>
+    [Fact]
+    public async Task BrowseGameDirectoryAsync_ReportReentersWithNewerReleaseSelection_RetiresTheBrowse()
+    {
+        const string newerDirectory = @"C:\Games\Fallout4";
+        var lookupStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var allowLookupToFinish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _fileDialogService.Setup(x => x.SelectGameDirectory())
+            .ReturnsAsync(FileDialogResult.Success(GameDirectory));
+        WithSkyrimLayout(GameDirectory);
+        _gameInstallationProbe.WithInstalledDirectories(GameRelease.Fallout4, newerDirectory);
+        GateInstalledLocationLookup(GameRelease.Fallout4, lookupStarted, allowLookupToFinish);
+        var sut = CreateSut();
+        Task? newerRelease = null;
+        _sink.OnEntry = entry =>
+        {
+            // Re-enter only from the Browse's own adoption report, once; the newer intent's reports pass through.
+            if (newerRelease is null &&
+                entry is StateReported { State.SelectedGameRelease: GameRelease.SkyrimSE })
+            {
+                newerRelease = sut.SelectGameReleaseAsync(GameRelease.Fallout4);
+            }
+        };
+
+        await sut.BrowseGameDirectoryAsync();
+        await lookupStarted.Task;
+
+        Assert.NotNull(newerRelease);
+        AssertReports(
+            Reported(State(GameRelease.SkyrimSE, GameDirectory)),
+            Reported(State(GameRelease.Fallout4, null)));
+        Assert.Empty(Refreshes);
+
+        allowLookupToFinish.SetResult();
+        await newerRelease;
+
+        AssertReports(
+            Reported(State(GameRelease.SkyrimSE, GameDirectory)),
+            Reported(State(GameRelease.Fallout4, null)),
+            Reported(State(GameRelease.Fallout4, newerDirectory, [newerDirectory])));
+        AssertSingleRefresh(newerDirectory, GameRelease.Fallout4, AdvancedMode.Off);
+    }
+
+    /// <summary>
     /// Verifies that a newer release intent prevents an older Browse detection result from reporting context or
     /// refreshing.
     /// </summary>

@@ -553,7 +553,9 @@ public sealed class UserWorkflow : IDisposable
         }
 
         /// <inheritdoc />
-        /// <exception cref="ArgumentOutOfRangeException">Presentation names a message list this adapter cannot write.</exception>
+        /// <exception cref="ArgumentOutOfRangeException">
+        ///     Presentation names a message list this adapter cannot write.
+        /// </exception>
         public void ReportNotice(GameContextNotice notice)
         {
             var rendered = GameContextPresentation.Render(notice);
