@@ -1108,6 +1108,237 @@ public sealed class FormIdRecordStoreTests : IDisposable
             record => record is { Plugin: "Plugin2.esp", FormId: "000020", Entry: "NewPlugin2" });
     }
 
+    /// <summary>
+    ///     Verifies that the text-row role in append mode keeps a Plugin's existing rows beside the streamed ones.
+    /// </summary>
+    [Fact]
+    public async Task WriteTextRowsAsync_AppendMode_PreservesExistingRows()
+    {
+        await InsertTestRecordAsync("Plugin1.esp", "000001", "OldEntry");
+        await using var store = await OpenStoreAsync();
+        IFormIdTextRowWriter writer = store;
+
+        await writer.WriteTextRowsAsync(
+            StreamRowsAsync([new FormIdTextRow("Plugin1.esp", "000002", "NewEntry")]),
+            UpdateMode.Append,
+            TestContext.Current.CancellationToken);
+
+        var records = await store.ReadRecordsAsync(FormIdRecordQuery.All, TestContext.Current.CancellationToken);
+        Assert.Equal(
+            [
+                new FormIdStoredRecord("Plugin1.esp", "000001", "OldEntry"),
+                new FormIdStoredRecord("Plugin1.esp", "000002", "NewEntry")
+            ],
+            records);
+    }
+
+    /// <summary>
+    ///     Verifies that Update Mode replaces each mentioned Plugin case-insensitively, keeps each row's casing,
+    ///     inserts new Plugins, and leaves unmentioned Plugins alone.
+    /// </summary>
+    [Fact]
+    public async Task WriteTextRowsAsync_UpdateMode_ReplacesMentionedPluginsAndInsertsNewOnes()
+    {
+        await InsertTestRecordAsync("Plugin1.esp", "000001", "OldEntry1");
+        await InsertTestRecordAsync("Plugin1.esp", "000002", "OldEntry2");
+        await InsertTestRecordAsync("Untouched.esp", "000003", "UntouchedEntry");
+        await using var store = await OpenStoreAsync();
+        IFormIdTextRowWriter writer = store;
+
+        await writer.WriteTextRowsAsync(
+            StreamRowsAsync(
+            [
+                new FormIdTextRow("PLUGIN1.ESP", "000010", "NewEntry1"),
+                new FormIdTextRow("plugin1.esp", "000011", "NewEntry2"),
+                new FormIdTextRow("BrandNewPlugin.esp", "000020", "BrandNewEntry")
+            ]),
+            UpdateMode.ReplacePluginRecords,
+            TestContext.Current.CancellationToken);
+
+        var records = await store.ReadRecordsAsync(FormIdRecordQuery.All, TestContext.Current.CancellationToken);
+        Assert.Equal(
+            [
+                new FormIdStoredRecord("Untouched.esp", "000003", "UntouchedEntry"),
+                new FormIdStoredRecord("PLUGIN1.ESP", "000010", "NewEntry1"),
+                new FormIdStoredRecord("plugin1.esp", "000011", "NewEntry2"),
+                new FormIdStoredRecord("BrandNewPlugin.esp", "000020", "BrandNewEntry")
+            ],
+            records);
+    }
+
+    /// <summary>
+    ///     Verifies that one Plugin's rows scattered through the stream are committed together, in stream order, before
+    ///     the next Plugin's rows.
+    /// </summary>
+    [Fact]
+    public async Task WriteTextRowsAsync_ScatteredRowsForOnePlugin_CommitsThePluginTogether()
+    {
+        await InsertTestRecordAsync("First.esp", "000001", "OldFirst");
+        await using var store = await OpenStoreAsync();
+        IFormIdTextRowWriter writer = store;
+
+        await writer.WriteTextRowsAsync(
+            StreamRowsAsync(
+            [
+                new FormIdTextRow("First.esp", "000010", "First1"),
+                new FormIdTextRow("Second.esp", "000020", "Second1"),
+                new FormIdTextRow("FIRST.ESP", "000011", "First2"),
+                new FormIdTextRow("Second.esp", "000021", "Second2"),
+                new FormIdTextRow("first.esp", "000012", "First3")
+            ]),
+            UpdateMode.ReplacePluginRecords,
+            TestContext.Current.CancellationToken);
+
+        var records = await store.ReadRecordsAsync(FormIdRecordQuery.All, TestContext.Current.CancellationToken);
+        Assert.Equal(
+            [
+                new FormIdStoredRecord("First.esp", "000010", "First1"),
+                new FormIdStoredRecord("FIRST.ESP", "000011", "First2"),
+                new FormIdStoredRecord("first.esp", "000012", "First3"),
+                new FormIdStoredRecord("Second.esp", "000020", "Second1"),
+                new FormIdStoredRecord("Second.esp", "000021", "Second2")
+            ],
+            records);
+    }
+
+    /// <summary>
+    ///     Verifies that a stream crossing the 10,000-row staging boundary commits every row.
+    /// </summary>
+    [Fact]
+    public async Task WriteTextRowsAsync_ExceedsStagingBatchSize_CommitsEveryRow()
+    {
+        const int totalRows = 10100;
+        await using var store = await OpenStoreAsync();
+        IFormIdTextRowWriter writer = store;
+
+        await writer.WriteTextRowsAsync(
+            StreamRowsAsync(Enumerable.Range(0, totalRows)
+                .Select(i => new FormIdTextRow("Plugin.esp", $"{i:X6}", $"Entry{i}"))),
+            UpdateMode.Append,
+            TestContext.Current.CancellationToken);
+
+        var records = await store.ReadRecordsAsync(FormIdRecordQuery.All, TestContext.Current.CancellationToken);
+        Assert.Equal(totalRows, records.Count);
+        Assert.Equal(new FormIdStoredRecord("Plugin.esp", "000000", "Entry0"), records[0]);
+        Assert.Equal(new FormIdStoredRecord("Plugin.esp", "002773", "Entry10099"), records[^1]);
+    }
+
+    /// <summary>
+    ///     Verifies that a failed Plugin commit rolls back that Plugin, including its replacement delete, while the
+    ///     other Plugins still commit and the single failure is rethrown as is.
+    /// </summary>
+    [Fact]
+    public async Task WriteTextRowsAsync_PluginCommitFails_RollsBackThatPluginAndCommitsTheOthers()
+    {
+        await InsertTestRecordAsync("Plugin1.esp", "000001", "OldPlugin1");
+        await InsertTestRecordAsync("Plugin2.esp", "000002", "OldPlugin2");
+        await CreateFailingInsertTriggerAsync("BadEntry");
+        await using var store = await OpenStoreAsync();
+        IFormIdTextRowWriter writer = store;
+
+        await Assert.ThrowsAsync<SqliteException>(() => writer.WriteTextRowsAsync(
+            StreamRowsAsync(
+            [
+                new FormIdTextRow("Plugin1.esp", "000010", "GoodEntry"),
+                new FormIdTextRow("Plugin1.esp", "000011", "BadEntry"),
+                new FormIdTextRow("Plugin2.esp", "000020", "NewPlugin2")
+            ]),
+            UpdateMode.ReplacePluginRecords,
+            TestContext.Current.CancellationToken));
+
+        var records = await store.ReadRecordsAsync(FormIdRecordQuery.All, TestContext.Current.CancellationToken);
+        Assert.Equal(
+            [
+                new FormIdStoredRecord("Plugin1.esp", "000001", "OldPlugin1"),
+                new FormIdStoredRecord("Plugin2.esp", "000020", "NewPlugin2")
+            ],
+            records);
+    }
+
+    /// <summary>
+    ///     Verifies that cancellation after a staging flush commits nothing and leaves no staged rows for the next
+    ///     call on the same Store.
+    /// </summary>
+    [Fact]
+    public async Task WriteTextRowsAsync_CancelledAfterStagingFlush_ReusedStoreCommitsNoStaleRows()
+    {
+        const int rowsBeforeCancellation = 11000;
+        using var cancellationSource = new CancellationTokenSource();
+        await using var store = await OpenStoreAsync();
+        IFormIdTextRowWriter writer = store;
+
+        async IAsyncEnumerable<FormIdTextRow> CancelAfterStagingFlushAsync()
+        {
+            foreach (var row in Enumerable.Range(0, rowsBeforeCancellation)
+                         .Select(i => new FormIdTextRow("Cancelled.esp", $"{i:X6}", $"CancelledEntry{i}")))
+            {
+                await Task.Yield();
+                yield return row;
+            }
+
+            // 11,000 staged rows leave one full batch flushed to TEMP and 1,000 rows managed when cancellation is
+            // requested. The Store observes it when it stages the row yielded next.
+            await cancellationSource.CancelAsync();
+            yield return new FormIdTextRow("Cancelled.esp", "FFFFFE", "AfterCancellation");
+        }
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => writer.WriteTextRowsAsync(
+            CancelAfterStagingFlushAsync(),
+            UpdateMode.Append,
+            cancellationSource.Token));
+
+        Assert.Empty(await store.ReadRecordsAsync(FormIdRecordQuery.All, TestContext.Current.CancellationToken));
+
+        await writer.WriteTextRowsAsync(
+            StreamRowsAsync([new FormIdTextRow("Fresh.esp", "FFFFFF", "FreshEntry")]),
+            UpdateMode.Append,
+            TestContext.Current.CancellationToken);
+
+        var records = await store.ReadRecordsAsync(FormIdRecordQuery.All, TestContext.Current.CancellationToken);
+        Assert.Equal(new FormIdStoredRecord("Fresh.esp", "FFFFFF", "FreshEntry"), Assert.Single(records));
+    }
+
+    /// <summary>
+    ///     Verifies that a stream failing partway through, after a staging flush, propagates its own exception unchanged,
+    ///     commits nothing, and leaves no staged rows for the next call on the same Store.
+    /// </summary>
+    [Fact]
+    public async Task WriteTextRowsAsync_StreamThrowsPartway_PropagatesItsExceptionAndReusedStoreCommitsNoStaleRows()
+    {
+        const int rowsBeforeFailure = 10500;
+        var streamFailure = new IOException("The FormID text file became unreadable.");
+        await using var store = await OpenStoreAsync();
+        IFormIdTextRowWriter writer = store;
+
+        async IAsyncEnumerable<FormIdTextRow> FailAfterStagingFlushAsync()
+        {
+            foreach (var row in Enumerable.Range(0, rowsBeforeFailure)
+                         .Select(i => new FormIdTextRow("Failed.esp", $"{i:X6}", $"FailedEntry{i}")))
+            {
+                await Task.Yield();
+                yield return row;
+            }
+
+            throw streamFailure;
+        }
+
+        var thrown = await Assert.ThrowsAsync<IOException>(() => writer.WriteTextRowsAsync(
+            FailAfterStagingFlushAsync(),
+            UpdateMode.Append,
+            TestContext.Current.CancellationToken));
+        Assert.Same(streamFailure, thrown);
+
+        Assert.Empty(await store.ReadRecordsAsync(FormIdRecordQuery.All, TestContext.Current.CancellationToken));
+
+        await writer.WriteTextRowsAsync(
+            StreamRowsAsync([new FormIdTextRow("Fresh.esp", "FFFFFF", "FreshEntry")]),
+            UpdateMode.Append,
+            TestContext.Current.CancellationToken);
+
+        var records = await store.ReadRecordsAsync(FormIdRecordQuery.All, TestContext.Current.CancellationToken);
+        Assert.Equal(new FormIdStoredRecord("Fresh.esp", "FFFFFF", "FreshEntry"), Assert.Single(records));
+    }
+
     private Task<FormIdRecordStore> OpenStoreAsync()
     {
         return FormIdRecordStore.OpenAsync(
@@ -1191,6 +1422,21 @@ public sealed class FormIdRecordStoreTests : IDisposable
         }
 
         return records;
+    }
+
+    /// <summary>
+    ///     Streams in-memory FormID text rows to the Store's text-row role, yielding before each row so the Store
+    ///     consumes a genuinely asynchronous stream rather than a completed one.
+    /// </summary>
+    /// <param name="rows">The rows to stream, in order.</param>
+    /// <returns>A lazy stream that yields each row once.</returns>
+    private static async IAsyncEnumerable<FormIdTextRow> StreamRowsAsync(IEnumerable<FormIdTextRow> rows)
+    {
+        foreach (var row in rows)
+        {
+            await Task.Yield();
+            yield return row;
+        }
     }
 
     private sealed class SynchronousProgress<T>(Action<T> handler) : IProgress<T>

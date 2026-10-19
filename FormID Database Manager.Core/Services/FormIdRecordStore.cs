@@ -185,6 +185,10 @@ public sealed class FormIdRecordStore : IFormIdRecordStoreSession
     /// </param>
     /// <param name="cancellationToken">Token to monitor for cancellation.</param>
     /// <returns>Counts describing the imported valid records and distinct Plugins.</returns>
+    /// <remarks>
+    ///     The file is parsed into a lazy row stream that feeds the same text-row role FormID Text Ingestion uses, so
+    ///     staging, per-Plugin commits, and cleanup have one implementation.
+    /// </remarks>
     public async Task<FormIdTextFileImportResult> ImportFormIdTextFileAsync(
         string formIdTextFilePath,
         UpdateMode updateMode,
@@ -206,7 +210,16 @@ public sealed class FormIdRecordStore : IFormIdRecordStoreSession
             new FileStream(formIdTextFilePath, FileMode.Open, FileAccess.Read, FileShare.Read, 81920);
         using var reader = new StreamReader(stream, Encoding.UTF8);
 
-        try
+        // The role consumes the stream once and clears staging however it ends, so no cleanup is needed here.
+        await WriteTextRowsCoreAsync(ReadValidRowsAsync(), updateMode, cancellationToken).ConfigureAwait(false);
+
+        // The completed import is reported as counts rather than a final progress message, so the caller that renders
+        // the run's status decides how a finished import is worded.
+        return new FormIdTextFileImportResult(processedPlugins.Count, recordCount);
+
+        // Counts and progress are updated as each row is read, before it is yielded, so every report still precedes
+        // the staging of the row it describes.
+        async IAsyncEnumerable<FormIdTextRow> ReadValidRowsAsync()
         {
             while (true)
             {
@@ -245,23 +258,22 @@ public sealed class FormIdRecordStore : IFormIdRecordStoreSession
                         new FormIdStorePluginFirstEncountered(recordCount, bytesRead, totalBytes, pluginName));
                 }
 
-                await StageTextRecordAsync(pluginName, formId, entry, cancellationToken).ConfigureAwait(false);
+                yield return new FormIdTextRow(pluginName, formId, entry);
             }
-
-            await CommitStagedTextRecordsAsync(ShouldReplacePluginRows(updateMode), cancellationToken)
-                .ConfigureAwait(false);
         }
-        catch
-        {
-            // The Store is reusable, so an aborted import must not expose staged rows to the next import.
-            _stagingBatch.Clear();
-            await ClearStagingTableBestEffortAsync().ConfigureAwait(false);
-            throw;
-        }
+    }
 
-        // The completed import is reported as counts rather than a final progress message, so the caller that renders
-        // the run's status decides how a finished import is worded.
-        return new FormIdTextFileImportResult(processedPlugins.Count, recordCount);
+    /// <inheritdoc />
+    /// <remarks>
+    ///     Implemented explicitly because the role and its row type are internal to FormID Text Ingestion's contracts,
+    ///     while the Store itself is public.
+    /// </remarks>
+    Task IFormIdTextRowWriter.WriteTextRowsAsync(
+        IAsyncEnumerable<FormIdTextRow> rows,
+        UpdateMode updateMode,
+        CancellationToken cancellationToken)
+    {
+        return WriteTextRowsCoreAsync(rows, updateMode, cancellationToken);
     }
 
     /// <summary>
@@ -500,13 +512,52 @@ public sealed class FormIdRecordStore : IFormIdRecordStoreSession
     }
 
     /// <summary>
+    ///     Consumes a lazy stream of FormID text rows once, stages every row, and commits them with one transaction per
+    ///     Plugin key, clearing staging however the operation ends.
+    /// </summary>
+    /// <param name="rows">The lazy parsed rows to stage and commit.</param>
+    /// <param name="updateMode">Whether to append rows or replace each mentioned Plugin's existing rows.</param>
+    /// <param name="cancellationToken">Token to monitor for cancellation.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="rows" /> is <see langword="null" />.</exception>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="updateMode" /> is not supported.</exception>
+    private async Task WriteTextRowsCoreAsync(
+        IAsyncEnumerable<FormIdTextRow> rows,
+        UpdateMode updateMode,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(rows);
+
+        // Resolve the mode before enumerating, so an unsupported mode consumes nothing from the caller's stream.
+        var replaceExistingPluginRows = ShouldReplacePluginRows(updateMode);
+
+        try
+        {
+            await foreach (var row in rows.WithCancellation(cancellationToken).ConfigureAwait(false))
+            {
+                await StageTextRecordAsync(row.Plugin, row.FormId, row.Entry, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+
+            await CommitStagedTextRecordsAsync(replaceExistingPluginRows, cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            // The Store is reusable, so an aborted import must not expose staged rows to the next import. This covers
+            // a failing stream and cancellation while staging; the commit clears staging itself on its own failures.
+            _stagingBatch.Clear();
+            await ClearStagingTableBestEffortAsync().ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    /// <summary>
     ///     Stages one parsed FormID text row in SQLite for a later plugin-scoped commit.
     /// </summary>
     /// <param name="pluginName">The Plugin value from the FormID text row.</param>
     /// <param name="formId">The FormID value from the FormID text row.</param>
     /// <param name="entry">The Entry value from the FormID text row.</param>
     /// <param name="cancellationToken">Token to monitor for cancellation.</param>
-    internal async Task StageTextRecordAsync(
+    private async Task StageTextRecordAsync(
         string pluginName,
         string formId,
         string entry,
@@ -531,7 +582,7 @@ public sealed class FormIdRecordStore : IFormIdRecordStoreSession
     /// </summary>
     /// <param name="replaceExistingPluginRows">Whether existing rows for staged Plugins should be replaced case-insensitively.</param>
     /// <param name="cancellationToken">Token to monitor for cancellation.</param>
-    internal async Task CommitStagedTextRecordsAsync(
+    private async Task CommitStagedTextRecordsAsync(
         bool replaceExistingPluginRows,
         CancellationToken cancellationToken = default)
     {

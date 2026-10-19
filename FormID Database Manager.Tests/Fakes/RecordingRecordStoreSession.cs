@@ -38,6 +38,16 @@ internal sealed class RecordingRecordStoreSession : IFormIdRecordStoreSession
 
     public IReadOnlyList<FormIdStoreProgress> TextFileProgressReports { get; init; } = [];
 
+    /// <summary>
+    ///     The rows the text-row role consumed, in stream order, across every call.
+    /// </summary>
+    public List<FormIdTextRow> WrittenTextRows { get; } = [];
+
+    /// <summary>
+    ///     The Update Mode of the most recent text-row role call, or <see langword="null" /> if it was never called.
+    /// </summary>
+    public UpdateMode? WrittenTextRowsUpdateMode { get; private set; }
+
     public Task<FormIdPluginWriteResult> WritePluginAsync(
         string pluginName,
         IEnumerable<FormIdRecord> records,
@@ -65,6 +75,23 @@ internal sealed class RecordingRecordStoreSession : IFormIdRecordStoreSession
         ImportAction?.Invoke();
 
         return Task.FromResult(TextFileImportResult);
+    }
+
+    /// <summary>
+    ///     Consumes the stream exactly once, as the role's contract requires, recording each row and the Update Mode.
+    /// </summary>
+    /// <inheritdoc />
+    public async Task WriteTextRowsAsync(
+        IAsyncEnumerable<FormIdTextRow> rows,
+        UpdateMode updateMode,
+        CancellationToken cancellationToken = default)
+    {
+        WrittenTextRowsUpdateMode = updateMode;
+
+        await foreach (var row in rows.WithCancellation(cancellationToken).ConfigureAwait(false))
+        {
+            WrittenTextRows.Add(row);
+        }
     }
 
     /// <inheritdoc />

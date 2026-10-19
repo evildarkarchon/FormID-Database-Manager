@@ -808,6 +808,31 @@ public class CoreProjectBoundaryTests
     }
 
     /// <summary>
+    ///     Verifies the text-row writer role and its row type are declared with FormID Text Ingestion's contracts, which
+    ///     own them, and not with the Store that implements the role (ADR-0001, 2026-10-18).
+    /// </summary>
+    [Fact]
+    public void CoreServices_TextRowWriterRole_IsDeclaredWithFormIdTextIngestionContractsNotTheStore()
+    {
+        var servicesDirectory = Path.Combine(GetCoreProjectDirectory(), "Services");
+        var contractsSource =
+            File.ReadAllText(Path.Combine(servicesDirectory, "FormIdTextIngestionContracts.cs"));
+        string[] storeSources =
+        [
+            File.ReadAllText(Path.Combine(servicesDirectory, "FormIdRecordStore.cs")),
+            File.ReadAllText(Path.Combine(servicesDirectory, "FormIdRecordStoreSession.cs"))
+        ];
+
+        Assert.Contains("internal interface IFormIdTextRowWriter", contractsSource, StringComparison.Ordinal);
+        Assert.Contains("internal readonly record struct FormIdTextRow(", contractsSource, StringComparison.Ordinal);
+        Assert.All(storeSources, source =>
+        {
+            Assert.DoesNotContain("interface IFormIdTextRowWriter", source, StringComparison.Ordinal);
+            Assert.DoesNotContain("record struct FormIdTextRow(", source, StringComparison.Ordinal);
+        });
+    }
+
+    /// <summary>
     ///     Verifies the Core assembly exposes only the aggregate implementation and no retired one-Plugin transport.
     /// </summary>
     [Fact]

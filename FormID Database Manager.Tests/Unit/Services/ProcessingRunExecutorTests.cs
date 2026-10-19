@@ -1191,6 +1191,19 @@ public sealed class ProcessingRunExecutorTests : IDisposable
         }
 
         /// <inheritdoc />
+        public async Task WriteTextRowsAsync(
+            IAsyncEnumerable<FormIdTextRow> rows,
+            UpdateMode updateMode,
+            CancellationToken cancellationToken = default)
+        {
+            // Drain the stream under the token so a cancellation that reached the role surfaces as cancellation.
+            await foreach (var _ in rows.WithCancellation(cancellationToken).ConfigureAwait(false))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+            }
+        }
+
+        /// <inheritdoc />
         public Task OptimizeAsync(CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();

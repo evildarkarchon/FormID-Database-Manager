@@ -5,7 +5,7 @@ namespace FormID_Database_Manager.Services;
 /// <summary>
 ///     Complete run-scoped FormID Record Store session owned by a Processing Run.
 /// </summary>
-internal interface IFormIdRecordStoreSession : IPluginFormIdRecordWriter, IAsyncDisposable
+internal interface IFormIdRecordStoreSession : IPluginFormIdRecordWriter, IFormIdTextRowWriter, IAsyncDisposable
 {
     Task<FormIdTextFileImportResult> ImportFormIdTextFileAsync(
         string formIdTextFilePath,
