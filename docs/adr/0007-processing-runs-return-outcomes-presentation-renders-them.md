@@ -56,6 +56,21 @@ The Processing Run translates each report independently, with no remembered Plug
 policy: first-encounter reports name Plugins in Update Mode and are suppressed in append mode. Counter updates are
 translated in both modes. Processing Run Presentation remains unchanged, preserving the existing wording.
 
+> Note (2026-10-18, ADR-0001): FormID Text Ingestion now reads the FormID text file, so it owns case-insensitive Plugin
+> identity instead of the Store.
+>
+> - **First encounter.** FormID Text Ingestion reports a Plugin's first encounter before it hands that Plugin's first
+>   row to the Store.
+> - **Three cases, not two.** `FormIdStoreProgress` and its two cases are deleted. FormID Text Ingestion reports three
+>   cases instead: the import opening, a counter update, and a Plugin's first encounter. A zero record count no longer
+>   signals the opening.
+> - **The run splits the same way.** `ImportingFormIdText` becomes an opening case, a counter case, and a named-Plugin
+>   case. Processing Run Presentation no longer decodes counters to find the opening, and its wording does not change.
+>
+> The run still restates these facts in its own vocabulary, as the Decision above requires. Two things stay as they
+> were: the report ordering and timing described above, and the Update Mode policy, which remains in the Processing
+> Run.
+
 ## Cancellation is a value; failure is not
 
 The asymmetry is the part of this rule a future reader would otherwise have to infer, so it is recorded here.

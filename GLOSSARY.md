@@ -87,6 +87,10 @@ _Avoid_: Fallback name, placeholder entry, type label.
 A pipe-delimited import file whose rows provide Plugin, FormID, and Entry values without reading binary plugins.
 _Avoid_: List file, text import.
 
+**FormID Text Ingestion**:
+The part of a Processing Run that reads one FormID text file in row order and produces FormID records for a FormID Record Store. It skips malformed rows rather than failing, and identifies Plugins case-insensitively, noting each one the first time a valid row names it. Whether that Plugin is shown to the user is the Processing Run's decision, not FormID Text Ingestion's. It is the sibling of Plugin Ingestion for the other kind of run.
+_Avoid_: Text import, list import, text file reader.
+
 **FormID Record Store**:
 The persisted collection of FormID records for a single GameRelease, regardless of whether records came from plugin ingestion or a FormID text file.
 _Avoid_: Database writer, write path.

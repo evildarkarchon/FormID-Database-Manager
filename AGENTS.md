@@ -36,6 +36,8 @@ renaming Core members or changing project boundaries. In particular:
 - `FormIdRecordStore.cs` is the only production source file that may reference `Microsoft.Data.Sqlite`.
 - `ProcessingRun` owns Store opening, optimization, and disposal; `PluginIngestion` owns load-order, overlay, and
   Data-path adapters.
+- `FormIdTextIngestion` owns reading, parsing, and counting a FormID text file, and the file's import progress. The
+  Store persists only the rows it is handed through the text-row writer role (ADR-0001, ADR-0007).
 - `ProcessingRun.cs` and `ProcessingRunControl.cs` contain no user-facing wording. A run reports typed
   `ProcessingRunProgress` and returns a typed `ProcessingRunOutcome`; `ProcessingRunPresentation` renders both, along
   with refusals, failures, and the starting and cancellation-requested facts (ADR-0007, ADR-0012). The retired

@@ -35,6 +35,30 @@ database path's directory was created by the module that computed the path, befo
 Store is now the only production code that creates it, so a Dry Run or a run that Processing Run Admission refuses
 creates nothing, and a path the user picked whose folder was later deleted opens rather than failing.
 
+### FormID text file reading (2026-10-18)
+
+The Store persists FormID text rows. It does not read FormID text files. Previously `ImportFormIdTextFileAsync` did
+four jobs inside the Store:
+
+- opened the file;
+- parsed its pipe-delimited rows;
+- counted records and Plugins;
+- reported import progress.
+
+None of that work involves SQLite, and it left the Store as the only home of a domain concept, the FormID text file. The
+counter encoding it reported also had to be decoded the same way by the Processing Run and Processing Run Presentation
+(ADR-0007).
+
+That work moves to FormID Text Ingestion, the sibling of Plugin Ingestion.
+
+- **The seam.** FormID Text Ingestion hands the Store a lazy stream of parsed rows through a text-row writer role that
+  FormID Text Ingestion owns. This is the same shape as the Plugin write role.
+- **What stays in the Store.** The Store consumes the stream once, stages it in its temporary table, and commits one
+  transaction per Plugin. It clears staging when the stream or a commit fails. Every SQLite concern this ADR assigns to
+  the Store stays here.
+- **What is deleted.** `ImportFormIdTextFileAsync` and the public `FormIdStoreProgress` hierarchy are removed, with no
+  forwarding members kept.
+
 ## Consequences
 
 - SQLite lifecycle and schema changes are localized to `FormIdRecordStore`.
