@@ -341,18 +341,15 @@ public sealed class ProcessingRunExecutor : IProcessingRunExecutor
 
         return value switch
         {
-            // The run's progress vocabulary still has one FormID text case, whose contract reads zero records and no
-            // Plugin as the import opening, so the opening is restated in exactly that shape.
-            FormIdTextIngestionOpening opening => new ImportingFormIdText(0, 0, opening.TotalBytes, null),
+            FormIdTextIngestionOpening => new OpeningFormIdText(),
             FormIdTextIngestionCounterUpdate counters => new ImportingFormIdText(
                 counters.RecordCount,
                 counters.BytesRead,
-                counters.TotalBytes,
-                null),
+                counters.TotalBytes),
             // Naming a Plugin is the run's decision, not FormID Text Ingestion's. An appending run has never named
             // one, so it drops the report entirely rather than gaining status updates it does not show today.
             FormIdTextIngestionPluginFirstEncountered plugin => updateMode == UpdateMode.ReplacePluginRecords
-                ? new ImportingFormIdText(plugin.RecordCount, plugin.BytesRead, plugin.TotalBytes, plugin.PluginName)
+                ? new ImportingFormIdTextPlugin(plugin.PluginName)
                 : null,
             _ => throw new ArgumentOutOfRangeException(
                 nameof(value),

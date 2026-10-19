@@ -518,7 +518,7 @@ public sealed class ProcessingRunControlTests : IDisposable
     public async Task PressAsync_ProgressWithoutANewPercentage_CarriesTheLastPercentageForward()
     {
         var ingesting = new IngestingPlugin(PluginName, 2, 5);
-        var namedPlugin = new ImportingFormIdText(10, 100, 1000, PluginName);
+        var namedPlugin = new ImportingFormIdTextPlugin(PluginName);
         _executor.ProgressToReport.Add(ingesting);
         _executor.ProgressToReport.Add(namedPlugin);
         var renderedIngesting = ProcessingRunPresentation.Render(ingesting);

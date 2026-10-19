@@ -46,7 +46,13 @@ internal static class ProcessingRunPresentation
             IngestingPlugin ingesting => new RenderedRunProgress(
                 $"Ingesting plugin {ingesting.Position} of {ingesting.TotalPluginCount}: {ingesting.PluginName}",
                 (double)ingesting.Position / ingesting.TotalPluginCount * 100),
+            OpeningFormIdText => new RenderedRunProgress("Starting processing...", 0),
             ImportingFormIdText importing => RenderFormIdTextImport(importing),
+            // A named Plugin carries no percentage: reaching a Plugin says nothing new about how far through the file
+            // the import is, so the percentage already on screen is the honest one to keep showing.
+            ImportingFormIdTextPlugin plugin => new RenderedRunProgress(
+                $"Processing plugin: {plugin.PluginName}",
+                null),
             ImportedFormIdText imported => new RenderedRunProgress(
                 $"Completed processing {imported.ImportResult.PluginCount} plugins " +
                 $"({imported.ImportResult.RecordCount:N0} total records)",
@@ -95,25 +101,11 @@ internal static class ProcessingRunPresentation
     /// <summary>
     ///     Renders one in-flight FormID text import report from the counters it carries.
     /// </summary>
-    /// <param name="importing">The import counters and the Plugin the run chose to name, if any.</param>
+    /// <param name="importing">The import's counters.</param>
     /// <returns>The status text and its percentage.</returns>
     private static RenderedRunProgress RenderFormIdTextImport(ImportingFormIdText importing)
     {
-        // A named Plugin carries no percentage: reaching a Plugin says nothing new about how far through the file the
-        // import is, so the percentage already on screen is the honest one to keep showing.
-        if (importing.MostRecentPlugin is { } pluginName)
-        {
-            return new RenderedRunProgress($"Processing plugin: {pluginName}", null);
-        }
-
-        // Nothing counted and no Plugin named is the report that opens an import, by the contract on the case itself.
-        // This is the only place that decision is made; the run reports the counters and leaves the reading here.
-        if (importing.RecordCount == 0)
-        {
-            return new RenderedRunProgress("Starting processing...", 0);
-        }
-
-        // A file the Store measured as empty leaves nothing to divide by, so it reads as no progress at all.
+        // A file measured as empty leaves nothing to divide by, so it reads as no progress at all.
         var progressPercent = importing.TotalBytes > 0
             ? (double)importing.BytesRead / importing.TotalBytes * 100
             : 0;
