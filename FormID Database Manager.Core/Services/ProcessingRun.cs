@@ -1,21 +1,27 @@
 namespace FormID_Database_Manager.Services;
 
 /// <summary>
-///     Executes one Processing Run from a domain request, reports its transient progress, and returns how it ended.
+///     Executes one Processing Run from a domain request with the cancellation token its caller hands it, reports its
+///     transient progress, and returns how it ended.
 /// </summary>
 /// <remarks>
-///     The run writes no wording at all. What it is doing is reported as <see cref="ProcessingRunProgress" />, a
-///     vocabulary the run defines for itself rather than one borrowed from Plugin Ingestion or the FormID Record
-///     Store, and how it ended is a <see cref="ProcessingRunOutcome" />. Both are turned into words by
-///     <see cref="ProcessingRunPresentation" />, which lives outside this class.
+///     <para>
+///         The run writes no wording at all. What it is doing is reported as <see cref="ProcessingRunProgress" />, a
+///         vocabulary the run defines for itself rather than one borrowed from Plugin Ingestion or the FormID Record
+///         Store, and how it ended is a <see cref="ProcessingRunOutcome" />. Both are turned into words by
+///         <see cref="ProcessingRunPresentation" />, which lives outside this class.
+///     </para>
+///     <para>
+///         The executor holds no run state: no cancellation slot, no way to cancel, and nothing to dispose. Whether a
+///         Processing Run is active, and its cancellation, belong to whoever owns the run's token (ADR-0012), which
+///         creates that token the moment admission admits a press, so a cancel pressed before the run reaches this
+///         executor is never dropped.
+///     </para>
 /// </remarks>
 public sealed class ProcessingRunExecutor : IProcessingRunExecutor
 {
-    private readonly Lock _cancellationLock = new();
     private readonly IPluginIngestion _pluginIngestion;
     private readonly IFormIdRecordStoreSessionOpener _recordStoreOpener;
-    private CancellationTokenSource? _activeCancellationSource;
-    private bool _disposed;
 
     /// <summary>
     ///     Creates the production Processing Run module with aggregate Plugin Ingestion and Store session ownership.
@@ -42,114 +48,42 @@ public sealed class ProcessingRunExecutor : IProcessingRunExecutor
     }
 
     /// <summary>
-    ///     Executes the supplied Processing Run request.
+    ///     Executes the supplied Processing Run request on a worker thread with the caller's cancellation token.
     /// </summary>
     /// <param name="request">The validated domain request describing the run.</param>
     /// <param name="progress">Optional typed reporter for the run's transient progress.</param>
-    /// <returns>How the run ended, including cancellation this executor was asked for.</returns>
+    /// <param name="cancellationToken">
+    ///     The run's token, owned by the caller. Cancelling it, even before this method is called, ends the run as a
+    ///     <see cref="CancelledRunOutcome" />.
+    /// </param>
+    /// <returns>How the run ended, including the cancellation the caller requested through its token.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="request" /> is <see langword="null" />.</exception>
-    /// <exception cref="ObjectDisposedException">The executor has already been disposed.</exception>
     /// <exception cref="UnresolvableMasterException">
     ///     A selected Plugin declares a master the Data directory cannot supply, which fails the whole run (ADR-0006).
     /// </exception>
+    /// <exception cref="OperationCanceledException">
+    ///     A collaborator cancelled while <paramref name="cancellationToken" /> was not cancelled, which is not a
+    ///     cancellation the caller asked for (ADR-0007).
+    /// </exception>
     public async Task<ProcessingRunOutcome> ExecuteAsync(
         ProcessingRunRequest request,
-        IProgress<ProcessingRunProgress>? progress = null)
+        IProgress<ProcessingRunProgress>? progress,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        var cancellationSource = StartCancellationSource();
-        try
-        {
-            // Do not pass the token to Task.Run scheduling: even a pre-cancelled run must enter the worker
-            // so it can return the cancelled outcome and release the source owned by this execution.
-            return await Task.Run(() => ExecuteCoreAsync(request, progress, cancellationSource.Token))
-                .ConfigureAwait(false);
-        }
-        finally
-        {
-            CompleteRun(cancellationSource);
-        }
+        // Do not pass the token to Task.Run scheduling: even a pre-cancelled run must enter the worker so it can
+        // return the cancelled outcome rather than a cancelled task, which a caller would see as an exception.
+        return await Task.Run(() => ExecuteCoreAsync(request, progress, cancellationToken))
+            .ConfigureAwait(false);
     }
 
     /// <summary>
-    ///     Requests cancellation for the active Processing Run, if one is active.
-    /// </summary>
-    public void Cancel()
-    {
-        CancellationTokenSource? cancellationSource;
-        lock (_cancellationLock)
-        {
-            cancellationSource = _activeCancellationSource;
-        }
-
-        CancelSource(cancellationSource);
-    }
-
-    /// <summary>
-    ///     Cancels any active run and releases the owned cancellation source.
-    /// </summary>
-    public void Dispose()
-    {
-        CancellationTokenSource? cancellationSource;
-        lock (_cancellationLock)
-        {
-            if (_disposed)
-            {
-                return;
-            }
-
-            _disposed = true;
-            cancellationSource = _activeCancellationSource;
-        }
-
-        // The active execution remains the source owner and will dispose it in its finally block.
-        CancelSource(cancellationSource);
-    }
-
-    /// <summary>
-    ///     Creates and publishes the cancellation source for a new active Processing Run.
-    /// </summary>
-    /// <returns>The source owned by the new execution.</returns>
-    /// <exception cref="ObjectDisposedException">The executor has already been disposed.</exception>
-    private CancellationTokenSource StartCancellationSource()
-    {
-        CancellationTokenSource? previousSource;
-        CancellationTokenSource currentSource;
-        lock (_cancellationLock)
-        {
-            if (_disposed)
-            {
-                throw new ObjectDisposedException(nameof(ProcessingRunExecutor));
-            }
-
-            previousSource = _activeCancellationSource;
-            currentSource = new CancellationTokenSource();
-
-            // Publish the newer run before cancelling the older one so delayed older completion
-            // can never clear the slot now owned by the newer run.
-            _activeCancellationSource = currentSource;
-        }
-
-        try
-        {
-            // The older execution owns disposal of its source; supersession only requests cancellation.
-            CancelSource(previousSource);
-            return currentSource;
-        }
-        catch
-        {
-            CompleteRun(currentSource);
-            throw;
-        }
-    }
-
-    /// <summary>
-    ///     Executes one Processing Run on the background worker with the token owned by that execution.
+    ///     Executes one Processing Run on the background worker with the caller's token.
     /// </summary>
     /// <param name="request">The validated domain request describing the run.</param>
     /// <param name="progress">Optional typed reporter for the run's transient progress.</param>
-    /// <param name="cancellationToken">The execution-owned token used by initialization and ingestion.</param>
+    /// <param name="cancellationToken">The run's token, used by initialization and ingestion.</param>
     /// <returns>How the run ended; processing failures propagate unchanged.</returns>
     private async Task<ProcessingRunOutcome> ExecuteCoreAsync(
         ProcessingRunRequest request,
@@ -202,20 +136,14 @@ public sealed class ProcessingRunExecutor : IProcessingRunExecutor
                 }
             }
         }
-        // The token is owned by this execution, so cancellation observed while it is cancelled can only be the
-        // cancellation this run was asked for, and is therefore matched precisely and returned as a value. A
-        // cancellation nobody asked this executor for is not this run's to reinterpret and still propagates.
+        // The token is the caller's, and only the caller cancels it, so cancellation observed while it is cancelled is
+        // the cancellation the caller asked for, and is therefore matched precisely and returned as a value. A
+        // cancellation observed while it is not cancelled was asked for by nobody, is not this run's to reinterpret,
+        // and still propagates (ADR-0007). Failures are not caught at all: they reach the caller once, as exceptions,
+        // and nothing about them is said on the transient progress channel the caller clears as the run ends.
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             return new CancelledRunOutcome();
-        }
-        // Cancellation is excluded from failure reporting: the acknowledgement is a terminal fact rendered from the
-        // outcome into the message lists, while this channel is transient and is cleared as soon as the run ends, so
-        // anything written here about a cancelled run is erased before the user can read it (#60).
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            progress?.Report(new ProcessingRunFailure(ex.Message));
-            throw;
         }
     }
 
@@ -223,7 +151,7 @@ public sealed class ProcessingRunExecutor : IProcessingRunExecutor
     ///     Builds the plan a dry run reports instead of doing the work, without opening a FormID Record Store.
     /// </summary>
     /// <param name="request">The validated domain request describing the run.</param>
-    /// <param name="cancellationToken">The execution-owned token shared with Plugin Ingestion's planning.</param>
+    /// <param name="cancellationToken">The caller-owned run token shared with Plugin Ingestion's planning.</param>
     /// <returns>The planned work for the request kind.</returns>
     /// <exception cref="OperationCanceledException"><paramref name="cancellationToken" /> requests cancellation.</exception>
     /// <exception cref="ArgumentOutOfRangeException">The request kind is unsupported.</exception>
@@ -285,7 +213,7 @@ public sealed class ProcessingRunExecutor : IProcessingRunExecutor
     /// <param name="request">The validated FormID text-file request.</param>
     /// <param name="recordStore">The already-open Store session owned by the surrounding Processing Run.</param>
     /// <param name="progress">Optional transient Processing Run progress reporter.</param>
-    /// <param name="cancellationToken">The execution-owned token shared with the import and Store maintenance.</param>
+    /// <param name="cancellationToken">The caller-owned run token shared with the import and Store maintenance.</param>
     /// <returns>The completed text-run outcome carrying the import counts.</returns>
     /// <exception cref="OperationCanceledException"><paramref name="cancellationToken" /> requests cancellation.</exception>
     private static async Task<FormIdTextRunOutcome> ExecuteTextFileRunAsync(
@@ -318,7 +246,7 @@ public sealed class ProcessingRunExecutor : IProcessingRunExecutor
     /// <param name="request">The validated immutable selected-Plugin request.</param>
     /// <param name="recordStore">The already-open Store session owned by the surrounding Processing Run.</param>
     /// <param name="progress">Optional transient Processing Run progress reporter.</param>
-    /// <param name="cancellationToken">The execution-owned token shared with Plugin Ingestion and Store maintenance.</param>
+    /// <param name="cancellationToken">The caller-owned run token shared with Plugin Ingestion and Store maintenance.</param>
     /// <returns>The completed selected-Plugin outcome carrying the authoritative ordered report.</returns>
     /// <exception cref="OperationCanceledException"><paramref name="cancellationToken" /> requests cancellation.</exception>
     private async Task<PluginRunOutcome> ExecutePluginRunAsync(
@@ -430,40 +358,6 @@ public sealed class ProcessingRunExecutor : IProcessingRunExecutor
                 : null,
             _ => throw new ArgumentOutOfRangeException(nameof(value), value, "Unsupported Store progress case.")
         };
-    }
-
-    /// <summary>
-    ///     Clears the active slot when this source still owns it, then releases the execution-owned source.
-    /// </summary>
-    /// <param name="cancellationSource">The source owned by the completing execution.</param>
-    private void CompleteRun(CancellationTokenSource cancellationSource)
-    {
-        lock (_cancellationLock)
-        {
-            if (ReferenceEquals(_activeCancellationSource, cancellationSource))
-            {
-                _activeCancellationSource = null;
-            }
-        }
-
-        // Disposal happens only after the owning worker is finished reading its token.
-        cancellationSource.Dispose();
-    }
-
-    /// <summary>
-    ///     Requests cancellation while tolerating completion that wins the race and disposes the source first.
-    /// </summary>
-    /// <param name="cancellationSource">The source to cancel, or <see langword="null" /> when idle.</param>
-    private static void CancelSource(CancellationTokenSource? cancellationSource)
-    {
-        try
-        {
-            cancellationSource?.Cancel();
-        }
-        catch (ObjectDisposedException)
-        {
-            // The owning execution completed between the active-slot snapshot and this cancellation request.
-        }
     }
 
     /// <summary>

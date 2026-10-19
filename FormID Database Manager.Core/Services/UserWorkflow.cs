@@ -35,8 +35,9 @@ public sealed class UserWorkflow : IDisposable
     private readonly IProcessingRunExecutor _processingRunExecutor;
 
     /// <summary>
-    ///     Guards the run activity this workflow holds as its state of record, because a Processing Run reports its
-    ///     progress from whatever thread the executor is on while the UI thread reads it to decide what a button press means.
+    ///     Guards the run activity this workflow holds as its state of record, and the active run's cancellation source,
+    ///     because a Processing Run reports its progress from whatever thread the executor is on while the UI thread
+    ///     reads it to decide what a button press means.
     /// </summary>
     private readonly Lock _runActivityLock = new();
 
@@ -48,12 +49,28 @@ public sealed class UserWorkflow : IDisposable
     /// </summary>
     /// <remarks>
     ///     This has to be the source of truth: an admitted run publishes activity, clears the message lists and writes a
-    ///     defaulted database path back before the executor is handed the run, so there is a window in which this
-    ///     workflow is committed to a run while the executor's cancellation source does not yet exist. Owning the fact
-    ///     closes that window, so a second button press inside it cancels instead of starting a second run. A press that
-    ///     Processing Run Admission refuses never sets it.
+    ///     defaulted database path back before the executor is handed the run, and any of those notifications can
+    ///     re-enter a press. Owning the fact means a second button press inside that window cancels instead of starting
+    ///     a second run. A press that Processing Run Admission refuses never sets it.
     /// </remarks>
     private ActivityProjection _runActivity = ActivityProjection.None;
+
+    /// <summary>
+    ///     The active Processing Run's cancellation source, or null while no run is active. Guarded by
+    ///     <see cref="_runActivityLock" />.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         It is created inside the run gate the moment admission admits a press, before anything about the run is
+    ///         published, so a press re-entering from any startup notification finds a token to cancel and the run
+    ///         really is cancelled (#104). It is cancelled only while the lock is held, and released by the run that
+    ///         owns it only after clearing it under the lock, so a cancel can never reach a disposed source.
+    ///     </para>
+    ///     <para>
+    ///         This is an interim home: Processing Run Control takes it over unchanged (ADR-0012).
+    ///     </para>
+    /// </remarks>
+    private CancellationTokenSource? _runCancellationSource;
 
     /// <summary>
     ///     The default database root this workflow was composed with, or null or blank when none could be resolved.
@@ -78,7 +95,9 @@ public sealed class UserWorkflow : IDisposable
     ///     no reference to it.
     /// </param>
     /// <param name="pluginList">The authoritative Plugin List whose lifetime transfers to this workflow.</param>
-    /// <param name="processingRunExecutor">The owned Processing Run executor.</param>
+    /// <param name="processingRunExecutor">
+    ///     The stateless Processing Run executor each admitted run is handed to, with the token this workflow owns.
+    /// </param>
     /// <param name="defaultDatabaseRoot">
     ///     The root under which a real run with no chosen database path gets its default database, or null or blank when
     ///     composition could not resolve one. It is only used to compute a path; nothing is created under it here.
@@ -179,7 +198,6 @@ public sealed class UserWorkflow : IDisposable
         {
             // Ownership only transfers once the constructor returns, so a constructor failure would otherwise leak the
             // disposables built above. Cleanup is best-effort and must not replace the constructor's exception.
-            DisposeIgnoringFailure(processingRunExecutor);
             DisposeIgnoringFailure(pluginList);
             throw;
         }
@@ -207,10 +225,11 @@ public sealed class UserWorkflow : IDisposable
     /// </summary>
     /// <remarks>
     ///     The steps run in a fixed order: detach the Plugin List presentation adapter, retire the Game Context, cancel
-    ///     the Processing Run executor, dispose the executor, then dispose the Plugin List. Every owned
-    ///     collaborator is retired even when an earlier step fails. Cleanup after a failure is best-effort, matching
-    ///     Plugin ingestion overlay cleanup: the first failure keeps its identity, and a standalone cleanup failure still
-    ///     propagates because no other path reports it.
+    ///     the active Processing Run, then dispose the Plugin List. Cancelling does not wait for the run to end, so
+    ///     closing the window cannot hang on it; the run still releases its own cancellation source as it ends. Every
+    ///     owned collaborator is retired even when an earlier step fails. Cleanup after a failure is best-effort,
+    ///     matching Plugin ingestion overlay cleanup: the first failure keeps its identity, and a standalone cleanup
+    ///     failure still propagates because no other path reports it.
     /// </remarks>
     /// <exception cref="AggregateException">A registered Processing Run cancellation callback throws.</exception>
     public void Dispose()
@@ -225,15 +244,14 @@ public sealed class UserWorkflow : IDisposable
         Exception? primaryException = null;
         // Detach presentation before anything else, and in particular before the workflow retires its authoritative
         // Plugin List. A projection already queued on the dispatcher would otherwise still write to the ViewModel
-        // during teardown — for example when cancelling the executor lets the dispatcher run — and a refresh
+        // during teardown — for example when cancelling the active run lets the dispatcher run — and a refresh
         // publishing from another thread could queue a new one. Disposing the Plugin List itself publishes no state,
         // so these queued-projection and cross-thread publisher windows are the only ones this ordering guards.
         RetireCollaborator(_pluginListPresentationAdapter.Dispose, ref primaryException);
-        // Retire the Game Context before cancelling and disposing the executor and Plugin List so late lookup or picker
+        // Retire the Game Context before cancelling the run and disposing the Plugin List so late lookup or picker
         // work cannot publish into torn-down state. It borrows the Plugin List, so retiring it disposes nothing.
         RetireCollaborator(_gameContext.Dispose, ref primaryException);
-        RetireCollaborator(_processingRunExecutor.Cancel, ref primaryException);
-        RetireCollaborator(_processingRunExecutor.Dispose, ref primaryException);
+        RetireCollaborator(CancelActiveRun, ref primaryException);
         RetireCollaborator(_pluginList.Dispose, ref primaryException);
         if (primaryException is not null)
         {
@@ -374,6 +392,7 @@ public sealed class UserWorkflow : IDisposable
     {
         // The run-active check, Processing Run Admission and the transition into an active run happen together, so a
         // second press arriving before the executor has the run cancels the run in flight rather than starting another.
+        // A press that finds a run active has already cancelled its token inside the gate by the time it returns.
         var press = DecideRunPress();
         if (press is RunPress.CancelActiveRun)
         {
@@ -382,7 +401,6 @@ public sealed class UserWorkflow : IDisposable
             // message lists instead (#60). It carries no percentage, so the bar stays where the run left it.
             var cancelling = ProcessingRunPresentation.Render(new ProcessingRunCancellationRequested());
             ReportRunActivity(cancelling.Status, cancelling.Value);
-            _processingRunExecutor.Cancel();
             return;
         }
 
@@ -413,8 +431,8 @@ public sealed class UserWorkflow : IDisposable
     /// <param name="admitted">The admitted run and the database path captured with it.</param>
     /// <returns>A task that completes after the run finishes, fails, or observes cancellation.</returns>
     /// <remarks>
-    ///     The caller must already own the run gate's activity: this method's <c>finally</c> clears it, which is only
-    ///     correct for the press that published it.
+    ///     The caller must already own the run gate's activity and the run's cancellation source: this method's
+    ///     <c>finally</c> clears both and releases the source, which is only correct for the press that created them.
     /// </remarks>
     private async Task ExecuteAdmittedRunAsync(RunPress.Admitted admitted)
     {
@@ -430,7 +448,12 @@ public sealed class UserWorkflow : IDisposable
 
             var progress = new ProcessingRunProgressAdapter(ApplyProcessingRunProgress);
 
-            var outcome = await _processingRunExecutor.ExecuteAsync(admitted.Run.Request, progress);
+            // The token may already be cancelled by a press that re-entered during startup; the executor still enters
+            // its worker and returns the cancelled outcome, so that press ends with the normal acknowledgement.
+            var outcome = await _processingRunExecutor.ExecuteAsync(
+                admitted.Run.Request,
+                progress,
+                admitted.CancellationSource.Token);
             ApplyProcessingRunOutcome(outcome);
         }
         // Every run failure takes this one route. Which failure is shown unwrapped — an Unresolvable Master, whose own
@@ -441,9 +464,19 @@ public sealed class UserWorkflow : IDisposable
         }
         finally
         {
-            // Clearing run activity hands the progress channel back rather than blanking it: a Plugin List refresh
-            // still scanning underneath this run keeps showing its own progress, by the ViewModel's precedence rule.
-            ProjectRunActivity(ActivityProjection.None);
+            lock (_runActivityLock)
+            {
+                // Clearing run activity hands the progress channel back rather than blanking it: a Plugin List refresh
+                // still scanning underneath this run keeps showing its own progress, by the ViewModel's precedence rule.
+                ProjectRunActivityLocked(ActivityProjection.None);
+                // Cleared together with the activity, so no press can find the run inactive yet still holding a source,
+                // nor cancel the source after the release below.
+                _runCancellationSource = null;
+            }
+
+            // Released only after the executor has returned, so nothing still reads the token, and outside the lock
+            // because every cancel happens under it and now finds no source.
+            admitted.CancellationSource.Dispose();
         }
     }
 
@@ -452,15 +485,17 @@ public sealed class UserWorkflow : IDisposable
     ///     already active, and otherwise whatever Processing Run Admission makes of the inputs captured now.
     /// </summary>
     /// <returns>
-    ///     <see cref="RunPress.CancelActiveRun" /> when a run is already active; <see cref="RunPress.Refused" /> when
-    ///     admission refused the press; or <see cref="RunPress.Admitted" />, the only case in which run activity was
-    ///     published and the caller now owns a new run.
+    ///     <see cref="RunPress.CancelActiveRun" /> when a run was already active, whose token is now cancelled;
+    ///     <see cref="RunPress.Refused" /> when admission refused the press; or <see cref="RunPress.Admitted" />, the
+    ///     only case in which a cancellation source was created and run activity published, and the caller now owns a
+    ///     new run.
     /// </returns>
     /// <remarks>
-    ///     Capture, admission and activity publication share the run gate, so nothing published in between can change
-    ///     what was admitted, and a refused press never becomes an active run. Nothing is caught here: admission has no
-    ///     exception mode for a directory (ADR-0011), so anything it or a re-entrant activity notification throws is a
-    ///     programming error and propagates rather than being shown as a user-facing failure.
+    ///     Capture, admission, the run's cancellation source and activity publication share the run gate, so nothing
+    ///     published in between can change what was admitted, and a refused press never becomes an active run. Nothing
+    ///     is caught here: admission has no exception mode for a directory (ADR-0011), so anything it or a re-entrant
+    ///     activity notification throws is a programming error and propagates rather than being shown as a
+    ///     user-facing failure.
     /// </remarks>
     private RunPress DecideRunPress()
     {
@@ -468,6 +503,9 @@ public sealed class UserWorkflow : IDisposable
         {
             if (_runActivity.IsActive)
             {
+                // Cancelled inside the gate, so the run this press found active is the run it cancels. A press after
+                // cancellation was already requested cancels an already-cancelled source, which changes nothing.
+                CancelActiveRun();
                 return new RunPress.CancelActiveRun();
             }
 
@@ -490,6 +528,11 @@ public sealed class UserWorkflow : IDisposable
             switch (decision)
             {
                 case AdmittedRun admitted:
+                    // The run's token exists before anything about the run is published: the starting activity, the
+                    // list clears and the defaulted path all raise notifications that can re-enter a press, and that
+                    // press must find a token to cancel rather than a run with nothing to cancel yet (#104).
+                    var cancellationSource = new CancellationTokenSource();
+                    _runCancellationSource = cancellationSource;
                     // This projection is the transition into an active run, so it sets IsActive itself rather than
                     // going through ReportRunActivity, which never changes whether a run is active. The starting
                     // status renders 0 percent; the carry-forward only applies if a future render omits one.
@@ -498,7 +541,7 @@ public sealed class UserWorkflow : IDisposable
                         true,
                         starting.Status,
                         starting.Value ?? _runActivity.Value));
-                    return new RunPress.Admitted(admitted, inputs.DatabasePath);
+                    return new RunPress.Admitted(admitted, inputs.DatabasePath, cancellationSource);
                 case RefusedRun refused:
                     return new RunPress.Refused(refused.Reason);
                 default:
@@ -508,14 +551,19 @@ public sealed class UserWorkflow : IDisposable
     }
 
     /// <summary>
-    ///     Makes one complete run report authoritative and projects it.
+    ///     Requests cancellation of the active Processing Run, if one is active, without waiting for it to end.
     /// </summary>
-    /// <param name="runActivity">The complete run report to publish.</param>
-    private void ProjectRunActivity(ActivityProjection runActivity)
+    /// <exception cref="AggregateException">A callback registered on the run's token throws.</exception>
+    /// <remarks>
+    ///     The source is cancelled while the lock is held, which is what keeps a cancel from racing the run that
+    ///     releases it: the run clears the slot under the same lock before disposing the source. The lock is
+    ///     reentrant, so a press re-entering from a startup notification inside the gate can still cancel.
+    /// </remarks>
+    private void CancelActiveRun()
     {
         lock (_runActivityLock)
         {
-            ProjectRunActivityLocked(runActivity);
+            _runCancellationSource?.Cancel();
         }
     }
 
@@ -703,7 +751,13 @@ public sealed class UserWorkflow : IDisposable
         /// <param name="CapturedDatabasePath">
         ///     The database path captured with the press, which guards writing a defaulted path back to the ViewModel.
         /// </param>
-        public sealed record Admitted(AdmittedRun Run, string? CapturedDatabasePath) : RunPress;
+        /// <param name="CancellationSource">
+        ///     The run's cancellation source, created inside the gate and released by the press that executes the run.
+        /// </param>
+        public sealed record Admitted(
+            AdmittedRun Run,
+            string? CapturedDatabasePath,
+            CancellationTokenSource CancellationSource) : RunPress;
     }
 
     private sealed class ProcessingRunProgressAdapter(Action<ProcessingRunProgress> handler)

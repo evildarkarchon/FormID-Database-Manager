@@ -119,18 +119,6 @@ public sealed class ProcessingRunPresentationTests
     }
 
     /// <summary>
-    ///     Verifies that a failing run's status carries no percentage either, so the bar stays where the run left it.
-    /// </summary>
-    [Fact]
-    public void Render_ProcessingRunFailure_ReportsThePrefixedMessageWithoutAPercentage()
-    {
-        var rendered = ProcessingRunPresentation.Render(new ProcessingRunFailure("store unavailable"));
-
-        Assert.Equal("Error during processing: store unavailable", rendered.Status);
-        Assert.Null(rendered.Value);
-    }
-
-    /// <summary>
     ///     Pins the status an admitted press shows the moment it becomes a run, before the run has reported anything of
     ///     its own, and the zero percentage that resets the bar for it.
     /// </summary>

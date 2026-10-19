@@ -284,6 +284,37 @@ public class CoreProjectBoundaryTests
     }
 
     /// <summary>
+    ///     Verifies that the Processing Run progress vocabulary has no failure case, and that Processing Run
+    ///     Presentation no longer renders one: a failure reaches the user once, as an error message rendered from the
+    ///     exception, never as transient progress the run's cleanup erases.
+    /// </summary>
+    /// <remarks>
+    ///     Issue #104, under parent #102 (user stories 12 and 30). The cases are found by reflection, so this pins the
+    ///     closed set the run may report rather than the absence of one name.
+    /// </remarks>
+    [Fact]
+    public void ProcessingRunProgress_AfterTheStatelessExecutor_HasNoFailureCase()
+    {
+        var progressCases = typeof(ProcessingRunProgress).Assembly.GetTypes()
+            .Where(static type => type.IsSubclassOf(typeof(ProcessingRunProgress)))
+            .Select(static type => type.Name)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+        var presentationSource = File.ReadAllText(
+            Path.Combine(GetCoreProjectDirectory(), "Services", "ProcessingRunPresentation.cs"));
+
+        Assert.Equal(
+            [
+                nameof(ImportedFormIdText),
+                nameof(ImportingFormIdText),
+                nameof(IngestingPlugin),
+                nameof(PreparingLoadOrder)
+            ],
+            progressCases);
+        Assert.DoesNotContain("Error during processing", presentationSource, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     ///     Verifies that neither Processing Run Admission, the User Workflow nor the Game Context writes a refusal
     ///     sentence of its own: admission returns a typed reason and <c>ProcessingRunPresentation</c> alone renders it
     ///     (ADR-0010).
@@ -466,7 +497,8 @@ public class CoreProjectBoundaryTests
 
     /// <summary>
     ///     Verifies that <see cref="UserWorkflow.Dispose" /> detaches the Plugin List presentation adapter, then retires
-    ///     the Game Context, then cancels the Processing Run executor, in that order (#98).
+    ///     the Game Context, then cancels the active Processing Run, then disposes the Plugin List, in that order (#98),
+    ///     and that no teardown step reaches the executor (#104).
     /// </summary>
     /// <remarks>
     ///     <para>
@@ -480,9 +512,14 @@ public class CoreProjectBoundaryTests
     ///         The calls are searched for only inside the method's body, and each must appear there exactly once, so a
     ///         duplicated or relocated call cannot satisfy the order by accident.
     ///     </para>
+    ///     <para>
+    ///         Issue #104, under parent #102. The executor is stateless and no longer disposable, so the run's
+    ///         cancellation step cancels the workflow's own source rather than calling the executor, and the body may
+    ///         not mention the executor at all.
+    ///     </para>
     /// </remarks>
     [Fact]
-    public void UserWorkflowDispose_TeardownOrder_DetachesPresentationThenRetiresGameContextThenCancelsExecutor()
+    public void UserWorkflowDispose_TeardownOrder_DetachesPresentationThenRetiresGameContextThenCancelsTheRun()
     {
         var userWorkflowSource = File.ReadAllText(Path.Combine(GetCoreProjectDirectory(), "Services", "UserWorkflow.cs"));
         const string disposeSignature = "public void Dispose()";
@@ -497,8 +534,11 @@ public class CoreProjectBoundaryTests
         [
             "RetireCollaborator(_pluginListPresentationAdapter.Dispose,",
             "RetireCollaborator(_gameContext.Dispose,",
-            "RetireCollaborator(_processingRunExecutor.Cancel,"
+            "RetireCollaborator(CancelActiveRun,",
+            "RetireCollaborator(_pluginList.Dispose,"
         ];
+
+        Assert.DoesNotContain("_processingRunExecutor", disposeBody, StringComparison.Ordinal);
 
         var stepPositions = orderedSteps
             .Select(step =>

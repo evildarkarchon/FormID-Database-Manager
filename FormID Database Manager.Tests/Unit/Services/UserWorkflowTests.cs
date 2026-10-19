@@ -185,7 +185,6 @@ public class UserWorkflowTests
 
         Assert.Equal(["Please select a game from the dropdown first."], _viewModel.ErrorMessages);
         Assert.Empty(_processingRuns);
-        Assert.Equal(0, _processingRunExecutor.CancelCallCount);
         Assert.DoesNotContain("Initializing...", projectedStatuses);
         Assert.Empty(projectedStatuses);
         Assert.False(progressShown);
@@ -223,7 +222,7 @@ public class UserWorkflowTests
         await sut.ProcessFormIdsAsync();
 
         Assert.IsType<PluginProcessingRunRequest>(Assert.Single(_processingRuns));
-        Assert.Equal(0, _processingRunExecutor.CancelCallCount);
+        Assert.False(Assert.Single(_processingRunExecutor.ReceivedTokens).IsCancellationRequested);
     }
 
     /// <summary>
@@ -258,7 +257,7 @@ public class UserWorkflowTests
         await sut.ProcessFormIdsAsync();
 
         Assert.IsType<FormIdTextProcessingRunRequest>(Assert.Single(_processingRuns));
-        Assert.Equal(0, _processingRunExecutor.CancelCallCount);
+        Assert.False(Assert.Single(_processingRunExecutor.ReceivedTokens).IsCancellationRequested);
     }
 
     /// <summary>
@@ -672,10 +671,17 @@ public class UserWorkflowTests
     }
 
     /// <summary>
-    /// Verifies that a second press during the first startup notification requests cancellation without accepting another run.
+    /// Verifies that a second press during the first startup notification really cancels the run it re-enters: the
+    /// token handed to the executor is already cancelled, no second run is accepted, and the run ends with the normal
+    /// cancellation acknowledgement.
     /// </summary>
+    /// <remarks>
+    /// Issue #104, under parent #102. This used to count cancel calls on the fake executor, and passed while the
+    /// cancel was being dropped: the executor's own cancellation source did not exist yet when the press arrived. The
+    /// token is what the run actually observes, so asserting on it proves the cancel took effect.
+    /// </remarks>
     [Fact]
-    public async Task ProcessFormIdsAsync_PressedDuringInitializing_RequestsCancellationWithoutSecondRun()
+    public async Task ProcessFormIdsAsync_PressedDuringInitializing_HandsTheExecutorAnAlreadyCancelledToken()
     {
         var sut = CreateSut();
         await ConfigureValidPluginProcessingRunAsync(sut);
@@ -684,7 +690,12 @@ public class UserWorkflowTests
         await sut.ProcessFormIdsAsync();
 
         Assert.Single(_processingRuns);
-        Assert.Equal(1, _processingRunExecutor.CancelCallCount);
+        Assert.True(Assert.Single(_processingRunExecutor.ReceivedTokens).IsCancellationRequested);
+        // The last information message, because the Plugin List refresh that set the run up leaves its own ahead of it.
+        Assert.Equal(
+            ProcessingRunPresentation.Render(new CancelledRunOutcome()).InformationMessages.ToArray(),
+            _viewModel.InformationMessages.TakeLast(1).ToArray());
+        Assert.Equal("Process FormIDs", _viewModel.ProcessButtonText);
     }
 
     [Fact]
@@ -865,10 +876,6 @@ public class UserWorkflowTests
         var sut = CreateSut();
         await ConfigureValidPluginProcessingRunAsync(sut);
         var failure = new UnresolvableMasterException("User.esp", "Starfield.esm");
-        // The real executor reports this status for any terminal failure before rethrowing, so it is reproduced here:
-        // what the assertion needs to show is that it stays out of the error list rather than doubling the message.
-        _processingRunExecutor.ProgressToReport.Add(
-            new ProcessingRunFailure(failure.Message));
         _processingRunExecutor.ExecuteFailure = failure;
         // Recorded after the setup that confirmed the Plugin List, so the sequence below is the run's alone.
         var projectedStatuses = RecordProjectedStatuses();
@@ -878,13 +885,10 @@ public class UserWorkflowTests
         Assert.Equal([failure.Message], _viewModel.ErrorMessages);
         Assert.Empty(_viewModel.WarningMessages);
         Assert.False(_viewModel.IsProgressVisible);
-        // Cleared by the workflow's own finally, so the prefixed status is transient and never the lasting report.
         Assert.Equal(string.Empty, _viewModel.ProgressStatus);
-        // The complete sequence rather than a containment check: the prefixed status appearing once on the transient
-        // channel and nowhere else is the whole distinction this test draws.
-        Assert.Equal(
-            ["Initializing...", $"Error during processing: {failure.Message}", string.Empty],
-            projectedStatuses);
+        // The complete sequence rather than a containment check: a failure reaches the user once, in the error list,
+        // and never flickers on the transient channel (#102, user story 12).
+        Assert.Equal(["Initializing...", string.Empty], projectedStatuses);
     }
 
     /// <summary>
@@ -970,7 +974,7 @@ public class UserWorkflowTests
 
         await sut.ProcessFormIdsAsync();
 
-        Assert.Equal(1, _processingRunExecutor.CancelCallCount);
+        Assert.True(Assert.Single(_processingRunExecutor.ReceivedTokens).IsCancellationRequested);
         Assert.Single(_processingRuns);
         Assert.Equal("Cancel Processing", buttonTextDuringRun);
         Assert.Equal("Cancelling...", statusDuringCancellation);
@@ -994,19 +998,14 @@ public class UserWorkflowTests
         await ConfigureValidPluginProcessingRunAsync(sut);
         _processingRunExecutor.ProgressToReport.Add(new IngestingPlugin("User.esp", 2, 5));
         var projectedStatuses = RecordProjectedStatuses();
-        // The second press is the cancellation intent, delivered mid-run from the run's own progress notification.
-        OnRunStatus("Ingesting plugin 2 of 5: User.esp", () =>
-        {
-            sut.ProcessFormIdsAsync().GetAwaiter().GetResult();
-            // Armed only once the press has reached the executor, so the run ends as cancelled because it was
-            // cancelled: the real executor returns this outcome for the cancellation it accepted, and never for one
-            // it was not asked for.
-            _processingRunExecutor.Outcome = new CancelledRunOutcome();
-        });
+        // The second press is the cancellation intent, delivered mid-run from the run's own progress notification. The
+        // recording executor ends the run as cancelled only because that press cancelled the token it was handed, as
+        // the real executor does for the cancellation it was asked for and never for one it was not.
+        OnRunStatus("Ingesting plugin 2 of 5: User.esp", () => sut.ProcessFormIdsAsync().GetAwaiter().GetResult());
 
         await sut.ProcessFormIdsAsync();
 
-        Assert.Equal(1, _processingRunExecutor.CancelCallCount);
+        Assert.True(Assert.Single(_processingRunExecutor.ReceivedTokens).IsCancellationRequested);
         // The Plugin List refresh that set this run up leaves its own information message ahead of the acknowledgement.
         Assert.Contains("Processing cancelled by user.", _viewModel.InformationMessages);
         Assert.Empty(_viewModel.ErrorMessages);
@@ -1023,15 +1022,17 @@ public class UserWorkflowTests
 
     /// <summary>
     ///     Verifies the window this workflow owns run state to close: a press landing after the run was admitted but
-    ///     before the executor has been handed the run cancels rather than launching a second run.
+    ///     before the executor has been handed the run cancels that run rather than launching a second one, and the
+    ///     cancel really reaches it.
     /// </summary>
     /// <remarks>
     ///     The second press is delivered from the notification raised when the workflow defaults the database path,
-    ///     which happens inside that window. The executor's cancellation source does not exist yet at that point, so
-    ///     an executor-owned run flag could not have answered this press correctly.
+    ///     which happens inside that window. The run's cancellation source is created the moment admission admits the
+    ///     press, before anything is published (issue #104), so the token the executor is then handed is already
+    ///     cancelled — and the defaulted path the press chose still reaches the database path box.
     /// </remarks>
     [Fact]
-    public async Task ProcessFormIdsAsync_PressedBeforeTheRunReachesTheExecutor_DoesNotLaunchASecondRun()
+    public async Task ProcessFormIdsAsync_PressedBeforeTheRunReachesTheExecutor_CancelsTheRunWithoutLaunchingASecond()
     {
         var sut = CreateSut();
         var confirmed = await ConfirmPluginListAsync(sut, ["User.esp"]);
@@ -1051,8 +1052,9 @@ public class UserWorkflowTests
         await sut.ProcessFormIdsAsync();
 
         Assert.True(secondPressed);
-        Assert.Single(_processingRuns);
-        Assert.Equal(1, _processingRunExecutor.CancelCallCount);
+        var run = Assert.Single(_processingRuns);
+        Assert.True(Assert.Single(_processingRunExecutor.ReceivedTokens).IsCancellationRequested);
+        Assert.Equal(run.DatabasePath, _viewModel.DatabasePath);
     }
 
     /// <summary>
@@ -1183,116 +1185,147 @@ public class UserWorkflowTests
         };
     }
 
+    /// <summary>
+    /// Verifies that closing the window during a run cancels it without waiting for it to end: disposal returns while
+    /// the run is still held in flight, the token the run was handed is cancelled, and a repeated disposal is a no-op.
+    /// </summary>
+    /// <remarks>
+    /// Issue #104, under parent #102. The run's cancellation is this workflow's own now, so it is the token the run
+    /// observes, not a call on the executor, that shows the run was cancelled. The run is released afterwards and ends
+    /// as cancelled, as the real executor would end it.
+    /// </remarks>
     [Fact]
-    public void Dispose_CalledTwice_CancelsAndDisposesProcessingRunExecutorOnce()
+    public async Task Dispose_DuringARun_CancelsTheRunWithoutWaitingForIt()
     {
         var sut = CreateSut();
+        await ConfigureValidPluginProcessingRunAsync(sut);
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _processingRunExecutor.Gate = gate.Task;
+        var run = sut.ProcessFormIdsAsync();
+        var token = Assert.Single(_processingRunExecutor.ReceivedTokens);
+        Assert.False(token.IsCancellationRequested);
 
         sut.Dispose();
         sut.Dispose();
 
-        Assert.Equal(1, _processingRunExecutor.CancelCallCount);
-        Assert.Equal(1, _processingRunExecutor.DisposeCallCount);
+        Assert.False(run.IsCompleted);
+        Assert.True(token.IsCancellationRequested);
         Assert.Throws<ObjectDisposedException>(() => _pluginList.Invalidate());
+
+        gate.SetResult();
+        await run;
     }
 
     /// <summary>
-    /// Verifies that a throwing run cancellation still retires every owned collaborator, and that a later cleanup
-    /// failure cannot replace the cancellation failure the caller observes.
+    /// Verifies that a throwing run cancellation callback still lets disposal retire the Plugin List, and that the
+    /// callback's failure propagates as the one failure the caller observes.
     /// </summary>
+    /// <remarks>
+    /// A cancellation callback registered on the run's token throws out of <see cref="CancellationTokenSource.Cancel()" />
+    /// as an <see cref="AggregateException" />. Cancelling the run is the only teardown step a test can make fail, so
+    /// this also covers a standalone cleanup failure: nothing else is in flight to take precedence over it.
+    /// </remarks>
     [Fact]
-    public void Dispose_CancellationCallbackThrows_StillDisposesCollaboratorsAndKeepsPrimaryFailure()
+    public async Task Dispose_RunCancellationCallbackThrows_PropagatesAndStillRetiresPluginList()
     {
         var callbackFailure = new InvalidOperationException("cancellation callback failed");
-        _processingRunExecutor.CancelFailure = new AggregateException(callbackFailure);
-        _processingRunExecutor.DisposeFailure = new InvalidOperationException("executor cleanup failed");
         var sut = CreateSut();
+        await ConfigureValidPluginProcessingRunAsync(sut);
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _processingRunExecutor.Gate = gate.Task;
+        _processingRunExecutor.OnExecute = token => token.Register(() => throw callbackFailure);
+        var run = sut.ProcessFormIdsAsync();
 
         var thrown = Assert.Throws<AggregateException>(() => sut.Dispose());
 
         Assert.Same(callbackFailure, Assert.Single(thrown.InnerExceptions));
-        Assert.Equal(1, _processingRunExecutor.CancelCallCount);
-        Assert.Equal(1, _processingRunExecutor.DisposeCallCount);
+        Assert.True(Assert.Single(_processingRunExecutor.ReceivedTokens).IsCancellationRequested);
         Assert.Throws<ObjectDisposedException>(() => _pluginList.Invalidate());
+
+        gate.SetResult();
+        await run;
     }
 
     /// <summary>
-    /// Verifies that a cleanup failure with no other failure in flight still propagates and does not stop the
-    /// remaining collaborator from being retired.
-    /// </summary>
-    [Fact]
-    public void Dispose_StandaloneCleanupFailure_PropagatesAndStillRetiresPluginList()
-    {
-        var disposalFailure = new InvalidOperationException("executor cleanup failed");
-        _processingRunExecutor.DisposeFailure = disposalFailure;
-        var sut = CreateSut();
-
-        var thrown = Assert.Throws<InvalidOperationException>(() => sut.Dispose());
-
-        Assert.Same(disposalFailure, thrown);
-        Assert.Equal(1, _processingRunExecutor.CancelCallCount);
-        Assert.Throws<ObjectDisposedException>(() => _pluginList.Invalidate());
-    }
-
-    /// <summary>
-    /// Verifies the middle of the disposal order: the Game Context is retired before the executor is cancelled, so an
-    /// installed-location lookup that finishes while cancellation runs cannot project a directory or refresh the
+    /// Verifies the middle of the disposal order: the Game Context is retired before the active run is cancelled, so
+    /// an installed-location lookup that finishes while cancellation runs cannot project a directory or refresh the
     /// Plugin List the workflow is about to dispose.
     /// </summary>
     /// <remarks>
-    /// The lookup is released from inside the executor's cancellation, which is the first step after the Game Context
-    /// slot. The step before it, detaching the Plugin List presentation adapter, is pinned against cancellation by
-    /// <see cref="Dispose_QueuedPluginListProjection_DetachesPresentationBeforeCancellingExecutor" />. Retiring the Game
+    /// The lookup is released from a callback registered on the run's token, so it finishes inside the run's
+    /// cancellation, which is the step after the Game Context's. The step before it, detaching the Plugin List
+    /// presentation adapter, is pinned against cancellation by
+    /// <see cref="Dispose_QueuedPluginListProjection_DetachesPresentationBeforeCancellingTheRun" />. Retiring the Game
     /// Context has no effect at the moment it runs, only on later work, so its order relative to the adapter is
     /// not observable and is kept by the source order alone, which
-    /// <c>CoreProjectBoundaryTests.UserWorkflowDispose_TeardownOrder_DetachesPresentationThenRetiresGameContextThenCancelsExecutor</c>
+    /// <c>CoreProjectBoundaryTests.UserWorkflowDispose_TeardownOrder_DetachesPresentationThenRetiresGameContextThenCancelsTheRun</c>
     /// pins.
     /// </remarks>
     [Fact]
-    public async Task Dispose_LookupFinishingDuringExecutorCancellation_CannotPublishIntoTeardown()
+    public async Task Dispose_LookupFinishingDuringRunCancellation_CannotPublishIntoTeardown()
     {
         var lookupStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var allowLookupToFinish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var sut = CreateSut();
+        await ConfigureValidPluginProcessingRunAsync(sut);
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _processingRunExecutor.Gate = gate.Task;
+        var run = sut.ProcessFormIdsAsync();
         _gameInstallationProbe.WithInstalledDirectories(GameRelease.Fallout4, @"C:\Games\Fallout4");
         GateInstalledLocationLookup(GameRelease.Fallout4, lookupStarted, allowLookupToFinish);
-        var sut = CreateSut();
         // Started from the thread pool, so the selection's continuations never need the test's own context, which is
         // blocked inside the cancellation callback below while it waits for them.
         var selection = Task.Run(
             () => sut.SelectGameReleaseAsync(GameRelease.Fallout4),
             TestContext.Current.CancellationToken);
         await lookupStarted.Task;
+        var refreshesBeforeDispose = _refreshes.Count;
         string? directoryDuringCancel = null;
         var refreshesDuringCancel = -1;
-        _processingRunExecutor.OnCancel = () =>
+        Assert.Single(_processingRunExecutor.ReceivedTokens).Register(() =>
         {
             allowLookupToFinish.SetResult();
             selection.GetAwaiter().GetResult();
             directoryDuringCancel = _viewModel.GameDirectory;
             refreshesDuringCancel = _refreshes.Count;
-        };
+        });
 
         sut.Dispose();
 
-        Assert.Equal(1, _processingRunExecutor.CancelCallCount);
+        Assert.True(Assert.Single(_processingRunExecutor.ReceivedTokens).IsCancellationRequested);
+        // Selecting Fallout4 cleared the directory; the retired lookup never projected the one it found.
         Assert.Equal(string.Empty, directoryDuringCancel);
-        Assert.Equal(0, refreshesDuringCancel);
+        Assert.Equal(refreshesBeforeDispose, refreshesDuringCancel);
         Assert.Empty(_viewModel.DetectedDirectories);
+
+        gate.SetResult();
+        await run;
     }
 
     /// <summary>
     /// Verifies that disposal detaches Plugin List presentation before any other teardown step, so a projection already
-    /// queued on the dispatcher cannot write to the ViewModel when cancelling the executor lets that dispatcher run.
+    /// queued on the dispatcher cannot write to the ViewModel when cancelling the active run lets that dispatcher run.
     /// </summary>
+    /// <remarks>
+    /// The dispatcher is drained from a callback registered on the run's token, so it runs inside the run's
+    /// cancellation. That drain also applies the run's own queued starting activity, which is why the standing scan
+    /// activity is checked only once the run has ended and handed the progress channel back: a Plugin List projection
+    /// that survived disposal would have replaced it.
+    /// </remarks>
     [Fact]
-    public async Task Dispose_QueuedPluginListProjection_DetachesPresentationBeforeCancellingExecutor()
+    public async Task Dispose_QueuedPluginListProjection_DetachesPresentationBeforeCancellingTheRun()
     {
         var dispatcher = new RecordingThreadDispatcher();
         var viewModel = new MainWindowViewModel(dispatcher);
         // Standing scan activity from before the workflow existed, so a projection surviving disposal would clear it.
         viewModel.ApplyScanActivityProjection(new ActivityProjection(true, "Unchanged", 42));
         dispatcher.Drain();
-        var executor = new RecordingProcessingRunExecutor([]) { OnCancel = dispatcher.Drain };
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var executor = new RecordingProcessingRunExecutor([])
+        {
+            Gate = gate.Task,
+            OnExecute = token => token.Register(dispatcher.Drain)
+        };
         _pluginListGameLoadOrders.PluginNames = ["User.esp"];
         _gameInstallationProbe.WithInstalledDirectories(GameRelease.SkyrimSE, GameDirectory);
         var sut = new UserWorkflow(
@@ -1308,18 +1341,27 @@ public class UserWorkflowTests
         Assert.NotNull(_pluginList.Current.Confirmed);
         Assert.NotEqual(0, dispatcher.PendingCount);
         Assert.Empty(viewModel.Plugins);
+        // A FormID text run, which needs only the GameRelease, and an explicit path so no default is written back.
+        viewModel.FormIdListPath = FormIdListPath;
+        viewModel.DatabasePath = DatabasePath;
+        var run = sut.ProcessFormIdsAsync();
         var postCountBeforeDispose = dispatcher.PostCount;
 
         sut.Dispose();
+
+        Assert.True(Assert.Single(executor.ReceivedTokens).IsCancellationRequested);
+        Assert.Empty(viewModel.Plugins);
+        Assert.Empty(viewModel.InformationMessages);
+        Assert.Equal(postCountBeforeDispose, dispatcher.PostCount);
+
+        gate.SetResult();
+        await run;
         dispatcher.Drain();
 
-        Assert.Equal(1, executor.CancelCallCount);
         Assert.Empty(viewModel.Plugins);
         Assert.True(viewModel.IsProgressVisible);
         Assert.Equal("Unchanged", viewModel.ProgressStatus);
         Assert.Equal(42, viewModel.ProgressValue);
-        Assert.Empty(viewModel.InformationMessages);
-        Assert.Equal(postCountBeforeDispose, dispatcher.PostCount);
     }
 
     /// <summary>
@@ -1485,29 +1527,35 @@ public class UserWorkflowTests
         sut.SetPluginSelection(confirmed.MembershipVersion, "User.esp", true);
     }
 
+    /// <summary>
+    ///     Records every run it is handed, together with the cancellation token that came with it, and ends each run
+    ///     the way the real executor would: cancelled when that token was cancelled by the time the run ends, and
+    ///     otherwise with the configured failure or outcome.
+    /// </summary>
+    /// <remarks>
+    ///     Issue #104, under parent #102. Tests observe cancellation through the token the run received rather than by
+    ///     counting calls, so a test passes only if the cancel really reached the run. A run can be held at
+    ///     <see cref="Gate" /> so a test can act — press again, dispose — while it is still in flight.
+    /// </remarks>
     private sealed class RecordingProcessingRunExecutor(List<ProcessingRunRequest> processingRuns)
         : IProcessingRunExecutor
     {
-        public int CancelCallCount { get; private set; }
-
-        public int DisposeCallCount { get; private set; }
+        /// <summary>
+        ///     The cancellation token each run was handed, in run order.
+        /// </summary>
+        public List<CancellationToken> ReceivedTokens { get; } = [];
 
         /// <summary>
-        ///     The failure raised by <see cref="Cancel" />, standing in for a registered run cancellation callback
-        ///     that throws out of the real executor's cancellation source.
+        ///     When set, each run reports its progress and then waits for this task before ending, so it stays in
+        ///     flight until the test completes it.
         /// </summary>
-        public Exception? CancelFailure { get; set; }
+        public Task? Gate { get; set; }
 
         /// <summary>
-        ///     Work run inside <see cref="Cancel" /> before any configured failure, standing in for cancellation
-        ///     callbacks that let the UI dispatcher run queued work while the workflow is being torn down.
+        ///     Work run inside each run after its progress is reported and before it waits at <see cref="Gate" />, with
+        ///     the run's token — for example to register a cancellation callback on it.
         /// </summary>
-        public Action? OnCancel { get; set; }
-
-        /// <summary>
-        ///     The failure raised by <see cref="Dispose" />, standing in for an executor whose own cleanup fails.
-        /// </summary>
-        public Exception? DisposeFailure { get; set; }
+        public Action<CancellationToken>? OnExecute { get; set; }
 
         /// <summary>
         ///     The failure raised by <see cref="ExecuteAsync" /> after any configured events are reported, standing in
@@ -1527,38 +1575,70 @@ public class UserWorkflowTests
 
         public List<ProcessingRunProgress> ProgressToReport { get; } = [];
 
+        /// <inheritdoc />
         public Task<ProcessingRunOutcome> ExecuteAsync(
             ProcessingRunRequest request,
-            IProgress<ProcessingRunProgress>? progress = null)
+            IProgress<ProcessingRunProgress>? progress,
+            CancellationToken cancellationToken)
         {
             processingRuns.Add(request);
+            ReceivedTokens.Add(cancellationToken);
             foreach (var runEvent in ProgressToReport)
             {
                 progress?.Report(runEvent);
             }
 
-            return ExecuteFailure is { } failure
-                ? Task.FromException<ProcessingRunOutcome>(failure)
-                : Task.FromResult(Outcome);
-        }
+            OnExecute?.Invoke(cancellationToken);
 
-        public void Cancel()
-        {
-            CancelCallCount++;
-            OnCancel?.Invoke();
-            if (CancelFailure is { } failure)
+            if (Gate is { } gate)
             {
-                throw failure;
+                return EndAfterGateAsync(gate, cancellationToken);
+            }
+
+            // A failure is returned as a faulted task rather than thrown, as an async executor would surface it.
+            try
+            {
+                return Task.FromResult(End(cancellationToken));
+            }
+            catch (Exception ex)
+            {
+                return Task.FromException<ProcessingRunOutcome>(ex);
             }
         }
 
-        public void Dispose()
+        /// <summary>
+        ///     Ends a held run once its gate opens.
+        /// </summary>
+        /// <param name="gate">The task the run waits for.</param>
+        /// <param name="cancellationToken">The run's token, read only once the gate has opened.</param>
+        /// <returns>How the run ended.</returns>
+        private async Task<ProcessingRunOutcome> EndAfterGateAsync(Task gate, CancellationToken cancellationToken)
         {
-            DisposeCallCount++;
-            if (DisposeFailure is { } failure)
+            // The gate ignores the token on purpose: the test, not the cancel, decides when the run ends, so a cancel
+            // that never reached the token shows up as a completed outcome rather than as a hang.
+            await gate.ConfigureAwait(false);
+            return End(cancellationToken);
+        }
+
+        /// <summary>
+        ///     Decides how a run ends, cancellation first, exactly as the real executor attributes it (ADR-0007).
+        /// </summary>
+        /// <param name="cancellationToken">The token the run was handed.</param>
+        /// <returns>The cancelled outcome, or the configured outcome.</returns>
+        /// <exception cref="Exception">The configured <see cref="ExecuteFailure" />, when the run was not cancelled.</exception>
+        private ProcessingRunOutcome End(CancellationToken cancellationToken)
+        {
+            if (cancellationToken.IsCancellationRequested)
+            {
+                return new CancelledRunOutcome();
+            }
+
+            if (ExecuteFailure is { } failure)
             {
                 throw failure;
             }
+
+            return Outcome;
         }
     }
 

@@ -50,7 +50,7 @@ public class StressTests : IDisposable
         var pluginNames = Enumerable.Range(0, cancellationAttempts)
             .Select(static i => $"Test_{i}.esp")
             .ToArray();
-        using var processingRunExecutor = PerformanceProcessingRunFactory.Create(pluginNames);
+        var processingRunExecutor = PerformanceProcessingRunFactory.Create(pluginNames);
 
         var cancelledCount = 0;
         var completedCount = 0;
@@ -64,11 +64,13 @@ public class StressTests : IDisposable
                 dbPath,
                 [pluginNames[i]],
                 UpdateMode.Append);
-            var progress = new CancelOnFirstProgressReport(processingRunExecutor);
+            // Each attempt owns its run's token, as Processing Run Control does for a real run (ADR-0012).
+            using var cancellation = new CancellationTokenSource();
+            var progress = new CancelOnFirstProgressReport(cancellation);
 
             try
             {
-                var outcome = await processingRunExecutor.ExecuteAsync(request, progress);
+                var outcome = await processingRunExecutor.ExecuteAsync(request, progress, cancellation.Token);
                 if (outcome is CancelledRunOutcome)
                 {
                     cancelledCount++;
@@ -90,7 +92,9 @@ public class StressTests : IDisposable
             dbPath,
             [pluginNames[0]],
             UpdateMode.Append,
-            dryRun: true));
+            dryRun: true),
+            null,
+            TestContext.Current.CancellationToken);
         completedCount++;
 
         // Assert
@@ -372,7 +376,7 @@ public class StressTests : IDisposable
             $"Search too slow: {searchStopwatch.ElapsedMilliseconds} ms");
     }
 
-    private sealed class CancelOnFirstProgressReport(ProcessingRunExecutor executor)
+    private sealed class CancelOnFirstProgressReport(CancellationTokenSource cancellation)
         : IProgress<ProcessingRunProgress>
     {
         private bool _cancellationRequested;
@@ -384,7 +388,7 @@ public class StressTests : IDisposable
             if (!_cancellationRequested)
             {
                 _cancellationRequested = true;
-                executor.Cancel();
+                cancellation.Cancel();
             }
         }
     }

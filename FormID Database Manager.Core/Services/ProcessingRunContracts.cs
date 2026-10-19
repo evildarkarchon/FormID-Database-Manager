@@ -263,9 +263,10 @@ public sealed record FormIdTextProcessingRunRequest : ProcessingRunRequest
 ///         Failed Plugins, and <see cref="CancelledRunOutcome" /> is the fourth state.
 ///     </para>
 ///     <para>
-///         Cancellation is an outcome rather than an exception because the token is executor-owned: the only
-///         <see cref="OperationCanceledException" /> that can surface from a run is the one that executor requested,
-///         so it can be matched precisely. Failure is deliberately not an outcome, because building one would need a
+///         Cancellation is an outcome rather than an exception because it can be attributed precisely: the run's token
+///         belongs to its caller, so an <see cref="OperationCanceledException" /> observed while that token is
+///         cancelled is the cancellation the caller requested, and any other propagates (ADR-0007). Failure is
+///         deliberately not an outcome, because building one would need a
 ///         broad <c>catch (Exception)</c>, which ADR-0006 and the Plugin overlay reader avoid so that unexpected
 ///         internal failures abort loudly instead of being reported as a tidy result.
 ///     </para>
@@ -300,7 +301,7 @@ internal sealed record FormIdTextRunOutcome(FormIdTextFileImportResult ImportRes
 internal sealed record PlannedRunOutcome(ProcessingRunPlan Plan) : ProcessingRunOutcome;
 
 /// <summary>
-///     A Processing Run that stopped because this executor's own cancellation was requested.
+///     A Processing Run that stopped because the token its caller handed it was cancelled.
 /// </summary>
 internal sealed record CancelledRunOutcome : ProcessingRunOutcome;
 
@@ -412,37 +413,32 @@ internal sealed record ImportingFormIdText(
 internal sealed record ImportedFormIdText(FormIdTextFileImportResult ImportResult) : ProcessingRunProgress;
 
 /// <summary>
-///     The run is failing with the message of the exception about to be rethrown.
+///     Executes one typed Processing Run request with the cancellation token its caller hands it, holding no run state.
 /// </summary>
-/// <param name="FailureMessage">The failure's own message, without any prefix.</param>
 /// <remarks>
-///     A failure produces no outcome to render — only cancellation becomes a value — so the last thing a failing run
-///     has to say goes out on the progress channel like everything else it says while running.
+///     There is deliberately no way to cancel through this seam and nothing to dispose: the caller owns the run's
+///     token, and with it whether the run is active (ADR-0012).
 /// </remarks>
-internal sealed record ProcessingRunFailure(string FailureMessage) : ProcessingRunProgress;
-
-/// <summary>
-///     Executes typed Processing Run requests and owns cancellation for the active run.
-/// </summary>
-internal interface IProcessingRunExecutor : IDisposable
+internal interface IProcessingRunExecutor
 {
     /// <summary>
     ///     Executes the supplied Processing Run request.
     /// </summary>
     /// <param name="request">The admitted domain request describing the run.</param>
     /// <param name="progress">Optional typed reporter for the run's transient progress.</param>
-    /// <returns>How the run ended, including cancellation this executor was asked for.</returns>
+    /// <param name="cancellationToken">
+    ///     The run's token, owned by the caller; cancelling it, even before the run starts, ends the run as a
+    ///     <see cref="CancelledRunOutcome" />.
+    /// </param>
+    /// <returns>How the run ended, including the cancellation the caller requested through its token.</returns>
     /// <remarks>
     ///     <see cref="UnresolvableMasterException" /> and unexpected internal failures propagate: only cancellation is a
-    ///     value, because only cancellation can be attributed to this executor precisely. Whether a press may start a
-    ///     run was already decided by Processing Run Admission before the request existed (ADR-0010).
+    ///     value, because only cancellation of the caller's own token can be attributed precisely (ADR-0007). Whether a
+    ///     press may start a run was already decided by Processing Run Admission before the request existed
+    ///     (ADR-0010).
     /// </remarks>
     Task<ProcessingRunOutcome> ExecuteAsync(
         ProcessingRunRequest request,
-        IProgress<ProcessingRunProgress>? progress = null);
-
-    /// <summary>
-    ///     Requests cancellation for the active Processing Run, if one is active.
-    /// </summary>
-    void Cancel();
+        IProgress<ProcessingRunProgress>? progress,
+        CancellationToken cancellationToken);
 }

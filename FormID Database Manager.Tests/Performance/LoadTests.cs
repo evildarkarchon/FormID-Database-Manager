@@ -53,7 +53,7 @@ public class LoadTests : IDisposable
         var dbPath = Path.Combine(_testDirectory, "loadtest.db");
         _createdFiles.Add(dbPath);
 
-        using var processingRunExecutor = PerformanceProcessingRunFactory.Create(plugins);
+        var processingRunExecutor = PerformanceProcessingRunFactory.Create(plugins);
 
         // Act
         var stopwatch = Stopwatch.StartNew();
@@ -70,7 +70,7 @@ public class LoadTests : IDisposable
 
         Assert.All(plugins, p => Assert.True(File.Exists(Path.Combine(dataPath, p))));
 
-        await processingRunExecutor.ExecuteAsync(request, progress);
+        await processingRunExecutor.ExecuteAsync(request, progress, TestContext.Current.CancellationToken);
         stopwatch.Stop();
 
         // Assert
@@ -108,12 +108,14 @@ public class LoadTests : IDisposable
         var stopwatch = Stopwatch.StartNew();
         Assert.True(File.Exists(Path.Combine(dataPath, pluginName)));
 
-        using var processingRunExecutor = PerformanceProcessingRunFactory.Create([pluginName]);
+        var processingRunExecutor = PerformanceProcessingRunFactory.Create([pluginName]);
         await processingRunExecutor.ExecuteAsync(new PluginProcessingRunRequest(
             PluginListSource.Create(GameRelease.SkyrimSE, _testDirectory),
             dbPath,
             [pluginName],
-            UpdateMode.Append));
+            UpdateMode.Append),
+            null,
+            TestContext.Current.CancellationToken);
 
         stopwatch.Stop();
 

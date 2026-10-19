@@ -54,7 +54,7 @@ public sealed class ProcessingRunIntegrationTests : IDisposable
             ],
             TestContext.Current.CancellationToken);
 
-        using var executor = new ProcessingRunExecutor();
+        var executor = new ProcessingRunExecutor();
         var reports = new List<ProcessingRunProgress>();
         var progress = new SynchronousProgress<ProcessingRunProgress>(reports.Add);
         var request = new FormIdTextProcessingRunRequest(
@@ -63,7 +63,7 @@ public sealed class ProcessingRunIntegrationTests : IDisposable
             GameRelease.SkyrimSE,
             UpdateMode.Append);
 
-        var outcome = await executor.ExecuteAsync(request, progress);
+        var outcome = await executor.ExecuteAsync(request, progress, TestContext.Current.CancellationToken);
 
         Assert.True(File.Exists(databasePath));
 
@@ -194,7 +194,7 @@ public sealed class ProcessingRunIntegrationTests : IDisposable
 
         var gameLoadOrders = new GameLoadOrders(new FixtureGameLoadOrderEnvironment([pluginName]));
         var pluginIngestion = new PluginIngestion(gameLoadOrders);
-        using var executor = new ProcessingRunExecutor(
+        var executor = new ProcessingRunExecutor(
             pluginIngestion,
             new FormIdRecordStoreSessionOpener());
         var reports = new List<ProcessingRunProgress>();
@@ -206,7 +206,8 @@ public sealed class ProcessingRunIntegrationTests : IDisposable
                 databasePath,
                 [pluginName],
                 UpdateMode.Append),
-            progress);
+            progress,
+            TestContext.Current.CancellationToken);
 
         // The run withholds its outcome until explicit optimization has succeeded, so statistics are already
         // observable by the time the caller has anything to report.
