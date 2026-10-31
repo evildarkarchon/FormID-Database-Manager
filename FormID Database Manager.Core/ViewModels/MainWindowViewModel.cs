@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
+using System.Diagnostics;
 using CommunityToolkit.Mvvm.ComponentModel;
 using FormID_Database_Manager.Models;
 using FormID_Database_Manager.Services;
@@ -9,11 +10,13 @@ namespace FormID_Database_Manager.ViewModels;
 
 public partial class MainWindowViewModel : ObservableObject
 {
+    /// <summary>How many of its most recent messages each Message List keeps.</summary>
+    private const int MaxMessagesPerList = 10;
+
     private readonly ObservableCollection<string> _detectedDirectories = [];
     private readonly IThreadDispatcher _dispatcher;
 
     private readonly ObservableCollection<PluginListItem> _filteredPlugins = [];
-    private readonly Lock _messagesLock = new();
 
     private readonly ObservableCollection<PluginListItem> _plugins = [];
 
@@ -28,15 +31,18 @@ public partial class MainWindowViewModel : ObservableObject
     /// </remarks>
     [ObservableProperty] private bool _dryRun;
 
-    [ObservableProperty] [NotifyPropertyChangedFor(nameof(HasErrorMessages))]
-    private ObservableCollection<string> _errorMessages = [];
+    /// <summary>
+    ///     The Error Message List, written only through <see cref="AddMessage" /> and
+    ///     <see cref="ClearErrorAndWarningMessages" /> (ADR-0014).
+    /// </summary>
+    private readonly ObservableCollection<string> _errorMessages = [];
 
     private bool _filterSuspended;
 
     [ObservableProperty] private string _formIdListPath = string.Empty;
 
-    [ObservableProperty] [NotifyPropertyChangedFor(nameof(HasInformationMessages))]
-    private ObservableCollection<string> _informationMessages = [];
+    /// <summary>The Information Message List, written only through <see cref="AddMessage" /> (ADR-0014).</summary>
+    private readonly ObservableCollection<string> _informationMessages = [];
 
     private int _isApplyingFilter;
     private bool _isApplyingGameContextProjection;
@@ -51,8 +57,11 @@ public partial class MainWindowViewModel : ObservableObject
 
     [ObservableProperty] private bool _updateMode;
 
-    [ObservableProperty] [NotifyPropertyChangedFor(nameof(HasWarningMessages))]
-    private ObservableCollection<string> _warningMessages = [];
+    /// <summary>
+    ///     The Warning Message List, written only through <see cref="AddMessage" /> and
+    ///     <see cref="ClearErrorAndWarningMessages" /> (ADR-0014).
+    /// </summary>
+    private readonly ObservableCollection<string> _warningMessages = [];
 
     /// <summary>
     ///     Initializes the ViewModel around the dispatcher that owns every projection it publishes.
@@ -69,6 +78,9 @@ public partial class MainWindowViewModel : ObservableObject
         DetectedDirectories = new ReadOnlyObservableCollection<string>(_detectedDirectories);
         Plugins = new ReadOnlyObservableCollection<PluginListItem>(_plugins);
         FilteredPlugins = new ReadOnlyObservableCollection<PluginListItem>(_filteredPlugins);
+        ErrorMessages = new ReadOnlyObservableCollection<string>(_errorMessages);
+        WarningMessages = new ReadOnlyObservableCollection<string>(_warningMessages);
+        InformationMessages = new ReadOnlyObservableCollection<string>(_informationMessages);
         _plugins.CollectionChanged += OnPluginsCollectionChanged;
 
         // Sourced from the Supported GameRelease table, which owns both the content and the display order, so a
@@ -85,6 +97,8 @@ public partial class MainWindowViewModel : ObservableObject
                 OnPropertyChanged(nameof(HasMultipleDirectories));
             }
         };
+        // The Message List collections are readonly and never replaced, so one subscription for the ViewModel's
+        // lifetime keeps each Has*Messages flag current; no replacement hook has to move it (ADR-0014).
         _errorMessages.CollectionChanged += OnErrorMessagesCollectionChanged;
         _informationMessages.CollectionChanged += OnInformationMessagesCollectionChanged;
         _warningMessages.CollectionChanged += OnWarningMessagesCollectionChanged;
@@ -116,6 +130,27 @@ public partial class MainWindowViewModel : ObservableObject
     public bool IsGameSelected => SelectedGame.HasValue;
 
     public bool HasMultipleDirectories => DetectedDirectories.Count > 1;
+
+    /// <summary>
+    ///     Gets the read-only Error Message List. Writers append through <see cref="AddMessage" /> and start over through
+    ///     <see cref="ClearErrorAndWarningMessages" /> (ADR-0014).
+    /// </summary>
+    /// <remarks>The observable collection identity is stable for the lifetime of this ViewModel.</remarks>
+    public ReadOnlyObservableCollection<string> ErrorMessages { get; }
+
+    /// <summary>
+    ///     Gets the read-only Warning Message List. Writers append through <see cref="AddMessage" /> and start over
+    ///     through <see cref="ClearErrorAndWarningMessages" /> (ADR-0014).
+    /// </summary>
+    /// <remarks>The observable collection identity is stable for the lifetime of this ViewModel.</remarks>
+    public ReadOnlyObservableCollection<string> WarningMessages { get; }
+
+    /// <summary>
+    ///     Gets the read-only Information Message List. Writers append through <see cref="AddMessage" />; starting the
+    ///     lists over keeps it (ADR-0014).
+    /// </summary>
+    /// <remarks>The observable collection identity is stable for the lifetime of this ViewModel.</remarks>
+    public ReadOnlyObservableCollection<string> InformationMessages { get; }
 
     public bool HasErrorMessages => ErrorMessages.Count > 0;
 
@@ -393,54 +428,6 @@ public partial class MainWindowViewModel : ObservableObject
         }
     }
 
-    partial void OnErrorMessagesChanging(ObservableCollection<string> value)
-    {
-        if (ReferenceEquals(ErrorMessages, value))
-        {
-            return;
-        }
-
-        ErrorMessages.CollectionChanged -= OnErrorMessagesCollectionChanged;
-    }
-
-    partial void OnErrorMessagesChanged(ObservableCollection<string> value)
-    {
-        value.CollectionChanged += OnErrorMessagesCollectionChanged;
-        OnPropertyChanged(nameof(HasErrorMessages));
-    }
-
-    partial void OnInformationMessagesChanging(ObservableCollection<string> value)
-    {
-        if (ReferenceEquals(InformationMessages, value))
-        {
-            return;
-        }
-
-        InformationMessages.CollectionChanged -= OnInformationMessagesCollectionChanged;
-    }
-
-    partial void OnInformationMessagesChanged(ObservableCollection<string> value)
-    {
-        value.CollectionChanged += OnInformationMessagesCollectionChanged;
-        OnPropertyChanged(nameof(HasInformationMessages));
-    }
-
-    partial void OnWarningMessagesChanging(ObservableCollection<string> value)
-    {
-        if (ReferenceEquals(WarningMessages, value))
-        {
-            return;
-        }
-
-        WarningMessages.CollectionChanged -= OnWarningMessagesCollectionChanged;
-    }
-
-    partial void OnWarningMessagesChanged(ObservableCollection<string> value)
-    {
-        value.CollectionChanged += OnWarningMessagesCollectionChanged;
-        OnPropertyChanged(nameof(HasWarningMessages));
-    }
-
     private void OnErrorMessagesCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
     {
         OnPropertyChanged(nameof(HasErrorMessages));
@@ -534,63 +521,81 @@ public partial class MainWindowViewModel : ObservableObject
         }
     }
 
-    public virtual void AddErrorMessage(string message, int maxMessages = 10)
+    /// <summary>
+    ///     Appends one message to a Message List, keeping only the most recent <see cref="MaxMessagesPerList" />.
+    /// </summary>
+    /// <param name="list">The Message List the message belongs to.</param>
+    /// <param name="message">The text the user reads.</param>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="list" /> is not a defined Message List.</exception>
+    /// <remarks>
+    ///     <para>
+    ///         Every writer appends through here, so appending has one dispatch rule and one cap (ADR-0014). A call made
+    ///         off the dispatcher's thread is posted to it rather than applied in place.
+    ///     </para>
+    ///     <para>
+    ///         There is deliberately no lock. Every Message List mutation, this one and
+    ///         <see cref="ClearErrorAndWarningMessages" />, is posted to the dispatcher before it touches a list, so all
+    ///         of them run on the dispatcher's one thread, one after another. A lock taken after that post could never
+    ///         be contended, and would only suggest a threading model the lists do not have.
+    ///     </para>
+    /// </remarks>
+    internal void AddMessage(MessageList list, string message)
     {
-        // Ensure collection operations happen on UI thread
+        // Validated before dispatch so an off-thread caller is refused where it made the mistake, not by a posted
+        // action failing later on the UI thread.
+        if (!Enum.IsDefined(list))
+        {
+            throw new ArgumentOutOfRangeException(nameof(list), list, "Unsupported Message List.");
+        }
+
         if (!_dispatcher.CheckAccess())
         {
-            _dispatcher.Post(() => AddErrorMessage(message, maxMessages));
+            _dispatcher.Post(() => AddMessage(list, message));
             return;
         }
 
-        lock (_messagesLock)
-        {
-            ErrorMessages.Add(message);
+        var messages = MessagesFor(list);
+        messages.Add(message);
 
-            if (ErrorMessages.Count > maxMessages)
-            {
-                ErrorMessages.RemoveAt(0);
-            }
+        if (messages.Count > MaxMessagesPerList)
+        {
+            messages.RemoveAt(0);
         }
     }
 
-    public virtual void AddInformationMessage(string message, int maxMessages = 10)
+    /// <summary>
+    ///     Starts the Message Lists over: clears errors and warnings, and keeps information.
+    /// </summary>
+    /// <remarks>
+    ///     This names what happens, not when. Processing Run Control decides when: on every press of the run button
+    ///     that does not cancel a run, including a refused one (ADR-0012, ADR-0014). It follows the same dispatch rule as
+    ///     <see cref="AddMessage" />, so a clear and an append can never interleave on two threads.
+    /// </remarks>
+    internal void ClearErrorAndWarningMessages()
     {
-        // Ensure collection operations happen on UI thread
         if (!_dispatcher.CheckAccess())
         {
-            _dispatcher.Post(() => AddInformationMessage(message, maxMessages));
+            _dispatcher.Post(ClearErrorAndWarningMessages);
             return;
         }
 
-        lock (_messagesLock)
-        {
-            InformationMessages.Add(message);
-
-            if (InformationMessages.Count > maxMessages)
-            {
-                InformationMessages.RemoveAt(0);
-            }
-        }
+        _errorMessages.Clear();
+        _warningMessages.Clear();
     }
 
-    public virtual void AddWarningMessage(string message, int maxMessages = 10)
+    /// <summary>
+    ///     Resolves a Message List to the collection that shows it.
+    /// </summary>
+    /// <param name="list">A defined Message List; <see cref="AddMessage" /> has already refused any other value.</param>
+    /// <returns>The private, writable collection behind that list.</returns>
+    private ObservableCollection<string> MessagesFor(MessageList list)
     {
-        // Ensure collection operations happen on UI thread
-        if (!_dispatcher.CheckAccess())
+        return list switch
         {
-            _dispatcher.Post(() => AddWarningMessage(message, maxMessages));
-            return;
-        }
-
-        lock (_messagesLock)
-        {
-            WarningMessages.Add(message);
-
-            if (WarningMessages.Count > maxMessages)
-            {
-                WarningMessages.RemoveAt(0);
-            }
-        }
+            MessageList.Error => _errorMessages,
+            MessageList.Warning => _warningMessages,
+            MessageList.Information => _informationMessages,
+            _ => throw new UnreachableException($"AddMessage admitted an undefined Message List: {list}.")
+        };
     }
 }

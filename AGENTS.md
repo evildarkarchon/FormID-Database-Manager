@@ -47,8 +47,8 @@ renaming Core members or changing project boundaries. In particular:
   `PluginListPresentationAdapter`'s lifetime and detaches it first on dispose.
 - `GameContext` owns Game Context state, its transitions, and the Plugin List Source built from it. `UserWorkflow`
   constructs it and forwards Game Context intents to it. `GameContext.cs` contains no user-facing wording and names no
-  ViewModel: it reports each state and typed notice to an `IGameContextSink` that `UserWorkflow` implements
-  (ADR-0013).
+  ViewModel: it reports each state and typed notice to an `IGameContextSink`, which has a sink adapter that
+  `UserWorkflow` composes (ADR-0013, ADR-0014).
 - `ProcessingRunControl` is the single owner of whether a Processing Run is active (ADR-0012). `UserWorkflow` constructs
   it, and it owns the executor. It reads no Game Context, Plugin List, or ViewModel.
 - Projected `MainWindowViewModel` state is read-only to consumers, and retired APIs must not be reintroduced.
@@ -64,8 +64,8 @@ renaming Core members or changing project boundaries. In particular:
   - takes the `ProcessingRunInputs` that `UserWorkflow` captured;
   - creates the run's cancellation token inside its gate the moment it admits the run, before reporting anything, so a
     cancel pressed during startup is never dropped;
-  - reports rendered activity and messages to a sink that `UserWorkflow` implements over the ViewModel, and calls the
-    sink while holding its lock to keep the #60 ordering;
+  - reports rendered activity and messages to a sink, which has a sink adapter that `UserWorkflow` composes over the
+    ViewModel, and calls the sink while holding its lock to keep the #60 ordering;
   - throws `ObjectDisposedException` for a press after disposal rather than rendering it.
 - `ProcessingRunExecutor` executes one typed Processing Run request with the cancellation token Processing Run Control
   hands it, reports its transient progress, and returns how it ended. It holds no run state:
@@ -85,12 +85,13 @@ renaming Core members or changing project boundaries. In particular:
   it — counting rows is what an import does.
 - `ProcessingRunPresentation` is a pure renderer and writes nothing (ADR-0007, ADR-0012).
   - Processing Run Control keeps the run activity and its ordering lock.
-  - `UserWorkflow`'s sink adapter performs every ViewModel write.
+  - The sink adapter that `UserWorkflow` composes performs every ViewModel write.
   - Do not move either into Presentation for symmetry with `PluginListPresentationAdapter`.
   - Test run wording only in `ProcessingRunPresentationTests`. Other tests compare against Presentation's output.
 - `GameContextPresentation` is a pure renderer and writes nothing (ADR-0013). It renders each Game Context notice and
-  chooses its message list; `UserWorkflow`'s Game Context sink adapter performs every ViewModel write. Test Game
-  Context wording only in `GameContextPresentationTests`. `GameContextTests` record what the sink receives.
+  chooses its message list; the Game Context sink adapter that `UserWorkflow` composes performs every ViewModel
+  write. Test Game Context wording only in `GameContextPresentationTests`. `GameContextTests` record what the sink
+  receives.
 - Open databases through `FormIdRecordStore.OpenAsync`. Use raw SQLite only for workload generation, failure
   injection, or persisted-state inspection.
 - Tests must not depend on an installed game. Supply an in-memory `IGameInstallationProbe`.

@@ -33,8 +33,8 @@ namespace FormID_Database_Manager.Services;
 ///         The Plugin List is borrowed: whoever constructs this module owns the Plugin List's lifetime, and
 ///         <see cref="Dispose" /> leaves it alone. This module writes nothing the user sees: it reports every
 ///         published state and every typed <see cref="GameContextNotice" /> to an <see cref="IGameContextSink" />,
-///         which the User Workflow implements, and it holds no wording, because <see cref="GameContextPresentation" />
-///         renders the notices (ADR-0013).
+///         through a sink adapter that the User Workflow composes, and it holds no wording, because
+///         <see cref="GameContextPresentation" /> renders the notices (ADR-0013, ADR-0014).
 ///     </para>
 /// </remarks>
 internal sealed class GameContext : IDisposable
@@ -595,8 +595,8 @@ internal sealed class GameContext : IDisposable
 ///         Processing Run Control's sink.
 ///     </para>
 ///     <para>
-///         The User Workflow implements it over the ViewModel, and tests implement it by recording, so the seam has
-///         two adapters.
+///         A sink adapter that the User Workflow composes implements it over the ViewModel, and tests implement it by
+///         recording, so the seam has two adapters (ADR-0014).
 ///     </para>
 /// </remarks>
 internal interface IGameContextSink

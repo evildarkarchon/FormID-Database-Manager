@@ -443,7 +443,7 @@ public sealed class UserWorkflow : IDisposable
 
         if (IsFailure(result))
         {
-            _viewModel.AddErrorMessage($"{failureContext}: {result.ErrorMessage}");
+            _viewModel.AddMessage(MessageList.Error, $"{failureContext}: {result.ErrorMessage}");
         }
 
         return false;
@@ -462,117 +462,5 @@ public sealed class UserWorkflow : IDisposable
         }
 
         _pluginList.Apply(new PluginSelectionForAllIntent(confirmed.MembershipVersion, isSelected));
-    }
-
-    /// <summary>
-    ///     The User Workflow's adapter on the Processing Run Control sink: it performs every ViewModel write a Processing
-    ///     Run reports (ADR-0012).
-    /// </summary>
-    /// <param name="viewModel">The ViewModel the reports are written to.</param>
-    /// <remarks>
-    ///     Processing Run Control calls each member while holding its lock, so these writes reach the ViewModel in the
-    ///     order they were sequenced (#60). Any of them may raise a notification that re-enters a press.
-    /// </remarks>
-    private sealed class ViewModelProcessingRunControlSink(MainWindowViewModel viewModel) : IProcessingRunControlSink
-    {
-        /// <inheritdoc />
-        public void ClearMessageLists()
-        {
-            viewModel.ErrorMessages.Clear();
-            viewModel.WarningMessages.Clear();
-        }
-
-        /// <inheritdoc />
-        /// <remarks>
-        ///     The admitted run still uses its default, but a re-entrant edit made during startup notifications must
-        ///     survive for the next run, so the default is written back only while the box still holds the capture.
-        /// </remarks>
-        public void ReportDefaultedDatabasePath(string defaultedDatabasePath, string? capturedDatabasePath)
-        {
-            if (string.Equals(viewModel.DatabasePath, capturedDatabasePath, StringComparison.Ordinal))
-            {
-                viewModel.DatabasePath = defaultedDatabasePath;
-            }
-        }
-
-        /// <inheritdoc />
-        public void ReportRunActivity(ActivityProjection runActivity)
-        {
-            viewModel.ApplyRunActivityProjection(runActivity);
-        }
-
-        /// <inheritdoc />
-        public void AddWarningMessage(string message)
-        {
-            viewModel.AddWarningMessage(message);
-        }
-
-        /// <inheritdoc />
-        public void AddErrorMessage(string message)
-        {
-            viewModel.AddErrorMessage(message);
-        }
-
-        /// <inheritdoc />
-        public void AddInformationMessage(string message)
-        {
-            viewModel.AddInformationMessage(message);
-        }
-    }
-
-    /// <summary>
-    ///     The User Workflow's adapter on the Game Context sink: it performs every ViewModel write the Game Context
-    ///     reports (ADR-0013).
-    /// </summary>
-    /// <param name="viewModel">The ViewModel the reports are written to.</param>
-    /// <remarks>
-    ///     <para>
-    ///         Game Context reports from the UI thread and holds no lock, so these writes need none either. It is a
-    ///         separate class from <see cref="ViewModelProcessingRunControlSink" /> because the two sinks have different
-    ///         ordering contracts: that one is called under Processing Run Control's lock, this one is UI-thread-affine.
-    ///     </para>
-    ///     <para>
-    ///         A write may raise a notification that re-enters a Game Context intent, such as a ComboBox echoing the
-    ///         projected selection. Game Context has already written the state it reports, so the echo reads it.
-    ///     </para>
-    /// </remarks>
-    private sealed class ViewModelGameContextSink(MainWindowViewModel viewModel) : IGameContextSink
-    {
-        /// <inheritdoc />
-        /// <remarks>
-        ///     One projection call carries all four shown fields, so observers never see fields from two states. The
-        ///     Plugin List Source is not shown, and the ViewModel's own dispatch handles a call from off the UI thread.
-        /// </remarks>
-        public void ReportState(GameContextState state)
-        {
-            viewModel.ApplyGameContextProjection(
-                state.SelectedGameRelease,
-                state.SelectedGameDirectory,
-                state.AvailableDirectories,
-                state.AdvancedMode);
-        }
-
-        /// <inheritdoc />
-        /// <exception cref="ArgumentOutOfRangeException">
-        ///     Presentation names a message list this adapter cannot write.
-        /// </exception>
-        public void ReportNotice(GameContextNotice notice)
-        {
-            var rendered = GameContextPresentation.Render(notice);
-            switch (rendered.List)
-            {
-                case GameContextMessageList.Error:
-                    viewModel.AddErrorMessage(rendered.Text);
-                    break;
-                case GameContextMessageList.Information:
-                    viewModel.AddInformationMessage(rendered.Text);
-                    break;
-                default:
-                    throw new ArgumentOutOfRangeException(
-                        nameof(notice),
-                        rendered.List,
-                        "Unsupported Game Context message list.");
-            }
-        }
     }
 }

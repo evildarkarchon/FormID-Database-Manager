@@ -31,17 +31,17 @@ internal static class GameContextPresentation
         return notice switch
         {
             GameDirectoryPickerFailed pickerFailed => new RenderedGameContextNotice(
-                GameContextMessageList.Error,
+                MessageList.Error,
                 $"Error selecting game directory: {pickerFailed.ErrorMessage}"),
             // No installed location is not a failure: the user can still Browse, so this is guidance, not an error.
             NoInstalledLocationsFound noLocations => new RenderedGameContextNotice(
-                GameContextMessageList.Information,
+                MessageList.Information,
                 $"No installed locations found for {noLocations.GameRelease}. Use Browse to select a directory."),
             DirectoryRefused refused => new RenderedGameContextNotice(
-                GameContextMessageList.Error,
+                MessageList.Error,
                 $"Could not read the selected directory: {refused.FailureMessage}"),
             NoGameDetected => new RenderedGameContextNotice(
-                GameContextMessageList.Error,
+                MessageList.Error,
                 "Could not detect game from directory. Please select a game from the dropdown."),
             _ => throw new ArgumentOutOfRangeException(
                 nameof(notice),
@@ -52,23 +52,11 @@ internal static class GameContextPresentation
 }
 
 /// <summary>
-///     The message list a rendered Game Context notice belongs to.
-/// </summary>
-/// <remarks>
-///     Only the two lists Game Context uses are named; it never warns.
-/// </remarks>
-internal enum GameContextMessageList
-{
-    /// <summary>The error list: a pick was refused or the picker failed.</summary>
-    Error,
-
-    /// <summary>The information list: guidance that is not a failure.</summary>
-    Information
-}
-
-/// <summary>
 ///     One Game Context notice, rendered but not yet written anywhere.
 /// </summary>
-/// <param name="List">The message list the notice belongs to.</param>
+/// <param name="List">
+///     The Message List the notice belongs to. Game Context never warns, so this is only ever
+///     <see cref="MessageList.Error" /> or <see cref="MessageList.Information" />.
+/// </param>
 /// <param name="Text">The sentence the user reads.</param>
-internal readonly record struct RenderedGameContextNotice(GameContextMessageList List, string Text);
+internal readonly record struct RenderedGameContextNotice(MessageList List, string Text);

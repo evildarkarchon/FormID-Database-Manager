@@ -100,6 +100,8 @@ public class CoreProjectBoundaryTests
     /// <remarks>
     /// The progress properties are pinned here for the same reason the Game Context ones are: a public setter would
     /// let a third writer back onto the progress channel and reintroduce the collision the precedence rule removes.
+    /// The Message Lists are pinned because the ViewModel owns them (ADR-0014): a setter would let a consumer replace
+    /// a list and bypass <c>AddMessage</c> and <c>ClearErrorAndWarningMessages</c>.
     /// </remarks>
     [Theory]
     [InlineData(nameof(MainWindowViewModel.SelectedGame))]
@@ -110,6 +112,9 @@ public class CoreProjectBoundaryTests
     [InlineData(nameof(MainWindowViewModel.ProgressValue))]
     [InlineData(nameof(MainWindowViewModel.IsProgressVisible))]
     [InlineData(nameof(MainWindowViewModel.ProcessButtonText))]
+    [InlineData(nameof(MainWindowViewModel.ErrorMessages))]
+    [InlineData(nameof(MainWindowViewModel.WarningMessages))]
+    [InlineData(nameof(MainWindowViewModel.InformationMessages))]
     public void ProjectedProperties_PublicContract_ExposeGettersWithoutConsumerAccessibleSetters(string propertyName)
     {
         var property = Assert.Single(
@@ -120,6 +125,24 @@ public class CoreProjectBoundaryTests
         Assert.True(property.GetMethod.IsPublic);
         // Reflection includes private accessors, which let the ViewModel apply projections without exposing a writer.
         Assert.True(property.SetMethod is null or { IsPrivate: true });
+    }
+
+    /// <summary>
+    /// Verifies that each Message List is exposed as a read-only collection, so no consumer can append to, clear, or
+    /// replace it except through the ViewModel's Message List operations (ADR-0014).
+    /// </summary>
+    /// <param name="propertyName">The Message List property whose public type is verified.</param>
+    [Theory]
+    [InlineData(nameof(MainWindowViewModel.ErrorMessages))]
+    [InlineData(nameof(MainWindowViewModel.WarningMessages))]
+    [InlineData(nameof(MainWindowViewModel.InformationMessages))]
+    public void MessageLists_PublicContract_AreReadOnlyObservableCollectionsOfString(string propertyName)
+    {
+        var property = Assert.Single(
+            typeof(MainWindowViewModel).GetProperties(),
+            candidate => candidate.Name == propertyName);
+
+        Assert.Equal(typeof(ReadOnlyObservableCollection<string>), property.PropertyType);
     }
 
     /// <summary>
@@ -365,12 +388,15 @@ public class CoreProjectBoundaryTests
     ///     matters now. The User Workflow row still guards something real: the workflow captures every press before
     ///     Processing Run Control sees it and writes its own picker errors straight to the ViewModel, so it is the one
     ///     place a pre-check, such as refusing an empty selection before the press is handed on, could show a refusal
-    ///     that bypasses admission and Presentation.
+    ///     that bypasses admission and Presentation. Issue #120 moved the run sink adapter, which writes every refusal to
+    ///     the ViewModel, out of <c>UserWorkflow.cs</c> into its own file, so that file keeps the row the workflow's
+    ///     source used to cover for it.
     /// </remarks>
     [Theory]
     [InlineData("ProcessingRunAdmission.cs")]
     [InlineData("ProcessingRunControl.cs")]
     [InlineData("UserWorkflow.cs")]
+    [InlineData("ViewModelProcessingRunControlSink.cs")]
     [InlineData("GameContext.cs")]
     public void RunAdmissionCallers_RefusalReasons_ContainNoRefusalSentence(string sourceFileName)
     {
@@ -401,10 +427,12 @@ public class CoreProjectBoundaryTests
     ///     statuses are searched for among the string literals rather than in the raw text, so a comment may still
     ///     quote them. The failure rule is pinned as the absence of a catch clause for
     ///     <see cref="UnresolvableMasterException" />, because such a clause is exactly how the rule used to live in the
-    ///     User Workflow. What the user reads is pinned by <c>ProcessingRunPresentationTests</c>.
+    ///     User Workflow. What the user reads is pinned by <c>ProcessingRunPresentationTests</c>. Issue #120 moved the run
+    ///     sink adapter out of <c>UserWorkflow.cs</c>, so its own file takes over the coverage the workflow's row gave it.
     /// </remarks>
     [Theory]
     [InlineData("UserWorkflow.cs")]
+    [InlineData("ViewModelProcessingRunControlSink.cs")]
     [InlineData("ProcessingRunControl.cs")]
     public void RunReporters_RunStatusesAndFailures_AreRenderedOnlyByProcessingRunPresentation(string sourceFileName)
     {
@@ -747,16 +775,18 @@ public class CoreProjectBoundaryTests
     }
 
     /// <summary>
-    ///     Verifies that the User Workflow is the only Core writer of the ViewModel's Game Context projection: the Game
-    ///     Context reports its state to a sink, and the User Workflow's sink adapter writes it (ADR-0013).
+    ///     Verifies that the Game Context sink adapter is the only Core writer of the ViewModel's Game Context
+    ///     projection: the Game Context reports its state to a sink, and the adapter the User Workflow composes writes
+    ///     it (ADR-0013, ADR-0014).
     /// </summary>
     /// <remarks>
     ///     The ViewModel's own file defines the member and is the other legitimate mention. Tests call it directly to
     ///     exercise the ViewModel, which is why only Core sources are scanned. Issue #116, under parent #114, moved the
-    ///     write out of <c>GameContext.cs</c>.
+    ///     write out of <c>GameContext.cs</c>, and issue #120, under parent #118, moved the adapter out of
+    ///     <c>UserWorkflow.cs</c> into its own file.
     /// </remarks>
     [Fact]
-    public void CoreSources_GameContextProjection_IsWrittenOnlyByTheUserWorkflow()
+    public void CoreSources_GameContextProjection_IsWrittenOnlyByTheGameContextSinkAdapter()
     {
         var projectionWriters = Directory
             .EnumerateFiles(GetCoreProjectDirectory(), "*.cs", SearchOption.AllDirectories)
@@ -766,12 +796,13 @@ public class CoreProjectBoundaryTests
             .OrderBy(static fileName => fileName, StringComparer.Ordinal)
             .ToArray();
 
-        Assert.Equal(["MainWindowViewModel.cs", "UserWorkflow.cs"], projectionWriters);
+        Assert.Equal(["MainWindowViewModel.cs", "ViewModelGameContextSink.cs"], projectionWriters);
     }
 
     /// <summary>
     ///     Verifies that the Game Context references neither <see cref="MainWindowViewModel" /> nor the ViewModels
-    ///     namespace: it reports to a sink the User Workflow implements, and writes nothing itself (ADR-0013).
+    ///     namespace: it reports to a sink whose adapter the User Workflow composes, and writes nothing itself
+    ///     (ADR-0013, ADR-0014).
     /// </summary>
     /// <remarks>
     ///     Issue #116, under parent #114. The check is on raw source text, comments included, as

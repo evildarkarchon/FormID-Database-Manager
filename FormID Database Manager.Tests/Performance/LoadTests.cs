@@ -259,7 +259,7 @@ public class LoadTests : IDisposable
 
             for (var j = 0; j < 100; j++)
             {
-                viewModel.AddErrorMessage($"Test error {i}_{j}");
+                viewModel.AddMessage(MessageList.Error, $"Test error {i}_{j}");
             }
 
             var afterMemory = GC.GetTotalMemory(false);

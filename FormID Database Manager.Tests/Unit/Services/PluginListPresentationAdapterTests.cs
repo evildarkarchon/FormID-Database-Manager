@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Collections.Specialized;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
@@ -332,7 +333,7 @@ public sealed class PluginListPresentationAdapterTests
         Assert.Equal(25, viewModel.ProgressValue);
 
         var membershipWasVisibleBeforeReadyMessage = false;
-        viewModel.InformationMessages.CollectionChanged += (_, _) =>
+        ((INotifyCollectionChanged)viewModel.InformationMessages).CollectionChanged += (_, _) =>
         {
             Assert.Equal("User.esp", Assert.Single(viewModel.Plugins).Name);
             membershipWasVisibleBeforeReadyMessage = true;
