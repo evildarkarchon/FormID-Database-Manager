@@ -61,6 +61,10 @@ one to Entry Extraction. An architecture review on 2026-10-30 found what that le
 - **Behavior does not change.** The three classification rules keep their current, differing scopes after they move.
   Whether they should become one rule is #127.
 
+  > Note (2026-10-31): Superseded by ADR-0016. #127 settled that the three rules become one classification by fault
+  > scope inside `MutagenPluginReader`; this bullet held only for the restructuring itself. The seam, its contracts, and
+  > what Plugin Ingestion keeps are unchanged.
+
 ## Considered options
 
 - **Keep the master-resolution classification in Plugin Ingestion, as ADR-0006 point 1 placed it.** Rejected. It keeps

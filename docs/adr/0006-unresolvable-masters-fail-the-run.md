@@ -80,6 +80,14 @@ names one, and never becomes a Failed Plugin.
 The consequence below that both Mutagen failures "escape the adapter unwrapped" no longer holds. The adapter tests
 assert that they come out as `UnresolvableMasterException` instead.
 
+### The master check runs first (2026-10-31, ADR-0016)
+
+The master check now runs *before* the Failed Plugin list, and finds `MissingModException` or
+`MissingModMappingException` anywhere in the inner-exception chain rather than only at the top. Before, a master
+failure with a listed cause in its chain became a Failed Plugin, and a wrapped one failed the run without naming the
+master. Now an unresolvable master always fails the Processing Run, whatever it wraps or is wrapped by, which is what
+this ADR's decision always required. The Failed Plugin list still does not contain either type.
+
 ## Why not the alternatives
 
 - **Add the two failures to the adapter's classification list, making them one Failed Plugin.** Cheapest, and wrong on

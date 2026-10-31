@@ -20,7 +20,7 @@ A selected Plugin that a Processing Run did not store records for because it was
 _Avoid_: Successful plugin, missing file error, ignored plugin.
 
 **Failed Plugin**:
-A selected Plugin whose ingestion could not complete because of a fatal Plugin-specific error, not because of a FormID Record Store failure. A Failed Plugin counts against the Processing Run summary, but does not by itself mean the whole Processing Run failed.
+A selected Plugin whose ingestion could not complete because of a fatal Plugin-specific error, not because of a FormID Record Store failure. A Failed Plugin counts against the Processing Run summary, but does not by itself mean the whole Processing Run failed. A failure that is neither about the Plugin's data nor a Record Issue fails the Processing Run instead, naming the Plugin it was reading (ADR-0016).
 _Avoid_: Run failure, warning, skipped plugin.
 
 **Unresolvable Master**:
@@ -104,8 +104,12 @@ A single execution that turns either selected Plugins or one FormID text file in
 _Avoid_: Processing job, import task, plugin processing.
 
 **Processing Warning**:
-A user-visible condition from a Processing Run that did not stop ingestion, such as a Skipped Plugin or recoverable record issue. Processing Warnings can make a Processing Run complete with warnings but do not count as failed.
+A user-visible condition from a Processing Run that did not stop ingestion, such as a Skipped Plugin or a Record Issue. Processing Warnings can make a Processing Run complete with warnings but do not count as failed.
 _Avoid_: Non-fatal error, ignored error.
+
+**Record Issue**:
+A failure reading one record's FormID or Entry during Plugin Ingestion. It costs at most that record's row, or only its Entry when a Synthesized Entry can stand in, and is counted in its Plugin's Processing Warning. It never makes a Failed Plugin, and none is dropped without being counted (ADR-0016).
+_Avoid_: Ignorable error, record error, recoverable error.
 
 **Processing Run Outcome**:
 How one Processing Run ended, as a value its caller can inspect rather than prose it has to reconstruct from status strings and exception types. There is one case per kind of run — selected Plugins, one FormID text file, and a Dry Run — each carrying the report that run already produced, plus cancellation. Failure is deliberately not an Outcome: an Unresolvable Master and any unexpected internal failure leave a run as exceptions (ADR-0007), and a request that Processing Run Admission refuses never becomes a run at all (ADR-0010).
