@@ -80,8 +80,9 @@ internal sealed class RecordingProcessingRunExecutor : IProcessingRunExecutor
     ///     How the run ends when it does not fail.
     /// </summary>
     /// <remarks>
-    ///     The default is an empty text import, which adds no messages. Plans now require a non-empty
-    ///     authoritative selection, so an empty plan cannot stand in for an uneventful outcome.
+    ///     The default is an empty text import, which adds no warning or error and only its completion line as
+    ///     information (#94). Plans now require a non-empty authoritative selection, so an empty plan cannot stand in
+    ///     for an uneventful outcome.
     /// </remarks>
     public ProcessingRunOutcome Outcome { get; set; } =
         new FormIdTextRunOutcome(new FormIdTextFileImportResult(0, 0));

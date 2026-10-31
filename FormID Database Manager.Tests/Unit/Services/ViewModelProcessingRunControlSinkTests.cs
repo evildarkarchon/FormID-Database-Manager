@@ -184,16 +184,18 @@ public sealed class ViewModelProcessingRunControlSinkTests
     }
 
     /// <summary>
-    ///     Verifies where each message part of a rendered run report lands when one run produced both: the warning
-    ///     messages in the warning list and the failure messages in the error list, with the information list untouched.
+    ///     Verifies where each message part of a rendered run report lands when one run produced all three: the warning
+    ///     messages in the warning list, the failure messages in the error list, and the completion line in the
+    ///     information list.
     /// </summary>
     /// <remarks>
     ///     Each part is handed to the sink member Processing Run Control uses for it, as it does for a finished run.
     ///     What is asserted is which list each part reached; the order they are reported in is pinned by
-    ///     <see cref="ProcessingRunControlTests" />.
+    ///     <see cref="ProcessingRunControlTests" />. The completion line reaching the information list is issue #94: it
+    ///     is how the run ended, so it stays readable after the run hands the progress channel back.
     /// </remarks>
     [Fact]
-    public void AddWarningMessageAndAddErrorMessage_RenderedRunReportWithBothParts_RouteEachPartToItsOwnList()
+    public void AddWarningErrorAndInformationMessage_RenderedRunReportWithEveryPart_RouteEachPartToItsOwnList()
     {
         var rendered = ProcessingRunPresentation.Render(CreatePluginRunOutcome(
             new IngestedPlugin("User.esp", 1, new ProcessingWarning(1, ["Recoverable issue"])),
@@ -202,13 +204,13 @@ public sealed class ViewModelProcessingRunControlSinkTests
                 new PluginReadDiagnostic(PluginReadPhase.OpeningPlugin, "Invalid plugin header."))));
         Assert.NotEmpty(rendered.WarningMessages);
         Assert.NotEmpty(rendered.ErrorMessages);
-        Assert.Empty(rendered.InformationMessages);
+        Assert.NotEmpty(rendered.InformationMessages);
 
         ReportMessages(rendered);
 
         Assert.Equal(rendered.WarningMessages.ToArray(), _viewModel.WarningMessages);
         Assert.Equal(rendered.ErrorMessages.ToArray(), _viewModel.ErrorMessages);
-        Assert.Empty(_viewModel.InformationMessages);
+        Assert.Equal(rendered.InformationMessages.ToArray(), _viewModel.InformationMessages);
     }
 
     /// <summary>

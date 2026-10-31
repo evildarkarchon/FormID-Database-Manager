@@ -301,9 +301,10 @@ internal sealed class ProcessingRunControl : IDisposable
     /// <param name="outcome">The outcome the executor returned.</param>
     /// <remarks>
     ///     <see cref="ProcessingRunPresentation" /> is a pure renderer, so the order the run's terminal facts reach the
-    ///     user is decided here: the messages first and the transient status last. An inactive rendered activity means
-    ///     the outcome has nothing to say on that channel — a cancelled run's acknowledgement is a terminal fact, and
-    ///     reporting it there would only have it erased as the run hands the channel back (#60).
+    ///     user is decided here: warnings, then errors, then information, all under <see cref="_lock" /> (#60). Every
+    ///     one of them is a message, and nothing goes to the transient channel: how a run ended — its completion line,
+    ///     its plan, or its cancellation acknowledgement — is a terminal fact, and reporting it there would only have it
+    ///     erased as the run hands the channel back (#60, #94).
     /// </remarks>
     private void ReportOutcome(ProcessingRunOutcome outcome)
     {
@@ -324,13 +325,6 @@ internal sealed class ProcessingRunControl : IDisposable
             foreach (var message in rendered.InformationMessages)
             {
                 _sink.AddInformationMessage(message);
-            }
-
-            if (rendered.Activity.IsActive)
-            {
-                // A terminal activity is a complete projection with a percentage of its own, so it goes through the
-                // same application path as any other report and the carry-forward never applies to it.
-                ReportRunActivityLocked(new RenderedRunProgress(rendered.Activity.Status, rendered.Activity.Value));
             }
         }
     }
