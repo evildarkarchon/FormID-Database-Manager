@@ -4,6 +4,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Collections.Specialized;
 using System.Linq;
 using System.Reflection;
 using System.Threading;
@@ -936,8 +937,12 @@ public class MainWindowViewModelTests
         Assert.Contains("HasWarningMessages", notifiedProperties);
     }
 
+    /// <summary>
+    ///     Verifies that the read-only Error Message List still drives its flag both ways: the first entry raises
+    ///     <see cref="MainWindowViewModel.HasErrorMessages" /> and starting over lowers it.
+    /// </summary>
     [Fact]
-    public void ErrorMessages_CollectionChangesNotifyHasErrorMessagesForAddAndClear()
+    public void ClearErrorAndWarningMessages_ErrorListHeldAMessage_NotifiesHasErrorMessagesBecameFalse()
     {
         // Arrange
         var notifiedProperties = new System.Collections.Generic.List<string>();
@@ -948,25 +953,25 @@ public class MainWindowViewModelTests
                 notifiedProperties.Add(args.PropertyName);
             }
         };
-
-        // Act
-        _viewModel.ErrorMessages.Add("Binding support error");
-
-        // Assert
+        _viewModel.AddMessage(MessageList.Error, "Binding support error");
         Assert.True(_viewModel.HasErrorMessages);
         Assert.Contains(nameof(MainWindowViewModel.HasErrorMessages), notifiedProperties);
+        notifiedProperties.Clear();
 
         // Act
-        notifiedProperties.Clear();
-        _viewModel.ErrorMessages.Clear();
+        _viewModel.ClearErrorAndWarningMessages();
 
         // Assert
         Assert.False(_viewModel.HasErrorMessages);
         Assert.Contains(nameof(MainWindowViewModel.HasErrorMessages), notifiedProperties);
     }
 
+    /// <summary>
+    ///     Verifies that the read-only Warning Message List still drives its flag both ways: the first entry raises
+    ///     <see cref="MainWindowViewModel.HasWarningMessages" /> and starting over lowers it.
+    /// </summary>
     [Fact]
-    public void InformationMessages_CollectionChangesNotifyHasInformationMessagesForAddAndClear()
+    public void ClearErrorAndWarningMessages_WarningListHeldAMessage_NotifiesHasWarningMessagesBecameFalse()
     {
         // Arrange
         var notifiedProperties = new System.Collections.Generic.List<string>();
@@ -977,139 +982,13 @@ public class MainWindowViewModelTests
                 notifiedProperties.Add(args.PropertyName);
             }
         };
-
-        // Act
-        _viewModel.InformationMessages.Add("Binding support information");
-
-        // Assert
-        Assert.True(_viewModel.HasInformationMessages);
-        Assert.Contains(nameof(MainWindowViewModel.HasInformationMessages), notifiedProperties);
-
-        // Act
-        notifiedProperties.Clear();
-        _viewModel.InformationMessages.Clear();
-
-        // Assert
-        Assert.False(_viewModel.HasInformationMessages);
-        Assert.Contains(nameof(MainWindowViewModel.HasInformationMessages), notifiedProperties);
-    }
-
-    [Fact]
-    public void WarningMessages_CollectionChangesNotifyHasWarningMessagesForAddAndClear()
-    {
-        // Arrange
-        var notifiedProperties = new System.Collections.Generic.List<string>();
-        _viewModel.PropertyChanged += (_, args) =>
-        {
-            if (args.PropertyName != null)
-            {
-                notifiedProperties.Add(args.PropertyName);
-            }
-        };
-
-        // Act
-        _viewModel.WarningMessages.Add("Binding support warning");
-
-        // Assert
+        _viewModel.AddMessage(MessageList.Warning, "Binding support warning");
         Assert.True(_viewModel.HasWarningMessages);
         Assert.Contains(nameof(MainWindowViewModel.HasWarningMessages), notifiedProperties);
-
-        // Act
         notifiedProperties.Clear();
-        _viewModel.WarningMessages.Clear();
-
-        // Assert
-        Assert.False(_viewModel.HasWarningMessages);
-        Assert.Contains(nameof(MainWindowViewModel.HasWarningMessages), notifiedProperties);
-    }
-
-    [Fact]
-    public void ErrorMessages_ReplacedCollectionContinuesNotifyingHasErrorMessages()
-    {
-        // Arrange
-        var replacement = new ObservableCollection<string>();
-        var notifiedProperties = new System.Collections.Generic.List<string>();
-        _viewModel.ErrorMessages = replacement;
-        _viewModel.PropertyChanged += (_, args) =>
-        {
-            if (args.PropertyName != null)
-            {
-                notifiedProperties.Add(args.PropertyName);
-            }
-        };
 
         // Act
-        replacement.Add("Replacement error");
-
-        // Assert
-        Assert.True(_viewModel.HasErrorMessages);
-        Assert.Contains(nameof(MainWindowViewModel.HasErrorMessages), notifiedProperties);
-
-        // Act
-        notifiedProperties.Clear();
-        replacement.Clear();
-
-        // Assert
-        Assert.False(_viewModel.HasErrorMessages);
-        Assert.Contains(nameof(MainWindowViewModel.HasErrorMessages), notifiedProperties);
-    }
-
-    [Fact]
-    public void InformationMessages_ReplacedCollectionContinuesNotifyingHasInformationMessages()
-    {
-        // Arrange
-        var replacement = new ObservableCollection<string>();
-        var notifiedProperties = new System.Collections.Generic.List<string>();
-        _viewModel.InformationMessages = replacement;
-        _viewModel.PropertyChanged += (_, args) =>
-        {
-            if (args.PropertyName != null)
-            {
-                notifiedProperties.Add(args.PropertyName);
-            }
-        };
-
-        // Act
-        replacement.Add("Replacement information");
-
-        // Assert
-        Assert.True(_viewModel.HasInformationMessages);
-        Assert.Contains(nameof(MainWindowViewModel.HasInformationMessages), notifiedProperties);
-
-        // Act
-        notifiedProperties.Clear();
-        replacement.Clear();
-
-        // Assert
-        Assert.False(_viewModel.HasInformationMessages);
-        Assert.Contains(nameof(MainWindowViewModel.HasInformationMessages), notifiedProperties);
-    }
-
-    [Fact]
-    public void WarningMessages_ReplacedCollectionContinuesNotifyingHasWarningMessages()
-    {
-        // Arrange
-        var replacement = new ObservableCollection<string>();
-        var notifiedProperties = new System.Collections.Generic.List<string>();
-        _viewModel.WarningMessages = replacement;
-        _viewModel.PropertyChanged += (_, args) =>
-        {
-            if (args.PropertyName != null)
-            {
-                notifiedProperties.Add(args.PropertyName);
-            }
-        };
-
-        // Act
-        replacement.Add("Replacement warning");
-
-        // Assert
-        Assert.True(_viewModel.HasWarningMessages);
-        Assert.Contains(nameof(MainWindowViewModel.HasWarningMessages), notifiedProperties);
-
-        // Act
-        notifiedProperties.Clear();
-        replacement.Clear();
+        _viewModel.ClearErrorAndWarningMessages();
 
         // Assert
         Assert.False(_viewModel.HasWarningMessages);
@@ -1117,20 +996,28 @@ public class MainWindowViewModelTests
     }
 
     /// <summary>
-    ///     Verifies mutable message presentation remains independent from read-only Plugin membership projection.
+    ///     Verifies that starting over leaves the Information Message List's flag alone, since information survives it.
     /// </summary>
     [Fact]
-    public void MessageCollections_PublicMutation_RetainsItems()
+    public void ClearErrorAndWarningMessages_InformationListHeldAMessage_DoesNotNotifyHasInformationMessages()
     {
+        // Arrange
+        _viewModel.AddMessage(MessageList.Information, "Binding support information");
+        var notifiedProperties = new System.Collections.Generic.List<string>();
+        _viewModel.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName != null)
+            {
+                notifiedProperties.Add(args.PropertyName);
+            }
+        };
+
         // Act
-        _viewModel.ErrorMessages.Add("Error");
-        _viewModel.InformationMessages.Add("Info");
-        _viewModel.WarningMessages.Add("Warning");
+        _viewModel.ClearErrorAndWarningMessages();
 
         // Assert
-        Assert.Single(_viewModel.ErrorMessages);
-        Assert.Single(_viewModel.InformationMessages);
-        Assert.Single(_viewModel.WarningMessages);
+        Assert.True(_viewModel.HasInformationMessages);
+        Assert.DoesNotContain(nameof(MainWindowViewModel.HasInformationMessages), notifiedProperties);
     }
 
     #endregion
@@ -1343,7 +1230,7 @@ public class MainWindowViewModelTests
         using var dispatcher = new SingleThreadDispatcher();
         var viewModel = new MainWindowViewModel(dispatcher);
         var mutationsOffTheDispatcherThread = 0;
-        viewModel.ErrorMessages.CollectionChanged += (_, _) =>
+        ((INotifyCollectionChanged)viewModel.ErrorMessages).CollectionChanged += (_, _) =>
         {
             if (!dispatcher.CheckAccess())
             {

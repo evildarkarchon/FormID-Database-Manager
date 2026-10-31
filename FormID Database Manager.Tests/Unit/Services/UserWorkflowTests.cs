@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Collections.Specialized;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -475,11 +476,11 @@ public class UserWorkflowTests
         }
         else if (notification == "Errors")
         {
-            _viewModel.ErrorMessages.CollectionChanged += (_, _) => EditInputs();
+            ((INotifyCollectionChanged)_viewModel.ErrorMessages).CollectionChanged += (_, _) => EditInputs();
         }
         else
         {
-            _viewModel.WarningMessages.CollectionChanged += (_, _) => EditInputs();
+            ((INotifyCollectionChanged)_viewModel.WarningMessages).CollectionChanged += (_, _) => EditInputs();
         }
 
         await sut.ProcessFormIdsAsync();

@@ -100,6 +100,8 @@ public class CoreProjectBoundaryTests
     /// <remarks>
     /// The progress properties are pinned here for the same reason the Game Context ones are: a public setter would
     /// let a third writer back onto the progress channel and reintroduce the collision the precedence rule removes.
+    /// The Message Lists are pinned because the ViewModel owns them (ADR-0014): a setter would let a consumer replace
+    /// a list and bypass <c>AddMessage</c> and <c>ClearErrorAndWarningMessages</c>.
     /// </remarks>
     [Theory]
     [InlineData(nameof(MainWindowViewModel.SelectedGame))]
@@ -110,6 +112,9 @@ public class CoreProjectBoundaryTests
     [InlineData(nameof(MainWindowViewModel.ProgressValue))]
     [InlineData(nameof(MainWindowViewModel.IsProgressVisible))]
     [InlineData(nameof(MainWindowViewModel.ProcessButtonText))]
+    [InlineData(nameof(MainWindowViewModel.ErrorMessages))]
+    [InlineData(nameof(MainWindowViewModel.WarningMessages))]
+    [InlineData(nameof(MainWindowViewModel.InformationMessages))]
     public void ProjectedProperties_PublicContract_ExposeGettersWithoutConsumerAccessibleSetters(string propertyName)
     {
         var property = Assert.Single(
@@ -120,6 +125,24 @@ public class CoreProjectBoundaryTests
         Assert.True(property.GetMethod.IsPublic);
         // Reflection includes private accessors, which let the ViewModel apply projections without exposing a writer.
         Assert.True(property.SetMethod is null or { IsPrivate: true });
+    }
+
+    /// <summary>
+    /// Verifies that each Message List is exposed as a read-only collection, so no consumer can append to, clear, or
+    /// replace it except through the ViewModel's Message List operations (ADR-0014).
+    /// </summary>
+    /// <param name="propertyName">The Message List property whose public type is verified.</param>
+    [Theory]
+    [InlineData(nameof(MainWindowViewModel.ErrorMessages))]
+    [InlineData(nameof(MainWindowViewModel.WarningMessages))]
+    [InlineData(nameof(MainWindowViewModel.InformationMessages))]
+    public void MessageLists_PublicContract_AreReadOnlyObservableCollectionsOfString(string propertyName)
+    {
+        var property = Assert.Single(
+            typeof(MainWindowViewModel).GetProperties(),
+            candidate => candidate.Name == propertyName);
+
+        Assert.Equal(typeof(ReadOnlyObservableCollection<string>), property.PropertyType);
     }
 
     /// <summary>
