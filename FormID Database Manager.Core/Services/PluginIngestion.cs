@@ -458,10 +458,9 @@ internal sealed class PluginIngestion : IPluginIngestion
     /// <param name="readyPlugin">The selected Plugin and opaque capability prepared by Game Load Orders.</param>
     /// <returns>The disposable Plugin overlay.</returns>
     /// <remarks>
-    ///     The two master-resolution failures below are classified here rather than in the overlay adapter on purpose.
-    ///     The adapter's expected-failure list stays narrow so an unexpected internal failure still aborts loudly, and
-    ///     these are not Plugin-specific anyway: they are facts about the Data directory that would fail every selected
-    ///     Plugin identically (ADR-0006, issue #52).
+    ///     The overlay adapter classifies master-resolution failures itself, beside its Failed Plugin list, so an
+    ///     <see cref="UnresolvableMasterException" /> passes through here untouched and fails the whole selection
+    ///     (ADR-0006, ADR-0015).
     /// </remarks>
     /// <exception cref="PluginReadException">The overlay adapter reports an expected Plugin-specific failure.</exception>
     /// <exception cref="UnresolvableMasterException">
@@ -480,21 +479,6 @@ internal sealed class PluginIngestion : IPluginIngestion
                 PluginReadPhase.OpeningPlugin,
                 ex.Message,
                 ex);
-        }
-        catch (MissingModException ex)
-        {
-            // ModPath is the first of the exception's keys, which is the only one here: Mutagen's separated-master
-            // path raises this per unresolved master, from a ModKey rather than a path, so it carries exactly one and
-            // that key has no directory to report — only its file name.
-            throw new UnresolvableMasterException(
-                readyPlugin.PluginName,
-                ex.ModPath.ModKey.FileName.ToString(),
-                ex);
-        }
-        catch (MissingModMappingException ex)
-        {
-            // Mutagen reports only that no lookup was supplied, so there is no individual master to name.
-            throw new UnresolvableMasterException(readyPlugin.PluginName, null, ex);
         }
     }
 

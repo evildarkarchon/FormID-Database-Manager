@@ -208,21 +208,21 @@ public sealed class PluginIngestionPlanTests : IDisposable
     }
 
     /// <summary>
-    ///     Verifies that a master the Data directory cannot supply fails the whole plan, naming that master, exactly as
-    ///     it fails a whole run.
+    ///     Verifies that a master the Data directory cannot supply fails the whole plan, unchanged, exactly as it fails
+    ///     a whole run.
     /// </summary>
     /// <remarks>
     ///     ADR-0006 and issue #52. This is the point of a plan opening overlays at all: the user sees the failure before
     ///     committing to a run rather than after. The overlay opened for the earlier Plugin is asserted released,
-    ///     because a plan that fails partway still owns everything it opened.
+    ///     because a plan that fails partway still owns everything it opened, and the failing Plugin has no overlay to
+    ///     release. Which Mutagen failures become an Unresolvable Master, and which master each names, is the overlay
+    ///     adapter's classification since ADR-0015, and is pinned in <see cref="PluginOverlayConstructionTests" />.
     /// </remarks>
     [Fact]
-    public async Task PlanAsync_DeclaredMasterMissingFromTheLookup_FailsTheWholePlanAndReleasesEarlierOverlays()
+    public async Task PlanAsync_UnresolvableMasterWhileOpening_FailsTheWholePlanAndReleasesEarlierOverlays()
     {
         var gameDirectory = CreateGameDirectory();
-        var failure = new MissingModException(
-            ModKey.FromNameAndExtension("Starfield.esm"),
-            "Mod was missing from load order when constructing the separate mod lists needed for FormID translation.");
+        var failure = new UnresolvableMasterException("Patch.esp", "Starfield.esm");
         var overlayReader = new PlanningOverlayReader { Failures = { ["Patch.esp"] = failure } };
         IPluginIngestion sut = new PluginIngestion(
             new RecordingPreparedGameLoadOrders(CreateReadyPlugins(
@@ -237,36 +237,9 @@ public sealed class PluginIngestionPlanTests : IDisposable
             CreateRequest(gameDirectory, "First.esp", "Patch.esp", "Never.esp"),
             TestContext.Current.CancellationToken));
 
-        Assert.Equal("Patch.esp", thrown.PluginName);
-        Assert.Equal("Starfield.esm", thrown.MasterName);
-        Assert.Same(failure, thrown.InnerException);
+        Assert.Same(failure, thrown);
         Assert.Equal(["First.esp", "Patch.esp"], overlayReader.OpenedPlugins);
         Assert.Equal(["First.esp"], overlayReader.DisposedPlugins);
-    }
-
-    /// <summary>
-    ///     Verifies that Mutagen's unnamed missing-mapping failure stops the whole plan as an unnamed Unresolvable
-    ///     Master instead of becoming one planned Plugin failure.
-    /// </summary>
-    [Fact]
-    public async Task PlanAsync_MasterMappingMissing_FailsTheWholePlanWithoutNamingAMaster()
-    {
-        var gameDirectory = CreateGameDirectory();
-        var failure = new MissingModMappingException("Master flag lookup was not provided.");
-        var overlayReader = new PlanningOverlayReader { Failures = { ["Patch.esp"] = failure } };
-        IPluginIngestion sut = new PluginIngestion(
-            new RecordingPreparedGameLoadOrders(CreateReadyPlugins(gameDirectory, "Patch.esp")),
-            overlayReader,
-            new EntryExtraction());
-
-        var thrown = await Assert.ThrowsAsync<UnresolvableMasterException>(() => sut.PlanAsync(
-            CreateRequest(gameDirectory, "Patch.esp"),
-            TestContext.Current.CancellationToken));
-
-        Assert.Equal("Patch.esp", thrown.PluginName);
-        Assert.Null(thrown.MasterName);
-        Assert.Same(failure, thrown.InnerException);
-        Assert.Empty(overlayReader.DisposedPlugins);
     }
 
     /// <summary>

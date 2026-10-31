@@ -18,8 +18,9 @@ internal interface IPluginOverlayReader
     ///     failure, so it deliberately does not arrive as <see cref="PluginOverlayReadException" />.
     /// </exception>
     /// <exception cref="PluginOverlayReadException">The selected Plugin contains malformed or unreadable data.</exception>
-    /// <exception cref="MissingModException">The prepared lookup cannot resolve a declared master.</exception>
-    /// <exception cref="MissingModMappingException">No prepared lookup maps a declared master.</exception>
+    /// <exception cref="UnresolvableMasterException">
+    ///     The prepared read capability cannot resolve a master the selected Plugin declares (ADR-0006).
+    /// </exception>
     IModDisposeGetter ReadOverlay(SelectedPluginReady readyPlugin);
 }
 
@@ -44,11 +45,9 @@ internal sealed class MutagenPluginOverlayReader : IPluginOverlayReader
     /// </exception>
     /// <exception cref="InvalidOperationException">The capability belongs to an incompatible adapter.</exception>
     /// <exception cref="PluginOverlayReadException">Mutagen or the filesystem reports unreadable Plugin data.</exception>
-    /// <exception cref="MissingModException">
-    ///     The prepared lookup cannot resolve a declared master; Plugin Ingestion classifies this under ADR-0006.
-    /// </exception>
-    /// <exception cref="MissingModMappingException">
-    ///     No prepared lookup maps a declared master; Plugin Ingestion classifies this under ADR-0006.
+    /// <exception cref="UnresolvableMasterException">
+    ///     Mutagen raises <see cref="MissingModException" /> (naming the master's file name) or
+    ///     <see cref="MissingModMappingException" /> (naming no master); the Mutagen exception is the inner exception.
     /// </exception>
     public IModDisposeGetter ReadOverlay(SelectedPluginReady readyPlugin)
     {
@@ -68,13 +67,49 @@ internal sealed class MutagenPluginOverlayReader : IPluginOverlayReader
         catch (Exception ex)
         {
             RethrowNestedCancellation(ex);
-            if (!IsExpectedPluginOverlayFailure(ex))
+            if (IsExpectedPluginOverlayFailure(ex))
             {
-                throw;
+                // The application-owned marker prevents arbitrary adapter failures from becoming Failed Plugins.
+                throw new PluginOverlayReadException(GetUnderlyingPluginReadMessage(ex), ex);
             }
 
-            // The application-owned marker prevents arbitrary adapter failures from becoming Failed Plugins.
-            throw new PluginOverlayReadException(GetUnderlyingPluginReadMessage(ex), ex);
+            // Classified after the Failed Plugin list, as Plugin Ingestion used to classify whatever escaped it, so a
+            // master-resolution failure wrapping a listed cause still becomes the same Failed Plugin it did before.
+            ThrowIfUnresolvableMaster(readyPlugin.PluginName, ex);
+            throw;
+        }
+    }
+
+    /// <summary>
+    ///     Classifies Mutagen's two master-resolution failures as an Unresolvable Master that fails the Processing Run.
+    /// </summary>
+    /// <param name="pluginName">The selected Plugin whose declared master could not be resolved.</param>
+    /// <param name="exception">The top-level exception raised while opening the overlay.</param>
+    /// <remarks>
+    ///     This is a classification of its own beside the Failed Plugin list, not an entry in it. The list stays narrow
+    ///     so an unexpected internal failure still aborts loudly, and these failures are not Plugin-specific anyway:
+    ///     they are facts about the Data directory that would fail every selected Plugin identically (ADR-0006,
+    ///     ADR-0015, issue #52). Only the top-level exception is inspected, matching the catch Plugin Ingestion held.
+    /// </remarks>
+    /// <exception cref="UnresolvableMasterException">
+    ///     <paramref name="exception" /> is a <see cref="MissingModException" /> or
+    ///     <see cref="MissingModMappingException" />, which is kept as the inner exception.
+    /// </exception>
+    private static void ThrowIfUnresolvableMaster(string pluginName, Exception exception)
+    {
+        switch (exception)
+        {
+            case MissingModException missingMod:
+                // ModPath is the first of the exception's keys, which is the only one here: Mutagen's separated-master
+                // path raises this per unresolved master, from a ModKey rather than a path, so it carries exactly one
+                // and that key has no directory to report — only its file name.
+                throw new UnresolvableMasterException(
+                    pluginName,
+                    missingMod.ModPath.ModKey.FileName.ToString(),
+                    missingMod);
+            case MissingModMappingException missingMapping:
+                // Mutagen reports only that no lookup was supplied, so there is no individual master to name.
+                throw new UnresolvableMasterException(pluginName, null, missingMapping);
         }
     }
 

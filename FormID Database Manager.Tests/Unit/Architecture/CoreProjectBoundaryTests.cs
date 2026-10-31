@@ -933,6 +933,26 @@ public class CoreProjectBoundaryTests
     }
 
     /// <summary>
+    ///     Verifies Plugin Ingestion names neither of Mutagen's master-resolution exceptions, because the Mutagen
+    ///     overlay adapter classifies them as an Unresolvable Master itself (ADR-0006, ADR-0015).
+    /// </summary>
+    /// <param name="sourceFileName">A Plugin Ingestion source file.</param>
+    /// <remarks>
+    ///     Issue #132, under spec #129. Raw text is searched, so a comment naming either type fails this too: Plugin
+    ///     Ingestion has no reason to know them at all once the adapter owns the classification.
+    /// </remarks>
+    [Theory]
+    [InlineData("PluginIngestion.cs")]
+    [InlineData("PluginIngestionContracts.cs")]
+    public void PluginIngestionSources_MasterResolutionFailures_AreNotNamed(string sourceFileName)
+    {
+        var source = File.ReadAllText(Path.Combine(GetCoreProjectDirectory(), "Services", sourceFileName));
+
+        Assert.DoesNotContain("MissingModException", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("MissingModMappingException", source, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     ///     Verifies the text-row writer role and its row type are declared with FormID Text Ingestion's contracts, which
     ///     own them, and not with the Store that implements the role (ADR-0001, 2026-10-18).
     /// </summary>

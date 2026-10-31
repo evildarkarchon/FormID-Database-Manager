@@ -195,11 +195,11 @@ public sealed class PluginOverlayConstructionTests : IDisposable
     }
 
     /// <summary>
-    ///     Verifies a production capability with a present but empty separated-master lookup preserves Mutagen's
-    ///     master-resolution failure for Plugin Ingestion to classify.
+    ///     Verifies a production capability with a present but empty separated-master lookup becomes an Unresolvable
+    ///     Master naming the declared master, classified by the adapter itself rather than as a Plugin-read failure.
     /// </summary>
     [Fact]
-    public void ReadOverlay_ProductionReadyPluginWithUnresolvableMaster_EscapesWithoutPluginReadFailure()
+    public void ReadOverlay_ProductionReadyPluginWithUnresolvableMaster_ThrowsUnresolvableMasterNamingIt()
     {
         const string pluginName = "CapabilityMissingMaster.esp";
         var pluginPath = PluginFixture.Write(GameRelease.Starfield, _testDirectory, pluginName);
@@ -209,7 +209,10 @@ public sealed class PluginOverlayConstructionTests : IDisposable
         var exception = Record.Exception(() => _reader.ReadOverlay(readyPlugin));
 
         Assert.IsNotType<PluginOverlayReadException>(exception);
-        Assert.IsType<MissingModException>(exception);
+        var unresolvableMaster = Assert.IsType<UnresolvableMasterException>(exception);
+        Assert.Equal(pluginName, unresolvableMaster.PluginName);
+        Assert.Equal(PluginFixture.MainMasterFor(GameRelease.Starfield), unresolvableMaster.MasterName);
+        Assert.IsType<MissingModException>(unresolvableMaster.InnerException);
     }
 
     // ---------------------------------------------------------------------------------------------------------
@@ -281,25 +284,28 @@ public sealed class PluginOverlayConstructionTests : IDisposable
     // ---------------------------------------------------------------------------------------------------------
     // The negative boundary of the adapter's classification list. The companion coverage pins which inputs *become*
     // an expected Plugin-read failure; these pin which real Mutagen failures deliberately stay off that list and
-    // escape unwrapped. Both need a spec-correct Plugin, which is why they live with the fixture-based tests.
+    // are classified beside it as an Unresolvable Master instead. Both need a spec-correct Plugin, which is why they
+    // live with the fixture-based tests.
     // ---------------------------------------------------------------------------------------------------------
 
     /// <summary>
-    ///     Verifies that opening a master-declaring Starfield Plugin without a master-flags lookup escapes the adapter
-    ///     unchanged, so an unexpected internal failure aborts the Processing Run loudly instead of being reported to
-    ///     the user as a problem with their Plugin.
+    ///     Verifies that opening a master-declaring Starfield Plugin without a master-flags lookup fails the
+    ///     Processing Run as an Unresolvable Master that names no master, instead of being reported to the user as a
+    ///     problem with their Plugin.
     /// </summary>
     /// <remarks>
     ///     The fixture is an ordinary Starfield Plugin, not an exotic one: the format requires every Plugin to list
     ///     its game's main master first, so declaring <c>Starfield.esm</c> is what makes it spec-correct rather than
     ///     what makes it unusual. Starfield uses separated master load orders, so reading one without a lookup raises
-    ///     <see cref="MissingModMappingException" />, which matches none of the adapter's classified branches. The
+    ///     <see cref="MissingModMappingException" />, which matches none of the Failed Plugin list's branches. The
     ///     capability below deliberately carries default read parameters instead of prepared separated-master state.
-    ///     What is asserted is the boundary of the list, not this specific Mutagen type — widening the list to swallow
-    ///     this would have to be a deliberate edit here.
+    ///     Mutagen reports only that the lookup was absent, so there is no master to name. Production Game Load Orders
+    ///     always supplies a lookup for a game that needs one, so this arrives only from another prepared capability;
+    ///     it stays covered because an unnamed master is still a stopped run rather than an unhandled abort.
+    ///     Widening the Failed Plugin list to swallow this would have to be a deliberate edit here.
     /// </remarks>
     [Fact]
-    public void ReadOverlay_MasterFlagsLookupMissingEntirely_EscapesWithoutBecomingAPluginReadFailure()
+    public void ReadOverlay_MasterFlagsLookupMissingEntirely_ThrowsUnresolvableMasterWithoutNamingAMaster()
     {
         const string pluginName = "NoLookup.esp";
         var pluginPath = PluginFixture.Write(GameRelease.Starfield, _testDirectory, pluginName);
@@ -309,27 +315,31 @@ public sealed class PluginOverlayConstructionTests : IDisposable
 
         var exception = Record.Exception(() => _reader.ReadOverlay(readyPlugin));
 
-        // The "not a Failed Plugin" assertion comes first and names the actual regression; the type assertion below
-        // is what identifies which Mutagen failure this case reached.
+        // The "not a Failed Plugin" assertion comes first and names the actual regression; the inner-exception
+        // assertion below is what identifies which Mutagen failure this case reached.
         Assert.IsNotType<PluginOverlayReadException>(exception);
-        Assert.IsType<MissingModMappingException>(exception);
+        var unresolvableMaster = Assert.IsType<UnresolvableMasterException>(exception);
+        Assert.Equal(pluginName, unresolvableMaster.PluginName);
+        Assert.Null(unresolvableMaster.MasterName);
+        Assert.Contains(pluginName, unresolvableMaster.Message, StringComparison.Ordinal);
+        Assert.IsType<MissingModMappingException>(unresolvableMaster.InnerException);
     }
 
     /// <summary>
     ///     Verifies the same for a lookup that exists but does not contain the master the Plugin declares, which is a
-    ///     different Mutagen failure reaching the same boundary.
+    ///     different Mutagen failure reaching the same boundary and naming the master it could not resolve.
     /// </summary>
     /// <remarks>
     ///     This case is reachable in production, not merely a constructed one: production Game Load Orders collects
     ///     master styles only for listings whose file exists on disk, so a Starfield Data directory holding
     ///     mods but not <c>Starfield.esm</c> builds exactly this lookup. Issue #52 fixed what a Processing Run does
-    ///     with it, and fixed it one layer up — Plugin Ingestion turns this exception into an
-    ///     <c>UnresolvableMasterException</c> that stops the run and names the master (ADR-0006). The adapter's list
-    ///     deliberately did not widen, which is what this pins: widening it would report a Data-directory problem as a
-    ///     Failed Plugin, and would have to be a deliberate edit here.
+    ///     with it: the exception becomes an <c>UnresolvableMasterException</c> that stops the run and names the master
+    ///     (ADR-0006). ADR-0015 moved that classification from Plugin Ingestion into this adapter, as a catch of its own
+    ///     beside the Failed Plugin list. The list deliberately did not widen, which is what this pins: widening it
+    ///     would report a Data-directory problem as a Failed Plugin, and would have to be a deliberate edit here.
     /// </remarks>
     [Fact]
-    public void ReadOverlay_MasterFlagsLookupWithoutTheDeclaredMaster_EscapesWithoutBecomingAPluginReadFailure()
+    public void ReadOverlay_MasterFlagsLookupWithoutTheDeclaredMaster_ThrowsUnresolvableMasterNamingIt()
     {
         const string pluginName = "WrongLookup.esp";
         var pluginPath = PluginFixture.Write(GameRelease.Starfield, _testDirectory, pluginName);
@@ -345,7 +355,11 @@ public sealed class PluginOverlayConstructionTests : IDisposable
         var exception = Record.Exception(() => _reader.ReadOverlay(readyPlugin));
 
         Assert.IsNotType<PluginOverlayReadException>(exception);
-        Assert.IsType<MissingModException>(exception);
+        var unresolvableMaster = Assert.IsType<UnresolvableMasterException>(exception);
+        Assert.Equal(pluginName, unresolvableMaster.PluginName);
+        Assert.Equal("Starfield.esm", unresolvableMaster.MasterName);
+        Assert.Contains("Starfield.esm", unresolvableMaster.Message, StringComparison.Ordinal);
+        Assert.IsType<MissingModException>(unresolvableMaster.InnerException);
     }
 
     /// <summary>
