@@ -50,6 +50,14 @@ legacy path without changing Plugin List, Plugin Ingestion, Dry Run, or overlay 
 over and remove the provider, snapshot, Boolean mode, and forwarding discovery seam. Interim coexistence is therefore
 a checked migration state, not a compatibility adapter or the final architecture described by this decision.
 
+### The Plugin read seam (2026-10-30, ADR-0015)
+
+`IPluginOverlayReader` becomes `IPluginReader`. It still consumes the ready case's opaque read capability, but it now
+opens the Plugin *and* reads its records, and hands back FormID records rather than a Mutagen overlay. Plugin Ingestion
+still owns the opened Plugin's lifetime. It no longer "alone classifies Mutagen master-resolution failures": the Mutagen
+adapter behind the seam throws the Unresolvable Master, so Plugin Ingestion names no Mutagen type. A selected-Plugin Dry
+Run still uses the same preparation and opening path as a real run. Everything else in this decision stands.
+
 ## Considered options
 
 - A minimal listing/read-preparation interface was rejected because it left membership and file-availability

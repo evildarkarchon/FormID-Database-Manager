@@ -69,6 +69,17 @@ Point 3 no longer lives in a catch clause in `UserWorkflow`. `ProcessingRunPrese
 an `UnresolvableMasterException` is shown unwrapped, and anything else gets the "Error processing FormIDs" prefix.
 Processing Run Control calls it for every failure. What the user reads is unchanged.
 
+### Classification behind the Plugin read seam (2026-10-30, ADR-0015)
+
+Point 1's placement changes, but not its outcome. `MutagenPluginReader`, the adapter behind the new `IPluginReader`
+seam, now catches `MissingModException` and `MissingModMappingException` and throws `UnresolvableMasterException`, so
+`PluginIngestion` names no Mutagen type. That catch sits beside the adapter's Failed Plugin list rather than in it, so
+the list still does not widen. An unresolvable master still fails the Processing Run, names the master where Mutagen
+names one, and never becomes a Failed Plugin.
+
+The consequence below that both Mutagen failures "escape the adapter unwrapped" no longer holds. The adapter tests
+assert that they come out as `UnresolvableMasterException` instead.
+
 ## Why not the alternatives
 
 - **Add the two failures to the adapter's classification list, making them one Failed Plugin.** Cheapest, and wrong on
