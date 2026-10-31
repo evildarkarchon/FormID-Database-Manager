@@ -189,7 +189,8 @@ internal sealed class ProcessingRunControl : IDisposable
                 case RefusedRun refused:
                     // A refused press never became a run, so it takes no ownership of the gate and publishes no
                     // starting activity: the rendered reason is the only thing it leaves behind (ADR-0010). It still
-                    // starts the message lists over, as every press that does not cancel does.
+                    // starts all three message lists over, as every press that does not cancel does, so the reason is
+                    // the only message the user reads afterwards (#95).
                     _sink.ClearMessageLists();
                     _sink.AddErrorMessage(ProcessingRunPresentation.Render(refused.Reason));
                     return null;
@@ -223,8 +224,8 @@ internal sealed class ProcessingRunControl : IDisposable
         var starting = NextActiveRunActivity(ProcessingRunPresentation.Render(new ProcessingRunStarting()));
         _runActivity = starting;
 
-        // Every press that does not cancel starts the message lists over first, so what the user reads afterwards is
-        // only what this press produced.
+        // Every press that does not cancel starts all three message lists over first, information included, so what
+        // the user reads afterwards is only what this press produced (#95).
         _sink.ClearMessageLists();
         // A press re-entering from the list clear has already reported its cancellation-requested activity, which is
         // what the run is doing now; publishing the starting activity after it would put the older status back.
@@ -300,9 +301,10 @@ internal sealed class ProcessingRunControl : IDisposable
     /// <param name="outcome">The outcome the executor returned.</param>
     /// <remarks>
     ///     <see cref="ProcessingRunPresentation" /> is a pure renderer, so the order the run's terminal facts reach the
-    ///     user is decided here: the messages first and the transient status last. An inactive rendered activity means
-    ///     the outcome has nothing to say on that channel — a cancelled run's acknowledgement is a terminal fact, and
-    ///     reporting it there would only have it erased as the run hands the channel back (#60).
+    ///     user is decided here: warnings, then errors, then information, all under <see cref="_lock" /> (#60). Every
+    ///     one of them is a message, and nothing goes to the transient channel: how a run ended — its completion line,
+    ///     its plan, or its cancellation acknowledgement — is a terminal fact, and reporting it there would only have it
+    ///     erased as the run hands the channel back (#60, #94).
     /// </remarks>
     private void ReportOutcome(ProcessingRunOutcome outcome)
     {
@@ -323,13 +325,6 @@ internal sealed class ProcessingRunControl : IDisposable
             foreach (var message in rendered.InformationMessages)
             {
                 _sink.AddInformationMessage(message);
-            }
-
-            if (rendered.Activity.IsActive)
-            {
-                // A terminal activity is a complete projection with a percentage of its own, so it goes through the
-                // same application path as any other report and the carry-forward never applies to it.
-                ReportRunActivityLocked(new RenderedRunProgress(rendered.Activity.Status, rendered.Activity.Value));
             }
         }
     }
@@ -436,7 +431,7 @@ internal sealed class ProcessingRunControl : IDisposable
 internal interface IProcessingRunControlSink
 {
     /// <summary>
-    ///     Clears the error and warning message lists at the start of a press that does not cancel.
+    ///     Clears every message list (errors, warnings, and information) at the start of a press that does not cancel.
     /// </summary>
     void ClearMessageLists();
 

@@ -171,7 +171,7 @@ internal static class ProcessingRunPresentation
     ///     Renders one Processing Run outcome into the report its caller should show.
     /// </summary>
     /// <param name="outcome">How the run ended.</param>
-    /// <returns>The activity projection the run's transient channel should show, and the messages it implies.</returns>
+    /// <returns>The messages the outcome implies, each in the list it belongs to.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="outcome" /> is <see langword="null" />.</exception>
     /// <exception cref="ArgumentOutOfRangeException">The outcome is not one this module knows how to render.</exception>
     internal static RenderedRunReport Render(ProcessingRunOutcome outcome)
@@ -232,24 +232,25 @@ internal static class ProcessingRunPresentation
                     failedDetails)
             ];
 
-        // Failures outrank warnings in the completion status, because the count line has to name the worse of the two.
-        var completionStatus = failedPlugins > 0
-            ? FormatCompletionStatus("Processing completed with failures", ingestedPlugins, skippedPlugins,
+        // Failures outrank warnings in the completion line, because the count line has to name the worse of the two.
+        var completionLine = failedPlugins > 0
+            ? FormatCompletionLine("Processing completed with failures", ingestedPlugins, skippedPlugins,
                 failedPlugins)
             : warningDetails.Count > 0
-                ? FormatCompletionStatus("Processing completed with warnings", ingestedPlugins, skippedPlugins,
+                ? FormatCompletionLine("Processing completed with warnings", ingestedPlugins, skippedPlugins,
                     failedPlugins)
                 : "Processing completed successfully!";
 
+        // The completion line is how the run ended, so it is a terminal fact for the information list rather than a
+        // final status on the transient channel, which the run hands back as it ends and would erase (#60, #94).
         return new RenderedRunReport(
-            new ActivityProjection(true, completionStatus, 100),
             warningMessages,
             errorMessages,
-            ImmutableArray<string>.Empty);
+            [completionLine]);
     }
 
     /// <summary>
-    ///     Renders the completion status of a FormID text-file run from the counts FormID Text Ingestion read.
+    ///     Renders the completion line of a FormID text-file run from the counts FormID Text Ingestion read.
     /// </summary>
     /// <param name="importResult">The distinct Plugin and valid record counts of the import.</param>
     /// <returns>The rendered report for the run.</returns>
@@ -261,14 +262,12 @@ internal static class ProcessingRunPresentation
     private static RenderedRunReport RenderFormIdTextRun(FormIdTextFileImportResult importResult)
     {
         return new RenderedRunReport(
-            new ActivityProjection(
-                true,
+            ImmutableArray<string>.Empty,
+            ImmutableArray<string>.Empty,
+            [
                 $"Processing completed successfully: {importResult.PluginCount} Plugins and " +
-                $"{importResult.RecordCount:N0} records.",
-                100),
-            ImmutableArray<string>.Empty,
-            ImmutableArray<string>.Empty,
-            ImmutableArray<string>.Empty);
+                $"{importResult.RecordCount:N0} records."
+            ]);
     }
 
     /// <summary>
@@ -291,7 +290,6 @@ internal static class ProcessingRunPresentation
         };
 
         return new RenderedRunReport(
-            ActivityProjection.None,
             ImmutableArray<string>.Empty,
             ImmutableArray<string>.Empty,
             plannedWork);
@@ -407,7 +405,6 @@ internal static class ProcessingRunPresentation
     private static RenderedRunReport RenderCancellation()
     {
         return new RenderedRunReport(
-            ActivityProjection.None,
             ImmutableArray<string>.Empty,
             ImmutableArray<string>.Empty,
             ["Processing cancelled by user."]);
@@ -502,7 +499,7 @@ internal static class ProcessingRunPresentation
         return string.Join(Environment.NewLine, lines);
     }
 
-    private static string FormatCompletionStatus(
+    private static string FormatCompletionLine(
         string prefix,
         int ingestedPlugins,
         int skippedPlugins,
@@ -520,9 +517,9 @@ internal static class ProcessingRunPresentation
 ///     The progress percentage, or <see langword="null" /> to keep the percentage already on screen.
 /// </param>
 /// <remarks>
-///     This is deliberately not an <see cref="ActivityProjection" />, which a terminal report does return: that type
-///     carries a non-nullable percentage and so cannot express "this report changes the words but not the bar", which
-///     is exactly what a Plugin-named text-import report does.
+///     This is deliberately not an <see cref="ActivityProjection" />, the projection the run's owner builds from it:
+///     that type carries a non-nullable percentage and so cannot express "this report changes the words but not the
+///     bar", which is exactly what a Plugin-named text-import report does.
 /// </remarks>
 internal readonly record struct RenderedRunProgress(string Status, double? Value);
 
@@ -549,15 +546,18 @@ internal sealed record ProcessingRunCancellationRequested;
 /// <summary>
 ///     Everything one Processing Run outcome has to say to the user, rendered but not yet written anywhere.
 /// </summary>
-/// <param name="Activity">
-///     The run's terminal activity projection, or <see cref="ActivityProjection.None" /> when the outcome has nothing
-///     to say on the transient progress channel.
-/// </param>
+/// <remarks>
+///     How a run ended is a terminal fact, so the report has only message lists and no activity: the transient
+///     progress channel is handed back as the run ends, and a terminal status written there would be erased in the
+///     same tick (#60, #94). Leaving the field out means no outcome can put that defect back.
+/// </remarks>
 /// <param name="WarningMessages">Messages for the warning list, in report order.</param>
 /// <param name="ErrorMessages">Messages for the error list, in report order.</param>
-/// <param name="InformationMessages">Messages for the information list, in report order.</param>
+/// <param name="InformationMessages">
+///     Messages for the information list, in report order: a completed run's completion line, a dry run's plan, or a
+///     cancelled run's acknowledgement.
+/// </param>
 internal readonly record struct RenderedRunReport(
-    ActivityProjection Activity,
     ImmutableArray<string> WarningMessages,
     ImmutableArray<string> ErrorMessages,
     ImmutableArray<string> InformationMessages);

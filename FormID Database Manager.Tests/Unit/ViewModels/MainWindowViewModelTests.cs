@@ -579,23 +579,23 @@ public class MainWindowViewModelTests
     }
 
     /// <summary>
-    ///     Verifies the start-over rule: errors and warnings are cleared, and information survives.
+    ///     Verifies the start-over rule: errors, warnings, and information are all cleared (#95).
     /// </summary>
     [Fact]
-    public void ClearErrorAndWarningMessages_AllListsHoldMessages_KeepsOnlyInformation()
+    public void ClearMessageLists_AllListsHoldMessages_ClearsEveryList()
     {
         _viewModel.AddMessage(MessageList.Error, "Stale error");
         _viewModel.AddMessage(MessageList.Warning, "Stale warning");
         _viewModel.AddMessage(MessageList.Information, "Earlier information");
 
-        _viewModel.ClearErrorAndWarningMessages();
+        _viewModel.ClearMessageLists();
 
         Assert.Empty(_viewModel.ErrorMessages);
         Assert.Empty(_viewModel.WarningMessages);
-        Assert.Equal(["Earlier information"], _viewModel.InformationMessages);
+        Assert.Empty(_viewModel.InformationMessages);
         Assert.False(_viewModel.HasErrorMessages);
         Assert.False(_viewModel.HasWarningMessages);
-        Assert.True(_viewModel.HasInformationMessages);
+        Assert.False(_viewModel.HasInformationMessages);
     }
 
     /// <summary>
@@ -603,7 +603,7 @@ public class MainWindowViewModelTests
     ///     posted, and the lists change only when the posted action runs.
     /// </summary>
     [Fact]
-    public void ClearErrorAndWarningMessages_WithoutDispatcherAccess_ClearsOnlyWhenThePostedActionRuns()
+    public void ClearMessageLists_WithoutDispatcherAccess_ClearsOnlyWhenThePostedActionRuns()
     {
         var dispatcher = new RecordingThreadDispatcher(hasAccess: true);
         var viewModel = new MainWindowViewModel(dispatcher);
@@ -612,17 +612,18 @@ public class MainWindowViewModelTests
         viewModel.AddMessage(MessageList.Information, "Earlier information");
         dispatcher.HasAccess = false;
 
-        viewModel.ClearErrorAndWarningMessages();
+        viewModel.ClearMessageLists();
 
         Assert.Equal(1, dispatcher.PostCount);
         Assert.Equal(["Stale error"], viewModel.ErrorMessages);
         Assert.Equal(["Stale warning"], viewModel.WarningMessages);
+        Assert.Equal(["Earlier information"], viewModel.InformationMessages);
 
         dispatcher.DrainPostedActions(hasAccessDuringDrain: true);
 
         Assert.Empty(viewModel.ErrorMessages);
         Assert.Empty(viewModel.WarningMessages);
-        Assert.Equal(["Earlier information"], viewModel.InformationMessages);
+        Assert.Empty(viewModel.InformationMessages);
     }
 
     [Fact]
@@ -942,7 +943,7 @@ public class MainWindowViewModelTests
     ///     <see cref="MainWindowViewModel.HasErrorMessages" /> and starting over lowers it.
     /// </summary>
     [Fact]
-    public void ClearErrorAndWarningMessages_ErrorListHeldAMessage_NotifiesHasErrorMessagesBecameFalse()
+    public void ClearMessageLists_ErrorListHeldAMessage_NotifiesHasErrorMessagesBecameFalse()
     {
         // Arrange
         var notifiedProperties = new System.Collections.Generic.List<string>();
@@ -959,7 +960,7 @@ public class MainWindowViewModelTests
         notifiedProperties.Clear();
 
         // Act
-        _viewModel.ClearErrorAndWarningMessages();
+        _viewModel.ClearMessageLists();
 
         // Assert
         Assert.False(_viewModel.HasErrorMessages);
@@ -971,7 +972,7 @@ public class MainWindowViewModelTests
     ///     <see cref="MainWindowViewModel.HasWarningMessages" /> and starting over lowers it.
     /// </summary>
     [Fact]
-    public void ClearErrorAndWarningMessages_WarningListHeldAMessage_NotifiesHasWarningMessagesBecameFalse()
+    public void ClearMessageLists_WarningListHeldAMessage_NotifiesHasWarningMessagesBecameFalse()
     {
         // Arrange
         var notifiedProperties = new System.Collections.Generic.List<string>();
@@ -988,7 +989,7 @@ public class MainWindowViewModelTests
         notifiedProperties.Clear();
 
         // Act
-        _viewModel.ClearErrorAndWarningMessages();
+        _viewModel.ClearMessageLists();
 
         // Assert
         Assert.False(_viewModel.HasWarningMessages);
@@ -996,13 +997,13 @@ public class MainWindowViewModelTests
     }
 
     /// <summary>
-    ///     Verifies that starting over leaves the Information Message List's flag alone, since information survives it.
+    ///     Verifies that the read-only Information Message List drives its flag both ways like the other lists: the first
+    ///     entry raises <see cref="MainWindowViewModel.HasInformationMessages" /> and starting over lowers it (#95).
     /// </summary>
     [Fact]
-    public void ClearErrorAndWarningMessages_InformationListHeldAMessage_DoesNotNotifyHasInformationMessages()
+    public void ClearMessageLists_InformationListHeldAMessage_NotifiesHasInformationMessagesBecameFalse()
     {
         // Arrange
-        _viewModel.AddMessage(MessageList.Information, "Binding support information");
         var notifiedProperties = new System.Collections.Generic.List<string>();
         _viewModel.PropertyChanged += (_, args) =>
         {
@@ -1011,13 +1012,17 @@ public class MainWindowViewModelTests
                 notifiedProperties.Add(args.PropertyName);
             }
         };
+        _viewModel.AddMessage(MessageList.Information, "Binding support information");
+        Assert.True(_viewModel.HasInformationMessages);
+        Assert.Contains(nameof(MainWindowViewModel.HasInformationMessages), notifiedProperties);
+        notifiedProperties.Clear();
 
         // Act
-        _viewModel.ClearErrorAndWarningMessages();
+        _viewModel.ClearMessageLists();
 
         // Assert
-        Assert.True(_viewModel.HasInformationMessages);
-        Assert.DoesNotContain(nameof(MainWindowViewModel.HasInformationMessages), notifiedProperties);
+        Assert.False(_viewModel.HasInformationMessages);
+        Assert.Contains(nameof(MainWindowViewModel.HasInformationMessages), notifiedProperties);
     }
 
     #endregion

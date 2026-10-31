@@ -33,7 +33,7 @@ public partial class MainWindowViewModel : ObservableObject
 
     /// <summary>
     ///     The Error Message List, written only through <see cref="AddMessage" /> and
-    ///     <see cref="ClearErrorAndWarningMessages" /> (ADR-0014).
+    ///     <see cref="ClearMessageLists" /> (ADR-0014).
     /// </summary>
     private readonly ObservableCollection<string> _errorMessages = [];
 
@@ -41,7 +41,10 @@ public partial class MainWindowViewModel : ObservableObject
 
     [ObservableProperty] private string _formIdListPath = string.Empty;
 
-    /// <summary>The Information Message List, written only through <see cref="AddMessage" /> (ADR-0014).</summary>
+    /// <summary>
+    ///     The Information Message List, written only through <see cref="AddMessage" /> and
+    ///     <see cref="ClearMessageLists" /> (ADR-0014).
+    /// </summary>
     private readonly ObservableCollection<string> _informationMessages = [];
 
     private int _isApplyingFilter;
@@ -59,7 +62,7 @@ public partial class MainWindowViewModel : ObservableObject
 
     /// <summary>
     ///     The Warning Message List, written only through <see cref="AddMessage" /> and
-    ///     <see cref="ClearErrorAndWarningMessages" /> (ADR-0014).
+    ///     <see cref="ClearMessageLists" /> (ADR-0014).
     /// </summary>
     private readonly ObservableCollection<string> _warningMessages = [];
 
@@ -133,21 +136,21 @@ public partial class MainWindowViewModel : ObservableObject
 
     /// <summary>
     ///     Gets the read-only Error Message List. Writers append through <see cref="AddMessage" /> and start over through
-    ///     <see cref="ClearErrorAndWarningMessages" /> (ADR-0014).
+    ///     <see cref="ClearMessageLists" /> (ADR-0014).
     /// </summary>
     /// <remarks>The observable collection identity is stable for the lifetime of this ViewModel.</remarks>
     public ReadOnlyObservableCollection<string> ErrorMessages { get; }
 
     /// <summary>
     ///     Gets the read-only Warning Message List. Writers append through <see cref="AddMessage" /> and start over
-    ///     through <see cref="ClearErrorAndWarningMessages" /> (ADR-0014).
+    ///     through <see cref="ClearMessageLists" /> (ADR-0014).
     /// </summary>
     /// <remarks>The observable collection identity is stable for the lifetime of this ViewModel.</remarks>
     public ReadOnlyObservableCollection<string> WarningMessages { get; }
 
     /// <summary>
-    ///     Gets the read-only Information Message List. Writers append through <see cref="AddMessage" />; starting the
-    ///     lists over keeps it (ADR-0014).
+    ///     Gets the read-only Information Message List. Writers append through <see cref="AddMessage" /> and start over
+    ///     through <see cref="ClearMessageLists" /> (ADR-0014).
     /// </summary>
     /// <remarks>The observable collection identity is stable for the lifetime of this ViewModel.</remarks>
     public ReadOnlyObservableCollection<string> InformationMessages { get; }
@@ -534,7 +537,7 @@ public partial class MainWindowViewModel : ObservableObject
     ///     </para>
     ///     <para>
     ///         There is deliberately no lock. Every Message List mutation, this one and
-    ///         <see cref="ClearErrorAndWarningMessages" />, is posted to the dispatcher before it touches a list, so all
+    ///         <see cref="ClearMessageLists" />, is posted to the dispatcher before it touches a list, so all
     ///         of them run on the dispatcher's one thread, one after another. A lock taken after that post could never
     ///         be contended, and would only suggest a threading model the lists do not have.
     ///     </para>
@@ -564,23 +567,26 @@ public partial class MainWindowViewModel : ObservableObject
     }
 
     /// <summary>
-    ///     Starts the Message Lists over: clears errors and warnings, and keeps information.
+    ///     Starts the Message Lists over: clears errors, warnings, and information.
     /// </summary>
     /// <remarks>
     ///     This names what happens, not when. Processing Run Control decides when: on every press of the run button
-    ///     that does not cancel a run, including a refused one (ADR-0012, ADR-0014). It follows the same dispatch rule as
+    ///     that does not cancel a run, including a refused one (ADR-0012, ADR-0014). Information is cleared with the
+    ///     other two lists so the user reads only what the new press produced, and earlier runs' completion lines,
+    ///     plans, and Game Context notices cannot pile up (#95). It follows the same dispatch rule as
     ///     <see cref="AddMessage" />, so a clear and an append can never interleave on two threads.
     /// </remarks>
-    internal void ClearErrorAndWarningMessages()
+    internal void ClearMessageLists()
     {
         if (!_dispatcher.CheckAccess())
         {
-            _dispatcher.Post(ClearErrorAndWarningMessages);
+            _dispatcher.Post(ClearMessageLists);
             return;
         }
 
         _errorMessages.Clear();
         _warningMessages.Clear();
+        _informationMessages.Clear();
     }
 
     /// <summary>

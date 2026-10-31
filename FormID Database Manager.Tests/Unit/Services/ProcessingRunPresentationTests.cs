@@ -217,11 +217,11 @@ public sealed class ProcessingRunPresentationTests
     }
 
     /// <summary>
-    ///     Verifies the terminal status of a run in which every selected Plugin became an Ingested Plugin without a
+    ///     Verifies the completion line of a run in which every selected Plugin became an Ingested Plugin without a
     ///     Processing Warning.
     /// </summary>
     [Fact]
-    public void Render_EveryPluginIngestedWithoutWarnings_ReportsOnlyTheSuccessfulCompletionStatus()
+    public void Render_EveryPluginIngestedWithoutWarnings_ReportsOnlyTheSuccessfulCompletionLine()
     {
         var rendered = RenderPluginRun(
             new IngestedPlugin("First.esp", 2),
@@ -231,7 +231,7 @@ public sealed class ProcessingRunPresentationTests
     }
 
     /// <summary>
-    ///     Verifies the warning report and warning completion status of a run whose Ingested Plugins carried
+    ///     Verifies the warning report and warning completion line of a run whose Ingested Plugins carried
     ///     recoverable record issues, including the singular and plural forms of both the summary and the per-Plugin
     ///     detail.
     /// </summary>
@@ -437,13 +437,13 @@ public sealed class ProcessingRunPresentationTests
 
     /// <summary>
     ///     Verifies the complete report of a run that produced Ingested, Skipped and Failed Plugins at once: the
-    ///     warning message, the failure message, and the failure completion status with all three counts.
+    ///     warning message, the failure message, and the failure completion line with all three counts.
     /// </summary>
     /// <remarks>
-    ///     Failures outrank warnings in the completion status, which is only observable when a run produced both.
+    ///     Failures outrank warnings in the completion line, which is only observable when a run produced both.
     /// </remarks>
     [Fact]
-    public void Render_IngestedSkippedAndFailedPlugins_ReportsWarningsFailuresAndTheFailureCompletionStatus()
+    public void Render_IngestedSkippedAndFailedPlugins_ReportsWarningsFailuresAndTheFailureCompletionLine()
     {
         var rendered = RenderPluginRun(
             new IngestedPlugin("Warned.esp", 2, new ProcessingWarning(1, ["Recoverable issue"])),
@@ -466,14 +466,14 @@ public sealed class ProcessingRunPresentationTests
     }
 
     /// <summary>
-    ///     Verifies the completion status of a FormID text-file run, which reports the counts FormID Text Ingestion read.
+    ///     Verifies the completion line of a FormID text-file run, which reports the counts FormID Text Ingestion read.
     /// </summary>
     /// <remarks>
     ///     This is one of the two strings parent #61 changed on purpose: a text run used to end with a flat
     ///     "Processing completed successfully!" that discarded the counts a selected-Plugin run had always reported.
     /// </remarks>
     [Fact]
-    public void Render_FormIdTextRunOutcome_ReportsThePluginAndRecordCountsInTheCompletionStatus()
+    public void Render_FormIdTextRunOutcome_ReportsThePluginAndRecordCountsInTheCompletionLine()
     {
         var rendered = UnderInvariantCulture(() => ProcessingRunPresentation.Render(
             new FormIdTextRunOutcome(new FormIdTextFileImportResult(2, 2_048))));
@@ -494,7 +494,6 @@ public sealed class ProcessingRunPresentationTests
     {
         var rendered = ProcessingRunPresentation.Render(new CancelledRunOutcome());
 
-        Assert.Equal(ActivityProjection.None, rendered.Activity);
         Assert.Equal(["Processing cancelled by user."], rendered.InformationMessages);
         Assert.Empty(rendered.WarningMessages);
         Assert.Empty(rendered.ErrorMessages);
@@ -533,7 +532,6 @@ public sealed class ProcessingRunPresentationTests
                     new PluginReadDiagnostic(PluginReadPhase.OpeningPlugin, "Unreadable header."))
             ]))));
 
-        Assert.Equal(ActivityProjection.None, rendered.Activity);
         Assert.Equal(
             [
                 Lines(
@@ -588,7 +586,6 @@ public sealed class ProcessingRunPresentationTests
         var rendered = UnderInvariantCulture(() => ProcessingRunPresentation.Render(
             new PlannedRunOutcome(new FormIdTextRunPlan(@"C:\Imports\formids.txt", 1_234_567))));
 
-        Assert.Equal(ActivityProjection.None, rendered.Activity);
         Assert.Equal(
             [@"Would import FormID list file: C:\Imports\formids.txt (1,234,567 bytes)"],
             rendered.InformationMessages);
@@ -749,29 +746,30 @@ public sealed class ProcessingRunPresentationTests
     }
 
     /// <summary>
-    ///     Asserts the complete rendered report of one completed run across all four of its channels.
+    ///     Asserts the complete rendered report of one completed run across all three of its message lists.
     /// </summary>
     /// <param name="rendered">The report rendered from how the run ended.</param>
-    /// <param name="expectedStatus">The exact completion status, which always carries a full progress value.</param>
+    /// <param name="expectedCompletion">The exact completion line, the run's only information message.</param>
     /// <param name="expectedWarning">The exact warning message, or null when the run rendered none.</param>
     /// <param name="expectedError">The exact failure message, or null when the run rendered none.</param>
     /// <remarks>
-    ///     The information messages are asserted empty on every completed run, because that is the list a cancelled or
-    ///     dry run uses: a completed run leaving something there would be wording that moved channels.
+    ///     Issue #94. The completion line is how the run ended, a terminal fact, so it is the information message next
+    ///     to where a dry run's plan and a cancelled run's acknowledgement already go. It used to be the run's terminal
+    ///     activity, which the run erased again as it handed the progress channel back (#60). The warning and failure
+    ///     details stay in their own lists, so the completion line is asserted as the single information message.
     /// </remarks>
     private static void AssertTerminalReport(
         RenderedRunReport rendered,
-        string expectedStatus,
+        string expectedCompletion,
         string? expectedWarning = null,
         string? expectedError = null)
     {
         string[] expectedWarnings = expectedWarning is null ? [] : [expectedWarning];
         string[] expectedErrors = expectedError is null ? [] : [expectedError];
 
-        Assert.Equal(new ActivityProjection(true, expectedStatus, 100), rendered.Activity);
         Assert.Equal(expectedWarnings, rendered.WarningMessages);
         Assert.Equal(expectedErrors, rendered.ErrorMessages);
-        Assert.Empty(rendered.InformationMessages);
+        Assert.Equal([expectedCompletion], rendered.InformationMessages);
     }
 
     /// <summary>

@@ -101,7 +101,7 @@ public class CoreProjectBoundaryTests
     /// The progress properties are pinned here for the same reason the Game Context ones are: a public setter would
     /// let a third writer back onto the progress channel and reintroduce the collision the precedence rule removes.
     /// The Message Lists are pinned because the ViewModel owns them (ADR-0014): a setter would let a consumer replace
-    /// a list and bypass <c>AddMessage</c> and <c>ClearErrorAndWarningMessages</c>.
+    /// a list and bypass <c>AddMessage</c> and <c>ClearMessageLists</c>.
     /// </remarks>
     [Theory]
     [InlineData(nameof(MainWindowViewModel.SelectedGame))]

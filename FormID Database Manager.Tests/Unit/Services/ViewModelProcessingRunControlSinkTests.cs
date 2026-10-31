@@ -56,20 +56,23 @@ public sealed class ViewModelProcessingRunControlSinkTests
         /// <summary>The warning list being cleared.</summary>
         WarningListClear,
 
+        /// <summary>The information list being cleared.</summary>
+        InformationListClear,
+
         /// <summary>The starting status reaching the progress channel.</summary>
         StartingStatus
     }
 
     /// <summary>
-    ///     Verifies the start-over write: the error and warning lists the user was reading are emptied, and the
-    ///     information messages stay.
+    ///     Verifies the start-over write: every Message List the user was reading is emptied, information included, so
+    ///     what remains afterwards is only what the new press produces (#95).
     /// </summary>
     /// <remarks>
     ///     When a press clears is Processing Run Control's rule, pinned by <see cref="ProcessingRunControlTests" />;
     ///     which lists the clear empties is this adapter's write.
     /// </remarks>
     [Fact]
-    public void ClearMessageLists_StaleMessagesInEveryList_ClearsErrorsAndWarningsButKeepsInformation()
+    public void ClearMessageLists_StaleMessagesInEveryList_ClearsEveryList()
     {
         _sut.AddErrorMessage("Stale error");
         _sut.AddWarningMessage("Stale warning");
@@ -79,7 +82,7 @@ public sealed class ViewModelProcessingRunControlSinkTests
 
         Assert.Empty(_viewModel.ErrorMessages);
         Assert.Empty(_viewModel.WarningMessages);
-        Assert.Equal(["Earlier information"], _viewModel.InformationMessages);
+        Assert.Empty(_viewModel.InformationMessages);
     }
 
     /// <summary>
@@ -111,6 +114,7 @@ public sealed class ViewModelProcessingRunControlSinkTests
     [Theory]
     [InlineData(StartupNotification.ErrorListClear)]
     [InlineData(StartupNotification.WarningListClear)]
+    [InlineData(StartupNotification.InformationListClear)]
     [InlineData(StartupNotification.StartingStatus)]
     public void ReportDefaultedDatabasePath_BoxEditedDuringAStartupNotification_KeepsTheEdit(
         StartupNotification notification)
@@ -132,6 +136,10 @@ public sealed class ViewModelProcessingRunControlSinkTests
                 break;
             case StartupNotification.WarningListClear:
                 ((INotifyCollectionChanged)_viewModel.WarningMessages).CollectionChanged += (_, _) => EditDatabasePath();
+                break;
+            case StartupNotification.InformationListClear:
+                ((INotifyCollectionChanged)_viewModel.InformationMessages).CollectionChanged +=
+                    (_, _) => EditDatabasePath();
                 break;
             case StartupNotification.StartingStatus:
                 _viewModel.PropertyChanged += (_, args) =>
@@ -176,16 +184,18 @@ public sealed class ViewModelProcessingRunControlSinkTests
     }
 
     /// <summary>
-    ///     Verifies where each message part of a rendered run report lands when one run produced both: the warning
-    ///     messages in the warning list and the failure messages in the error list, with the information list untouched.
+    ///     Verifies where each message part of a rendered run report lands when one run produced all three: the warning
+    ///     messages in the warning list, the failure messages in the error list, and the completion line in the
+    ///     information list.
     /// </summary>
     /// <remarks>
     ///     Each part is handed to the sink member Processing Run Control uses for it, as it does for a finished run.
     ///     What is asserted is which list each part reached; the order they are reported in is pinned by
-    ///     <see cref="ProcessingRunControlTests" />.
+    ///     <see cref="ProcessingRunControlTests" />. The completion line reaching the information list is issue #94: it
+    ///     is how the run ended, so it stays readable after the run hands the progress channel back.
     /// </remarks>
     [Fact]
-    public void AddWarningMessageAndAddErrorMessage_RenderedRunReportWithBothParts_RouteEachPartToItsOwnList()
+    public void AddWarningErrorAndInformationMessage_RenderedRunReportWithEveryPart_RouteEachPartToItsOwnList()
     {
         var rendered = ProcessingRunPresentation.Render(CreatePluginRunOutcome(
             new IngestedPlugin("User.esp", 1, new ProcessingWarning(1, ["Recoverable issue"])),
@@ -194,13 +204,13 @@ public sealed class ViewModelProcessingRunControlSinkTests
                 new PluginReadDiagnostic(PluginReadPhase.OpeningPlugin, "Invalid plugin header."))));
         Assert.NotEmpty(rendered.WarningMessages);
         Assert.NotEmpty(rendered.ErrorMessages);
-        Assert.Empty(rendered.InformationMessages);
+        Assert.NotEmpty(rendered.InformationMessages);
 
         ReportMessages(rendered);
 
         Assert.Equal(rendered.WarningMessages.ToArray(), _viewModel.WarningMessages);
         Assert.Equal(rendered.ErrorMessages.ToArray(), _viewModel.ErrorMessages);
-        Assert.Empty(_viewModel.InformationMessages);
+        Assert.Equal(rendered.InformationMessages.ToArray(), _viewModel.InformationMessages);
     }
 
     /// <summary>

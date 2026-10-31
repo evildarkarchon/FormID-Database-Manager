@@ -145,6 +145,12 @@ means the outcome has nothing to say on the transient channel: a cancelled run's
 belongs in the message lists, since the channel is handed back the moment a run ends and would erase it (#60). A Dry
 Run's plan is terminal for the same reason and goes to the information messages.
 
+> Note (2026-10-30, #94): A completed run's completion line is terminal for the same reason, and it was erased the same
+> way: it was reported as a 100% activity, and the run handed the channel back in the same UI-thread continuation, so
+> it was never drawn. It now goes to the information messages, whether the run completed cleanly, with warnings, or with
+> failures. No outcome has anything left to say on the transient channel, so `RenderedRunReport` no longer carries an
+> activity projection, and Processing Run Control only writes the outcome's messages before handing the channel back.
+
 ## Consequences
 
 - A caller can ask what a run did without parsing prose. `UserWorkflow` lost `ApplyProcessingRunEvent`, its
