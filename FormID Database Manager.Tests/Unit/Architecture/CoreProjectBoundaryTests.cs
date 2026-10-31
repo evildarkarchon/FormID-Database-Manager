@@ -645,6 +645,29 @@ public class CoreProjectBoundaryTests
     }
 
     /// <summary>
+    ///     Verifies the retired ignore list has not come back anywhere in Core, so no record can again be dropped
+    ///     uncounted by matching its failure's message text (ADR-0016 rule 5).
+    /// </summary>
+    /// <remarks>
+    ///     Issue #139, under spec #127. The name used to sit in the Plugin Ingestion seam's behind-the-seam list, which
+    ///     only kept it out of two files; this pins its deletion across every Core source.
+    /// </remarks>
+    [Fact]
+    public void CoreSources_AfterRecordIssuesAreAlwaysCounted_DoNotContainTheRetiredIgnoreList()
+    {
+        const string retiredIgnoreListName = "IgnorableErrorPatterns";
+        var retiredIgnoreListOwners = Directory
+            .EnumerateFiles(GetCoreProjectDirectory(), "*.cs", SearchOption.AllDirectories)
+            .Where(path => !IsBuildOutput(path))
+            .Where(path => File.ReadAllText(path).Contains(retiredIgnoreListName, StringComparison.Ordinal))
+            .Select(path => Path.GetRelativePath(FindRepositoryRoot(), path))
+            .OrderBy(static path => path, StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.Empty(retiredIgnoreListOwners);
+    }
+
+    /// <summary>
     ///     Verifies that the User Workflow reaches Game Installation resolution only through the Game Context it
     ///     composes: it keeps no reference to <c>GameInstallations</c> and calls none of its members (ADR-0011).
     /// </summary>

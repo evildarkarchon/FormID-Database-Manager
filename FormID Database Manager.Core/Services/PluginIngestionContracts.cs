@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Runtime.CompilerServices;
 
 namespace FormID_Database_Manager.Services;
 
@@ -434,6 +435,45 @@ internal enum PluginReadPhase
     ///     Record enumeration or extraction failed after the Plugin opened.
     /// </summary>
     ReadingRecords
+}
+
+/// <summary>
+///     The one rejection of a <see cref="PluginReadPhase" /> value the enum does not define, shared by every module
+///     that stores or switches on a phase so each refuses it the same way.
+/// </summary>
+internal static class PluginReadPhaseGuard
+{
+    /// <summary>
+    ///     The diagnostic carried by every rejection of an undefined phase.
+    /// </summary>
+    internal const string UnsupportedPhaseMessage = "Unsupported Plugin-read phase.";
+
+    /// <summary>
+    ///     Creates the rejection of a phase a switch has no arm for, for the switch's default arm to throw.
+    /// </summary>
+    /// <param name="paramName">The parameter the phase was reached through.</param>
+    /// <param name="phase">The unsupported phase value.</param>
+    /// <returns>The exception to throw.</returns>
+    internal static ArgumentOutOfRangeException Unsupported(string paramName, PluginReadPhase phase)
+    {
+        return new ArgumentOutOfRangeException(paramName, phase, UnsupportedPhaseMessage);
+    }
+
+    /// <summary>
+    ///     Throws when <paramref name="phase" /> is not a value the enum defines.
+    /// </summary>
+    /// <param name="phase">The phase to check.</param>
+    /// <param name="paramName">The caller's parameter name, supplied by the compiler.</param>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="phase" /> is not defined.</exception>
+    internal static void ThrowIfUndefined(
+        PluginReadPhase phase,
+        [CallerArgumentExpression(nameof(phase))] string paramName = "")
+    {
+        if (!Enum.IsDefined(phase))
+        {
+            throw Unsupported(paramName, phase);
+        }
+    }
 }
 
 /// <summary>

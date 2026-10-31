@@ -547,6 +547,7 @@ public sealed class PluginIngestionTests : IDisposable
         var failure = new UnrecognizedPluginReadFailureException(
             "Broken.esp",
             PluginReadPhase.OpeningPlugin,
+            "Adapter state is broken.",
             new InvalidOperationException("Adapter state is broken."));
         var pluginReader = new ScriptedPluginReader { OpeningFailures = { ["Broken.esp"] = failure } };
         IPluginIngestion sut = new PluginIngestion(
@@ -1092,6 +1093,7 @@ public sealed class PluginIngestionTests : IDisposable
         var failure = new UnrecognizedPluginReadFailureException(
             "Broken.esp",
             PluginReadPhase.ReadingRecords,
+            "Mutagen defect.",
             new NullReferenceException("Mutagen defect."));
         var pluginReader = new ScriptedPluginReader { ReadingFailures = { ["Broken.esp"] = failure } };
         IPluginIngestion sut = new PluginIngestion(
