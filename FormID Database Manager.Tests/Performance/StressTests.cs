@@ -201,6 +201,12 @@ public class StressTests : IDisposable
     /// <summary>
     ///     Stresses concurrent progress and message presentation updates without bypassing Plugin List ownership.
     /// </summary>
+    /// <remarks>
+    ///     The worker threads hand their updates to a dispatcher that serializes them onto one thread, as the WinUI
+    ///     dispatcher does in production. Nothing in the ViewModel locks the Message Lists; its contract is that every
+    ///     mutation is posted to the dispatcher first. <see cref="SynchronousThreadDispatcher" /> would let these
+    ///     workers append to the lists concurrently, which is a data race production never runs.
+    /// </remarks>
     [ManualPerformanceFact(Timeout = 60000)]
     [Trait("Category", "ManualPerformance")]
     [Trait("Category", "StressTest")]
@@ -209,7 +215,8 @@ public class StressTests : IDisposable
         // Arrange
         const int updateCount = 10000;
         const int threadCount = 5;
-        var viewModel = new MainWindowViewModel(new SynchronousThreadDispatcher());
+        using var dispatcher = new SingleThreadDispatcher();
+        var viewModel = new MainWindowViewModel(dispatcher);
         var errors = new List<Exception>();
         var updateTimes = new List<long>();
         var updateLock = new object();
@@ -235,7 +242,7 @@ public class StressTests : IDisposable
 
                         if (i % 10 == 0)
                         {
-                            viewModel.AddErrorMessage($"T{threadId}: Error message {i}");
+                            viewModel.AddMessage(MessageList.Error, $"T{threadId}: Error message {i}");
                         }
 
                         stopwatch.Stop();
@@ -257,10 +264,14 @@ public class StressTests : IDisposable
 
         await Task.WhenAll(tasks);
 
+        // The workers only posted their updates; wait for the dispatcher thread to apply them before asserting.
+        dispatcher.WaitForIdle(TimeSpan.FromSeconds(30));
+
         // Assert
         _output.WriteLine("UI stress test completed:");
         _output.WriteLine($"Total updates: {updateCount}");
         _output.WriteLine($"Errors: {errors.Count}");
+        _output.WriteLine($"Dispatcher faults: {dispatcher.Faults.Count}");
 
         if (updateTimes.Count > 0)
         {
@@ -271,6 +282,8 @@ public class StressTests : IDisposable
         }
 
         Assert.Empty(errors);
+        Assert.Empty(dispatcher.Faults);
+        Assert.Equal(10, viewModel.ErrorMessages.Count);
     }
 
     /// <summary>

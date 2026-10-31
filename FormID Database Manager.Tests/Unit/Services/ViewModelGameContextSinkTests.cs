@@ -116,8 +116,8 @@ public sealed class ViewModelGameContextSinkTests
 
         _sut.ReportNotice(notice);
 
-        string[] expectedErrors = rendered.List == GameContextMessageList.Error ? [rendered.Text] : [];
-        string[] expectedInformation = rendered.List == GameContextMessageList.Information ? [rendered.Text] : [];
+        string[] expectedErrors = rendered.List == MessageList.Error ? [rendered.Text] : [];
+        string[] expectedInformation = rendered.List == MessageList.Information ? [rendered.Text] : [];
         Assert.Equal(expectedErrors, _viewModel.ErrorMessages);
         Assert.Equal(expectedInformation, _viewModel.InformationMessages);
         Assert.Empty(_viewModel.WarningMessages);

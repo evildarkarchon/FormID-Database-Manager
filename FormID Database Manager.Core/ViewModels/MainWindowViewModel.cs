@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
+using System.Diagnostics;
 using CommunityToolkit.Mvvm.ComponentModel;
 using FormID_Database_Manager.Models;
 using FormID_Database_Manager.Services;
@@ -9,11 +10,13 @@ namespace FormID_Database_Manager.ViewModels;
 
 public partial class MainWindowViewModel : ObservableObject
 {
+    /// <summary>How many of its most recent messages each Message List keeps.</summary>
+    private const int MaxMessagesPerList = 10;
+
     private readonly ObservableCollection<string> _detectedDirectories = [];
     private readonly IThreadDispatcher _dispatcher;
 
     private readonly ObservableCollection<PluginListItem> _filteredPlugins = [];
-    private readonly Lock _messagesLock = new();
 
     private readonly ObservableCollection<PluginListItem> _plugins = [];
 
@@ -534,63 +537,85 @@ public partial class MainWindowViewModel : ObservableObject
         }
     }
 
-    public virtual void AddErrorMessage(string message, int maxMessages = 10)
+    /// <summary>
+    ///     Appends one message to a Message List, keeping only the most recent <see cref="MaxMessagesPerList" />.
+    /// </summary>
+    /// <param name="list">The Message List the message belongs to.</param>
+    /// <param name="message">The text the user reads.</param>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="list" /> is not a defined Message List.</exception>
+    /// <remarks>
+    ///     <para>
+    ///         Every writer appends through here, so appending has one dispatch rule and one cap (ADR-0014). A call made
+    ///         off the dispatcher's thread is posted to it rather than applied in place.
+    ///     </para>
+    ///     <para>
+    ///         There is deliberately no lock. Every Message List mutation, this one and
+    ///         <see cref="ClearErrorAndWarningMessages" />, is posted to the dispatcher before it touches a list, so all
+    ///         of them run on the dispatcher's one thread, one after another. A lock taken after that post could never
+    ///         be contended, and would only suggest a threading model the lists do not have.
+    ///     </para>
+    /// </remarks>
+    internal void AddMessage(MessageList list, string message)
     {
-        // Ensure collection operations happen on UI thread
+        // Validated before dispatch so an off-thread caller is refused where it made the mistake, not by a posted
+        // action failing later on the UI thread.
+        if (!Enum.IsDefined(list))
+        {
+            throw new ArgumentOutOfRangeException(nameof(list), list, "Unsupported Message List.");
+        }
+
         if (!_dispatcher.CheckAccess())
         {
-            _dispatcher.Post(() => AddErrorMessage(message, maxMessages));
+            _dispatcher.Post(() => AddMessage(list, message));
             return;
         }
 
-        lock (_messagesLock)
-        {
-            ErrorMessages.Add(message);
+        var messages = MessagesFor(list);
+        messages.Add(message);
 
-            if (ErrorMessages.Count > maxMessages)
-            {
-                ErrorMessages.RemoveAt(0);
-            }
+        if (messages.Count > MaxMessagesPerList)
+        {
+            messages.RemoveAt(0);
         }
     }
 
-    public virtual void AddInformationMessage(string message, int maxMessages = 10)
+    /// <summary>
+    ///     Starts the Message Lists over: clears errors and warnings, and keeps information.
+    /// </summary>
+    /// <remarks>
+    ///     This names what happens, not when. Processing Run Control decides when: on every press of the run button
+    ///     that does not cancel a run, including a refused one (ADR-0012, ADR-0014). It follows the same dispatch rule as
+    ///     <see cref="AddMessage" />, so a clear and an append can never interleave on two threads.
+    /// </remarks>
+    internal void ClearErrorAndWarningMessages()
     {
-        // Ensure collection operations happen on UI thread
         if (!_dispatcher.CheckAccess())
         {
-            _dispatcher.Post(() => AddInformationMessage(message, maxMessages));
+            _dispatcher.Post(ClearErrorAndWarningMessages);
             return;
         }
 
-        lock (_messagesLock)
-        {
-            InformationMessages.Add(message);
-
-            if (InformationMessages.Count > maxMessages)
-            {
-                InformationMessages.RemoveAt(0);
-            }
-        }
+        ErrorMessages.Clear();
+        WarningMessages.Clear();
     }
 
-    public virtual void AddWarningMessage(string message, int maxMessages = 10)
+    /// <summary>
+    ///     Resolves a Message List to the collection that shows it.
+    /// </summary>
+    /// <param name="list">A defined Message List; <see cref="AddMessage" /> has already refused any other value.</param>
+    /// <returns>The collection behind that list.</returns>
+    /// <remarks>
+    ///     Resolved on the dispatcher's thread rather than before posting, so the posted action reads the list
+    ///     property when it runs instead of carrying a collection captured on another thread.
+    /// </remarks>
+    private ObservableCollection<string> MessagesFor(MessageList list)
     {
-        // Ensure collection operations happen on UI thread
-        if (!_dispatcher.CheckAccess())
+        return list switch
         {
-            _dispatcher.Post(() => AddWarningMessage(message, maxMessages));
-            return;
-        }
-
-        lock (_messagesLock)
-        {
-            WarningMessages.Add(message);
-
-            if (WarningMessages.Count > maxMessages)
-            {
-                WarningMessages.RemoveAt(0);
-            }
-        }
+            MessageList.Error => ErrorMessages,
+            MessageList.Warning => WarningMessages,
+            MessageList.Information => InformationMessages,
+            _ => throw new UnreachableException($"AddMessage admitted an undefined Message List: {list}.")
+        };
     }
 }

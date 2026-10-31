@@ -25,7 +25,7 @@ public sealed class GameContextPresentationTests
     {
         var rendered = GameContextPresentation.Render(new GameDirectoryPickerFailed("picker unavailable"));
 
-        Assert.Equal(GameContextMessageList.Error, rendered.List);
+        Assert.Equal(MessageList.Error, rendered.List);
         Assert.Equal("Error selecting game directory: picker unavailable", rendered.Text);
     }
 
@@ -38,7 +38,7 @@ public sealed class GameContextPresentationTests
     {
         var rendered = GameContextPresentation.Render(new NoInstalledLocationsFound(GameRelease.Fallout4));
 
-        Assert.Equal(GameContextMessageList.Information, rendered.List);
+        Assert.Equal(MessageList.Information, rendered.List);
         Assert.Equal("No installed locations found for Fallout4. Use Browse to select a directory.", rendered.Text);
     }
 
@@ -50,7 +50,7 @@ public sealed class GameContextPresentationTests
     {
         var rendered = GameContextPresentation.Render(new DirectoryRefused("drive not ready"));
 
-        Assert.Equal(GameContextMessageList.Error, rendered.List);
+        Assert.Equal(MessageList.Error, rendered.List);
         Assert.Equal("Could not read the selected directory: drive not ready", rendered.Text);
     }
 
@@ -62,7 +62,7 @@ public sealed class GameContextPresentationTests
     {
         var rendered = GameContextPresentation.Render(new NoGameDetected());
 
-        Assert.Equal(GameContextMessageList.Error, rendered.List);
+        Assert.Equal(MessageList.Error, rendered.List);
         Assert.Equal(
             "Could not detect game from directory. Please select a game from the dropdown.",
             rendered.Text);

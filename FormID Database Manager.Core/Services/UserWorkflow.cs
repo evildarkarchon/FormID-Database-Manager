@@ -443,7 +443,7 @@ public sealed class UserWorkflow : IDisposable
 
         if (IsFailure(result))
         {
-            _viewModel.AddErrorMessage($"{failureContext}: {result.ErrorMessage}");
+            _viewModel.AddMessage(MessageList.Error, $"{failureContext}: {result.ErrorMessage}");
         }
 
         return false;

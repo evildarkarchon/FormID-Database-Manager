@@ -39,25 +39,13 @@ internal sealed class ViewModelGameContextSink(MainWindowViewModel viewModel) : 
     }
 
     /// <inheritdoc />
-    /// <exception cref="ArgumentOutOfRangeException">
-    ///     Presentation names a message list this adapter cannot write.
-    /// </exception>
+    /// <remarks>
+    ///     Which list a notice belongs to is Presentation's choice, so it is passed straight through with no per-list
+    ///     switch here (ADR-0014).
+    /// </remarks>
     public void ReportNotice(GameContextNotice notice)
     {
         var rendered = GameContextPresentation.Render(notice);
-        switch (rendered.List)
-        {
-            case GameContextMessageList.Error:
-                viewModel.AddErrorMessage(rendered.Text);
-                break;
-            case GameContextMessageList.Information:
-                viewModel.AddInformationMessage(rendered.Text);
-                break;
-            default:
-                throw new ArgumentOutOfRangeException(
-                    nameof(notice),
-                    rendered.List,
-                    "Unsupported Game Context message list.");
-        }
+        viewModel.AddMessage(rendered.List, rendered.Text);
     }
 }

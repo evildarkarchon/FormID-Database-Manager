@@ -211,7 +211,9 @@ internal sealed class PluginListPresentationAdapter : IDisposable
                 var pluginLabel = ready.Confirmed.AdvancedMode == AdvancedMode.On
                     ? "plugins"
                     : "non-base game plugins";
-                _viewModel.AddInformationMessage($"Loaded {ready.Confirmed.Entries.Length} {pluginLabel}");
+                _viewModel.AddMessage(
+                    MessageList.Information,
+                    $"Loaded {ready.Confirmed.Entries.Length} {pluginLabel}");
                 return;
 
             case PluginListFailedState failed:
@@ -219,8 +221,8 @@ internal sealed class PluginListPresentationAdapter : IDisposable
                 var message = string.IsNullOrWhiteSpace(failed.ErrorMessage)
                     ? "Unknown error"
                     : failed.ErrorMessage;
-                _viewModel.AddErrorMessage($"Failed to load plugins: {message}");
-                _viewModel.AddErrorMessage("Ensure you selected the correct game Data directory");
+                _viewModel.AddMessage(MessageList.Error, $"Failed to load plugins: {message}");
+                _viewModel.AddMessage(MessageList.Error, "Ensure you selected the correct game Data directory");
                 return;
 
             default:

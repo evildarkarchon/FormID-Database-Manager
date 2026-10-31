@@ -485,130 +485,143 @@ public class MainWindowViewModelTests
 
     #region Message Management Tests
 
+    /// <summary>
+    ///     Verifies that each message lands in the Message List it names and in no other.
+    /// </summary>
     [Fact]
-    public void AddErrorMessage_AddsToCollection()
+    public void AddMessage_OneMessagePerList_AddsEachToOnlyItsList()
     {
-        // Arrange
-        var message = "Test error message";
+        _viewModel.AddMessage(MessageList.Error, "Test error");
+        _viewModel.AddMessage(MessageList.Warning, "Test warning");
+        _viewModel.AddMessage(MessageList.Information, "Test information");
 
-        // Act
-        _viewModel.AddErrorMessage(message);
-
-        // Assert
-        Assert.Single(_viewModel.ErrorMessages);
-        Assert.Contains(message, _viewModel.ErrorMessages);
+        Assert.Equal(["Test error"], _viewModel.ErrorMessages);
+        Assert.Equal(["Test warning"], _viewModel.WarningMessages);
+        Assert.Equal(["Test information"], _viewModel.InformationMessages);
     }
 
+    /// <summary>
+    ///     Verifies the fixed cap on the error list: an eleventh message drops the oldest.
+    /// </summary>
     [Fact]
-    public void AddErrorMessage_MaintainsMaxMessages()
+    public void AddMessage_ElevenErrors_KeepsTheTenMostRecent()
     {
-        // Arrange
-        const int maxMessages = 5;
-
-        // Act
-        for (var i = 0; i < 10; i++)
-        {
-            _viewModel.AddErrorMessage($"Error {i}", maxMessages);
-        }
-
-        // Assert
-        Assert.Equal(maxMessages, _viewModel.ErrorMessages.Count);
-        Assert.Equal("Error 5", _viewModel.ErrorMessages.First());
-        Assert.Equal("Error 9", _viewModel.ErrorMessages.Last());
+        AssertElevenMessagesKeepTheTenMostRecent(MessageList.Error, () => _viewModel.ErrorMessages);
     }
 
+    /// <summary>
+    ///     Verifies the fixed cap on the warning list: an eleventh message drops the oldest.
+    /// </summary>
     [Fact]
-    public void AddErrorMessage_UsesDefaultMaxMessages()
+    public void AddMessage_ElevenWarnings_KeepsTheTenMostRecent()
     {
-        // Act
-        for (var i = 0; i < 12; i++)
-        {
-            _viewModel.AddErrorMessage($"Error {i}");
-        }
-
-        // Assert
-        Assert.Equal(10, _viewModel.ErrorMessages.Count);
-        Assert.Equal("Error 2", _viewModel.ErrorMessages.First());
-        Assert.Equal("Error 11", _viewModel.ErrorMessages.Last());
+        AssertElevenMessagesKeepTheTenMostRecent(MessageList.Warning, () => _viewModel.WarningMessages);
     }
 
+    /// <summary>
+    ///     Verifies the fixed cap on the information list: an eleventh message drops the oldest.
+    /// </summary>
     [Fact]
-    public void AddInformationMessage_AddsToCollection()
+    public void AddMessage_ElevenInformationMessages_KeepsTheTenMostRecent()
     {
-        // Arrange
-        var message = "Test information message";
-
-        // Act
-        _viewModel.AddInformationMessage(message);
-
-        // Assert
-        Assert.Single(_viewModel.InformationMessages);
-        Assert.Contains(message, _viewModel.InformationMessages);
+        AssertElevenMessagesKeepTheTenMostRecent(MessageList.Information, () => _viewModel.InformationMessages);
     }
 
+    /// <summary>
+    ///     Verifies that an append made off the dispatcher's thread is posted rather than applied in place, so every
+    ///     Message List mutation runs on the one thread that owns the lists.
+    /// </summary>
     [Fact]
-    public void AddInformationMessage_MaintainsMaxMessages()
+    public void AddMessage_WithoutDispatcherAccess_AppendsOnlyWhenThePostedActionRuns()
     {
-        // Arrange
-        const int maxMessages = 5;
+        var dispatcher = new RecordingThreadDispatcher(hasAccess: false);
+        var viewModel = new MainWindowViewModel(dispatcher);
 
-        // Act
-        for (var i = 0; i < 10; i++)
-        {
-            _viewModel.AddInformationMessage($"Info {i}", maxMessages);
-        }
+        viewModel.AddMessage(MessageList.Warning, "Posted warning");
 
-        // Assert
-        Assert.Equal(maxMessages, _viewModel.InformationMessages.Count);
-        Assert.Equal("Info 5", _viewModel.InformationMessages.First());
-        Assert.Equal("Info 9", _viewModel.InformationMessages.Last());
+        Assert.Equal(1, dispatcher.PostCount);
+        Assert.Empty(viewModel.WarningMessages);
+
+        dispatcher.DrainPostedActions(hasAccessDuringDrain: true);
+
+        Assert.Equal(["Posted warning"], viewModel.WarningMessages);
     }
 
+    /// <summary>
+    ///     Verifies that a value naming no Message List is refused and adds nothing anywhere.
+    /// </summary>
     [Fact]
-    public void AddInformationMessage_UsesDefaultMaxMessages()
+    public void AddMessage_UndefinedList_ThrowsArgumentOutOfRangeException()
     {
-        // Act
-        for (var i = 0; i < 12; i++)
-        {
-            _viewModel.AddInformationMessage($"Info {i}");
-        }
+        var exception = Assert.Throws<ArgumentOutOfRangeException>(
+            () => _viewModel.AddMessage((MessageList)42, "Lost message"));
 
-        // Assert
-        Assert.Equal(10, _viewModel.InformationMessages.Count);
-        Assert.Equal("Info 2", _viewModel.InformationMessages.First());
-        Assert.Equal("Info 11", _viewModel.InformationMessages.Last());
+        Assert.Equal("list", exception.ParamName);
+        Assert.Empty(_viewModel.ErrorMessages);
+        Assert.Empty(_viewModel.WarningMessages);
+        Assert.Empty(_viewModel.InformationMessages);
     }
 
+    /// <summary>
+    ///     Verifies that an off-thread caller naming no Message List is refused where it called, rather than posting
+    ///     work that would fail later on the dispatcher's thread, away from the caller that made the mistake.
+    /// </summary>
     [Fact]
-    public void AddWarningMessage_AddsToCollection()
+    public void AddMessage_UndefinedListWithoutDispatcherAccess_ThrowsWithoutPosting()
     {
-        // Arrange
-        var message = "Test warning message";
+        var dispatcher = new RecordingThreadDispatcher(hasAccess: false);
+        var viewModel = new MainWindowViewModel(dispatcher);
 
-        // Act
-        _viewModel.AddWarningMessage(message);
+        Assert.Throws<ArgumentOutOfRangeException>(() => viewModel.AddMessage((MessageList)42, "Lost message"));
 
-        // Assert
-        Assert.Single(_viewModel.WarningMessages);
-        Assert.Contains(message, _viewModel.WarningMessages);
+        Assert.Equal(0, dispatcher.PostCount);
     }
 
+    /// <summary>
+    ///     Verifies the start-over rule: errors and warnings are cleared, and information survives.
+    /// </summary>
     [Fact]
-    public void AddWarningMessage_MaintainsMaxMessages()
+    public void ClearErrorAndWarningMessages_AllListsHoldMessages_KeepsOnlyInformation()
     {
-        // Arrange
-        const int maxMessages = 5;
+        _viewModel.AddMessage(MessageList.Error, "Stale error");
+        _viewModel.AddMessage(MessageList.Warning, "Stale warning");
+        _viewModel.AddMessage(MessageList.Information, "Earlier information");
 
-        // Act
-        for (var i = 0; i < 10; i++)
-        {
-            _viewModel.AddWarningMessage($"Warning {i}", maxMessages);
-        }
+        _viewModel.ClearErrorAndWarningMessages();
 
-        // Assert
-        Assert.Equal(maxMessages, _viewModel.WarningMessages.Count);
-        Assert.Equal("Warning 5", _viewModel.WarningMessages.First());
-        Assert.Equal("Warning 9", _viewModel.WarningMessages.Last());
+        Assert.Empty(_viewModel.ErrorMessages);
+        Assert.Empty(_viewModel.WarningMessages);
+        Assert.Equal(["Earlier information"], _viewModel.InformationMessages);
+        Assert.False(_viewModel.HasErrorMessages);
+        Assert.False(_viewModel.HasWarningMessages);
+        Assert.True(_viewModel.HasInformationMessages);
+    }
+
+    /// <summary>
+    ///     Verifies that starting over off the dispatcher's thread follows the same dispatch rule as appending: it is
+    ///     posted, and the lists change only when the posted action runs.
+    /// </summary>
+    [Fact]
+    public void ClearErrorAndWarningMessages_WithoutDispatcherAccess_ClearsOnlyWhenThePostedActionRuns()
+    {
+        var dispatcher = new RecordingThreadDispatcher(hasAccess: true);
+        var viewModel = new MainWindowViewModel(dispatcher);
+        viewModel.AddMessage(MessageList.Error, "Stale error");
+        viewModel.AddMessage(MessageList.Warning, "Stale warning");
+        viewModel.AddMessage(MessageList.Information, "Earlier information");
+        dispatcher.HasAccess = false;
+
+        viewModel.ClearErrorAndWarningMessages();
+
+        Assert.Equal(1, dispatcher.PostCount);
+        Assert.Equal(["Stale error"], viewModel.ErrorMessages);
+        Assert.Equal(["Stale warning"], viewModel.WarningMessages);
+
+        dispatcher.DrainPostedActions(hasAccessDuringDrain: true);
+
+        Assert.Empty(viewModel.ErrorMessages);
+        Assert.Empty(viewModel.WarningMessages);
+        Assert.Equal(["Earlier information"], viewModel.InformationMessages);
     }
 
     [Fact]
@@ -622,11 +635,11 @@ public class MainWindowViewModelTests
         // Act - Add messages from background thread
         await Task.Run(() =>
         {
-            _viewModel.AddErrorMessage("Background error");
+            _viewModel.AddMessage(MessageList.Error, "Background error");
             errorAdded = true;
-            _viewModel.AddInformationMessage("Background info");
+            _viewModel.AddMessage(MessageList.Information, "Background info");
             infoAdded = true;
-            _viewModel.AddWarningMessage("Background warning");
+            _viewModel.AddMessage(MessageList.Warning, "Background warning");
             warningAdded = true;
         }, TestContext.Current.CancellationToken);
 
@@ -861,7 +874,7 @@ public class MainWindowViewModelTests
     }
 
     [Fact]
-    public void AddErrorMessage_UpdatesHasErrorMessages()
+    public void AddMessage_ErrorList_UpdatesHasErrorMessages()
     {
         // Arrange
         var notifiedProperties = new System.Collections.Generic.List<string>();
@@ -874,7 +887,7 @@ public class MainWindowViewModelTests
         };
 
         // Act
-        _viewModel.AddErrorMessage("Binding support error");
+        _viewModel.AddMessage(MessageList.Error, "Binding support error");
 
         // Assert
         Assert.True(GetBooleanProperty(_viewModel, "HasErrorMessages"));
@@ -882,7 +895,7 @@ public class MainWindowViewModelTests
     }
 
     [Fact]
-    public void AddInformationMessage_UpdatesHasInformationMessages()
+    public void AddMessage_InformationList_UpdatesHasInformationMessages()
     {
         // Arrange
         var notifiedProperties = new System.Collections.Generic.List<string>();
@@ -895,7 +908,7 @@ public class MainWindowViewModelTests
         };
 
         // Act
-        _viewModel.AddInformationMessage("Binding support information");
+        _viewModel.AddMessage(MessageList.Information, "Binding support information");
 
         // Assert
         Assert.True(GetBooleanProperty(_viewModel, "HasInformationMessages"));
@@ -903,7 +916,7 @@ public class MainWindowViewModelTests
     }
 
     [Fact]
-    public void AddWarningMessage_UpdatesHasWarningMessages()
+    public void AddMessage_WarningList_UpdatesHasWarningMessages()
     {
         // Arrange
         var notifiedProperties = new System.Collections.Generic.List<string>();
@@ -916,7 +929,7 @@ public class MainWindowViewModelTests
         };
 
         // Act
-        _viewModel.AddWarningMessage("Binding support warning");
+        _viewModel.AddMessage(MessageList.Warning, "Binding support warning");
 
         // Assert
         Assert.True(GetBooleanProperty(_viewModel, "HasWarningMessages"));
@@ -1298,29 +1311,45 @@ public class MainWindowViewModelTests
         const int messageCount = 100;
         for (var i = 0; i < messageCount; i++)
         {
-            _viewModel.AddErrorMessage($"Error {i}", 50);
-            _viewModel.AddInformationMessage($"Info {i}", 50);
-            _viewModel.AddWarningMessage($"Warning {i}", 50);
+            _viewModel.AddMessage(MessageList.Error, $"Error {i}");
+            _viewModel.AddMessage(MessageList.Information, $"Info {i}");
+            _viewModel.AddMessage(MessageList.Warning, $"Warning {i}");
         }
 
         // Assert
-        Assert.Equal(50, _viewModel.ErrorMessages.Count);
-        Assert.Equal(50, _viewModel.InformationMessages.Count);
-        Assert.Equal(50, _viewModel.WarningMessages.Count);
-        Assert.Equal("Error 50", _viewModel.ErrorMessages.First());
+        Assert.Equal(10, _viewModel.ErrorMessages.Count);
+        Assert.Equal(10, _viewModel.InformationMessages.Count);
+        Assert.Equal(10, _viewModel.WarningMessages.Count);
+        Assert.Equal("Error 90", _viewModel.ErrorMessages.First());
         Assert.Equal("Error 99", _viewModel.ErrorMessages.Last());
-        Assert.Equal("Warning 50", _viewModel.WarningMessages.First());
+        Assert.Equal("Warning 90", _viewModel.WarningMessages.First());
         Assert.Equal("Warning 99", _viewModel.WarningMessages.Last());
     }
 
+    /// <summary>
+    ///     Verifies that appends from many threads at once are serialized onto the dispatcher's one thread, which is
+    ///     what keeps the Message Lists consistent now that no lock guards them.
+    /// </summary>
+    /// <remarks>
+    ///     <see cref="SynchronousThreadDispatcher" /> would grant every caller access and let them mutate the list
+    ///     concurrently, which production never does, so this uses a dispatcher that owns one thread like WinUI's.
+    /// </remarks>
     [Fact]
-    public async Task AddErrorMessage_IsThreadSafeUnderConcurrentCalls()
+    public async Task AddMessage_ConcurrentCallersOffTheDispatcherThread_EveryMutationRunsOnTheDispatcherThread()
     {
         // Arrange
         const int threadCount = 8;
         const int perThreadMessages = 200;
-        const int defaultMaxMessages = 10;
-        var errors = new ConcurrentQueue<Exception>();
+        using var dispatcher = new SingleThreadDispatcher();
+        var viewModel = new MainWindowViewModel(dispatcher);
+        var mutationsOffTheDispatcherThread = 0;
+        viewModel.ErrorMessages.CollectionChanged += (_, _) =>
+        {
+            if (!dispatcher.CheckAccess())
+            {
+                Interlocked.Increment(ref mutationsOffTheDispatcherThread);
+            }
+        };
 
         // Act
         var tasks = Enumerable.Range(0, threadCount)
@@ -1328,22 +1357,18 @@ public class MainWindowViewModelTests
             {
                 for (var i = 0; i < perThreadMessages; i++)
                 {
-                    try
-                    {
-                        _viewModel.AddErrorMessage($"T{threadId}:{i}");
-                    }
-                    catch (Exception ex)
-                    {
-                        errors.Enqueue(ex);
-                    }
+                    viewModel.AddMessage(MessageList.Error, $"T{threadId}:{i}");
                 }
             }, TestContext.Current.CancellationToken))
             .ToArray();
 
         await Task.WhenAll(tasks);
+        dispatcher.WaitForIdle(TimeSpan.FromSeconds(30));
+
         // Assert
-        Assert.Empty(errors);
-        Assert.Equal(defaultMaxMessages, _viewModel.ErrorMessages.Count);
+        Assert.Empty(dispatcher.Faults);
+        Assert.Equal(0, mutationsOffTheDispatcherThread);
+        Assert.Equal(10, viewModel.ErrorMessages.Count);
     }
 
     [Fact]
@@ -1442,6 +1467,26 @@ public class MainWindowViewModelTests
                 HasAccess = previousHasAccess;
             }
         }
+    }
+
+    /// <summary>
+    ///     Adds eleven numbered messages to one Message List and asserts it kept the ten most recent, oldest first.
+    /// </summary>
+    /// <param name="list">The Message List the messages are added to.</param>
+    /// <param name="readList">Reads the ViewModel collection that list is shown through.</param>
+    private void AssertElevenMessagesKeepTheTenMostRecent(MessageList list, Func<IEnumerable<string>> readList)
+    {
+        for (var i = 1; i <= 11; i++)
+        {
+            _viewModel.AddMessage(list, $"Message {i}");
+        }
+
+        Assert.Equal(
+            [
+                "Message 2", "Message 3", "Message 4", "Message 5", "Message 6",
+                "Message 7", "Message 8", "Message 9", "Message 10", "Message 11"
+            ],
+            readList());
     }
 
     private static bool GetBooleanProperty(MainWindowViewModel viewModel, string propertyName)

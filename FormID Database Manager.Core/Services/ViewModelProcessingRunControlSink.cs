@@ -23,8 +23,7 @@ internal sealed class ViewModelProcessingRunControlSink(MainWindowViewModel view
     /// <inheritdoc />
     public void ClearMessageLists()
     {
-        viewModel.ErrorMessages.Clear();
-        viewModel.WarningMessages.Clear();
+        viewModel.ClearErrorAndWarningMessages();
     }
 
     /// <inheritdoc />
@@ -49,18 +48,18 @@ internal sealed class ViewModelProcessingRunControlSink(MainWindowViewModel view
     /// <inheritdoc />
     public void AddWarningMessage(string message)
     {
-        viewModel.AddWarningMessage(message);
+        viewModel.AddMessage(MessageList.Warning, message);
     }
 
     /// <inheritdoc />
     public void AddErrorMessage(string message)
     {
-        viewModel.AddErrorMessage(message);
+        viewModel.AddMessage(MessageList.Error, message);
     }
 
     /// <inheritdoc />
     public void AddInformationMessage(string message)
     {
-        viewModel.AddInformationMessage(message);
+        viewModel.AddMessage(MessageList.Information, message);
     }
 }

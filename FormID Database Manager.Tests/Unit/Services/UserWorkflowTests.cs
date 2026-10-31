@@ -155,7 +155,7 @@ public class UserWorkflowTests
         _fileDialogService.Setup(x => x.SelectGameDirectory())
             .ReturnsAsync(FileDialogResult.Failure("picker unavailable"));
         var rendered = GameContextPresentation.Render(new GameDirectoryPickerFailed("picker unavailable"));
-        Assert.Equal(GameContextMessageList.Error, rendered.List);
+        Assert.Equal(MessageList.Error, rendered.List);
         var sut = CreateSut();
 
         await sut.BrowseGameDirectoryAsync();

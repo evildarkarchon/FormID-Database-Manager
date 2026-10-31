@@ -552,7 +552,7 @@ public sealed class ProcessingRunPresentationTests
     ///     Verifies that a plan longer than the ViewModel's bounded message list still arrives whole.
     /// </summary>
     /// <remarks>
-    ///     <see cref="MainWindowViewModel.AddInformationMessage" /> keeps ten messages and drops the oldest, so a plan
+    ///     <see cref="MainWindowViewModel.AddMessage" /> keeps ten messages and drops the oldest, so a plan
     ///     of one message per Plugin would lose its first entries — the ones a user reads first. This asserts the
     ///     shape that makes that impossible rather than the wording, which the tests above pin.
     /// </remarks>

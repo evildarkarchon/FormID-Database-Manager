@@ -84,7 +84,7 @@ public sealed partial class MainWindow : Window, IDisposable
         }
         catch (Exception ex)
         {
-            ViewModel.AddErrorMessage($"Unexpected error: {ex.Message}");
+            ViewModel.AddMessage(MessageList.Error, $"Unexpected error: {ex.Message}");
         }
     }
 
@@ -106,7 +106,7 @@ public sealed partial class MainWindow : Window, IDisposable
         }
         catch (Exception ex)
         {
-            ViewModel.AddErrorMessage($"Unexpected error: {ex.Message}");
+            ViewModel.AddMessage(MessageList.Error, $"Unexpected error: {ex.Message}");
         }
     }
 
@@ -129,7 +129,7 @@ public sealed partial class MainWindow : Window, IDisposable
         }
         catch (Exception ex)
         {
-            ViewModel.AddErrorMessage($"Unexpected error: {ex.Message}");
+            ViewModel.AddMessage(MessageList.Error, $"Unexpected error: {ex.Message}");
         }
     }
 
@@ -144,7 +144,7 @@ public sealed partial class MainWindow : Window, IDisposable
         }
         catch (Exception ex)
         {
-            ViewModel.AddErrorMessage($"Unexpected error: {ex.Message}");
+            ViewModel.AddMessage(MessageList.Error, $"Unexpected error: {ex.Message}");
         }
     }
 
@@ -159,7 +159,7 @@ public sealed partial class MainWindow : Window, IDisposable
         }
         catch (Exception ex)
         {
-            ViewModel.AddErrorMessage($"Unexpected error: {ex.Message}");
+            ViewModel.AddMessage(MessageList.Error, $"Unexpected error: {ex.Message}");
         }
     }
 
@@ -174,7 +174,7 @@ public sealed partial class MainWindow : Window, IDisposable
         }
         catch (Exception ex)
         {
-            ViewModel.AddErrorMessage($"Unexpected error: {ex.Message}");
+            ViewModel.AddMessage(MessageList.Error, $"Unexpected error: {ex.Message}");
         }
     }
 
@@ -221,7 +221,7 @@ public sealed partial class MainWindow : Window, IDisposable
         }
         catch (Exception ex)
         {
-            ViewModel.AddErrorMessage($"Unexpected error: {ex.Message}");
+            ViewModel.AddMessage(MessageList.Error, $"Unexpected error: {ex.Message}");
         }
     }
 }
