@@ -395,7 +395,7 @@ public sealed class PluginIngestionTests : IDisposable
         var gameLoadOrders = new RecordingGameLoadOrders(["Bad.esp", "Good.esp"], []);
         var overlayReader = new OpeningFailureOverlayReader(
             "Bad.esp",
-            CreatePluginOverlayReadException("Invalid plugin header."));
+            CreateOpeningFailure("Invalid plugin header."));
         IPluginIngestion sut = new PluginIngestion(
             gameLoadOrders,
             overlayReader,
@@ -1461,9 +1461,9 @@ public sealed class PluginIngestionTests : IDisposable
         return overlay.Object;
     }
 
-    private static PluginOverlayReadException CreatePluginOverlayReadException(string message)
+    private static PluginReadException CreateOpeningFailure(string message)
     {
-        return new PluginOverlayReadException(message, new MalformedDataException(message));
+        return new PluginReadException(PluginReadPhase.OpeningPlugin, message, new MalformedDataException(message));
     }
 
     private sealed class RecordingGameLoadOrders(

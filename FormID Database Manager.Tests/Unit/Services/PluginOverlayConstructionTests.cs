@@ -189,8 +189,9 @@ public sealed class PluginOverlayConstructionTests : IDisposable
         var capability = new GameLoadOrderEnvironment().PreparePluginReads(GameRelease.SkyrimSE, []);
         var readyPlugin = new SelectedPluginReady(pluginName, pluginPath, capability);
 
-        var exception = Assert.Throws<PluginOverlayReadException>(() => _reader.ReadOverlay(readyPlugin));
+        var exception = Assert.Throws<PluginReadException>(() => _reader.ReadOverlay(readyPlugin));
 
+        Assert.Equal(PluginReadPhase.OpeningPlugin, exception.Phase);
         Assert.IsType<MalformedDataException>(exception.InnerException);
     }
 
@@ -208,7 +209,7 @@ public sealed class PluginOverlayConstructionTests : IDisposable
 
         var exception = Record.Exception(() => _reader.ReadOverlay(readyPlugin));
 
-        Assert.IsNotType<PluginOverlayReadException>(exception);
+        Assert.IsNotType<PluginReadException>(exception);
         Assert.IsType<MissingModException>(exception);
     }
 
@@ -311,7 +312,7 @@ public sealed class PluginOverlayConstructionTests : IDisposable
 
         // The "not a Failed Plugin" assertion comes first and names the actual regression; the type assertion below
         // is what identifies which Mutagen failure this case reached.
-        Assert.IsNotType<PluginOverlayReadException>(exception);
+        Assert.IsNotType<PluginReadException>(exception);
         Assert.IsType<MissingModMappingException>(exception);
     }
 
@@ -344,7 +345,7 @@ public sealed class PluginOverlayConstructionTests : IDisposable
 
         var exception = Record.Exception(() => _reader.ReadOverlay(readyPlugin));
 
-        Assert.IsNotType<PluginOverlayReadException>(exception);
+        Assert.IsNotType<PluginReadException>(exception);
         Assert.IsType<MissingModException>(exception);
     }
 
