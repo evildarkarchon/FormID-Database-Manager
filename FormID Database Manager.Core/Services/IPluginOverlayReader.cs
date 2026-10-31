@@ -26,8 +26,17 @@ internal interface IPluginOverlayReader
     IModDisposeGetter ReadOverlay(SelectedPluginReady readyPlugin);
 }
 
+/// <summary>
+///     The overlay seam's production adapter, kept until Plugin Ingestion reads through <see cref="IPluginReader" />.
+/// </summary>
+/// <remarks>
+///     It owns no classification rule: every opening rule lives in <see cref="MutagenPluginReader" />, and this
+///     adapter delegates to it so no rule exists in two places while both seams do (ADR-0015).
+/// </remarks>
 internal sealed class MutagenPluginOverlayReader : IPluginOverlayReader
 {
+    private readonly MutagenPluginReader _pluginReader = new();
+
     /// <summary>
     ///     Opens one ready selected Plugin using the production read state hidden in its opaque capability.
     /// </summary>
@@ -48,108 +57,6 @@ internal sealed class MutagenPluginOverlayReader : IPluginOverlayReader
     /// </exception>
     public IModDisposeGetter ReadOverlay(SelectedPluginReady readyPlugin)
     {
-        ArgumentNullException.ThrowIfNull(readyPlugin);
-
-        // Validate adapter ownership before delegating to any Supported GameRelease factory or filesystem work.
-        var payload = readyPlugin.ReadCapability.RequirePayload<MutagenPluginReadCapabilityPayload>();
-        // Resolved outside the try: an unsupported GameRelease is a programming error, and the ArgumentOutOfRangeException
-        // it raises would otherwise be normalized into a Failed Plugin by the expected-failure check below, which
-        // deliberately treats ArgumentException as a malformed-Plugin signal from Mutagen.
-        var createOverlay = SupportedGameReleases.ForRelease(payload.GameRelease).CreateOverlay;
-
-        try
-        {
-            return createOverlay(readyPlugin.ResolvedPluginPath, payload.ReadParameters);
-        }
-        catch (Exception ex)
-        {
-            // Cancellation is preserved before any expected Plugin-opening failure is normalized below.
-            NestedCancellation.RethrowIfPresent(ex);
-            if (IsExpectedPluginOverlayFailure(ex))
-            {
-                // The application-owned marker prevents arbitrary adapter failures from becoming Failed Plugins.
-                throw new PluginReadException(
-                    PluginReadPhase.OpeningPlugin,
-                    GetUnderlyingPluginReadMessage(ex),
-                    ex);
-            }
-
-            // Classified after the Failed Plugin list, as Plugin Ingestion used to classify whatever escaped it, so a
-            // master-resolution failure wrapping a listed cause still becomes the same Failed Plugin it did before.
-            ThrowIfUnresolvableMaster(readyPlugin.PluginName, ex);
-            throw;
-        }
-    }
-
-    /// <summary>
-    ///     Classifies Mutagen's two master-resolution failures as an Unresolvable Master that fails the Processing Run.
-    /// </summary>
-    /// <param name="pluginName">The selected Plugin whose declared master could not be resolved.</param>
-    /// <param name="exception">The top-level exception raised while opening the overlay.</param>
-    /// <remarks>
-    ///     This is a classification of its own beside the Failed Plugin list, not an entry in it. The list stays narrow
-    ///     so an unexpected internal failure still aborts loudly, and these failures are not Plugin-specific anyway:
-    ///     they are facts about the Data directory that would fail every selected Plugin identically (ADR-0006,
-    ///     ADR-0015, issue #52). Only the top-level exception is inspected, matching the catch Plugin Ingestion held.
-    /// </remarks>
-    /// <exception cref="UnresolvableMasterException">
-    ///     <paramref name="exception" /> is a <see cref="MissingModException" /> or
-    ///     <see cref="MissingModMappingException" />, which is kept as the inner exception.
-    /// </exception>
-    private static void ThrowIfUnresolvableMaster(string pluginName, Exception exception)
-    {
-        switch (exception)
-        {
-            case MissingModException missingMod:
-                // ModPath is the first of the exception's keys, which is the only one here: Mutagen's separated-master
-                // path raises this per unresolved master, from a ModKey rather than a path, so it carries exactly one
-                // and that key has no directory to report — only its file name.
-                throw new UnresolvableMasterException(
-                    pluginName,
-                    missingMod.ModPath.ModKey.FileName.ToString(),
-                    missingMod);
-            case MissingModMappingException missingMapping:
-                // Mutagen reports only that no lookup was supplied, so there is no individual master to name.
-                throw new UnresolvableMasterException(pluginName, null, missingMapping);
-        }
-    }
-
-    /// <summary>
-    ///     Identifies the concrete Mutagen and filesystem failures that mean the selected Plugin could not be opened.
-    /// </summary>
-    /// <param name="exception">The exception raised by Mutagen while opening the configured Plugin path.</param>
-    /// <returns><see langword="true" /> only for expected malformed or unreadable Plugin failures.</returns>
-    private static bool IsExpectedPluginOverlayFailure(Exception exception)
-    {
-        for (var current = exception; current is not null; current = current.InnerException)
-        {
-            if (current is MalformedDataException
-                or RecordException
-                or ArgumentException
-                or OverflowException
-                or IOException
-                or UnauthorizedAccessException)
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    /// <summary>
-    ///     Retains the deepest underlying Plugin-read message when Mutagen enriches an opening failure.
-    /// </summary>
-    /// <param name="exception">The adapter exception chain.</param>
-    /// <returns>The deepest underlying exception message.</returns>
-    private static string GetUnderlyingPluginReadMessage(Exception exception)
-    {
-        var underlying = exception;
-        while (underlying.InnerException is { } innerException)
-        {
-            underlying = innerException;
-        }
-
-        return underlying.Message;
+        return _pluginReader.OpenOverlay(readyPlugin);
     }
 }

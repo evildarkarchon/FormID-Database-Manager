@@ -9,10 +9,10 @@ using Xunit;
 namespace FormID_Database_Manager.Tests.Unit.Services;
 
 /// <summary>
-///     Tests the one nested-cancellation unwrap that the overlay reader, Plugin Ingestion, and Entry Extraction share.
-///     The overlay reader's opening path has no seam to drive a cancellation through, so this is that path's coverage;
-///     enumeration and per-record cancellation are also covered end to end by <c>PluginIngestionTests</c> and
-///     <c>EntryExtractionTests</c>.
+///     Tests the one nested-cancellation unwrap that <c>MutagenPluginReader</c> and Entry Extraction share. Each phase
+///     that uses it — opening, enumerating, and per record — is covered through the adapter's opening delegate in
+///     <c>MutagenPluginReaderTests</c>; enumeration and per-record cancellation are also covered end to end by
+///     <c>PluginIngestionTests</c> and <c>EntryExtractionTests</c>.
 /// </summary>
 public sealed class NestedCancellationTests
 {

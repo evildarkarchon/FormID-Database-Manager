@@ -1,4 +1,3 @@
-using Mutagen.Bethesda.Plugins.Exceptions;
 using Mutagen.Bethesda.Plugins.Records;
 
 namespace FormID_Database_Manager.Services;
@@ -389,66 +388,16 @@ internal sealed class PluginIngestion : IPluginIngestion
     /// <param name="warningCollector">The bounded recoverable-diagnostic collector.</param>
     /// <param name="cancellationToken">Stops record extraction.</param>
     /// <returns>The lazy sequence consumed inside the Store's atomic Plugin write.</returns>
+    /// <remarks>
+    ///     The enumeration and per-record classification rules live in <see cref="MutagenPluginReader" />, so they exist
+    ///     in one place while this module still opens Plugins through the overlay seam (ADR-0015).
+    /// </remarks>
     private IEnumerable<FormIdRecord> EnumeratePluginRecords(
         IModGetter plugin,
         RecordWarningCollector warningCollector,
         CancellationToken cancellationToken)
     {
-        using var records = CreateRecordEnumerator(plugin);
-
-        while (MoveNextRecord(records))
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            if (_entryExtraction.TryExtract(records.Current, warningCollector.Add) is { } record)
-            {
-                yield return record;
-            }
-        }
-    }
-
-    /// <summary>
-    ///     Creates the Mutagen record enumerator and marks expected record-read failures with their internal phase.
-    /// </summary>
-    /// <param name="plugin">The opened Plugin overlay.</param>
-    /// <returns>The lazy major-record enumerator.</returns>
-    /// <exception cref="PluginReadException">Mutagen reports an expected record-read failure.</exception>
-    private static IEnumerator<IMajorRecordGetter> CreateRecordEnumerator(IModGetter plugin)
-    {
-        try
-        {
-            return plugin.EnumerateMajorRecords().GetEnumerator();
-        }
-        catch (RecordException ex)
-        {
-            NestedCancellation.RethrowIfPresent(ex);
-            throw new PluginReadException(
-                PluginReadPhase.ReadingRecords,
-                ex.Message,
-                ex);
-        }
-    }
-
-    /// <summary>
-    ///     Advances a lazy Mutagen enumerator while preserving expected record-read classification.
-    /// </summary>
-    /// <param name="records">The active major-record enumerator.</param>
-    /// <returns><see langword="true" /> when another record is available.</returns>
-    /// <exception cref="PluginReadException">Mutagen reports an expected record-read failure.</exception>
-    private static bool MoveNextRecord(IEnumerator<IMajorRecordGetter> records)
-    {
-        try
-        {
-            return records.MoveNext();
-        }
-        catch (RecordException ex)
-        {
-            NestedCancellation.RethrowIfPresent(ex);
-            throw new PluginReadException(
-                PluginReadPhase.ReadingRecords,
-                ex.Message,
-                ex);
-        }
+        return MutagenPluginReader.ReadRecords(plugin, _entryExtraction, warningCollector.Add, cancellationToken);
     }
 
     /// <summary>

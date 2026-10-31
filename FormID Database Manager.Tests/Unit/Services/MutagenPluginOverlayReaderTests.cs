@@ -14,8 +14,8 @@ namespace FormID_Database_Manager.Tests.Unit.Services;
 /// <summary>
 ///     Covers two of the production Mutagen overlay adapter's contracts: which failures it normalizes into an expected
 ///     Plugin-read failure, and the fact that an unsupported GameRelease is not one of them. Its third — preserving a
-///     nested cancellation — is deliberately not covered, because Mutagen's overlay construction is synchronous and
-///     not cancellable and no delegate-injection seam exists to drive one through.
+///     nested cancellation — is not covered here, because Mutagen's overlay construction is synchronous and not
+///     cancellable and this adapter has no delegate-injection seam to drive one through.
 /// </summary>
 /// <remarks>
 ///     <para>
@@ -48,6 +48,13 @@ namespace FormID_Database_Manager.Tests.Unit.Services;
 ///         <see cref="RecordException" /> and <see cref="OverflowException" /> entries in the classification list are
 ///         unreachable from any caller, by either route. Recorded here rather than acted on: deleting them is a
 ///         narrowing of a deliberately conservative list and belongs in its own change.
+///     </para>
+///     <para>
+///         Since ADR-0015 this adapter owns none of those rules: it delegates opening to
+///         <see cref="MutagenPluginReader" />, whose one test seam, the overlay-opening delegate, drives the nested
+///         cancellation, the deepest-cause walk and every list entry with constructed failures. That coverage lives in
+///         <see cref="MutagenPluginReaderTests" />. The real-path cases here stay, unchanged, as the proof that the
+///         delegation reaches real Mutagen calls.
 ///     </para>
 /// </remarks>
 public sealed class MutagenPluginOverlayReaderTests : IDisposable
