@@ -1,4 +1,3 @@
-using System.Runtime.ExceptionServices;
 using Mutagen.Bethesda.Plugins.Exceptions;
 using Mutagen.Bethesda.Plugins.Records;
 
@@ -422,7 +421,7 @@ internal sealed class PluginIngestion : IPluginIngestion
         }
         catch (RecordException ex)
         {
-            RethrowNestedCancellation(ex);
+            NestedCancellation.RethrowIfPresent(ex);
             throw new PluginReadException(
                 PluginReadPhase.ReadingRecords,
                 ex.Message,
@@ -444,7 +443,7 @@ internal sealed class PluginIngestion : IPluginIngestion
         }
         catch (RecordException ex)
         {
-            RethrowNestedCancellation(ex);
+            NestedCancellation.RethrowIfPresent(ex);
             throw new PluginReadException(
                 PluginReadPhase.ReadingRecords,
                 ex.Message,
@@ -475,7 +474,7 @@ internal sealed class PluginIngestion : IPluginIngestion
         }
         catch (PluginOverlayReadException ex)
         {
-            RethrowNestedCancellation(ex);
+            NestedCancellation.RethrowIfPresent(ex);
             throw new PluginReadException(
                 PluginReadPhase.OpeningPlugin,
                 ex.Message,
@@ -495,22 +494,6 @@ internal sealed class PluginIngestion : IPluginIngestion
         {
             // Mutagen reports only that no lookup was supplied, so there is no individual master to name.
             throw new UnresolvableMasterException(readyPlugin.PluginName, null, ex);
-        }
-    }
-
-    /// <summary>
-    ///     Preserves cancellation even when Mutagen enriches it inside a record-reading exception.
-    /// </summary>
-    /// <param name="exception">The possible wrapper raised by the Plugin adapter or enumerator.</param>
-    /// <exception cref="OperationCanceledException">The exception chain contains cancellation.</exception>
-    private static void RethrowNestedCancellation(Exception exception)
-    {
-        for (var current = exception; current is not null; current = current.InnerException)
-        {
-            if (current is OperationCanceledException cancellation)
-            {
-                ExceptionDispatchInfo.Capture(cancellation).Throw();
-            }
         }
     }
 
