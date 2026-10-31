@@ -801,7 +801,8 @@ public class CoreProjectBoundaryTests
 
     /// <summary>
     ///     Verifies that the Game Context references neither <see cref="MainWindowViewModel" /> nor the ViewModels
-    ///     namespace: it reports to a sink the User Workflow implements, and writes nothing itself (ADR-0013).
+    ///     namespace: it reports to a sink whose adapter the User Workflow composes, and writes nothing itself
+    ///     (ADR-0013, ADR-0014).
     /// </summary>
     /// <remarks>
     ///     Issue #116, under parent #114. The check is on raw source text, comments included, as

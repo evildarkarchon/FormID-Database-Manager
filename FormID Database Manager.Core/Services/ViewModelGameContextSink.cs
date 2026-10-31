@@ -43,6 +43,10 @@ internal sealed class ViewModelGameContextSink(MainWindowViewModel viewModel) : 
     ///     Which list a notice belongs to is Presentation's choice, so it is passed straight through with no per-list
     ///     switch here (ADR-0014).
     /// </remarks>
+    /// <exception cref="ArgumentOutOfRangeException">
+    ///     Presentation names a message list the ViewModel does not define; <see cref="MainWindowViewModel.AddMessage" />
+    ///     throws before writing anything.
+    /// </exception>
     public void ReportNotice(GameContextNotice notice)
     {
         var rendered = GameContextPresentation.Render(notice);

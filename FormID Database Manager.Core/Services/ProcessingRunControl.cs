@@ -430,7 +430,8 @@ internal sealed class ProcessingRunControl : IDisposable
 /// <remarks>
 ///     Processing Run Control calls every member while holding its lock, so an implementation sees reports from the UI
 ///     thread and the executor's thread in sequence (#60). A member may raise notifications that re-enter a press. The
-///     User Workflow implements it over the ViewModel, and tests implement it by recording (ADR-0012).
+///     User Workflow composes a sink adapter that implements it over the ViewModel, and tests implement it by recording
+///     (ADR-0012, ADR-0014).
 /// </remarks>
 internal interface IProcessingRunControlSink
 {

@@ -185,7 +185,7 @@ public sealed class ViewModelProcessingRunControlSinkTests
     ///     <see cref="ProcessingRunControlTests" />.
     /// </remarks>
     [Fact]
-    public void AddWarningAndErrorMessages_RenderedRunReport_RouteEachPartToItsOwnList()
+    public void AddWarningMessageAndAddErrorMessage_RenderedRunReportWithBothParts_RouteEachPartToItsOwnList()
     {
         var rendered = ProcessingRunPresentation.Render(CreatePluginRunOutcome(
             new IngestedPlugin("User.esp", 1, new ProcessingWarning(1, ["Recoverable issue"])),
