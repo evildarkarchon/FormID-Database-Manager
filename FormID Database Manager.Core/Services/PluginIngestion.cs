@@ -1,4 +1,3 @@
-using System.Runtime.ExceptionServices;
 using Mutagen.Bethesda.Plugins.Exceptions;
 using Mutagen.Bethesda.Plugins.Records;
 
@@ -422,7 +421,7 @@ internal sealed class PluginIngestion : IPluginIngestion
         }
         catch (RecordException ex)
         {
-            RethrowNestedCancellation(ex);
+            NestedCancellation.RethrowIfPresent(ex);
             throw new PluginReadException(
                 PluginReadPhase.ReadingRecords,
                 ex.Message,
@@ -444,7 +443,7 @@ internal sealed class PluginIngestion : IPluginIngestion
         }
         catch (RecordException ex)
         {
-            RethrowNestedCancellation(ex);
+            NestedCancellation.RethrowIfPresent(ex);
             throw new PluginReadException(
                 PluginReadPhase.ReadingRecords,
                 ex.Message,
@@ -471,22 +470,6 @@ internal sealed class PluginIngestion : IPluginIngestion
         // A PluginReadException already carries the opening phase and has had nested cancellation unwrapped by
         // the adapter, so it passes through to the callers' Failed Plugin catches without a second wrap.
         return _overlayReader.ReadOverlay(readyPlugin);
-    }
-
-    /// <summary>
-    ///     Preserves cancellation even when Mutagen enriches it inside a record-reading exception.
-    /// </summary>
-    /// <param name="exception">The possible wrapper raised by the record enumerator.</param>
-    /// <exception cref="OperationCanceledException">The exception chain contains cancellation.</exception>
-    private static void RethrowNestedCancellation(Exception exception)
-    {
-        for (var current = exception; current is not null; current = current.InnerException)
-        {
-            if (current is OperationCanceledException cancellation)
-            {
-                ExceptionDispatchInfo.Capture(cancellation).Throw();
-            }
-        }
     }
 
     private sealed class RecordWarningCollector

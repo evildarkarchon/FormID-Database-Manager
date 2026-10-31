@@ -1,4 +1,3 @@
-using System.Runtime.ExceptionServices;
 using Mutagen.Bethesda.Plugins.Exceptions;
 using Mutagen.Bethesda.Plugins.Records;
 
@@ -64,7 +63,8 @@ internal sealed class MutagenPluginOverlayReader : IPluginOverlayReader
         }
         catch (Exception ex)
         {
-            RethrowNestedCancellation(ex);
+            // Cancellation is preserved before any expected Plugin-opening failure is normalized below.
+            NestedCancellation.RethrowIfPresent(ex);
             if (IsExpectedPluginOverlayFailure(ex))
             {
                 // The application-owned marker prevents arbitrary adapter failures from becoming Failed Plugins.
@@ -151,21 +151,5 @@ internal sealed class MutagenPluginOverlayReader : IPluginOverlayReader
         }
 
         return underlying.Message;
-    }
-
-    /// <summary>
-    ///     Preserves cancellation before any expected Plugin-opening failure is normalized.
-    /// </summary>
-    /// <param name="exception">The possible adapter wrapper.</param>
-    /// <exception cref="OperationCanceledException">The exception chain contains cancellation.</exception>
-    private static void RethrowNestedCancellation(Exception exception)
-    {
-        for (var current = exception; current is not null; current = current.InnerException)
-        {
-            if (current is OperationCanceledException cancellation)
-            {
-                ExceptionDispatchInfo.Capture(cancellation).Throw();
-            }
-        }
     }
 }
