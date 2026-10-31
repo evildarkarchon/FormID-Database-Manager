@@ -34,8 +34,11 @@ renaming Core members or changing project boundaries. In particular:
 
 - Core must remain independent of Avalonia and other desktop UI implementations.
 - `FormIdRecordStore.cs` is the only production source file that may reference `Microsoft.Data.Sqlite`.
-- `ProcessingRun` owns Store opening, optimization, and disposal; `PluginIngestion` owns load-order, overlay, and
+- `ProcessingRun` owns Store opening, optimization, and disposal; `PluginIngestion` owns load-order, Plugin reader, and
   Data-path adapters.
+- Plugin Ingestion reads Plugins only through `IPluginReader`. Mutagen record types, Mutagen exceptions, and the
+  Unresolvable Master classification stay behind it in `MutagenPluginReader`, and `PluginIngestion.cs` and
+  `PluginIngestionContracts.cs` reference no Mutagen namespace or type (ADR-0015).
 - `FormIdTextIngestion` owns reading, parsing, and counting a FormID text file, and the file's import progress. The
   Store persists only the rows it is handed through the text-row writer role (ADR-0001, ADR-0007).
 - `ProcessingRun.cs` and `ProcessingRunControl.cs` contain no user-facing wording. A run reports typed

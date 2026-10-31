@@ -16,7 +16,7 @@ namespace FormID_Database_Manager.Tests.Integration;
 
 /// <summary>
 ///     Covers Plugin Ingestion end to end for one release of each game family, over a Plugin generated at test time
-///     and read through the production overlay adapter and the production Entry Extraction module.
+///     and read through the production Plugin reader, which applies the production Entry Extraction module.
 /// </summary>
 /// <remarks>
 ///     <para>
@@ -149,7 +149,7 @@ public sealed class PluginIngestionFixtureTests : IDisposable
     ///         the name of Mutagen's <em>overlay</em> class — <c>NpcBinaryOverlay</c>, not <c>Npc</c> — so the Entry a
     ///         user saw in their database differed from the one the same record produces in memory, which is how every
     ///         other test in this suite reads records. The in-memory half is
-    ///         <c>PluginIngestionTests.TryExtract_RecordWithNeitherAnEditorIdNorAName_NamesTheMutagenRecordType</c>,
+    ///         <c>EntryExtractionTests.TryExtract_RecordWithNeitherAnEditorIdNorAName_NamesTheMutagenRecordType</c>,
     ///         which asserts this same literal; the two together are the parity claim.
     ///     </para>
     ///     <para>
@@ -184,7 +184,7 @@ public sealed class PluginIngestionFixtureTests : IDisposable
     /// </summary>
     /// <remarks>
     ///     The overlay half of issue #51's fix; the in-memory half is
-    ///     <c>PluginIngestionTests.TryExtract_RecordWhoseNameAspectIsRequired_UsesThatNameAsEntry</c>, which explains
+    ///     <c>EntryExtractionTests.TryExtract_RecordWhoseNameAspectIsRequired_UsesThatNameAsEntry</c>, which explains
     ///     the two name aspects and lists the affected record types. Both halves are needed for the same reason
     ///     ADR-0004 needed both: a Mutagen overlay class reaches a name through its own generated members, so what an
     ///     in-memory record does is not evidence of what a Processing Run reads.

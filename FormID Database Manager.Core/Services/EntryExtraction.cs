@@ -1,4 +1,3 @@
-using System.Runtime.ExceptionServices;
 using Mutagen.Bethesda.Plugins.Aspects;
 using Mutagen.Bethesda.Plugins.Records;
 
@@ -44,7 +43,7 @@ internal sealed class EntryExtraction
             }
             catch (Exception ex)
             {
-                RethrowNestedCancellation(ex);
+                NestedCancellation.RethrowIfPresent(ex);
                 ReportRecoverableIssue(ex, reportWarning);
                 return null;
             }
@@ -61,7 +60,7 @@ internal sealed class EntryExtraction
             }
             catch (Exception ex)
             {
-                RethrowNestedCancellation(ex);
+                NestedCancellation.RethrowIfPresent(ex);
                 ReportRecoverableIssue(ex, reportWarning);
                 entry = SynthesizeEntry(record, formId);
             }
@@ -75,7 +74,7 @@ internal sealed class EntryExtraction
         }
         catch (Exception ex)
         {
-            RethrowNestedCancellation(ex);
+            NestedCancellation.RethrowIfPresent(ex);
             ReportRecoverableIssue(ex, reportWarning);
             return null;
         }
@@ -172,7 +171,7 @@ internal sealed class EntryExtraction
         {
             // A record that cannot describe its own registration must still produce an Entry, so this is not a
             // Processing Warning — it degrades to the runtime type name below.
-            RethrowNestedCancellation(ex);
+            NestedCancellation.RethrowIfPresent(ex);
         }
 
         return record.GetType().Name;
@@ -187,26 +186,6 @@ internal sealed class EntryExtraction
                 exception.Message.Contains(pattern, StringComparison.OrdinalIgnoreCase)))
         {
             reportWarning(exception.Message);
-        }
-    }
-
-    /// <summary>
-    ///     Preserves cancellation when a lazy getter's exception reaches Entry Extraction wrapped in another one.
-    /// </summary>
-    /// <remarks>
-    ///     Mutagen wraps some record-read failures, and a getter invoked through a dynamic proxy surfaces its exception
-    ///     inside a <c>TargetInvocationException</c>, so the innermost cancellation is not necessarily the caught type.
-    /// </remarks>
-    /// <param name="exception">The possible wrapper raised during Entry Extraction.</param>
-    /// <exception cref="OperationCanceledException">The exception chain contains cancellation.</exception>
-    private static void RethrowNestedCancellation(Exception exception)
-    {
-        for (var current = exception; current is not null; current = current.InnerException)
-        {
-            if (current is OperationCanceledException cancellation)
-            {
-                ExceptionDispatchInfo.Capture(cancellation).Throw();
-            }
         }
     }
 }

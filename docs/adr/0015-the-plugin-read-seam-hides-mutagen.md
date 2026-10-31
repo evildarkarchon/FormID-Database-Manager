@@ -36,6 +36,10 @@ one to Entry Extraction. An architecture review on 2026-10-30 found what that le
     outcome is unchanged.
 
   It keeps the only copy of `RethrowNestedCancellation`, shared with Entry Extraction.
+
+  > Note (2026-10-31): The one copy is `NestedCancellation.RethrowIfPresent` in `Core/Services/NestedCancellation.cs`,
+  > not a member of `MutagenPluginReader`. `MutagenPluginReader` and Entry Extraction both call it, and both sit behind
+  > the seam, so Plugin Ingestion never names it and there is still one copy rather than three.
 - One internal `PluginReadException`, carrying `PluginReadPhase` and the diagnostic message, reports a Failed Plugin
   from either phase. It replaces both `PluginOverlayReadException` and Plugin Ingestion's private nested exception of
   the same name. It has to stay an exception during enumeration: the Store consumes the record stream inside its atomic

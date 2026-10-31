@@ -212,8 +212,8 @@ public sealed class PluginIngestionContractTests
     }
 
     /// <summary>
-    ///     Verifies public Processing Run construction does not expose Plugin Ingestion's Game Load Orders or overlay
-    ///     dependencies without pinning unrelated constructor evolution.
+    ///     Verifies public Processing Run construction does not expose Plugin Ingestion's Game Load Orders or Plugin
+    ///     reader dependencies without pinning unrelated constructor evolution.
     /// </summary>
     [Fact]
     public void ProcessingRunExecutor_PublicConstruction_ExposesNoPluginIngestionAdapters()
@@ -225,7 +225,7 @@ public sealed class PluginIngestionContractTests
             .ToArray();
 
         Assert.DoesNotContain(typeof(IGameLoadOrders), publicDependencyTypes);
-        Assert.DoesNotContain(typeof(IPluginOverlayReader), publicDependencyTypes);
+        Assert.DoesNotContain(typeof(IPluginReader), publicDependencyTypes);
     }
 
     [Fact]

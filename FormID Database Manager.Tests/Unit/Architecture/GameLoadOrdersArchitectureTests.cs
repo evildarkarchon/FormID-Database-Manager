@@ -87,21 +87,36 @@ public sealed class GameLoadOrdersArchitectureTests
     }
 
     /// <summary>
-    ///     Pins the live overlay seam to one intact ready selected-Plugin case without exposing binary preparation.
+    ///     Pins the live Plugin read seam to one operation taking one intact ready selected-Plugin case, without
+    ///     exposing binary preparation or any Mutagen type.
     /// </summary>
     [Fact]
-    public void PluginOverlayReaderContract_LiveOperation_AcceptsOnlyPreparedReadyCase()
+    public void PluginReaderContract_LiveOperation_AcceptsOnlyPreparedReadyCase()
     {
-        var contractOperation = Assert.Single(typeof(IPluginOverlayReader).GetMethods());
-        var productionOperation = Assert.Single(typeof(MutagenPluginOverlayReader).GetMethods(
+        var contractOperation = Assert.Single(typeof(IPluginReader).GetMethods());
+        var productionOperation = Assert.Single(typeof(MutagenPluginReader).GetMethods(
             BindingFlags.Instance | BindingFlags.Public | BindingFlags.DeclaredOnly));
         var contractParameter = Assert.Single(contractOperation.GetParameters());
         var productionParameter = Assert.Single(productionOperation.GetParameters());
 
-        Assert.Equal(nameof(IPluginOverlayReader.ReadOverlay), contractOperation.Name);
-        Assert.Equal(nameof(IPluginOverlayReader.ReadOverlay), productionOperation.Name);
+        Assert.Equal(nameof(IPluginReader.Open), contractOperation.Name);
+        Assert.Equal(nameof(IPluginReader.Open), productionOperation.Name);
         Assert.Equal(typeof(SelectedPluginReady), contractParameter.ParameterType);
         Assert.Equal(typeof(SelectedPluginReady), productionParameter.ParameterType);
+        Assert.Equal(typeof(IOpenedPlugin), contractOperation.ReturnType);
+    }
+
+    /// <summary>
+    ///     Pins the opened Plugin's read operation to application-owned FormID records, so records leave the Plugin
+    ///     read seam as FormIDs and Entries and no Mutagen record type crosses it (ADR-0015).
+    /// </summary>
+    [Fact]
+    public void OpenedPluginContract_ReadRecords_ReturnsFormIdRecords()
+    {
+        var readOperation = typeof(IOpenedPlugin).GetMethod(nameof(IOpenedPlugin.ReadRecords));
+
+        Assert.NotNull(readOperation);
+        Assert.Equal(typeof(IEnumerable<FormIdRecord>), readOperation.ReturnType);
     }
 
     /// <summary>
@@ -124,19 +139,22 @@ public sealed class GameLoadOrdersArchitectureTests
 
     /// <summary>
     ///     Pins the production composition entry point that pairs the highest Game Load Orders seam with the production
-    ///     overlay adapter without exposing either dependency to Processing Run.
+    ///     Plugin reader without exposing either dependency to Processing Run, and pins Plugin Ingestion's widest
+    ///     constructor to exactly Game Load Orders and the Plugin reader (ADR-0015).
     /// </summary>
     [Fact]
     public void PluginIngestionProductionComposition_HighestGameLoadOrdersSeam_HasMatchedEntryPoint()
     {
         var constructors = typeof(PluginIngestion).GetConstructors(
             BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        var parameterLists = constructors
+            .Select(constructor => constructor.GetParameters().Select(parameter => parameter.ParameterType).ToArray())
+            .ToArray();
 
-        Assert.Contains(
-            constructors,
-            constructor => constructor.GetParameters()
-                .Select(parameter => parameter.ParameterType)
-                .SequenceEqual([typeof(IGameLoadOrders)]));
+        var widest = parameterLists.MaxBy(parameters => parameters.Length);
+
+        Assert.Contains(parameterLists, parameters => parameters.SequenceEqual([typeof(IGameLoadOrders)]));
+        Assert.Equal([typeof(IGameLoadOrders), typeof(IPluginReader)], widest);
     }
 
     /// <summary>
@@ -185,11 +203,11 @@ public sealed class GameLoadOrdersArchitectureTests
     }
 
     /// <summary>
-    ///     Keeps overlay opening, record enumeration, and FormID Record Store boundary types outside Game Load Orders
-    ///     without pinning its private helpers or exact environment calls.
+    ///     Keeps the Plugin reader, Mutagen record types, and FormID Record Store boundary types outside Game Load
+    ///     Orders without pinning its private helpers or exact environment calls.
     /// </summary>
     [Fact]
-    public void GameLoadOrdersSources_PreparationOwnership_ReferencesNoOverlayEnumerationOrStoreBoundaries()
+    public void GameLoadOrdersSources_PreparationOwnership_ReferencesNoPluginReaderRecordOrStoreBoundaries()
     {
         var servicesDirectory = Path.Combine(FindRepositoryRoot(), "FormID Database Manager.Core", "Services");
         var source = string.Join(
@@ -197,7 +215,9 @@ public sealed class GameLoadOrdersArchitectureTests
             File.ReadAllText(Path.Combine(servicesDirectory, "GameLoadOrders.cs")),
             File.ReadAllText(Path.Combine(servicesDirectory, "GameLoadOrderEnvironment.cs")));
 
-        Assert.DoesNotContain("IPluginOverlayReader", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("IPluginReader", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("IOpenedPlugin", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("MutagenPluginReader", source, StringComparison.Ordinal);
         Assert.DoesNotContain("IModDisposeGetter", source, StringComparison.Ordinal);
         Assert.DoesNotContain("IMajorRecordGetter", source, StringComparison.Ordinal);
         Assert.DoesNotContain("IFormIdRecordStoreSession", source, StringComparison.Ordinal);

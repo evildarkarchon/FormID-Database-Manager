@@ -906,8 +906,8 @@ public class CoreProjectBoundaryTests
         Assert.Contains("DisposeAsync(", processingRunSource, StringComparison.Ordinal);
         Assert.DoesNotContain("IGameLoadOrders", processingRunSource, StringComparison.Ordinal);
         Assert.DoesNotContain("GameLoadOrders", processingRunSource, StringComparison.Ordinal);
-        Assert.DoesNotContain("IPluginOverlayReader", processingRunSource, StringComparison.Ordinal);
-        Assert.DoesNotContain("MutagenPluginOverlayReader", processingRunSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("IPluginReader", processingRunSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("MutagenPluginReader", processingRunSource, StringComparison.Ordinal);
         Assert.DoesNotContain(
             "GameInstallations.CanonicalizeDataDirectory",
             processingRunSource,
@@ -915,7 +915,7 @@ public class CoreProjectBoundaryTests
 
         Assert.Contains("IGameLoadOrders", pluginIngestionSource, StringComparison.Ordinal);
         Assert.Contains("PrepareSelectedPlugins", pluginIngestionSource, StringComparison.Ordinal);
-        Assert.Contains("IPluginOverlayReader", pluginIngestionSource, StringComparison.Ordinal);
+        Assert.Contains("IPluginReader", pluginIngestionSource, StringComparison.Ordinal);
         Assert.Contains(
             ingestionOperation.GetParameters(),
             parameter => parameter.ParameterType == pluginWriterType);
@@ -930,6 +930,84 @@ public class CoreProjectBoundaryTests
         Assert.DoesNotContain("FormIdRecordStore.OpenAsync", pluginIngestionSource, StringComparison.Ordinal);
         Assert.DoesNotContain("OptimizeAsync(", pluginIngestionSource, StringComparison.Ordinal);
         Assert.DoesNotContain("DisposeAsync(", pluginIngestionSource, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    ///     Verifies Plugin Ingestion and its contracts reference no Mutagen namespace or type, nor any read-side rule
+    ///     that lives behind the seam, because Plugin Ingestion reads Plugins only through <see cref="IPluginReader" />,
+    ///     which keeps Mutagen record types, Mutagen exceptions, and the Unresolvable Master classification behind it
+    ///     (ADR-0006, ADR-0015).
+    /// </summary>
+    /// <param name="sourceFileName">A Plugin Ingestion source file.</param>
+    /// <remarks>
+    ///     <para>
+    ///         Spec #129. Raw text is searched, so a comment naming a forbidden type fails this too: Plugin Ingestion
+    ///         has no reason to know them at all once the Plugin reader owns every classification. This subsumes
+    ///         issue #132's narrower pin on the two master-resolution exceptions, which are both on the list below.
+    ///     </para>
+    ///     <para>
+    ///         Two references are deliberately allowed. The production constructors compose
+    ///         <see cref="MutagenPluginReader" />, which is an application type, so the namespace check matches only a
+    ///         qualified <c>Mutagen.</c> segment rather than the word. <c>GameRelease</c> passes through on the request
+    ///         to Game Load Orders without Plugin Ingestion naming its type, so it is not on the list.
+    ///     </para>
+    /// </remarks>
+    [Theory]
+    [InlineData("PluginIngestion.cs")]
+    [InlineData("PluginIngestionContracts.cs")]
+    public void PluginIngestionSources_PluginReadSeam_ReferenceNoMutagenNamespaceOrType(string sourceFileName)
+    {
+        var source = File.ReadAllText(Path.Combine(GetCoreProjectDirectory(), "Services", sourceFileName));
+
+        AssertReferencesNoMutagenNamespaceOrTypeBehindTheSeam(source);
+    }
+
+    /// <summary>
+    ///     Verifies the Plugin read seam's own contract file references no Mutagen namespace or type, nor any read-side
+    ///     rule that lives behind it, so the seam Plugin Ingestion reads through cannot leak what it hides (ADR-0015).
+    /// </summary>
+    /// <remarks>
+    ///     Spec #129. The contract is checked with the same list as Plugin Ingestion's sources: Plugin Ingestion is
+    ///     written against this contract, so a Mutagen name here is the first step of a leak into it.
+    /// </remarks>
+    [Fact]
+    public void PluginReaderContractSource_PluginReadSeam_ReferencesNoMutagenNamespaceOrType()
+    {
+        var source = File.ReadAllText(Path.Combine(GetCoreProjectDirectory(), "Services", "IPluginReader.cs"));
+
+        AssertReferencesNoMutagenNamespaceOrTypeBehindTheSeam(source);
+    }
+
+    /// <summary>
+    ///     Asserts that raw source text names no qualified Mutagen namespace, no Mutagen type, and no application
+    ///     read-side rule that lives behind the Plugin read seam.
+    /// </summary>
+    /// <param name="source">The raw C# source text, comments included.</param>
+    private static void AssertReferencesNoMutagenNamespaceOrTypeBehindTheSeam(string source)
+    {
+        // Mutagen's record, read-parameter, key, and exception types, then the application's own read-side rules
+        // that live behind the seam with them: Entry Extraction, the nested-cancellation unwrap, and the ignore list.
+        string[] behindTheSeamNames =
+        [
+            "IModGetter",
+            "IModDisposeGetter",
+            "IMajorRecordGetter",
+            "BinaryReadParameters",
+            "ModKey",
+            "FormKey",
+            "RecordException",
+            "MalformedDataException",
+            "MissingModException",
+            "MissingModMappingException",
+            "EntryExtraction",
+            "NestedCancellation",
+            "IgnorableErrorPatterns"
+        ];
+
+        Assert.DoesNotMatch(@"\bMutagen\.[A-Z]", source);
+        Assert.All(
+            behindTheSeamNames,
+            typeName => Assert.DoesNotMatch($@"\b{Regex.Escape(typeName)}\b", source));
     }
 
     /// <summary>

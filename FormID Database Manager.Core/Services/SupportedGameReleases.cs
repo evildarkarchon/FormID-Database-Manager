@@ -60,7 +60,7 @@ internal sealed class SupportedGameRelease
     /// <summary>
     ///     Gets the factory that opens a Plugin path as this release's Mutagen overlay type, given the shared
     ///     load-order-aware binary read parameters. This is data in a constant table, not a seam: callers reach it
-    ///     through <see cref="IPluginOverlayReader" />, which owns failure normalization.
+    ///     through <see cref="MutagenPluginReader" />, which owns failure normalization.
     /// </summary>
     internal Func<string, BinaryReadParameters, IModDisposeGetter> CreateOverlay { get; }
 }
