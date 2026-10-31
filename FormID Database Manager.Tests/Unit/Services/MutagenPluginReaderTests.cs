@@ -491,7 +491,7 @@ public sealed class MutagenPluginReaderTests : IDisposable
     ///     The wrappers a master-resolution failure can sit behind: each Mutagen enrichment wrapper, a listed Plugin-data
     ///     cause, and an exception the application does not recognise. The master check must see through all of them.
     /// </summary>
-    public static TheoryData<string> MasterFailureWrappers =>
+    private static readonly string[] MasterFailureWrapperNames =
     [
         nameof(RecordException),
         nameof(SubrecordException),
@@ -499,6 +499,11 @@ public sealed class MutagenPluginReaderTests : IDisposable
         nameof(IOException),
         nameof(InvalidOperationException)
     ];
+
+    /// <summary>
+    ///     Every master-failure wrapper, by name.
+    /// </summary>
+    public static TheoryData<string> MasterFailureWrappers => [.. MasterFailureWrapperNames];
 
     /// <summary>
     ///     Verifies a named missing master found anywhere in the inner-exception chain fails the run as an Unresolvable
@@ -574,10 +579,68 @@ public sealed class MutagenPluginReaderTests : IDisposable
     }
 
     // ---------------------------------------------------------------------------------------------------------
-    // Enumeration. Only a top-level RecordException is a Failed Plugin here, a narrower rule than opening's on
-    // purpose (#127); its message is the RecordException's own, not the classified cause's that opening reports.
-    // Enumeration moves onto the shared fault-scope classification in #138.
+    // Enumeration. Starting and advancing the record enumerator classify a failure by fault scope exactly as
+    // opening does (ADR-0016 rules 1, 2, 3 and 6); only the phase differs. Every failure Mutagen raises from
+    // MoveNext arrives wrapped in a RecordException, so these cases drive each family through that wrapper too.
     // ---------------------------------------------------------------------------------------------------------
+
+    /// <summary>
+    ///     Where a failure arrives while enumerating: as the enumerator is started, or as it is advanced past a record
+    ///     it already yielded. Both places classify through the same rule.
+    /// </summary>
+    public enum EnumerationPoint
+    {
+        Starting,
+        Advancing
+    }
+
+    /// <summary>
+    ///     Both enumeration points.
+    /// </summary>
+    public static TheoryData<EnumerationPoint> EnumerationPoints =>
+    [
+        EnumerationPoint.Starting,
+        EnumerationPoint.Advancing
+    ];
+
+    /// <summary>
+    ///     Every Plugin-data failure family at each enumeration point.
+    /// </summary>
+    public static TheoryData<string, EnumerationPoint> PluginDataFailureFamiliesAtEachEnumerationPoint
+    {
+        get
+        {
+            var data = new TheoryData<string, EnumerationPoint>();
+            foreach (var family in PluginDataFailureFamilyNames)
+            {
+                data.Add(family, EnumerationPoint.Starting);
+                data.Add(family, EnumerationPoint.Advancing);
+            }
+
+            return data;
+        }
+    }
+
+    /// <summary>
+    ///     Verifies each Plugin-data failure raised directly while enumerating becomes a Failed Plugin in the
+    ///     reading-records phase carrying its own message. This includes the bare <see cref="RecordException" /> and
+    ///     an <see cref="IOException" />, which until ADR-0016 failed the run when it arrived from enumeration.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(PluginDataFailureFamiliesAtEachEnumerationPoint))]
+    public void ReadRecords_PluginDataFailure_ThrowsPluginReadFailureInTheReadingPhase(
+        string family,
+        EnumerationPoint point)
+    {
+        var failure = CreatePluginDataFailure(family, "The group is unreadable.");
+        using var opened = OpenPluginWhoseEnumerationFails(failure, point);
+
+        var thrown = Assert.Throws<PluginReadException>(() => ReadAll(opened));
+
+        Assert.Equal(PluginReadPhase.ReadingRecords, thrown.Phase);
+        Assert.Equal(failure.Message, thrown.DiagnosticMessage);
+        Assert.Same(failure, thrown.InnerException);
+    }
 
     /// <summary>
     ///     Verifies a record-read failure raised midway through enumeration becomes a Failed Plugin in the
@@ -627,40 +690,230 @@ public sealed class MutagenPluginReaderTests : IDisposable
     }
 
     /// <summary>
-    ///     Verifies an enumeration failure other than a top-level <see cref="RecordException" /> propagates unchanged,
-    ///     including one that merely wraps a <see cref="RecordException" />.
+    ///     Every Plugin-data family behind every enrichment wrapper, at each enumeration point.
     /// </summary>
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void ReadRecords_UnexpectedEnumerationFailure_PropagatesUnchanged(bool wrapsARecordException)
+    public static TheoryData<string, string, EnumerationPoint>
+        PluginDataFailureFamiliesBehindEachEnrichmentWrapperAtEachEnumerationPoint
     {
-        Exception failure = wrapsARecordException
-            ? new InvalidOperationException("Enumerator broke.", CreateRecordException("Inner record failure."))
-            : new IOException("Record enumeration infrastructure failed.");
-        var sut = new MutagenPluginReader((_, _, _) =>
-            CreateOverlay(YieldThenThrow(CreateRecord("BeforeFailure"), failure)));
-        using var opened = sut.Open(CreateReadyPlugin());
+        get
+        {
+            var data = new TheoryData<string, string, EnumerationPoint>();
+            foreach (var family in PluginDataFailureFamilyNames)
+            {
+                foreach (var wrapper in EnrichmentWrapperNames)
+                {
+                    data.Add(family, wrapper, EnumerationPoint.Starting);
+                    data.Add(family, wrapper, EnumerationPoint.Advancing);
+                }
+            }
 
-        var thrown = Record.Exception(() => opened.ReadRecords(_ => { }, CancellationToken.None).ToList());
-
-        Assert.Same(failure, thrown);
+            return data;
+        }
     }
 
     /// <summary>
-    ///     Verifies cancellation that Mutagen wraps in a <see cref="RecordException" /> while enumerating is rethrown as
-    ///     the original cancellation, never reported as a Failed Plugin.
+    ///     Verifies each Plugin-data failure behind each enrichment wrapper, raised while starting or advancing
+    ///     enumeration, becomes a Failed Plugin in the reading-records phase whose diagnostic is the listed cause's
+    ///     message rather than the wrapper's (ADR-0016 rules 3 and 6).
     /// </summary>
-    [Fact]
-    public void ReadRecords_CancellationNestedInARecordException_ThrowsTheOriginalCancellation()
+    [Theory]
+    [MemberData(nameof(PluginDataFailureFamiliesBehindEachEnrichmentWrapperAtEachEnumerationPoint))]
+    public void ReadRecords_PluginDataFailureBehindAnEnrichmentWrapper_ThrowsPluginReadFailureWithTheCausesMessage(
+        string family,
+        string wrapper,
+        EnumerationPoint point)
+    {
+        var cause = CreatePluginDataFailure(family, "Cause wording.");
+        var failure = Wrap(wrapper, cause);
+        using var opened = OpenPluginWhoseEnumerationFails(failure, point);
+
+        var thrown = Assert.Throws<PluginReadException>(() => ReadAll(opened));
+
+        Assert.Equal(PluginReadPhase.ReadingRecords, thrown.Phase);
+        Assert.NotEqual(WrapperWording, cause.Message);
+        Assert.Equal(cause.Message, thrown.DiagnosticMessage);
+        Assert.Same(failure, thrown.InnerException);
+    }
+
+    /// <summary>
+    ///     Every enrichment wrapper at each enumeration point.
+    /// </summary>
+    public static TheoryData<string, EnumerationPoint> EnrichmentWrappersAtEachEnumerationPoint
+    {
+        get
+        {
+            var data = new TheoryData<string, EnumerationPoint>();
+            foreach (var wrapper in EnrichmentWrapperNames)
+            {
+                data.Add(wrapper, EnumerationPoint.Starting);
+                data.Add(wrapper, EnumerationPoint.Advancing);
+            }
+
+            return data;
+        }
+    }
+
+    /// <summary>
+    ///     Verifies an unlisted cause behind each enrichment wrapper while enumerating fails the run as an unrecognized
+    ///     Plugin-read failure naming the Plugin and the reading-records phase, rather than becoming a Failed Plugin
+    ///     because Mutagen's enumeration wrapped it (ADR-0016 rules 3 and 7).
+    /// </summary>
+    /// <remarks>
+    ///     This is the case ADR-0016 deliberately narrowed: Mutagen wraps every failure leaving <c>MoveNext</c>, so a
+    ///     defect inside Mutagen used to pass for a broken Plugin.
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(EnrichmentWrappersAtEachEnumerationPoint))]
+    public void ReadRecords_UnlistedCauseBehindAnEnrichmentWrapper_ThrowsUnrecognizedPluginReadFailureNamingThePlugin(
+        string wrapper,
+        EnumerationPoint point)
+    {
+        var failure = Wrap(wrapper, new NullReferenceException("Mutagen defect."));
+        using var opened = OpenPluginWhoseEnumerationFails(failure, point);
+
+        var thrown = Record.Exception(() => ReadAll(opened));
+
+        var unrecognized = Assert.IsType<UnrecognizedPluginReadFailureException>(thrown);
+        Assert.Equal(PluginName, unrecognized.PluginName);
+        Assert.Equal(PluginReadPhase.ReadingRecords, unrecognized.Phase);
+        Assert.Same(failure, unrecognized.InnerException);
+    }
+
+    /// <summary>
+    ///     Unlisted enumeration failures that no enrichment wrapper encloses: a bare unlisted exception, and an unlisted
+    ///     exception wrapping a <see cref="RecordException" />, which is classified by the unrecognised wrapper.
+    /// </summary>
+    public static TheoryData<bool, EnumerationPoint> UnwrappedUnlistedFailuresAtEachEnumerationPoint =>
+    [
+        (false, EnumerationPoint.Starting),
+        (false, EnumerationPoint.Advancing),
+        (true, EnumerationPoint.Starting),
+        (true, EnumerationPoint.Advancing)
+    ];
+
+    /// <summary>
+    ///     Verifies an unlisted enumeration failure that Mutagen did not wrap also fails the run as an unrecognized
+    ///     Plugin-read failure naming the Plugin, rather than propagating raw without saying which Plugin was being
+    ///     read (ADR-0016 rule 7).
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(UnwrappedUnlistedFailuresAtEachEnumerationPoint))]
+    public void ReadRecords_UnlistedFailureNotWrappedByMutagen_ThrowsUnrecognizedPluginReadFailureNamingThePlugin(
+        bool wrapsARecordException,
+        EnumerationPoint point)
+    {
+        Exception failure = wrapsARecordException
+            ? new InvalidOperationException("Enumerator broke.", CreateRecordException("Inner record failure."))
+            : new InvalidOperationException("Enumerator broke.");
+        using var opened = OpenPluginWhoseEnumerationFails(failure, point);
+
+        var thrown = Record.Exception(() => ReadAll(opened));
+
+        var unrecognized = Assert.IsType<UnrecognizedPluginReadFailureException>(thrown);
+        Assert.Equal(PluginName, unrecognized.PluginName);
+        Assert.Equal(PluginReadPhase.ReadingRecords, unrecognized.Phase);
+        Assert.Same(failure, unrecognized.InnerException);
+    }
+
+    /// <summary>
+    ///     Every master-failure wrapper at each enumeration point.
+    /// </summary>
+    public static TheoryData<string, EnumerationPoint> MasterFailureWrappersAtEachEnumerationPoint
+    {
+        get
+        {
+            var data = new TheoryData<string, EnumerationPoint>();
+            foreach (var wrapper in MasterFailureWrapperNames)
+            {
+                data.Add(wrapper, EnumerationPoint.Starting);
+                data.Add(wrapper, EnumerationPoint.Advancing);
+            }
+
+            return data;
+        }
+    }
+
+    /// <summary>
+    ///     Verifies a named missing master found anywhere in an enumeration failure's chain fails the run as an
+    ///     Unresolvable Master naming that master, never a Failed Plugin (ADR-0006, ADR-0016 rule 1).
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(MasterFailureWrappersAtEachEnumerationPoint))]
+    public void ReadRecords_MissingMasterWrappedInTheChain_ThrowsUnresolvableMasterNamingIt(
+        string wrapper,
+        EnumerationPoint point)
+    {
+        var missingMaster = new MissingModException(ModKey.FromNameAndExtension("Skyrim.esm"));
+        using var opened = OpenPluginWhoseEnumerationFails(Wrap(wrapper, missingMaster), point);
+
+        var thrown = Record.Exception(() => ReadAll(opened));
+
+        var unresolvableMaster = Assert.IsType<UnresolvableMasterException>(thrown);
+        Assert.Equal(PluginName, unresolvableMaster.PluginName);
+        Assert.Equal("Skyrim.esm", unresolvableMaster.MasterName);
+        Assert.Same(missingMaster, unresolvableMaster.InnerException);
+    }
+
+    /// <summary>
+    ///     Verifies a missing master-flags lookup wrapped in an enumeration failure fails the run as an Unresolvable
+    ///     Master naming no master.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(EnumerationPoints))]
+    public void ReadRecords_MasterFlagsLookupMissingWrappedInARecordException_ThrowsUnresolvableMaster(
+        EnumerationPoint point)
+    {
+        var missingMapping = new MissingModMappingException("No master flags lookup was supplied.");
+        using var opened = OpenPluginWhoseEnumerationFails(Wrap(nameof(RecordException), missingMapping), point);
+
+        var thrown = Record.Exception(() => ReadAll(opened));
+
+        var unresolvableMaster = Assert.IsType<UnresolvableMasterException>(thrown);
+        Assert.Equal(PluginName, unresolvableMaster.PluginName);
+        Assert.Null(unresolvableMaster.MasterName);
+        Assert.Same(missingMapping, unresolvableMaster.InnerException);
+    }
+
+    /// <summary>
+    ///     Wrappers a cancellation can arrive in while enumerating: Mutagen's enrichment wrapper, a listed cause, an
+    ///     unrecognised exception, and a master-resolution failure, each at each enumeration point.
+    /// </summary>
+    public static TheoryData<string, EnumerationPoint> CancellationWrappersAtEachEnumerationPoint
+    {
+        get
+        {
+            var data = new TheoryData<string, EnumerationPoint>();
+            foreach (var wrapper in new[]
+                     {
+                         nameof(RecordException), nameof(IOException), nameof(InvalidOperationException),
+                         nameof(MissingModException)
+                     })
+            {
+                data.Add(wrapper, EnumerationPoint.Starting);
+                data.Add(wrapper, EnumerationPoint.Advancing);
+            }
+
+            return data;
+        }
+    }
+
+    /// <summary>
+    ///     Verifies cancellation nested in any enumeration failure is rethrown as the original cancellation before any
+    ///     classification, so it never becomes a Failed Plugin, an Unresolvable Master, or a run failure.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(CancellationWrappersAtEachEnumerationPoint))]
+    public void ReadRecords_CancellationNestedInAnEnumerationFailure_ThrowsTheOriginalCancellation(
+        string wrapper,
+        EnumerationPoint point)
     {
         var cancellation = new OperationCanceledException("Record read cancelled.");
-        var sut = new MutagenPluginReader((_, _, _) =>
-            CreateOverlay(YieldThenThrow(CreateRecord("BeforeFailure"), CreateRecordException(cancellation))));
-        using var opened = sut.Open(CreateReadyPlugin());
+        var failure = wrapper == nameof(MissingModException)
+            ? new MissingModException(ModKey.FromNameAndExtension("Skyrim.esm"), "Master read cancelled.", cancellation)
+            : Wrap(wrapper, cancellation);
+        using var opened = OpenPluginWhoseEnumerationFails(failure, point);
 
-        var thrown = Assert.ThrowsAny<OperationCanceledException>(() =>
-            opened.ReadRecords(_ => { }, CancellationToken.None).ToList());
+        var thrown = Assert.ThrowsAny<OperationCanceledException>(() => ReadAll(opened));
 
         Assert.Same(cancellation, thrown);
     }
@@ -1077,6 +1330,41 @@ public sealed class MutagenPluginReaderTests : IDisposable
     {
         yield return record;
         throw exception;
+    }
+
+    /// <summary>
+    ///     Opens a Plugin through a Moq'd overlay whose record enumeration raises the given failure at the given point.
+    /// </summary>
+    /// <param name="failure">The exception the overlay raises, exactly as given.</param>
+    /// <param name="point">
+    ///     <see cref="EnumerationPoint.Starting" /> raises it from <see cref="IModGetter.EnumerateMajorRecords" />
+    ///     itself; <see cref="EnumerationPoint.Advancing" /> raises it from the enumerator's <c>MoveNext</c> after one
+    ///     record was yielded.
+    /// </param>
+    /// <returns>The opened Plugin, which the caller disposes.</returns>
+    private static IOpenedPlugin OpenPluginWhoseEnumerationFails(Exception failure, EnumerationPoint point)
+    {
+        IModDisposeGetter overlay;
+        if (point == EnumerationPoint.Starting)
+        {
+            var failingOverlay = new Mock<IModDisposeGetter>();
+            failingOverlay.Setup(plugin => plugin.EnumerateMajorRecords()).Throws(failure);
+            overlay = failingOverlay.Object;
+        }
+        else
+        {
+            overlay = CreateOverlay(YieldThenThrow(CreateRecord("BeforeFailure"), failure));
+        }
+
+        return new MutagenPluginReader((_, _, _) => overlay).Open(CreateReadyPlugin());
+    }
+
+    /// <summary>
+    ///     Consumes an opened Plugin's whole record sequence with no record-issue sink, as a Store write would.
+    /// </summary>
+    private static List<FormIdRecord> ReadAll(IOpenedPlugin opened)
+    {
+        return opened.ReadRecords(_ => { }, CancellationToken.None).ToList();
     }
 
     /// <summary>

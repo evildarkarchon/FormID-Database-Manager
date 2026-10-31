@@ -631,7 +631,7 @@ public sealed class PluginIngestionTests : IDisposable
     /// <remarks>
     ///     Unwrapping a cancellation Mutagen nests inside a <c>RecordException</c> is the Plugin reader's job since
     ///     ADR-0015, and is pinned in
-    ///     <c>MutagenPluginReaderTests.ReadRecords_CancellationNestedInARecordException_ThrowsTheOriginalCancellation</c>.
+    ///     <c>MutagenPluginReaderTests.ReadRecords_CancellationNestedInAnEnumerationFailure_ThrowsTheOriginalCancellation</c>.
     /// </remarks>
     [Fact]
     public async Task IngestAsync_RecordReadingCancellation_PropagatesWithoutCompletedReport()
@@ -1026,6 +1026,96 @@ public sealed class PluginIngestionTests : IDisposable
         Assert.Equal(SkippedPluginReason.ZeroFormIdRecords, skipped.Reason);
         Assert.Single(storedRecords);
         Assert.Contains(storedRecords, record => record is { Plugin: "Empty.esp", FormId: "000001", Entry: "OldEntry" });
+    }
+
+    /// <summary>
+    ///     Verifies through the production Store that a Plugin whose records fail partway, after one record was already
+    ///     yielded, becomes a Failed Plugin and leaves its previously stored rows exactly as they were.
+    /// </summary>
+    [Fact]
+    public async Task IngestAsync_RecordReadingFailsPartway_ReportsFailedPluginAndRollsBackItsWrite()
+    {
+        var gameDirectory = CreateGameDirectory();
+        await CreatePluginFileAsync(gameDirectory, "BadRecords.esp");
+        await using var recordStore = await OpenStoreAsync(gameDirectory);
+        await recordStore.WritePluginAsync(
+            "BadRecords.esp",
+            [new FormIdRecord("000001", "OldEntry")],
+            UpdateMode.Append,
+            TestContext.Current.CancellationToken);
+        IPluginIngestion sut = new PluginIngestion(
+            new RecordingGameLoadOrders(["BadRecords.esp"], []),
+            new ScriptedPluginReader
+            {
+                ReadingFailures =
+                {
+                    ["BadRecords.esp"] = new PluginReadException(PluginReadPhase.ReadingRecords, "Invalid group.")
+                }
+            });
+
+        var report = await sut.IngestAsync(
+            new PluginProcessingRunRequest(
+                PluginListSource.Create(GameRelease.SkyrimSE, gameDirectory),
+                "ingestion.db",
+                ["BadRecords.esp"],
+                UpdateMode.ReplacePluginRecords),
+            recordStore,
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        var storedRecords = await recordStore.ReadRecordsAsync(
+            FormIdRecordQuery.All,
+            TestContext.Current.CancellationToken);
+        var failed = Assert.IsType<FailedPlugin>(Assert.Single(report.Outcomes));
+        Assert.Equal(PluginReadPhase.ReadingRecords, failed.Diagnostic.Phase);
+        Assert.Single(storedRecords);
+        Assert.Contains(
+            storedRecords,
+            record => record is { Plugin: "BadRecords.esp", FormId: "000001", Entry: "OldEntry" });
+    }
+
+    /// <summary>
+    ///     Verifies through the production Store that an unrecognized Plugin-read failure raised partway through a
+    ///     Plugin's records fails the run unchanged and still rolls back that Plugin's write (ADR-0016 rule 7).
+    /// </summary>
+    [Fact]
+    public async Task IngestAsync_UnrecognizedPluginReadFailureWhileReadingRecords_FailsTheRunAndRollsBackItsWrite()
+    {
+        var gameDirectory = CreateGameDirectory();
+        await CreatePluginFileAsync(gameDirectory, "Broken.esp");
+        await CreatePluginFileAsync(gameDirectory, "Never.esp");
+        await using var recordStore = await OpenStoreAsync(gameDirectory);
+        await recordStore.WritePluginAsync(
+            "Broken.esp",
+            [new FormIdRecord("000001", "OldEntry")],
+            UpdateMode.Append,
+            TestContext.Current.CancellationToken);
+        var failure = new UnrecognizedPluginReadFailureException(
+            "Broken.esp",
+            PluginReadPhase.ReadingRecords,
+            new NullReferenceException("Mutagen defect."));
+        var pluginReader = new ScriptedPluginReader { ReadingFailures = { ["Broken.esp"] = failure } };
+        IPluginIngestion sut = new PluginIngestion(
+            new RecordingGameLoadOrders(["Broken.esp", "Never.esp"], []),
+            pluginReader);
+
+        var thrown = await Assert.ThrowsAsync<UnrecognizedPluginReadFailureException>(() => sut.IngestAsync(
+            new PluginProcessingRunRequest(
+                PluginListSource.Create(GameRelease.SkyrimSE, gameDirectory),
+                "ingestion.db",
+                ["Broken.esp", "Never.esp"],
+                UpdateMode.ReplacePluginRecords),
+            recordStore,
+            cancellationToken: TestContext.Current.CancellationToken));
+
+        var storedRecords = await recordStore.ReadRecordsAsync(
+            FormIdRecordQuery.All,
+            TestContext.Current.CancellationToken);
+        Assert.Same(failure, thrown);
+        Assert.Equal(["Broken.esp"], pluginReader.OpenedPlugins);
+        Assert.Single(storedRecords);
+        Assert.Contains(
+            storedRecords,
+            record => record is { Plugin: "Broken.esp", FormId: "000001", Entry: "OldEntry" });
     }
 
     private string CreateGameDirectory()

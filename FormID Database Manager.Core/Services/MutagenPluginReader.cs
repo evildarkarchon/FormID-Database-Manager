@@ -7,8 +7,8 @@ namespace FormID_Database_Manager.Services;
 /// <summary>
 ///     The production Plugin read adapter, and the one module that decides what every Mutagen failure means: a Failed
 ///     Plugin while opening or enumerating, a Processing Warning or silent drop per record, an Unresolvable Master
-///     that fails the Processing Run, or, for an unrecognised opening failure, a run failure that names the Plugin
-///     (ADR-0006, ADR-0015, ADR-0016).
+///     that fails the Processing Run, or, for an unrecognised opening or enumeration failure, a run failure that names
+///     the Plugin (ADR-0006, ADR-0015, ADR-0016).
 /// </summary>
 /// <remarks>
 ///     <para>
@@ -20,10 +20,8 @@ namespace FormID_Database_Manager.Services;
 ///         else fails the run naming the Plugin. The diagnostic message is the classified cause's.
 ///     </para>
 ///     <para>
-///         Opening applies it, and a Plugin-data cause there is a Failed Plugin. Enumeration still treats only a
-///         top-level <see cref="RecordException" /> as a Failed Plugin and reports its own message, and per record
-///         Entry Extraction's catch-all still applies; both move onto the shared classification in their own tickets
-///         (#138, #139).
+///         Opening and enumeration apply it, and a Plugin-data cause in either is a Failed Plugin. Per record, Entry
+///         Extraction's catch-all still applies; it moves onto the shared classification in its own ticket (#139).
 ///     </para>
 /// </remarks>
 internal sealed class MutagenPluginReader : IPluginReader
@@ -58,7 +56,8 @@ internal sealed class MutagenPluginReader : IPluginReader
     /// <inheritdoc />
     public IOpenedPlugin Open(SelectedPluginReady readyPlugin)
     {
-        return new OpenedPlugin(OpenOverlay(readyPlugin), _entryExtraction);
+        // OpenOverlay runs first and null-checks readyPlugin before its PluginName is read.
+        return new OpenedPlugin(OpenOverlay(readyPlugin), readyPlugin.PluginName, _entryExtraction);
     }
 
     /// <summary>
@@ -278,8 +277,10 @@ internal sealed class MutagenPluginReader : IPluginReader
     ///     One opened Mutagen overlay behind the seam. Its owner disposes it, which disposes the overlay.
     /// </summary>
     /// <param name="overlay">The overlay opening produced; owned by this instance from here on.</param>
+    /// <param name="pluginName">The selected Plugin the overlay was opened for, which every run failure names.</param>
     /// <param name="entryExtraction">The adapter's per-record Entry Extraction rules.</param>
-    private sealed class OpenedPlugin(IModDisposeGetter overlay, EntryExtraction entryExtraction) : IOpenedPlugin
+    private sealed class OpenedPlugin(IModDisposeGetter overlay, string pluginName, EntryExtraction entryExtraction)
+        : IOpenedPlugin
     {
         /// <inheritdoc />
         public IEnumerable<FormIdRecord> ReadRecords(
@@ -306,15 +307,22 @@ internal sealed class MutagenPluginReader : IPluginReader
         /// </param>
         /// <param name="cancellationToken">Checked once per record.</param>
         /// <returns>The lazy sequence consumed inside the Store's atomic Plugin write.</returns>
-        /// <exception cref="PluginReadException">Mutagen reports an expected record-read failure.</exception>
+        /// <exception cref="PluginReadException">
+        ///     Starting or advancing enumeration failed with a Plugin-data cause; see
+        ///     <see cref="CreateReadingRecordsFailure" />.
+        /// </exception>
+        /// <exception cref="UnresolvableMasterException">Enumeration failed resolving one of the Plugin's masters.</exception>
+        /// <exception cref="UnrecognizedPluginReadFailureException">
+        ///     Enumeration failed with a cause the application does not recognise.
+        /// </exception>
         /// <exception cref="OperationCanceledException">
-        ///     <paramref name="cancellationToken" /> requests cancellation.
+        ///     <paramref name="cancellationToken" /> requests cancellation, or enumeration's failure carries one.
         /// </exception>
         private IEnumerable<FormIdRecord> EnumerateRecords(
             Action<string> reportRecordIssue,
             CancellationToken cancellationToken)
         {
-            using var records = CreateRecordEnumerator(overlay);
+            using var records = CreateRecordEnumerator();
 
             while (MoveNextRecord(records))
             {
@@ -328,62 +336,76 @@ internal sealed class MutagenPluginReader : IPluginReader
         }
 
         /// <summary>
-        ///     Creates the Mutagen record enumerator and marks expected record-read failures with their internal phase.
+        ///     Starts the Mutagen record enumerator, classifying any failure by fault scope in the reading-records phase.
         /// </summary>
-        /// <param name="plugin">The opened Plugin overlay.</param>
         /// <returns>The lazy major-record enumerator.</returns>
-        /// <exception cref="PluginReadException">Mutagen reports an expected record-read failure.</exception>
-        private static IEnumerator<IMajorRecordGetter> CreateRecordEnumerator(IModGetter plugin)
+        /// <exception cref="PluginReadException">Starting failed with a Plugin-data cause.</exception>
+        /// <exception cref="UnresolvableMasterException">Starting failed resolving a master.</exception>
+        /// <exception cref="UnrecognizedPluginReadFailureException">Starting failed for an unrecognised cause.</exception>
+        /// <exception cref="OperationCanceledException">The failure carries a cancellation.</exception>
+        private IEnumerator<IMajorRecordGetter> CreateRecordEnumerator()
         {
             try
             {
-                return plugin.EnumerateMajorRecords().GetEnumerator();
+                return overlay.EnumerateMajorRecords().GetEnumerator();
             }
-            catch (RecordException ex)
+            catch (Exception ex)
             {
+                // Every failure is caught, not only RecordException: the classification, not this catch, decides
+                // which failures are about the Plugin's data (ADR-0016).
                 throw CreateReadingRecordsFailure(ex);
             }
         }
 
         /// <summary>
-        ///     Advances a lazy Mutagen enumerator while preserving expected record-read classification.
+        ///     Advances a lazy Mutagen enumerator, classifying any failure by fault scope in the reading-records phase.
         /// </summary>
         /// <param name="records">The active major-record enumerator.</param>
         /// <returns><see langword="true" /> when another record is available.</returns>
-        /// <exception cref="PluginReadException">Mutagen reports an expected record-read failure.</exception>
-        private static bool MoveNextRecord(IEnumerator<IMajorRecordGetter> records)
+        /// <exception cref="PluginReadException">Advancing failed with a Plugin-data cause.</exception>
+        /// <exception cref="UnresolvableMasterException">Advancing failed resolving a master.</exception>
+        /// <exception cref="UnrecognizedPluginReadFailureException">Advancing failed for an unrecognised cause.</exception>
+        /// <exception cref="OperationCanceledException">The failure carries a cancellation.</exception>
+        private bool MoveNextRecord(IEnumerator<IMajorRecordGetter> records)
         {
             try
             {
                 return records.MoveNext();
             }
-            catch (RecordException ex)
+            catch (Exception ex)
             {
+                // Mutagen's generated enumeration wraps every failure leaving MoveNext in a RecordException, so the
+                // wrapper's type says nothing about fault scope; only the cause behind it does (ADR-0016 rule 3).
                 throw CreateReadingRecordsFailure(ex);
             }
         }
 
         /// <summary>
-        ///     Classifies a top-level <see cref="RecordException" /> raised while enumerating as a Failed Plugin in the
-        ///     record-reading phase, keeping Mutagen's own message rather than the classified cause's that opening
-        ///     reports. It moves onto <see cref="ClassifyPluginReadFailure" /> in #138.
+        ///     Applies the shared Plugin-read classification to a failure raised while starting or advancing enumeration
+        ///     (ADR-0016 rules 1, 2, 3 and 6). A Plugin-data cause becomes a Failed Plugin in the reading-records phase
+        ///     whose diagnostic is the classified cause's message.
         /// </summary>
-        /// <param name="exception">The record-read failure Mutagen raised.</param>
-        /// <returns>The classified failure, for the caller to throw from its own catch.</returns>
+        /// <param name="exception">The enumeration failure, kept whole as the inner exception of whatever is raised.</param>
+        /// <returns>The Failed Plugin marker, for the caller to throw from its own catch.</returns>
         /// <exception cref="OperationCanceledException">
-        ///     <paramref name="exception" /> wraps a cancellation, which is rethrown instead of being classified.
+        ///     <paramref name="exception" />'s chain contains a cancellation, which is rethrown before any classification.
+        /// </exception>
+        /// <exception cref="UnresolvableMasterException">
+        ///     <paramref name="exception" />'s chain contains a master-resolution failure.
+        /// </exception>
+        /// <exception cref="UnrecognizedPluginReadFailureException">
+        ///     The cause is not about the Plugin's data. It names this Plugin and carries
+        ///     <see cref="PluginReadPhase.ReadingRecords" />.
         /// </exception>
         /// <remarks>
         ///     It returns rather than throws so each caller's <c>throw</c> keeps the compiler's flow analysis intact.
+        ///     Every exception it raises still leaves through the Store's atomic Plugin write, which rolls back the
+        ///     records this Plugin already yielded.
         /// </remarks>
-        private static PluginReadException CreateReadingRecordsFailure(RecordException exception)
+        private PluginReadException CreateReadingRecordsFailure(Exception exception)
         {
-            // Cancellation is preserved before the record-read failure is normalized below, as on the opening path.
-            NestedCancellation.RethrowIfPresent(exception);
-            return new PluginReadException(
-                PluginReadPhase.ReadingRecords,
-                exception.Message,
-                exception);
+            var cause = ClassifyPluginReadFailure(exception, pluginName, PluginReadPhase.ReadingRecords);
+            return new PluginReadException(PluginReadPhase.ReadingRecords, cause.Message, exception);
         }
     }
 }
