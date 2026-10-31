@@ -1016,6 +1016,110 @@ public class UserWorkflowTests
         Assert.Empty(Assert.IsType<ConfirmedPluginList>(_pluginList.Current.Confirmed).SelectedPluginNames);
     }
 
+    /// <summary>
+    /// Verifies that a whole-list press made while a newer confirmed membership's projection is still queued acts on
+    /// the membership on screen, so the Plugin List refuses it as stale. Once the newer membership is drawn, the same
+    /// press is applied.
+    /// </summary>
+    /// <param name="selectAll">Whether the press is Select All rather than Select None.</param>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task SelectAllAndNonePlugins_NewerMembershipNotYetProjected_RefusesUntilProjected(bool selectAll)
+    {
+        var dispatcher = new RecordingThreadDispatcher();
+        var viewModel = new MainWindowViewModel(dispatcher);
+        using var sut = CreateSut(viewModel, dispatcher);
+        _pluginListGameLoadOrders.PluginNames = ["First.esp"];
+        _gameInstallationProbe.WithInstalledDirectories(GameRelease.SkyrimSE, GameDirectory);
+        await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
+        dispatcher.Drain();
+        var displayed = Assert.IsType<ConfirmedPluginList>(_pluginList.Current.Confirmed);
+        sut.SetPluginSelection(displayed.MembershipVersion, "First.esp", true);
+        dispatcher.Drain();
+        _pluginListGameLoadOrders.PluginNames = ["First.esp", "Second.esp"];
+        await sut.SetAdvancedModeAsync(AdvancedMode.On);
+        // The newer membership is confirmed, but the screen still shows the one the user is clicking against.
+        var refreshed = Assert.IsType<ConfirmedPluginList>(_pluginList.Current.Confirmed);
+        Assert.NotEqual(displayed.MembershipVersion, refreshed.MembershipVersion);
+        Assert.Equal(displayed.MembershipVersion, viewModel.ProjectedMembershipVersion);
+        var stateRevisionBeforePress = _pluginList.Current.StateRevision;
+
+        PressWholeListSelection(sut, selectAll);
+
+        Assert.Equal(stateRevisionBeforePress, _pluginList.Current.StateRevision);
+        Assert.Equal(
+            ["First.esp"],
+            Assert.IsType<ConfirmedPluginList>(_pluginList.Current.Confirmed).SelectedPluginNames);
+
+        dispatcher.Drain();
+        PressWholeListSelection(sut, selectAll);
+
+        Assert.Equal(
+            selectAll ? ["First.esp", "Second.esp"] : [],
+            Assert.IsType<ConfirmedPluginList>(_pluginList.Current.Confirmed).SelectedPluginNames);
+    }
+
+    /// <summary>
+    /// Verifies that a whole-list press does nothing while no Confirmed Plugin List is on screen, even when one has
+    /// already been confirmed and is waiting to be drawn.
+    /// </summary>
+    /// <param name="selectAll">Whether the press is Select All rather than Select None.</param>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task SelectAllAndNonePlugins_NothingProjected_DoesNothing(bool selectAll)
+    {
+        var dispatcher = new RecordingThreadDispatcher();
+        var viewModel = new MainWindowViewModel(dispatcher);
+        using var sut = CreateSut(viewModel, dispatcher);
+        _pluginListGameLoadOrders.PluginNames = ["First.esp"];
+        _gameInstallationProbe.WithInstalledDirectories(GameRelease.SkyrimSE, GameDirectory);
+        await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
+        var confirmed = Assert.IsType<ConfirmedPluginList>(_pluginList.Current.Confirmed);
+        sut.SetPluginSelection(confirmed.MembershipVersion, "First.esp", !selectAll);
+        Assert.Null(viewModel.ProjectedMembershipVersion);
+        var stateRevisionBeforePress = _pluginList.Current.StateRevision;
+
+        PressWholeListSelection(sut, selectAll);
+
+        Assert.Equal(stateRevisionBeforePress, _pluginList.Current.StateRevision);
+        Assert.Equal(
+            selectAll ? [] : ["First.esp"],
+            Assert.IsType<ConfirmedPluginList>(_pluginList.Current.Confirmed).SelectedPluginNames);
+    }
+
+    /// <summary>
+    /// Presses Select All or Select None through the workflow's public, parameterless shell operations.
+    /// </summary>
+    private static void PressWholeListSelection(UserWorkflow sut, bool selectAll)
+    {
+        if (selectAll)
+        {
+            sut.SelectAllPlugins();
+        }
+        else
+        {
+            sut.SelectNoPlugins();
+        }
+    }
+
+    /// <summary>
+    /// Creates a workflow over a caller-supplied ViewModel and dispatcher, with the fixture's real Plugin List and
+    /// collaborators, so a test can hold the workflow's queued projections on a <see cref="RecordingThreadDispatcher" />.
+    /// </summary>
+    private UserWorkflow CreateSut(MainWindowViewModel viewModel, IThreadDispatcher dispatcher)
+    {
+        return new UserWorkflow(
+            viewModel,
+            dispatcher,
+            _fileDialogService.Object,
+            _gameInstallations,
+            _pluginList,
+            _processingRunExecutor,
+            _defaultDatabaseRoot);
+    }
+
     private UserWorkflow CreateSut()
     {
         return new UserWorkflow(
