@@ -105,11 +105,38 @@ internal sealed class MutagenPluginReader : IPluginReader
         {
             // Cancellation, an Unresolvable Master, and an unrecognised cause all leave from inside the classification;
             // only a Plugin-data cause returns, and while opening that can only mean a Failed Plugin.
-            var cause = ClassifyPluginReadFailure(ex, readyPlugin.PluginName, PluginReadPhase.OpeningPlugin);
-
             // The application-owned marker prevents arbitrary adapter failures from becoming Failed Plugins.
-            throw new PluginReadException(PluginReadPhase.OpeningPlugin, cause.Message, ex);
+            throw CreateFailedPluginFailure(ex, readyPlugin.PluginName, PluginReadPhase.OpeningPlugin);
         }
+    }
+
+    /// <summary>
+    ///     Classifies a failure that ends a whole Plugin's read and, for a Plugin-data cause, returns the Failed Plugin
+    ///     marker for <paramref name="phase" />, whose diagnostic is the classified cause's message (ADR-0016 rule 6).
+    /// </summary>
+    /// <param name="failure">The phase's failure, kept whole as the inner exception of whatever is raised.</param>
+    /// <param name="pluginName">The selected Plugin being read, which every run failure names.</param>
+    /// <param name="phase">The phase the failure arrived in, carried by the marker or the run failure.</param>
+    /// <returns>The Failed Plugin marker, for the caller to throw from its own catch.</returns>
+    /// <exception cref="OperationCanceledException">
+    ///     <paramref name="failure" />'s chain contains cancellation, which is rethrown before any classification.
+    /// </exception>
+    /// <exception cref="UnresolvableMasterException">
+    ///     <paramref name="failure" />'s chain contains a master-resolution failure.
+    /// </exception>
+    /// <exception cref="UnrecognizedPluginReadFailureException">The cause is not about the Plugin's data.</exception>
+    /// <remarks>
+    ///     It returns rather than throws so each caller's <c>throw</c> keeps the compiler's flow analysis intact.
+    ///     Per-record extraction does not use it, because a per-record failure is never fatal to the Plugin (ADR-0016
+    ///     rule 4).
+    /// </remarks>
+    private static PluginReadException CreateFailedPluginFailure(
+        Exception failure,
+        string pluginName,
+        PluginReadPhase phase)
+    {
+        var cause = ClassifyPluginReadFailure(failure, pluginName, phase);
+        return new PluginReadException(phase, cause.Message, failure);
     }
 
     /// <summary>
@@ -150,10 +177,17 @@ internal sealed class MutagenPluginReader : IPluginReader
         NestedCancellation.RethrowIfPresent(failure);
         ThrowIfUnresolvableMaster(pluginName, failure);
 
+        var cause = FindCause(failure);
+        if (IsPluginDataCause(cause))
+        {
+            return cause;
+        }
+
         // Anything left without a Plugin-data cause is a failure the application does not recognise. It fails the run,
-        // and names the Plugin so the user can deselect it (ADR-0016 rule 7).
-        return FindPluginDataCause(failure)
-               ?? throw new UnrecognizedPluginReadFailureException(pluginName, phase, failure);
+        // and names the Plugin so the user can deselect it (ADR-0016 rule 7). Its message is the cause's, as a Failed
+        // Plugin's is (rule 6), because an enrichment wrapper such as ModGroupsMalformedException may carry wording
+        // of its own that says nothing about the defect behind it.
+        throw new UnrecognizedPluginReadFailureException(pluginName, phase, cause.Message, failure);
     }
 
     /// <summary>
@@ -209,50 +243,58 @@ internal sealed class MutagenPluginReader : IPluginReader
     }
 
     /// <summary>
-    ///     Finds a Plugin-read failure's cause behind Mutagen's enrichment wrappers and returns it if it is about the
-    ///     Plugin's data (ADR-0016 rules 2 and 3).
+    ///     Finds a Plugin-read failure's cause behind Mutagen's enrichment wrappers (ADR-0016 rule 3), whether or not
+    ///     it is about the Plugin's data. Its message is the diagnostic of every outcome the failure reaches (rule 6).
     /// </summary>
     /// <param name="failure">The top-level Plugin-read failure, already cleared of cancellation and master failures.</param>
     /// <returns>
-    ///     The first exception from the top that is on the Plugin-data family list, reached through only
+    ///     The first exception from the top that is on the Plugin-data family list or is not one of
     ///     <see cref="RecordException" />, <see cref="SubrecordException" /> and
-    ///     <see cref="ModGroupsMalformedException" />; or a bare <see cref="RecordException" /> at the end of those
-    ///     wrappers; or <see langword="null" /> when the cause is anything else.
+    ///     <see cref="ModGroupsMalformedException" />, reached through only those wrappers; or the last of those
+    ///     wrappers when it has no cause of its own.
     /// </returns>
     /// <remarks>
     ///     Only Mutagen's own enrichment wrappers are looked through. Any other exception is the cause itself, so an
-    ///     unrecognised exception wrapping a listed one is classified as unrecognised: what wraps the data failure is
-    ///     not something the application knows to be about the Plugin. Mutagen raises a <see cref="RecordException" />
-    ///     (a <see cref="SubrecordException" /> among them) with no cause for data it rejects itself, so that one is a
-    ///     Failed Plugin; a <see cref="ModGroupsMalformedException" /> is only ever an enrichment, so with no cause it is
-    ///     not.
+    ///     unrecognised exception wrapping a listed one is the cause, and is unrecognised: what wraps the data failure
+    ///     is not something the application knows to be about the Plugin. A listed cause stops the walk even when it
+    ///     has an inner exception, so its message rather than the deepest one is reported.
     /// </remarks>
-    private static Exception? FindPluginDataCause(Exception failure)
+    private static Exception FindCause(Exception failure)
     {
         var current = failure;
-        while (true)
+        while (!IsPluginDataFailureFamily(current)
+               && current is RecordException or ModGroupsMalformedException
+               && current.InnerException is { } inner)
         {
-            if (IsPluginDataFailureFamily(current))
-            {
-                return current;
-            }
-
-            switch (current)
-            {
-                case RecordException or ModGroupsMalformedException when current.InnerException is { } cause:
-                    current = cause;
-                    break;
-                case RecordException bareRecordException:
-                    return bareRecordException;
-                default:
-                    return null;
-            }
+            current = inner;
         }
+
+        return current;
+    }
+
+    /// <summary>
+    ///     Decides whether a cause found by <see cref="FindCause" /> is about the Plugin's data (ADR-0016 rules 2
+    ///     and 3).
+    /// </summary>
+    /// <param name="cause">The cause behind Mutagen's enrichment wrappers.</param>
+    /// <returns>
+    ///     <see langword="true" /> for a cause on the Plugin-data family list, or for a bare
+    ///     <see cref="RecordException" />.
+    /// </returns>
+    /// <remarks>
+    ///     A <see cref="RecordException" /> can only be the cause when it has no inner exception, because
+    ///     <see cref="FindCause" /> looks through any that has one. Mutagen raises it (a
+    ///     <see cref="SubrecordException" /> among them) with no cause for data it rejects itself, so that one is a Failed Plugin; a
+    ///     <see cref="ModGroupsMalformedException" /> is only ever an enrichment, so with no cause it is not.
+    /// </remarks>
+    private static bool IsPluginDataCause(Exception cause)
+    {
+        return IsPluginDataFailureFamily(cause) || cause is RecordException;
     }
 
     /// <summary>
     ///     The one Plugin-data family list every phase classifies against (ADR-0016 rule 2), apart from the bare
-    ///     <see cref="RecordException" />, which <see cref="FindPluginDataCause" /> recognises by its having no cause.
+    ///     <see cref="RecordException" />, which <see cref="IsPluginDataCause" /> recognises by its having no cause.
     /// </summary>
     /// <param name="exception">One exception from a failure's chain.</param>
     /// <returns><see langword="true" /> when the exception is about the Plugin's data.</returns>
@@ -407,8 +449,7 @@ internal sealed class MutagenPluginReader : IPluginReader
         /// </remarks>
         private PluginReadException CreateReadingRecordsFailure(Exception exception)
         {
-            var cause = ClassifyPluginReadFailure(exception, pluginName, PluginReadPhase.ReadingRecords);
-            return new PluginReadException(PluginReadPhase.ReadingRecords, cause.Message, exception);
+            return CreateFailedPluginFailure(exception, pluginName, PluginReadPhase.ReadingRecords);
         }
     }
 }

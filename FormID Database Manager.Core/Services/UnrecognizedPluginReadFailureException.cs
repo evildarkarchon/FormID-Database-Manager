@@ -9,8 +9,9 @@ namespace FormID_Database_Manager.Services;
 ///     Modelled on <see cref="UnresolvableMasterException" />: it leaves the run as an exception rather than a
 ///     Processing Run Outcome (ADR-0007). It is deliberately not a <see cref="PluginReadException" />, because Plugin
 ///     Ingestion turns those into Failed Plugins, and an unrecognised cause may be a defect in the application or in
-///     Mutagen rather than a fact about the Plugin's data. Its message is the original exception's diagnostic text;
-///     the sentence the user reads is <see cref="ProcessingRunPresentation" />'s (ADR-0012).
+///     Mutagen rather than a fact about the Plugin's data. Its message is the classified cause's diagnostic text, found
+///     behind Mutagen's enrichment wrappers, while the original failure is kept whole as the inner exception (ADR-0016
+///     rule 6); the sentence the user reads is <see cref="ProcessingRunPresentation" />'s (ADR-0012).
 /// </remarks>
 internal sealed class UnrecognizedPluginReadFailureException : Exception
 {
@@ -19,23 +20,29 @@ internal sealed class UnrecognizedPluginReadFailureException : Exception
     /// </summary>
     /// <param name="pluginName">The selected Plugin that was being read.</param>
     /// <param name="phase">The Plugin-read phase the failure arrived in.</param>
-    /// <param name="innerException">The original failure, kept for diagnostics and as the source of the message.</param>
+    /// <param name="diagnosticMessage">
+    ///     The classified cause's message, which becomes this exception's message. It differs from
+    ///     <paramref name="innerException" />'s own message when an enrichment wrapper carries wording of its own.
+    /// </param>
+    /// <param name="innerException">The original failure, kept whole for diagnostics.</param>
     /// <exception cref="ArgumentException"><paramref name="pluginName" /> is blank.</exception>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="phase" /> is not defined.</exception>
-    /// <exception cref="ArgumentNullException"><paramref name="innerException" /> is null.</exception>
+    /// <exception cref="ArgumentNullException">
+    ///     <paramref name="diagnosticMessage" /> or <paramref name="innerException" /> is null.
+    /// </exception>
     public UnrecognizedPluginReadFailureException(
         string pluginName,
         PluginReadPhase phase,
+        string diagnosticMessage,
         Exception innerException)
-        // Validated inside the base initializer, as UnresolvableMasterException does, because the constructor body runs
-        // only after base() has already read the inner exception's message.
-        : base(EnsureInnerException(innerException).Message, innerException)
+        : base(diagnosticMessage, innerException)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(pluginName);
-        if (!Enum.IsDefined(phase))
-        {
-            throw new ArgumentOutOfRangeException(nameof(phase), phase, "Unsupported Plugin-read phase.");
-        }
+        PluginReadPhaseGuard.ThrowIfUndefined(phase);
+        // Checked here because Exception's constructor accepts a null message and substitutes its own default text,
+        // which would put a sentence about nothing in the place of the cause.
+        ArgumentNullException.ThrowIfNull(diagnosticMessage);
+        ArgumentNullException.ThrowIfNull(innerException);
 
         PluginName = pluginName;
         Phase = phase;
@@ -50,16 +57,4 @@ internal sealed class UnrecognizedPluginReadFailureException : Exception
     ///     The Plugin-read phase the failure arrived in.
     /// </summary>
     public PluginReadPhase Phase { get; }
-
-    /// <summary>
-    ///     Validates the original failure and returns it, so the guard can run inside the base initializer.
-    /// </summary>
-    /// <param name="innerException">The original failure.</param>
-    /// <returns>The same failure.</returns>
-    /// <exception cref="ArgumentNullException"><paramref name="innerException" /> is null.</exception>
-    private static Exception EnsureInnerException(Exception innerException)
-    {
-        ArgumentNullException.ThrowIfNull(innerException);
-        return innerException;
-    }
 }

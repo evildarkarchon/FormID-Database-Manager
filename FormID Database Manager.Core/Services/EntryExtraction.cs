@@ -19,7 +19,9 @@ internal sealed class EntryExtraction
     ///     The extracted record, carrying a Synthesized Entry when only its Entry failed; or <see langword="null" />
     ///     when its FormID failed, in which case exactly one Record Issue was reported for it.
     /// </returns>
-    /// <exception cref="ArgumentNullException"><paramref name="record" /> or <paramref name="reportRecordIssue" /> is null.</exception>
+    /// <exception cref="ArgumentNullException">
+    ///     <paramref name="record" /> or <paramref name="reportRecordIssue" /> is null.
+    /// </exception>
     /// <exception cref="ArgumentException"><paramref name="pluginName" /> is null or blank.</exception>
     /// <exception cref="OperationCanceledException">
     ///     A lazy record getter reports cancellation, directly or nested; the original cancellation is rethrown.

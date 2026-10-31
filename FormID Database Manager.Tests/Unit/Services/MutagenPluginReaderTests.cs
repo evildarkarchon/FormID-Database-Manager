@@ -416,6 +416,29 @@ public sealed class MutagenPluginReaderTests : IDisposable
     }
 
     /// <summary>
+    ///     Verifies the run failure for an unlisted cause behind an enrichment wrapper carries the cause's message, not
+    ///     the wrapper's, while keeping the whole original failure as its inner exception (ADR-0016 rule 6).
+    /// </summary>
+    /// <remarks>
+    ///     <see cref="ModGroupsMalformedException" /> carries wording of its own, so a run failure that took the
+    ///     top-level message would show the user the enrichment rather than the defect behind it.
+    /// </remarks>
+    [Fact]
+    public void Open_UnlistedCauseBehindModGroupsMalformed_RunFailureMessageIsTheCausesMessage()
+    {
+        var cause = new NullReferenceException("Mutagen defect.");
+        var failure = Wrap(nameof(ModGroupsMalformedException), cause);
+        var sut = new MutagenPluginReader((_, _, _) => throw failure);
+
+        var thrown = Record.Exception(() => sut.Open(CreateReadyPlugin()));
+
+        var unrecognized = Assert.IsType<UnrecognizedPluginReadFailureException>(thrown);
+        Assert.NotEqual(cause.Message, failure.Message);
+        Assert.Equal("Mutagen defect.", unrecognized.Message);
+        Assert.Same(failure, unrecognized.InnerException);
+    }
+
+    /// <summary>
     ///     Verifies cancellation nested in an otherwise unrecognized opening failure is rethrown as the original
     ///     cancellation, so it is never reported as a failure of the Plugin or the run.
     /// </summary>
@@ -1092,8 +1115,8 @@ public sealed class MutagenPluginReaderTests : IDisposable
     // mod header and top-level groups eagerly while constructing the overlay, so a malformed file fails at
     // opening rather than at first enumeration. Mutagen raises no nested chain at that point, so these pin message
     // forwarding and each family's real trigger, while the delegate-fed cases above pin the look-through to the
-    // cause behind Mutagen's enrichment wrappers and nested cancellation. The happy path and the master-resolution boundary need a generated Plugin, so they
-    // live in PluginOverlayConstructionTests.
+    // cause behind Mutagen's enrichment wrappers and nested cancellation. The happy path and the master-resolution
+    // boundary need a generated Plugin, so they live in PluginOverlayConstructionTests.
     // ---------------------------------------------------------------------------------------------------------
 
     /// <summary>
