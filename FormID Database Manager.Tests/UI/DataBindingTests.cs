@@ -52,6 +52,7 @@ public class DataBindingTests
         var viewModel = new MainWindowViewModel(new SynchronousThreadDispatcher());
 
         viewModel.ReplacePluginProjection(
+            0,
         [
             new PluginListItem { Name = "Skyrim.esm" },
             new PluginListItem { Name = "Update.esm" },

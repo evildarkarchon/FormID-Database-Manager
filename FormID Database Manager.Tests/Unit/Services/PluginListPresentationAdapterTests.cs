@@ -305,6 +305,48 @@ public sealed class PluginListPresentationAdapterTests
     }
 
     /// <summary>
+    ///     Verifies the ViewModel's projected membership version follows each projected membership, survives a
+    ///     selection-only revision, and returns to null once no Confirmed Plugin List remains.
+    /// </summary>
+    [Fact]
+    public async Task Projection_EachMembership_RecordsProjectedMembershipVersion()
+    {
+        var discovery = new SequencedPluginListGameLoadOrders(
+            PluginListGameLoadOrdersStub.Discovered(["First.esp"]),
+            PluginListGameLoadOrdersStub.Discovered(["First.esp", "Second.esp"]),
+            PluginListGameLoadOrdersStub.LocalAccessFailure("new source unavailable"));
+        using var pluginList = new PluginList(discovery);
+        var dispatcher = new SynchronousThreadDispatcher();
+        var viewModel = new MainWindowViewModel(dispatcher);
+        using var sut = new PluginListPresentationAdapter(pluginList, viewModel, dispatcher);
+        var source = PluginListSource.Create(GameRelease.SkyrimSE, discovery.GameDirectory);
+        await pluginList.RefreshAsync(source, AdvancedMode.Off, TestContext.Current.CancellationToken);
+        var firstVersion = pluginList.Current.Confirmed!.MembershipVersion;
+
+        Assert.Equal(firstVersion, viewModel.ProjectedMembershipVersion);
+
+        pluginList.Apply(new PluginSelectionByNameIntent(firstVersion, "First.esp", true));
+
+        Assert.Equal(firstVersion, viewModel.ProjectedMembershipVersion);
+
+        await pluginList.RefreshAsync(source, AdvancedMode.Off, TestContext.Current.CancellationToken);
+        var secondVersion = pluginList.Current.Confirmed!.MembershipVersion;
+
+        Assert.NotEqual(firstVersion, secondVersion);
+        Assert.Equal(secondVersion, viewModel.ProjectedMembershipVersion);
+
+        await pluginList.RefreshAsync(
+            PluginListSource.Create(
+                GameRelease.SkyrimSE,
+                Path.Combine(Path.GetTempPath(), $"different-plugin-source-{Guid.NewGuid():N}")),
+            AdvancedMode.Off,
+            TestContext.Current.CancellationToken);
+
+        Assert.Null(pluginList.Current.Confirmed);
+        Assert.Null(viewModel.ProjectedMembershipVersion);
+    }
+
+    /// <summary>
     ///     Verifies raw refresh counts map to legacy scanning wording and Ready clears transient progress.
     /// </summary>
     [Fact]

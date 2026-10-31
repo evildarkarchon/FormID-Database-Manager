@@ -468,6 +468,29 @@ public class MainWindowViewModelTests
     }
 
     /// <summary>
+    ///     Verifies the projected membership version is the one each projection supplies, recorded independently of the
+    ///     projected items: an empty displayed list still has a version, and only "no list" is null.
+    /// </summary>
+    [Fact]
+    public void ReplacePluginProjection_EachProjection_RecordsSuppliedMembershipVersion()
+    {
+        Assert.Null(_viewModel.ProjectedMembershipVersion);
+
+        _viewModel.ReplacePluginProjection(3, [new PluginListItem { Name = "First.esp", MembershipVersion = 3 }]);
+
+        Assert.Equal(3, _viewModel.ProjectedMembershipVersion);
+
+        _viewModel.ReplacePluginProjection(4, []);
+
+        Assert.Equal(4, _viewModel.ProjectedMembershipVersion);
+        Assert.Empty(_viewModel.Plugins);
+
+        _viewModel.ReplacePluginProjection(null, []);
+
+        Assert.Null(_viewModel.ProjectedMembershipVersion);
+    }
+
+    /// <summary>
     ///     Verifies presentation consumers can observe the stable projection without mutating its membership.
     /// </summary>
     [Fact]
@@ -1297,11 +1320,15 @@ public class MainWindowViewModelTests
     /// <summary>
     ///     Publishes one ordered membership through the adapter-owned ViewModel projection seam.
     /// </summary>
+    /// <remarks>
+    ///     The callers test filtering and item identity, not the projected membership version, so every projection
+    ///     records the default item version.
+    /// </remarks>
     private static void ProjectPlugins(
         MainWindowViewModel viewModel,
         params PluginListItem[] projectedItems)
     {
-        viewModel.ReplacePluginProjection(projectedItems);
+        viewModel.ReplacePluginProjection(0, projectedItems);
     }
 
     /// <summary>

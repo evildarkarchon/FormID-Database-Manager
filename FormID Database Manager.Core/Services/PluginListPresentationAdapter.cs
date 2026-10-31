@@ -117,7 +117,7 @@ internal sealed class PluginListPresentationAdapter : IDisposable
     {
         if (confirmed is null)
         {
-            _viewModel.ReplacePluginProjection([]);
+            _viewModel.ReplacePluginProjection(null, []);
             return;
         }
 
@@ -143,7 +143,7 @@ internal sealed class PluginListPresentationAdapter : IDisposable
             });
         }
 
-        _viewModel.ReplacePluginProjection(projectedItems);
+        _viewModel.ReplacePluginProjection(confirmed.MembershipVersion, projectedItems);
     }
 
     /// <summary>
