@@ -117,7 +117,7 @@ internal sealed class PluginListPresentationAdapter : IDisposable
     {
         if (confirmed is null)
         {
-            _viewModel.ReplacePluginProjection([]);
+            _viewModel.ReplacePluginProjection(null, []);
             return;
         }
 
@@ -143,17 +143,27 @@ internal sealed class PluginListPresentationAdapter : IDisposable
             });
         }
 
-        _viewModel.ReplacePluginProjection(projectedItems);
+        _viewModel.ReplacePluginProjection(confirmed.MembershipVersion, projectedItems);
     }
 
     /// <summary>
     ///     Tests whether the current projection represents the same ordered membership and version.
     /// </summary>
     /// <param name="confirmed">The confirmed membership being projected.</param>
-    /// <returns><see langword="true" /> when only projected selection can differ.</returns>
+    /// <returns>
+    ///     <see langword="true" /> when the ViewModel's recorded projected membership version is
+    ///     <paramref name="confirmed" />'s and its items match that membership in order, so only projected selection can
+    ///     differ.
+    /// </returns>
+    /// <remarks>
+    ///     The recorded version is compared first because the items alone cannot identify an empty membership: with zero
+    ///     items the per-item check never runs, and an empty-to-empty refresh would otherwise leave the recorded version
+    ///     stale.
+    /// </remarks>
     private bool ProjectionMatches(ConfirmedPluginList confirmed)
     {
-        if (_viewModel.Plugins.Count != confirmed.Entries.Length)
+        if (_viewModel.ProjectedMembershipVersion != confirmed.MembershipVersion ||
+            _viewModel.Plugins.Count != confirmed.Entries.Length)
         {
             return false;
         }

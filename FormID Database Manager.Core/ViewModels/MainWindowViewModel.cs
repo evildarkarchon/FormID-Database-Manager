@@ -207,6 +207,17 @@ public partial class MainWindowViewModel : ObservableObject
     public ReadOnlyObservableCollection<PluginListItem> Plugins { get; }
 
     /// <summary>
+    ///     Gets the membership version of the Confirmed Plugin List currently displayed, or <see langword="null" /> when
+    ///     none is displayed.
+    /// </summary>
+    /// <remarks>
+    ///     Set only by <see cref="ReplacePluginProjection" />. It lags the Plugin List's own confirmed version while a
+    ///     newer membership's projection is still queued on the dispatcher, which is what lets a whole-list selection
+    ///     carry the version the user actually saw.
+    /// </remarks>
+    internal long? ProjectedMembershipVersion { get; private set; }
+
+    /// <summary>
     ///     Gets the read-only filtered view of the current Plugin List projection.
     /// </summary>
     public ReadOnlyObservableCollection<PluginListItem> FilteredPlugins { get; }
@@ -408,13 +419,19 @@ public partial class MainWindowViewModel : ObservableObject
     /// <summary>
     ///     Replaces projected Plugin items as one UI-dispatched membership update, then reapplies the current text filter.
     /// </summary>
+    /// <param name="membershipVersion">
+    ///     The membership version of the Confirmed Plugin List being displayed, or <see langword="null" /> when no
+    ///     Confirmed Plugin List is displayed. It is recorded as given, never derived from the items, because an empty
+    ///     displayed list still has a version.
+    /// </param>
     /// <param name="projectedItems">The ordered presentation items copied from current confirmed membership.</param>
     /// <exception cref="ArgumentNullException"><paramref name="projectedItems" /> is null.</exception>
     /// <remarks>The caller must run on the dispatcher that owns this ViewModel.</remarks>
-    internal void ReplacePluginProjection(IEnumerable<PluginListItem> projectedItems)
+    internal void ReplacePluginProjection(long? membershipVersion, IEnumerable<PluginListItem> projectedItems)
     {
         ArgumentNullException.ThrowIfNull(projectedItems);
 
+        ProjectedMembershipVersion = membershipVersion;
         _filterSuspended = true;
         try
         {

@@ -50,8 +50,11 @@ public class DataBindingTests
     public void FilteredPlugins_UpdatesWithSearchFilter()
     {
         var viewModel = new MainWindowViewModel(new SynchronousThreadDispatcher());
+        // This test checks filtering, not the projected membership version, so it records the default item version.
+        const long membershipVersion = 0;
 
         viewModel.ReplacePluginProjection(
+            membershipVersion,
         [
             new PluginListItem { Name = "Skyrim.esm" },
             new PluginListItem { Name = "Update.esm" },

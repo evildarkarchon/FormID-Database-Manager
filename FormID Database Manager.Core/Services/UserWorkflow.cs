@@ -329,18 +329,20 @@ public sealed class UserWorkflow : IDisposable
     }
 
     /// <summary>
-    ///     Selects every currently loaded plugin.
+    ///     Selects every Plugin in the displayed Plugin List membership, including any a filter hides. Does nothing when
+    ///     no Confirmed Plugin List is displayed, or when a newer membership is confirmed but not yet drawn.
     /// </summary>
-    /// <exception cref="ObjectDisposedException">The workflow-owned Plugin List has been disposed.</exception>
+    /// <exception cref="ObjectDisposedException">The workflow has been disposed.</exception>
     public void SelectAllPlugins()
     {
         ApplyWholeListSelection(true);
     }
 
     /// <summary>
-    ///     Clears selection for every currently loaded plugin.
+    ///     Clears selection for every Plugin in the displayed Plugin List membership, including any a filter hides. Does
+    ///     nothing when no Confirmed Plugin List is displayed, or when a newer membership is confirmed but not yet drawn.
     /// </summary>
-    /// <exception cref="ObjectDisposedException">The workflow-owned Plugin List has been disposed.</exception>
+    /// <exception cref="ObjectDisposedException">The workflow has been disposed.</exception>
     public void SelectNoPlugins()
     {
         ApplyWholeListSelection(false);
@@ -450,17 +452,25 @@ public sealed class UserWorkflow : IDisposable
     }
 
     /// <summary>
-    ///     Submits a versioned whole-list selection intent against one captured confirmed membership.
+    ///     Submits a versioned whole-list selection intent against the membership the user can see.
     /// </summary>
     /// <param name="isSelected">Whether every confirmed Plugin should be selected.</param>
+    /// <remarks>
+    ///     The version is the ViewModel's projected one, not the Plugin List's current one: a newer membership can be
+    ///     confirmed while its projection still waits on the dispatcher, and the Plugin List then refuses this press as
+    ///     stale, exactly as it refuses a stale per-Plugin checkbox. Reading it here is equivalent to reading it in the
+    ///     shell's click handler, because both run on the UI thread before any queued projection.
+    /// </remarks>
     private void ApplyWholeListSelection(bool isSelected)
     {
-        var confirmed = _pluginList.Current.Confirmed;
-        if (confirmed is null)
+        // The early return below never reaches the Plugin List, whose Apply is what normally throws after disposal, so
+        // check here. Disposing the workflow is what disposes its Plugin List, and both happen on the UI thread.
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (_viewModel.ProjectedMembershipVersion is not { } membershipVersion)
         {
             return;
         }
 
-        _pluginList.Apply(new PluginSelectionForAllIntent(confirmed.MembershipVersion, isSelected));
+        _pluginList.Apply(new PluginSelectionForAllIntent(membershipVersion, isSelected));
     }
 }
