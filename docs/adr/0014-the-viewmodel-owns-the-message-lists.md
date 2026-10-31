@@ -33,6 +33,14 @@ architecture review on 2026-10-30 found that nobody does:
 - The start-over rule is one operation, `ClearErrorAndWarningMessages()`, under the same dispatch rule. Processing Run
   Control still decides *when* it happens: on every press that does not cancel a run (ADR-0012). The name says *what*
   happens: information survives.
+
+  > *Amended 2026-10-30:* #95 reverses "information survives". This ADR recorded it as existing behaviour rather than
+  > as a trade-off, and it contradicted the stated purpose of starting over: what the user reads afterwards is only what
+  > this press produced. Once a run's completion line went to the information list (#94), keeping information also
+  > piled up completion lines from earlier runs. The operation is now `ClearMessageLists()` and clears all three lists.
+  > A Game Context notice is cleared by the next press, the same way a Game Context error already was. Processing Run
+  > Control still decides when it happens. The rest of this decision stands.
+
 - The three lists are exposed as `ReadOnlyObservableCollection<string>` over private collections, like `Plugins` and
   `DetectedDirectories`. The replacement hooks are deleted.
 
