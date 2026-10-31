@@ -1090,6 +1090,37 @@ public class UserWorkflowTests
     }
 
     /// <summary>
+    /// Verifies that a whole-list press after disposal throws whether or not a Confirmed Plugin List was on screen, so
+    /// the "does nothing while nothing is displayed" rule never hides a press against a retired workflow.
+    /// </summary>
+    /// <param name="selectAll">Whether the press is Select All rather than Select None.</param>
+    /// <param name="projected">Whether a Confirmed Plugin List was displayed before disposal.</param>
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, false)]
+    [InlineData(true, true)]
+    [InlineData(false, true)]
+    public async Task SelectAllAndNonePlugins_AfterDispose_ThrowsObjectDisposedException(bool selectAll, bool projected)
+    {
+        var sut = CreateSut();
+        if (projected)
+        {
+            _pluginListGameLoadOrders.PluginNames = ["First.esp"];
+            _gameInstallationProbe.WithInstalledDirectories(GameRelease.SkyrimSE, GameDirectory);
+            await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
+            Assert.NotNull(_viewModel.ProjectedMembershipVersion);
+        }
+        else
+        {
+            Assert.Null(_viewModel.ProjectedMembershipVersion);
+        }
+
+        sut.Dispose();
+
+        Assert.Throws<ObjectDisposedException>(() => PressWholeListSelection(sut, selectAll));
+    }
+
+    /// <summary>
     /// Presses Select All or Select None through the workflow's public, parameterless shell operations.
     /// </summary>
     private static void PressWholeListSelection(UserWorkflow sut, bool selectAll)

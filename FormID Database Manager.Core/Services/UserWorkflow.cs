@@ -332,7 +332,7 @@ public sealed class UserWorkflow : IDisposable
     ///     Selects every Plugin in the displayed Plugin List membership, including any a filter hides. Does nothing when
     ///     no Confirmed Plugin List is displayed, or when a newer membership is confirmed but not yet drawn.
     /// </summary>
-    /// <exception cref="ObjectDisposedException">The workflow-owned Plugin List has been disposed.</exception>
+    /// <exception cref="ObjectDisposedException">The workflow has been disposed.</exception>
     public void SelectAllPlugins()
     {
         ApplyWholeListSelection(true);
@@ -342,7 +342,7 @@ public sealed class UserWorkflow : IDisposable
     ///     Clears selection for every Plugin in the displayed Plugin List membership, including any a filter hides. Does
     ///     nothing when no Confirmed Plugin List is displayed, or when a newer membership is confirmed but not yet drawn.
     /// </summary>
-    /// <exception cref="ObjectDisposedException">The workflow-owned Plugin List has been disposed.</exception>
+    /// <exception cref="ObjectDisposedException">The workflow has been disposed.</exception>
     public void SelectNoPlugins()
     {
         ApplyWholeListSelection(false);
@@ -463,6 +463,9 @@ public sealed class UserWorkflow : IDisposable
     /// </remarks>
     private void ApplyWholeListSelection(bool isSelected)
     {
+        // The early return below never reaches the Plugin List, whose Apply is what normally throws after disposal, so
+        // check here. Disposing the workflow is what disposes its Plugin List, and both happen on the UI thread.
+        ObjectDisposedException.ThrowIf(_disposed, this);
         if (_viewModel.ProjectedMembershipVersion is not { } membershipVersion)
         {
             return;
