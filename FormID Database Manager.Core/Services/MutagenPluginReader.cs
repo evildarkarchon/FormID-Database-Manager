@@ -6,9 +6,9 @@ namespace FormID_Database_Manager.Services;
 
 /// <summary>
 ///     The production Plugin read adapter, and the one module that decides what every Mutagen failure means: a Failed
-///     Plugin while opening or enumerating, a Processing Warning or silent drop per record, an Unresolvable Master
-///     that fails the Processing Run, or, for an unrecognised opening failure, a run failure that names the Plugin
-///     (ADR-0006, ADR-0015, ADR-0016).
+///     Plugin while opening or enumerating, a Record Issue per record, an Unresolvable Master that fails the
+///     Processing Run, or, for an unrecognised failure while opening or reading one record, a run failure that names
+///     the Plugin (ADR-0006, ADR-0015, ADR-0016).
 /// </summary>
 /// <remarks>
 ///     <para>
@@ -20,10 +20,10 @@ namespace FormID_Database_Manager.Services;
 ///         else fails the run naming the Plugin. The diagnostic message is the classified cause's.
 ///     </para>
 ///     <para>
-///         Opening applies it, and a Plugin-data cause there is a Failed Plugin. Enumeration still treats only a
-///         top-level <see cref="RecordException" /> as a Failed Plugin and reports its own message, and per record
-///         Entry Extraction's catch-all still applies; both move onto the shared classification in their own tickets
-///         (#138, #139).
+///         Opening applies it, and a Plugin-data cause there is a Failed Plugin. Entry Extraction applies it to each
+///         record's FormID and Entry getters, and a Plugin-data cause there is a Record Issue, never a Failed Plugin.
+///         Enumeration still treats only a top-level <see cref="RecordException" /> as a Failed Plugin and reports
+///         its own message; it moves onto the shared classification in its own ticket (#138).
 ///     </para>
 /// </remarks>
 internal sealed class MutagenPluginReader : IPluginReader
@@ -58,7 +58,7 @@ internal sealed class MutagenPluginReader : IPluginReader
     /// <inheritdoc />
     public IOpenedPlugin Open(SelectedPluginReady readyPlugin)
     {
-        return new OpenedPlugin(OpenOverlay(readyPlugin), _entryExtraction);
+        return new OpenedPlugin(OpenOverlay(readyPlugin), readyPlugin.PluginName, _entryExtraction);
     }
 
     /// <summary>
@@ -145,7 +145,7 @@ internal sealed class MutagenPluginReader : IPluginReader
     ///     The cause behind the enrichment wrappers is not on the Plugin-data family list. It names
     ///     <paramref name="pluginName" />, carries <paramref name="phase" />, and keeps <paramref name="failure" />.
     /// </exception>
-    private static Exception ClassifyPluginReadFailure(Exception failure, string pluginName, PluginReadPhase phase)
+    internal static Exception ClassifyPluginReadFailure(Exception failure, string pluginName, PluginReadPhase phase)
     {
         NestedCancellation.RethrowIfPresent(failure);
         ThrowIfUnresolvableMaster(pluginName, failure);
@@ -278,8 +278,10 @@ internal sealed class MutagenPluginReader : IPluginReader
     ///     One opened Mutagen overlay behind the seam. Its owner disposes it, which disposes the overlay.
     /// </summary>
     /// <param name="overlay">The overlay opening produced; owned by this instance from here on.</param>
+    /// <param name="pluginName">The selected Plugin the overlay was opened for, which every run failure names.</param>
     /// <param name="entryExtraction">The adapter's per-record Entry Extraction rules.</param>
-    private sealed class OpenedPlugin(IModDisposeGetter overlay, EntryExtraction entryExtraction) : IOpenedPlugin
+    private sealed class OpenedPlugin(IModDisposeGetter overlay, string pluginName, EntryExtraction entryExtraction)
+        : IOpenedPlugin
     {
         /// <inheritdoc />
         public IEnumerable<FormIdRecord> ReadRecords(
@@ -302,7 +304,7 @@ internal sealed class MutagenPluginReader : IPluginReader
         ///     rules.
         /// </summary>
         /// <param name="reportRecordIssue">
-        ///     Receives non-ignorable recoverable record issues in observation order.
+        ///     Receives every Record Issue in observation order, as the classified cause's message.
         /// </param>
         /// <param name="cancellationToken">Checked once per record.</param>
         /// <returns>The lazy sequence consumed inside the Store's atomic Plugin write.</returns>
@@ -320,7 +322,7 @@ internal sealed class MutagenPluginReader : IPluginReader
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                if (entryExtraction.TryExtract(records.Current, reportRecordIssue) is { } record)
+                if (entryExtraction.TryExtract(records.Current, pluginName, reportRecordIssue) is { } record)
                 {
                     yield return record;
                 }

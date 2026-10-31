@@ -10,6 +10,7 @@ using FormID_Database_Manager.Services;
 using Moq;
 using Mutagen.Bethesda;
 using Mutagen.Bethesda.Plugins;
+using Mutagen.Bethesda.Plugins.Aspects;
 using Mutagen.Bethesda.Plugins.Binary.Parameters;
 using Mutagen.Bethesda.Plugins.Exceptions;
 using Mutagen.Bethesda.Plugins.Records;
@@ -716,11 +717,12 @@ public sealed class MutagenPluginReaderTests : IDisposable
     }
 
     /// <summary>
-    ///     Verifies recoverable record issues reach the callback in observation order with ignorable ones filtered out:
-    ///     a failed FormID drops its record, and a failed Entry falls back to the Synthesized Entry.
+    ///     Verifies every Record Issue reaches the callback in observation order and none is filtered: a failed FormID
+    ///     drops its record, a failed Entry falls back to the Synthesized Entry, and failures whose messages the
+    ///     retired ignore list matched are counted like any other (ADR-0016 rule 5).
     /// </summary>
     [Fact]
-    public void ReadRecords_RecoverableRecordIssues_ReachTheCallbackInOrderWithoutIgnorableOnes()
+    public void ReadRecords_RecordIssues_ReachTheCallbackInOrderWithNoneDropped()
     {
         var sut = new MutagenPluginReader((_, _, _) => CreateOverlay(
         [
@@ -728,6 +730,7 @@ public sealed class MutagenPluginReaderTests : IDisposable
             CreateRecordWithUnreadableFormId("Unexpected record type in group."),
             CreateRecordWithUnreadableEditorId(0x000123, "second issue"),
             CreateRecord("ReadableNpc"),
+            CreateRecordWithUnreadableFormId("KSIZ count did not match."),
             CreateRecordWithUnreadableFormId("third issue")
         ]));
         using var opened = sut.Open(CreateReadyPlugin());
@@ -735,7 +738,9 @@ public sealed class MutagenPluginReaderTests : IDisposable
 
         var records = opened.ReadRecords(issues.Add, CancellationToken.None).ToList();
 
-        Assert.Equal(["first issue", "second issue", "third issue"], issues);
+        Assert.Equal(
+            ["first issue", "Unexpected record type in group.", "second issue", "KSIZ count did not match.", "third issue"],
+            issues);
         Assert.Collection(
             records,
             synthesized =>
@@ -745,6 +750,75 @@ public sealed class MutagenPluginReaderTests : IDisposable
                 Assert.EndsWith("_000123]", synthesized.Entry, StringComparison.Ordinal);
             },
             readable => Assert.Equal("ReadableNpc", readable.Entry));
+    }
+
+    /// <summary>
+    ///     Verifies an <see cref="IOException" /> from <c>Name</c>, as a localized Plugin's failed lazy <c>.STRINGS</c>
+    ///     load raises for every record that uses the strings file, is a Record Issue per record: each record is still
+    ///     read with its FormID, and the Plugin neither fails nor fails the run.
+    /// </summary>
+    [Fact]
+    public void ReadRecords_StringsLoadIOExceptionFromName_IsARecordIssueForEachRecordNotAFailedPlugin()
+    {
+        var stringsFailure = new IOException("Could not locate strings file Tested_English.STRINGS.");
+        var sut = new MutagenPluginReader((_, _, _) => CreateOverlay(
+        [
+            CreateRecordWithUnreadableName(0x000001, stringsFailure),
+            CreateRecordWithUnreadableName(0x000002, stringsFailure),
+            CreateRecord("ReadableNpc")
+        ]));
+        using var opened = sut.Open(CreateReadyPlugin());
+        var issues = new List<string>();
+
+        var records = opened.ReadRecords(issues.Add, CancellationToken.None).ToList();
+
+        Assert.Equal([stringsFailure.Message, stringsFailure.Message], issues);
+        Assert.Equal(["000001", "000002"], records.Take(2).Select(record => record.FormId));
+        Assert.Equal("ReadableNpc", records[2].Entry);
+    }
+
+    /// <summary>
+    ///     Verifies a getter failure whose cause the application does not recognise fails the Processing Run as the
+    ///     typed run failure naming the Plugin and the reading-records phase, rather than a Failed Plugin, a Record
+    ///     Issue, or a silent drop.
+    /// </summary>
+    [Fact]
+    public void ReadRecords_UnlistedCauseFromARecordGetter_ThrowsUnrecognizedPluginReadFailureNamingThePlugin()
+    {
+        var defect = new NullReferenceException("Object reference not set to an instance of an object.");
+        var record = new Mock<IMajorRecordGetter>();
+        record.SetupGet(candidate => candidate.FormKey).Throws(defect);
+        var sut = new MutagenPluginReader((_, _, _) => CreateOverlay([record.Object]));
+        using var opened = sut.Open(CreateReadyPlugin());
+        var issues = new List<string>();
+
+        var thrown = Record.Exception(() => opened.ReadRecords(issues.Add, CancellationToken.None).ToList());
+
+        var failure = Assert.IsType<UnrecognizedPluginReadFailureException>(thrown);
+        Assert.Equal(PluginName, failure.PluginName);
+        Assert.Equal(PluginReadPhase.ReadingRecords, failure.Phase);
+        Assert.Same(defect, failure.InnerException);
+        Assert.Empty(issues);
+    }
+
+    /// <summary>
+    ///     Verifies cancellation raised directly by an Entry getter is rethrown as the original cancellation and never
+    ///     reported as a Record Issue.
+    /// </summary>
+    [Fact]
+    public void ReadRecords_CancellationFromAnEntryGetter_ThrowsTheOriginalCancellation()
+    {
+        var cancellation = new OperationCanceledException("Name getter cancelled.");
+        var sut = new MutagenPluginReader((_, _, _) => CreateOverlay(
+            [CreateRecordWithUnreadableName(0x000001, cancellation)]));
+        using var opened = sut.Open(CreateReadyPlugin());
+        var issues = new List<string>();
+
+        var thrown = Assert.ThrowsAny<OperationCanceledException>(() =>
+            opened.ReadRecords(issues.Add, CancellationToken.None).ToList());
+
+        Assert.Same(cancellation, thrown);
+        Assert.Empty(issues);
     }
 
     /// <summary>
@@ -1067,6 +1141,21 @@ public sealed class MutagenPluginReaderTests : IDisposable
             .SetupGet(candidate => candidate.FormKey)
             .Returns(new FormKey(ModKey.FromNameAndExtension(PluginName), formId));
         record.SetupGet(candidate => candidate.EditorID).Throws(new InvalidDataException(message));
+        return record.Object;
+    }
+
+    /// <summary>
+    ///     Creates a record with a readable FormID and no EditorID whose required display name getter raises the given
+    ///     failure, so Entry Extraction reaches the name and must classify that failure.
+    /// </summary>
+    private static IMajorRecordGetter CreateRecordWithUnreadableName(uint formId, Exception failure)
+    {
+        var record = new Mock<IMajorRecordGetter>();
+        record
+            .SetupGet(candidate => candidate.FormKey)
+            .Returns(new FormKey(ModKey.FromNameAndExtension(PluginName), formId));
+        // As<> must run before Object is first read, so the proxy is generated implementing the name aspect.
+        record.As<INamedRequiredGetter>().SetupGet(named => named.Name).Throws(failure);
         return record.Object;
     }
 

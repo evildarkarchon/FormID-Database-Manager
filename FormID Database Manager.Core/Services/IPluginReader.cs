@@ -43,7 +43,12 @@ internal interface IOpenedPlugin : IDisposable
     ///     Lazily reads the Plugin's records as FormID records. Nothing is read until the sequence is consumed.
     /// </summary>
     /// <param name="reportRecordIssue">
-    ///     Receives each recoverable record issue worth reporting, in observation order, after the ignore list has run.
+    ///     Receives every Record Issue, in observation order, as the message of the Plugin-data cause it was classified
+    ///     by. None is filtered out, so each one is counted in the Plugin's Processing Warning. A record whose FormID
+    ///     failed is not yielded; a record whose Entry failed is yielded with a Synthesized Entry. A per-record failure
+    ///     is never a Failed Plugin: one whose cause is not about the Plugin's data is not reported here, and instead
+    ///     fails the Processing Run as an <see cref="UnrecognizedPluginReadFailureException" /> naming the Plugin, in
+    ///     <see cref="PluginReadPhase.ReadingRecords" /> (ADR-0016).
     /// </param>
     /// <param name="cancellationToken">Checked once per record while reading.</param>
     /// <returns>The lazy record sequence, intended to be consumed once inside the Store's atomic Plugin write.</returns>

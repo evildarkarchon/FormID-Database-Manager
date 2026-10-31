@@ -5,79 +5,103 @@ namespace FormID_Database_Manager.Services;
 
 internal sealed class EntryExtraction
 {
-    private static readonly HashSet<string> IgnorableErrorPatterns = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "KSIZ",
-        "KWDA",
-        "Expected EDID",
-        "List with a non zero counter",
-        "Unexpected record type",
-        "Failed to parse record header",
-        "Object reference not set to an instance"
-    };
-
     /// <summary>
-    ///     Extracts one FormID/Entry pair while reporting recoverable record diagnostics to the caller.
+    ///     Extracts one FormID/Entry pair, reporting each Record Issue to the caller and failing the Processing Run for
+    ///     any getter failure the application does not recognise (ADR-0016 rules 4 and 5).
     /// </summary>
     /// <param name="record">The lazy Mutagen record to inspect.</param>
-    /// <param name="reportWarning">Receives non-ignorable recoverable diagnostic messages in observation order.</param>
-    /// <returns>The extracted record, or <see langword="null" /> when a recoverable issue prevents storage.</returns>
-    /// <exception cref="ArgumentNullException">Either argument is <see langword="null" />.</exception>
-    /// <exception cref="OperationCanceledException">A lazy record getter reports cancellation.</exception>
-    internal FormIdRecord? TryExtract(IMajorRecordGetter record, Action<string> reportWarning)
+    /// <param name="pluginName">The selected Plugin the record belongs to, which a run failure names.</param>
+    /// <param name="reportRecordIssue">
+    ///     Receives every Record Issue in observation order, as the classified cause's message. None is filtered, so
+    ///     each one is counted in the Plugin's Processing Warning.
+    /// </param>
+    /// <returns>
+    ///     The extracted record, carrying a Synthesized Entry when only its Entry failed; or <see langword="null" />
+    ///     when its FormID failed, in which case exactly one Record Issue was reported for it.
+    /// </returns>
+    /// <exception cref="ArgumentNullException"><paramref name="record" /> or <paramref name="reportRecordIssue" /> is null.</exception>
+    /// <exception cref="ArgumentException"><paramref name="pluginName" /> is null or blank.</exception>
+    /// <exception cref="OperationCanceledException">
+    ///     A lazy record getter reports cancellation, directly or nested; the original cancellation is rethrown.
+    /// </exception>
+    /// <exception cref="UnrecognizedPluginReadFailureException">
+    ///     A getter failed with a cause off the Plugin-data family list. It names <paramref name="pluginName" />, carries
+    ///     <see cref="PluginReadPhase.ReadingRecords" />, and keeps the getter's exception as its inner exception.
+    /// </exception>
+    /// <exception cref="UnresolvableMasterException">A getter's failure chain contains a master-resolution failure.</exception>
+    /// <remarks>
+    ///     A per-record failure is never fatal to the Plugin: it never becomes a <see cref="PluginReadException" />.
+    ///     Only the two getter reads below are classified. The record-type lookup behind a Synthesized Entry keeps its
+    ///     own fallback and reports nothing (ADR-0004).
+    /// </remarks>
+    internal FormIdRecord? TryExtract(IMajorRecordGetter record, string pluginName, Action<string> reportRecordIssue)
     {
         ArgumentNullException.ThrowIfNull(record);
-        ArgumentNullException.ThrowIfNull(reportWarning);
+        ArgumentException.ThrowIfNullOrWhiteSpace(pluginName);
+        ArgumentNullException.ThrowIfNull(reportRecordIssue);
 
+        string formId;
         try
         {
-            string formId;
-            try
-            {
-                formId = record.FormKey.ID.ToString("X6");
-            }
-            catch (OperationCanceledException)
-            {
-                // Cancellation remains run control flow even when a lazy Mutagen record getter observes it first.
-                throw;
-            }
-            catch (Exception ex)
-            {
-                NestedCancellation.RethrowIfPresent(ex);
-                ReportRecoverableIssue(ex, reportWarning);
-                return null;
-            }
-
-            string entry;
-            try
-            {
-                entry = !string.IsNullOrEmpty(record.EditorID) ? record.EditorID : GetRecordName(record, formId);
-            }
-            catch (OperationCanceledException)
-            {
-                // Entry fallback must not turn cancellation into a recoverable Processing Warning.
-                throw;
-            }
-            catch (Exception ex)
-            {
-                NestedCancellation.RethrowIfPresent(ex);
-                ReportRecoverableIssue(ex, reportWarning);
-                entry = SynthesizeEntry(record, formId);
-            }
-
-            return new FormIdRecord(formId, entry);
+            formId = record.FormKey.ID.ToString("X6");
         }
         catch (OperationCanceledException)
         {
-            // Preserve cancellation from any later lazy record access in the extraction path.
+            // Cancellation remains run control flow even when a lazy Mutagen record getter observes it first.
             throw;
         }
         catch (Exception ex)
         {
-            NestedCancellation.RethrowIfPresent(ex);
-            ReportRecoverableIssue(ex, reportWarning);
+            // Without a FormID there is no row to store, so the record is dropped, but never without being counted.
+            reportRecordIssue(ClassifyRecordIssue(ex, pluginName));
             return null;
         }
+
+        string entry;
+        try
+        {
+            entry = !string.IsNullOrEmpty(record.EditorID) ? record.EditorID : GetRecordName(record, formId);
+        }
+        catch (OperationCanceledException)
+        {
+            // Entry fallback must not turn cancellation into a recoverable Processing Warning.
+            throw;
+        }
+        catch (Exception ex)
+        {
+            // The FormID is already in hand, so a failed Entry costs only the label. This includes an IOException from
+            // a lazy .STRINGS load behind Name: Mutagen caches that failure, so it repeats for every record using the
+            // strings file, and each of those records keeps its FormID with a Synthesized Entry (ADR-0016 rule 4).
+            reportRecordIssue(ClassifyRecordIssue(ex, pluginName));
+            entry = SynthesizeEntry(record, formId);
+        }
+
+        return new FormIdRecord(formId, entry);
+    }
+
+    /// <summary>
+    ///     Classifies one getter failure with the shared Plugin-read classification and returns the Record Issue's
+    ///     diagnostic.
+    /// </summary>
+    /// <param name="failure">The exception a FormID or Entry getter raised.</param>
+    /// <param name="pluginName">The selected Plugin being read.</param>
+    /// <returns>The classified Plugin-data cause's message (ADR-0016 rule 6).</returns>
+    /// <remarks>
+    ///     The classification rethrows nested cancellation before anything else, and throws for every cause that is
+    ///     not about the Plugin's data, so only a listed cause comes back here to be reported. Getters throw raw
+    ///     exceptions, but the classification looks through Mutagen's enrichment wrappers anyway, so a wrapped cause is
+    ///     classified the same way it would be in any other phase.
+    /// </remarks>
+    /// <exception cref="OperationCanceledException"><paramref name="failure" />'s chain contains cancellation.</exception>
+    /// <exception cref="UnresolvableMasterException">
+    ///     <paramref name="failure" />'s chain contains a master-resolution failure.
+    /// </exception>
+    /// <exception cref="UnrecognizedPluginReadFailureException">The cause is not on the Plugin-data family list.</exception>
+    private static string ClassifyRecordIssue(Exception failure, string pluginName)
+    {
+        return MutagenPluginReader
+            .ClassifyPluginReadFailure(failure, pluginName, PluginReadPhase.ReadingRecords)
+            .Message;
     }
 
     /// <summary>
@@ -175,17 +199,5 @@ internal sealed class EntryExtraction
         }
 
         return record.GetType().Name;
-    }
-
-    /// <summary>
-    ///     Reports non-ignorable record diagnostics while preserving the existing recoverable extraction policy.
-    /// </summary>
-    private static void ReportRecoverableIssue(Exception exception, Action<string> reportWarning)
-    {
-        if (!IgnorableErrorPatterns.Any(pattern =>
-                exception.Message.Contains(pattern, StringComparison.OrdinalIgnoreCase)))
-        {
-            reportWarning(exception.Message);
-        }
     }
 }
