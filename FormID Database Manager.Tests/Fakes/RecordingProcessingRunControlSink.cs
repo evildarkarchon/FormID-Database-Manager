@@ -81,7 +81,7 @@ internal sealed class RecordingProcessingRunControlSink : IProcessingRunControlS
 internal abstract record ProcessingRunSinkEntry;
 
 /// <summary>
-///     The error and warning message lists were cleared.
+///     Every message list (errors, warnings, and information) was cleared.
 /// </summary>
 internal sealed record MessageListsCleared : ProcessingRunSinkEntry;
 

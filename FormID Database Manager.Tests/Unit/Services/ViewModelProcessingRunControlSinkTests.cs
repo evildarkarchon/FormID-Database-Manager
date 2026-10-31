@@ -56,20 +56,23 @@ public sealed class ViewModelProcessingRunControlSinkTests
         /// <summary>The warning list being cleared.</summary>
         WarningListClear,
 
+        /// <summary>The information list being cleared.</summary>
+        InformationListClear,
+
         /// <summary>The starting status reaching the progress channel.</summary>
         StartingStatus
     }
 
     /// <summary>
-    ///     Verifies the start-over write: the error and warning lists the user was reading are emptied, and the
-    ///     information messages stay.
+    ///     Verifies the start-over write: every Message List the user was reading is emptied, information included, so
+    ///     what remains afterwards is only what the new press produces (#95).
     /// </summary>
     /// <remarks>
     ///     When a press clears is Processing Run Control's rule, pinned by <see cref="ProcessingRunControlTests" />;
     ///     which lists the clear empties is this adapter's write.
     /// </remarks>
     [Fact]
-    public void ClearMessageLists_StaleMessagesInEveryList_ClearsErrorsAndWarningsButKeepsInformation()
+    public void ClearMessageLists_StaleMessagesInEveryList_ClearsEveryList()
     {
         _sut.AddErrorMessage("Stale error");
         _sut.AddWarningMessage("Stale warning");
@@ -79,7 +82,7 @@ public sealed class ViewModelProcessingRunControlSinkTests
 
         Assert.Empty(_viewModel.ErrorMessages);
         Assert.Empty(_viewModel.WarningMessages);
-        Assert.Equal(["Earlier information"], _viewModel.InformationMessages);
+        Assert.Empty(_viewModel.InformationMessages);
     }
 
     /// <summary>
@@ -111,6 +114,7 @@ public sealed class ViewModelProcessingRunControlSinkTests
     [Theory]
     [InlineData(StartupNotification.ErrorListClear)]
     [InlineData(StartupNotification.WarningListClear)]
+    [InlineData(StartupNotification.InformationListClear)]
     [InlineData(StartupNotification.StartingStatus)]
     public void ReportDefaultedDatabasePath_BoxEditedDuringAStartupNotification_KeepsTheEdit(
         StartupNotification notification)
@@ -132,6 +136,10 @@ public sealed class ViewModelProcessingRunControlSinkTests
                 break;
             case StartupNotification.WarningListClear:
                 ((INotifyCollectionChanged)_viewModel.WarningMessages).CollectionChanged += (_, _) => EditDatabasePath();
+                break;
+            case StartupNotification.InformationListClear:
+                ((INotifyCollectionChanged)_viewModel.InformationMessages).CollectionChanged +=
+                    (_, _) => EditDatabasePath();
                 break;
             case StartupNotification.StartingStatus:
                 _viewModel.PropertyChanged += (_, args) =>

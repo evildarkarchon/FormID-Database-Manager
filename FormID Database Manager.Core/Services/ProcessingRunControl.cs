@@ -189,7 +189,8 @@ internal sealed class ProcessingRunControl : IDisposable
                 case RefusedRun refused:
                     // A refused press never became a run, so it takes no ownership of the gate and publishes no
                     // starting activity: the rendered reason is the only thing it leaves behind (ADR-0010). It still
-                    // starts the message lists over, as every press that does not cancel does.
+                    // starts all three message lists over, as every press that does not cancel does, so the reason is
+                    // the only message the user reads afterwards (#95).
                     _sink.ClearMessageLists();
                     _sink.AddErrorMessage(ProcessingRunPresentation.Render(refused.Reason));
                     return null;
@@ -223,8 +224,8 @@ internal sealed class ProcessingRunControl : IDisposable
         var starting = NextActiveRunActivity(ProcessingRunPresentation.Render(new ProcessingRunStarting()));
         _runActivity = starting;
 
-        // Every press that does not cancel starts the message lists over first, so what the user reads afterwards is
-        // only what this press produced.
+        // Every press that does not cancel starts all three message lists over first, information included, so what
+        // the user reads afterwards is only what this press produced (#95).
         _sink.ClearMessageLists();
         // A press re-entering from the list clear has already reported its cancellation-requested activity, which is
         // what the run is doing now; publishing the starting activity after it would put the older status back.
@@ -436,7 +437,7 @@ internal sealed class ProcessingRunControl : IDisposable
 internal interface IProcessingRunControlSink
 {
     /// <summary>
-    ///     Clears the error and warning message lists at the start of a press that does not cancel.
+    ///     Clears every message list (errors, warnings, and information) at the start of a press that does not cancel.
     /// </summary>
     void ClearMessageLists();
 

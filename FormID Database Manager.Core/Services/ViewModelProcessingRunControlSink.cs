@@ -23,7 +23,7 @@ internal sealed class ViewModelProcessingRunControlSink(MainWindowViewModel view
     /// <inheritdoc />
     public void ClearMessageLists()
     {
-        viewModel.ClearErrorAndWarningMessages();
+        viewModel.ClearMessageLists();
     }
 
     /// <inheritdoc />
