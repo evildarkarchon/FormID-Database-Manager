@@ -453,7 +453,7 @@ internal sealed class PluginIngestion : IPluginIngestion
     }
 
     /// <summary>
-    ///     Opens an overlay and attaches the opening phase to adapter-normalized Plugin-read failures.
+    ///     Opens an overlay, letting the adapter's opening-phase Plugin-read failure through unchanged.
     /// </summary>
     /// <param name="readyPlugin">The selected Plugin and opaque capability prepared by Game Load Orders.</param>
     /// <returns>The disposable Plugin overlay.</returns>
@@ -468,24 +468,15 @@ internal sealed class PluginIngestion : IPluginIngestion
     /// </exception>
     private IModDisposeGetter TryCreateOverlay(SelectedPluginReady readyPlugin)
     {
-        try
-        {
-            return _overlayReader.ReadOverlay(readyPlugin);
-        }
-        catch (PluginOverlayReadException ex)
-        {
-            RethrowNestedCancellation(ex);
-            throw new PluginReadException(
-                PluginReadPhase.OpeningPlugin,
-                ex.Message,
-                ex);
-        }
+        // A PluginReadException already carries the opening phase and has had nested cancellation unwrapped by
+        // the adapter, so it passes through to the callers' Failed Plugin catches without a second wrap.
+        return _overlayReader.ReadOverlay(readyPlugin);
     }
 
     /// <summary>
     ///     Preserves cancellation even when Mutagen enriches it inside a record-reading exception.
     /// </summary>
-    /// <param name="exception">The possible wrapper raised by the Plugin adapter or enumerator.</param>
+    /// <param name="exception">The possible wrapper raised by the record enumerator.</param>
     /// <exception cref="OperationCanceledException">The exception chain contains cancellation.</exception>
     private static void RethrowNestedCancellation(Exception exception)
     {
@@ -529,22 +520,5 @@ internal sealed class PluginIngestion : IPluginIngestion
 
             return new ProcessingWarning(_count, _details);
         }
-    }
-
-    /// <summary>
-    ///     Carries application-owned Plugin-read phase and message facts across lazy Store enumeration.
-    /// </summary>
-    /// <param name="phase">The internal read phase that failed.</param>
-    /// <param name="diagnosticMessage">The underlying Plugin-read message.</param>
-    /// <param name="innerException">The adapter or Mutagen exception retained for diagnostics.</param>
-    private sealed class PluginReadException(
-        PluginReadPhase phase,
-        string diagnosticMessage,
-        Exception? innerException = null)
-        : Exception(diagnosticMessage, innerException)
-    {
-        public PluginReadPhase Phase { get; } = phase;
-
-        public string DiagnosticMessage { get; } = diagnosticMessage;
     }
 }

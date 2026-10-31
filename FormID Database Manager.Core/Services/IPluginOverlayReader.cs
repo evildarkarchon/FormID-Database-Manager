@@ -15,22 +15,17 @@ internal interface IPluginOverlayReader
     /// <exception cref="InvalidOperationException">The read capability belongs to an incompatible adapter.</exception>
     /// <exception cref="ArgumentOutOfRangeException">
     ///     The capability identifies an unsupported GameRelease. This is a programming error, not a Plugin-read
-    ///     failure, so it deliberately does not arrive as <see cref="PluginOverlayReadException" />.
+    ///     failure, so it deliberately does not arrive as <see cref="PluginReadException" />.
     /// </exception>
-    /// <exception cref="PluginOverlayReadException">The selected Plugin contains malformed or unreadable data.</exception>
+    /// <exception cref="PluginReadException">
+    ///     The selected Plugin contains malformed or unreadable data; the phase is
+    ///     <see cref="PluginReadPhase.OpeningPlugin" />.
+    /// </exception>
     /// <exception cref="UnresolvableMasterException">
     ///     The prepared read capability cannot resolve a master the selected Plugin declares (ADR-0006).
     /// </exception>
     IModDisposeGetter ReadOverlay(SelectedPluginReady readyPlugin);
 }
-
-/// <summary>
-///     Marks an expected Plugin-specific failure raised by the binary-overlay adapter.
-/// </summary>
-/// <param name="message">The underlying Plugin-read message.</param>
-/// <param name="innerException">The Mutagen or filesystem exception.</param>
-internal sealed class PluginOverlayReadException(string message, Exception innerException)
-    : Exception(message, innerException);
 
 internal sealed class MutagenPluginOverlayReader : IPluginOverlayReader
 {
@@ -44,7 +39,10 @@ internal sealed class MutagenPluginOverlayReader : IPluginOverlayReader
     ///     The capability identifies a GameRelease this application does not support.
     /// </exception>
     /// <exception cref="InvalidOperationException">The capability belongs to an incompatible adapter.</exception>
-    /// <exception cref="PluginOverlayReadException">Mutagen or the filesystem reports unreadable Plugin data.</exception>
+    /// <exception cref="PluginReadException">
+    ///     Mutagen or the filesystem reports unreadable Plugin data; the phase is
+    ///     <see cref="PluginReadPhase.OpeningPlugin" /> and the message is the deepest underlying one.
+    /// </exception>
     /// <exception cref="UnresolvableMasterException">
     ///     Mutagen raises <see cref="MissingModException" /> (naming the master's file name) or
     ///     <see cref="MissingModMappingException" /> (naming no master); the Mutagen exception is the inner exception.
@@ -70,7 +68,10 @@ internal sealed class MutagenPluginOverlayReader : IPluginOverlayReader
             if (IsExpectedPluginOverlayFailure(ex))
             {
                 // The application-owned marker prevents arbitrary adapter failures from becoming Failed Plugins.
-                throw new PluginOverlayReadException(GetUnderlyingPluginReadMessage(ex), ex);
+                throw new PluginReadException(
+                    PluginReadPhase.OpeningPlugin,
+                    GetUnderlyingPluginReadMessage(ex),
+                    ex);
             }
 
             // Classified after the Failed Plugin list, as Plugin Ingestion used to classify whatever escaped it, so a

@@ -180,7 +180,8 @@ public sealed class PluginIngestionPlanTests : IDisposable
         {
             Failures =
             {
-                ["Broken.esp"] = new PluginOverlayReadException(
+                ["Broken.esp"] = new PluginReadException(
+                    PluginReadPhase.OpeningPlugin,
                     "Unreadable header.",
                     new MalformedDataException("Unreadable header."))
             }
