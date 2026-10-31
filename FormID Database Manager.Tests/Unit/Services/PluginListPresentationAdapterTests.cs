@@ -347,6 +347,57 @@ public sealed class PluginListPresentationAdapterTests
     }
 
     /// <summary>
+    ///     Verifies an empty first membership is recorded even though the ViewModel already shows no items, so an empty
+    ///     displayed list is distinguishable from no Confirmed Plugin List.
+    /// </summary>
+    [Fact]
+    public async Task Projection_EmptyMembershipAfterNoList_RecordsProjectedMembershipVersion()
+    {
+        var discovery = new SequencedPluginListGameLoadOrders(PluginListGameLoadOrdersStub.Discovered([]));
+        using var pluginList = new PluginList(discovery);
+        var dispatcher = new SynchronousThreadDispatcher();
+        var viewModel = new MainWindowViewModel(dispatcher);
+        using var sut = new PluginListPresentationAdapter(pluginList, viewModel, dispatcher);
+        Assert.Null(viewModel.ProjectedMembershipVersion);
+
+        await pluginList.RefreshAsync(
+            PluginListSource.Create(GameRelease.SkyrimSE, discovery.GameDirectory),
+            AdvancedMode.Off,
+            TestContext.Current.CancellationToken);
+
+        var confirmed = Assert.IsType<ConfirmedPluginList>(pluginList.Current.Confirmed);
+        Assert.Empty(confirmed.Entries);
+        Assert.Empty(viewModel.Plugins);
+        Assert.Equal(confirmed.MembershipVersion, viewModel.ProjectedMembershipVersion);
+    }
+
+    /// <summary>
+    ///     Verifies a newer empty membership replaces an older empty one's recorded version, even though both project
+    ///     the same zero items.
+    /// </summary>
+    [Fact]
+    public async Task Projection_EmptyMembershipAfterEmptyMembership_RecordsNewerProjectedMembershipVersion()
+    {
+        var discovery = new SequencedPluginListGameLoadOrders(
+            PluginListGameLoadOrdersStub.Discovered([]),
+            PluginListGameLoadOrdersStub.Discovered([]));
+        using var pluginList = new PluginList(discovery);
+        var dispatcher = new SynchronousThreadDispatcher();
+        var viewModel = new MainWindowViewModel(dispatcher);
+        using var sut = new PluginListPresentationAdapter(pluginList, viewModel, dispatcher);
+        var source = PluginListSource.Create(GameRelease.SkyrimSE, discovery.GameDirectory);
+        await pluginList.RefreshAsync(source, AdvancedMode.Off, TestContext.Current.CancellationToken);
+        var firstVersion = Assert.IsType<ConfirmedPluginList>(pluginList.Current.Confirmed).MembershipVersion;
+
+        await pluginList.RefreshAsync(source, AdvancedMode.Off, TestContext.Current.CancellationToken);
+
+        var second = Assert.IsType<ConfirmedPluginList>(pluginList.Current.Confirmed);
+        Assert.Empty(second.Entries);
+        Assert.NotEqual(firstVersion, second.MembershipVersion);
+        Assert.Equal(second.MembershipVersion, viewModel.ProjectedMembershipVersion);
+    }
+
+    /// <summary>
     ///     Verifies raw refresh counts map to legacy scanning wording and Ready clears transient progress.
     /// </summary>
     [Fact]
