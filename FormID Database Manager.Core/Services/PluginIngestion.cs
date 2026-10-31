@@ -65,6 +65,10 @@ internal sealed class PluginIngestion : IPluginIngestion
     ///     A selected Plugin declares a master the prepared read capability cannot resolve. The
     ///     selected set stops there because every remaining Plugin would fail the same way (ADR-0006).
     /// </exception>
+    /// <exception cref="UnrecognizedPluginReadFailureException">
+    ///     The Plugin reader could not classify a selected Plugin's read failure. The selected set stops there and the
+    ///     failure names that Plugin (ADR-0016).
+    /// </exception>
     public async Task<PluginIngestionReport> IngestAsync(
         PluginProcessingRunRequest request,
         IPluginFormIdRecordWriter recordStore,
@@ -146,6 +150,10 @@ internal sealed class PluginIngestion : IPluginIngestion
     /// <exception cref="UnresolvableMasterException">
     ///     A selected Plugin declares a master the prepared read capability cannot resolve. The
     ///     plan stops there because every remaining Plugin would fail the same way (ADR-0006).
+    /// </exception>
+    /// <exception cref="UnrecognizedPluginReadFailureException">
+    ///     The Plugin reader could not classify a selected Plugin's opening failure. The plan stops there and the
+    ///     failure names that Plugin (ADR-0016).
     /// </exception>
     public Task<PluginIngestionPlan> PlanAsync(
         PluginProcessingRunRequest request,
@@ -284,7 +292,8 @@ internal sealed class PluginIngestion : IPluginIngestion
         {
             // The Plugin reader has already given an opening failure its phase and unwrapped any nested cancellation,
             // and it raises an Unresolvable Master itself, which this catch deliberately lets through to fail the
-            // whole selection (ADR-0006, ADR-0015).
+            // whole selection (ADR-0006, ADR-0015). An unrecognized Plugin-read failure is let through the same way,
+            // since it is not a PluginReadException (ADR-0016).
             plugin = _pluginReader.Open(readyPlugin);
         }
         catch (PluginReadException ex)

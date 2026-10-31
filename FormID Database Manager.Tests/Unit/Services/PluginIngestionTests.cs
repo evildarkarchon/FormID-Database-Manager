@@ -530,6 +530,44 @@ public sealed class PluginIngestionTests : IDisposable
     }
 
     /// <summary>
+    ///     Verifies that an unrecognized Plugin-read failure raised while opening ends the Processing Run unchanged
+    ///     instead of becoming a Failed Plugin, so later selected Plugins are never opened and nothing is written.
+    /// </summary>
+    /// <remarks>
+    ///     ADR-0016 rule 7. Which Mutagen failures the reader reports this way is pinned in
+    ///     <see cref="MutagenPluginReaderTests" />; this pins only that Plugin Ingestion lets it through.
+    /// </remarks>
+    [Fact]
+    public async Task IngestAsync_UnrecognizedPluginReadFailureWhileOpening_FailsTheRunUnchangedWithoutAStoreWrite()
+    {
+        var gameDirectory = CreateGameDirectory();
+        await CreatePluginFileAsync(gameDirectory, "Broken.esp");
+        await CreatePluginFileAsync(gameDirectory, "Never.esp");
+        var storeEvents = new List<string>();
+        var failure = new UnrecognizedPluginReadFailureException(
+            "Broken.esp",
+            PluginReadPhase.OpeningPlugin,
+            new InvalidOperationException("Adapter state is broken."));
+        var pluginReader = new ScriptedPluginReader { OpeningFailures = { ["Broken.esp"] = failure } };
+        IPluginIngestion sut = new PluginIngestion(
+            new RecordingGameLoadOrders(["Broken.esp", "Never.esp"], []),
+            pluginReader);
+
+        var thrown = await Assert.ThrowsAsync<UnrecognizedPluginReadFailureException>(() => sut.IngestAsync(
+            new PluginProcessingRunRequest(
+                PluginListSource.Create(GameRelease.SkyrimSE, gameDirectory),
+                "ingestion.db",
+                ["Broken.esp", "Never.esp"],
+                UpdateMode.Append),
+            new RecordingPluginRecordWriter(storeEvents),
+            cancellationToken: TestContext.Current.CancellationToken));
+
+        Assert.Same(failure, thrown);
+        Assert.Equal(["Broken.esp"], pluginReader.OpenedPlugins);
+        Assert.Empty(storeEvents);
+    }
+
+    /// <summary>
     ///     Verifies that an unexpected record-enumerator failure remains an infrastructure failure and stops later
     ///     selected Plugins instead of becoming a Failed Plugin outcome.
     /// </summary>

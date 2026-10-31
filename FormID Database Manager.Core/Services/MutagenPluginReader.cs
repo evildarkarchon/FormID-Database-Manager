@@ -6,8 +6,9 @@ namespace FormID_Database_Manager.Services;
 
 /// <summary>
 ///     The production Plugin read adapter, and the one module that decides what every Mutagen failure means: a Failed
-///     Plugin while opening or enumerating, a Processing Warning or silent drop per record, or an Unresolvable Master
-///     that fails the Processing Run (ADR-0006, ADR-0015).
+///     Plugin while opening or enumerating, a Processing Warning or silent drop per record, an Unresolvable Master
+///     that fails the Processing Run, or, for an unrecognised opening failure, a run failure that names the Plugin
+///     (ADR-0006, ADR-0015, ADR-0016).
 /// </summary>
 /// <remarks>
 ///     The three classification rules keep their current, differing scopes. Opening walks the whole inner-exception
@@ -68,6 +69,13 @@ internal sealed class MutagenPluginReader : IPluginReader
     ///     Mutagen raises <see cref="MissingModException" /> (naming the master's file name) or
     ///     <see cref="MissingModMappingException" /> (naming no master); the Mutagen exception is the inner exception.
     /// </exception>
+    /// <exception cref="UnrecognizedPluginReadFailureException">
+    ///     Opening failed for any other reason; it names the selected Plugin, carries
+    ///     <see cref="PluginReadPhase.OpeningPlugin" />, and keeps the original exception as its inner exception.
+    /// </exception>
+    /// <exception cref="OperationCanceledException">
+    ///     The failure's chain contains cancellation, which is rethrown before any classification.
+    /// </exception>
     private IModDisposeGetter OpenOverlay(SelectedPluginReady readyPlugin)
     {
         ArgumentNullException.ThrowIfNull(readyPlugin);
@@ -99,7 +107,13 @@ internal sealed class MutagenPluginReader : IPluginReader
             // Classified after the Failed Plugin list, as Plugin Ingestion used to classify whatever escaped it, so a
             // master-resolution failure wrapping a listed cause still becomes the same Failed Plugin it did before.
             ThrowIfUnresolvableMaster(readyPlugin.PluginName, ex);
-            throw;
+
+            // Anything left is a failure the application does not recognise. It still fails the run, as it did when it
+            // propagated raw, but now names the Plugin so the user can deselect it (ADR-0016 rule 7).
+            throw new UnrecognizedPluginReadFailureException(
+                readyPlugin.PluginName,
+                PluginReadPhase.OpeningPlugin,
+                ex);
         }
     }
 
