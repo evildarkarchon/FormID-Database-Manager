@@ -141,104 +141,47 @@ public class UserWorkflowTests
     }
 
     /// <summary>
-    /// Verifies the Game Context sink adapter's state write: every field of a reported Game Context state reaches the
-    /// ViewModel's projection, and a later state that clears the selection replaces it whole (ADR-0013).
+    /// Verifies the Game Context sink wiring: a notice the composed Game Context reports reaches the ViewModel through
+    /// the sink adapter this workflow builds for it.
     /// </summary>
     /// <remarks>
-    /// When the Game Context reports a state is its own rule, pinned by <see cref="GameContextTests" />; what reaches
-    /// the ViewModel is this workflow's write. Advanced Mode is turned on first so all four projected fields differ from
-    /// the ViewModel's defaults.
+    /// Issue #120, under parent #118 (ADR-0014). What the adapter writes for each report is pinned by
+    /// <see cref="ViewModelGameContextSinkTests" />, so this checks only that the Game Context reports to it. The
+    /// expected text and list come from Game Context Presentation.
     /// </remarks>
     [Fact]
-    public async Task SelectGameReleaseAsync_ReportedGameContextState_ReachesTheViewModelProjection()
-    {
-        const string secondDirectory = @"D:\Games\Skyrim";
-        _gameInstallationProbe.WithInstalledDirectories(GameRelease.SkyrimSE, GameDirectory, secondDirectory);
-        var sut = CreateSut();
-        await sut.SetAdvancedModeAsync(AdvancedMode.On);
-
-        await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
-
-        Assert.Equal(GameRelease.SkyrimSE, _viewModel.SelectedGame);
-        Assert.Equal(GameDirectory, _viewModel.GameDirectory);
-        Assert.Equal([GameDirectory, secondDirectory], _viewModel.DetectedDirectories);
-        Assert.True(_viewModel.AdvancedMode);
-
-        await sut.SelectGameReleaseAsync(null);
-
-        Assert.Null(_viewModel.SelectedGame);
-        Assert.Empty(_viewModel.GameDirectory);
-        Assert.Empty(_viewModel.DetectedDirectories);
-        Assert.True(_viewModel.AdvancedMode);
-    }
-
-    /// <summary>
-    /// Verifies that a picker-failure notice reaches the list Game Context Presentation chooses, with the text it
-    /// renders.
-    /// </summary>
-    [Fact]
-    public async Task BrowseGameDirectoryAsync_PickerFailure_AddsTheRenderedNoticeToItsList()
+    public async Task BrowseGameDirectoryAsync_PickerFailure_ReachesTheViewModelThroughTheGameContextSink()
     {
         _fileDialogService.Setup(x => x.SelectGameDirectory())
             .ReturnsAsync(FileDialogResult.Failure("picker unavailable"));
+        var rendered = GameContextPresentation.Render(new GameDirectoryPickerFailed("picker unavailable"));
+        Assert.Equal(GameContextMessageList.Error, rendered.List);
         var sut = CreateSut();
-        var before = CaptureMessageLists();
 
         await sut.BrowseGameDirectoryAsync();
 
-        AssertNoticeAddedToItsList(new GameDirectoryPickerFailed("picker unavailable"), before);
+        Assert.Equal([rendered.Text], _viewModel.ErrorMessages);
     }
 
     /// <summary>
-    /// Verifies that a no-installed-locations notice reaches the list Game Context Presentation chooses, with the text
-    /// it renders.
+    /// Verifies the Processing Run Control sink wiring: the refusal the composed Processing Run Control reports for a
+    /// press reaches the ViewModel through the sink adapter this workflow builds for it.
     /// </summary>
+    /// <remarks>
+    /// Issue #120, under parent #118 (ADR-0014). What the adapter writes for each report is pinned by
+    /// <see cref="ViewModelProcessingRunControlSinkTests" />, and why the press is refused by
+    /// <see cref="ProcessingRunAdmissionTests" />. The expected text comes from Processing Run Presentation.
+    /// </remarks>
     [Fact]
-    public async Task SelectGameReleaseAsync_NoInstalledLocations_AddsTheRenderedNoticeToItsList()
+    public async Task ProcessFormIdsAsync_NoGameSelected_ReachesTheViewModelThroughTheRunSink()
     {
-        // No install records are declared for Fallout4, so the lookup answers with nothing recorded.
+        _viewModel.DatabasePath = DatabasePath;
         var sut = CreateSut();
-        var before = CaptureMessageLists();
 
-        await sut.SelectGameReleaseAsync(GameRelease.Fallout4);
+        await sut.ProcessFormIdsAsync();
 
-        AssertNoticeAddedToItsList(new NoInstalledLocationsFound(GameRelease.Fallout4), before);
-    }
-
-    /// <summary>
-    /// Verifies that a refused-directory notice reaches the list Game Context Presentation chooses, with the text it
-    /// renders.
-    /// </summary>
-    [Fact]
-    public async Task BrowseGameDirectoryAsync_DetectionCannotReadTheDirectory_AddsTheRenderedNoticeToItsList()
-    {
-        _gameInstallationProbe.BeforeProbe = _ => throw new IOException("drive not ready");
-        _fileDialogService.Setup(x => x.SelectGameDirectory())
-            .ReturnsAsync(FileDialogResult.Success(GameDirectory));
-        var sut = CreateSut();
-        var before = CaptureMessageLists();
-
-        await sut.BrowseGameDirectoryAsync();
-
-        AssertNoticeAddedToItsList(new DirectoryRefused("drive not ready"), before);
-    }
-
-    /// <summary>
-    /// Verifies that a no-game-detected notice reaches the list Game Context Presentation chooses, with the text it
-    /// renders.
-    /// </summary>
-    [Fact]
-    public async Task BrowseGameDirectoryAsync_NoDetectableGame_AddsTheRenderedNoticeToItsList()
-    {
-        // Nothing is declared under the browsed directory, so detection finds no known game master.
-        _fileDialogService.Setup(x => x.SelectGameDirectory())
-            .ReturnsAsync(FileDialogResult.Success(GameDirectory));
-        var sut = CreateSut();
-        var before = CaptureMessageLists();
-
-        await sut.BrowseGameDirectoryAsync();
-
-        AssertNoticeAddedToItsList(new NoGameDetected(), before);
+        Assert.Equal([ProcessingRunPresentation.Render(RunRejectionReason.NoGameSelected)], _viewModel.ErrorMessages);
+        Assert.Empty(_processingRuns);
     }
 
     [Fact]
@@ -254,33 +197,6 @@ public class UserWorkflowTests
 
         Assert.Equal(DatabasePath, _viewModel.DatabasePath);
         Assert.Contains("Error selecting database: picker unavailable", _viewModel.ErrorMessages);
-    }
-
-    /// <summary>
-    /// Verifies the sink adapter's list clear: a press that does not cancel empties the error and warning lists the user
-    /// was reading, and leaves the information messages in place.
-    /// </summary>
-    /// <remarks>
-    /// When a press reports the clear is Processing Run Control's rule, pinned by
-    /// <see cref="ProcessingRunControlTests" />; which lists the clear empties is this workflow's own write.
-    /// </remarks>
-    [Fact]
-    public async Task ProcessFormIdsAsync_AdmittedPress_ClearsStaleErrorsAndWarningsButKeepsInformation()
-    {
-        var sut = CreateSut();
-        await ConfigureValidPluginProcessingRunAsync(sut);
-        _viewModel.ErrorMessages.Add("Stale error");
-        _viewModel.WarningMessages.Add("Stale warning");
-        // Confirming the Plugin List left its own information message, which the clear must not take with it.
-        var informationBeforePress = _viewModel.InformationMessages.ToArray();
-        Assert.NotEmpty(informationBeforePress);
-
-        await sut.ProcessFormIdsAsync();
-
-        Assert.Single(_processingRuns);
-        Assert.Empty(_viewModel.ErrorMessages);
-        Assert.Empty(_viewModel.WarningMessages);
-        Assert.Equal(informationBeforePress, _viewModel.InformationMessages);
     }
 
     /// <summary>
@@ -376,30 +292,6 @@ public class UserWorkflowTests
         Assert.Equal(GameRelease.Fallout4, run.GameRelease);
         Assert.Equal("Fallout4.db", Path.GetFileName(run.DatabasePath));
         Assert.Equal(run.DatabasePath, viewModel.DatabasePath);
-    }
-
-    /// <summary>
-    /// Verifies that a real run with no chosen database path defaults one under the injected root, writes it back to
-    /// the database box, and creates nothing: the FormID Record Store creates the folder when the run opens it.
-    /// </summary>
-    [Fact]
-    public async Task ProcessFormIdsAsync_EmptyDatabasePath_DefaultsUnderInjectedRootWithoutCreatingIt()
-    {
-        var sut = CreateSut();
-        var confirmed = await ConfirmPluginListAsync(sut, ["User.esp"]);
-        sut.SetPluginSelection(confirmed.MembershipVersion, "User.esp", true);
-        _viewModel.DatabasePath = string.Empty;
-
-        await sut.ProcessFormIdsAsync();
-
-        var run = Assert.IsType<PluginProcessingRunRequest>(Assert.Single(_processingRuns));
-        Assert.Equal(
-            Path.Combine(_defaultDatabaseRoot, "FormID Database Manager", "Databases", "SkyrimSE.db"),
-            _viewModel.DatabasePath);
-        Assert.Equal(_viewModel.DatabasePath, run.DatabasePath);
-        Assert.Equal(["User.esp"], run.PluginNames);
-        Assert.False(Directory.Exists(_defaultDatabaseRoot),
-            $"Defaulting a database path must not create the root: {_defaultDatabaseRoot}");
     }
 
     /// <summary>
@@ -688,50 +580,6 @@ public class UserWorkflowTests
         Assert.Equal(run.DatabasePath, _viewModel.DatabasePath);
     }
 
-    /// <summary>
-    /// Verifies that a default chosen for the admitted run does not overwrite a database-path edit made during a
-    /// startup notification, while the run itself still uses the default.
-    /// </summary>
-    [Fact]
-    public async Task ProcessFormIdsAsync_StartingStatusEditsEmptyDatabasePath_PreservesEdit()
-    {
-        var sut = CreateSut();
-        var confirmed = await ConfirmPluginListAsync(sut, ["User.esp"]);
-        sut.SetPluginSelection(confirmed.MembershipVersion, "User.esp", true);
-        OnRunStatus(StartingStatus(), () => _viewModel.DatabasePath = DatabasePath);
-
-        await sut.ProcessFormIdsAsync();
-
-        Assert.Equal(DatabasePath, _viewModel.DatabasePath);
-        Assert.Equal("SkyrimSE.db", Path.GetFileName(Assert.Single(_processingRuns).DatabasePath));
-    }
-
-    /// <summary>
-    /// Verifies the sink adapter's guard on the defaulted path: an edit made from the list-clear notification, the first
-    /// report an admitted press makes, survives the default being reported, while the run itself still uses the
-    /// default.
-    /// </summary>
-    /// <remarks>
-    /// Issue #105, under parent #102. Processing Run Control reports the defaulted path together with the captured one;
-    /// writing it back only while the box still holds the capture is the User Workflow's own rule.
-    /// </remarks>
-    [Fact]
-    public async Task ProcessFormIdsAsync_DatabasePathEditedDuringTheListClear_KeepsTheEditOverTheDefault()
-    {
-        var sut = CreateSut();
-        var confirmed = await ConfirmPluginListAsync(sut, ["User.esp"]);
-        sut.SetPluginSelection(confirmed.MembershipVersion, "User.esp", true);
-        _viewModel.DatabasePath = string.Empty;
-        _viewModel.WarningMessages.CollectionChanged += (_, _) => _viewModel.DatabasePath = DatabasePath;
-
-        await sut.ProcessFormIdsAsync();
-
-        Assert.Equal(DatabasePath, _viewModel.DatabasePath);
-        Assert.Equal(
-            Path.Combine(_defaultDatabaseRoot, "FormID Database Manager", "Databases", "SkyrimSE.db"),
-            Assert.Single(_processingRuns).DatabasePath);
-    }
-
     [Fact]
     public async Task ProcessFormIdsAsync_UpdateModeOn_CreatesReplaceModeRunRequest()
     {
@@ -775,76 +623,6 @@ public class UserWorkflowTests
         await sut.ProcessFormIdsAsync();
 
         Assert.True(Assert.IsType<FormIdTextProcessingRunRequest>(Assert.Single(_processingRuns)).DryRun);
-    }
-
-    /// <summary>
-    ///     Verifies the workflow writes a dry run's plan to the information messages the user reads.
-    /// </summary>
-    [Fact]
-    public async Task ProcessFormIdsAsync_DryRunOutcome_AddsTheRenderedPlanToTheInformationMessages()
-    {
-        var sut = CreateSut();
-        await ConfigureValidPluginProcessingRunAsync(sut);
-        _viewModel.DryRun = true;
-        _processingRunExecutor.Outcome = new PlannedRunOutcome(new PluginRunPlan(new PluginIngestionPlan(
-            new PluginProcessingRunRequest(
-                PluginListSource.Create(GameRelease.SkyrimSE, @"C:\Games\Skyrim"),
-                string.Empty,
-                ["User.esp", "Absent.esp"], UpdateMode.Append, dryRun: true),
-            [
-            new PlannedPluginIngestion("User.esp"),
-            new PlannedPluginSkip("Absent.esp", PlannedSkipReason.NotPresentInLoadOrder)
-        ])));
-
-        await sut.ProcessFormIdsAsync();
-
-        var rendered = ProcessingRunPresentation.Render(_processingRunExecutor.Outcome);
-        Assert.NotEmpty(rendered.InformationMessages);
-        // The last messages rather than the whole list: confirming a Plugin List already reported what it loaded, and a
-        // run does not clear the information list the way it clears warnings and errors.
-        Assert.Equal(
-            rendered.InformationMessages.ToArray(),
-            _viewModel.InformationMessages.TakeLast(rendered.InformationMessages.Length).ToArray());
-        Assert.Empty(_viewModel.WarningMessages);
-        Assert.Empty(_viewModel.ErrorMessages);
-    }
-
-    /// <summary>
-    ///     Verifies where each part of a rendered run report lands when one run produced both: the warning message in
-    ///     the warning list, the failure message in the error list, and the completion status only on the transient
-    ///     progress channel.
-    /// </summary>
-    /// <remarks>
-    ///     One run that produced both parts shows the routing that a single-part run cannot. Routing is the sink
-    ///     adapter's responsibility — the wording of all three parts is pinned by
-    ///     <see cref="ProcessingRunPresentationTests" />, and the order they are reported in by
-    ///     <see cref="ProcessingRunControlTests" /> — so what is asserted here is which list each part reached, and
-    ///     that the completion status reached none of them.
-    /// </remarks>
-    [Fact]
-    public async Task ProcessFormIdsAsync_RunOutcomeWithWarningsAndFailures_RoutesEachRenderedPartToItsOwnList()
-    {
-        var sut = CreateSut();
-        await ConfigureValidPluginProcessingRunAsync(sut);
-        _processingRunExecutor.Outcome = CreatePluginRunOutcome(
-            new IngestedPlugin("User.esp", 1, new ProcessingWarning(1, ["Recoverable issue"])),
-            new FailedPlugin(
-                "Bad.esp",
-                new PluginReadDiagnostic(PluginReadPhase.OpeningPlugin, "Invalid plugin header.")));
-        var rendered = ProcessingRunPresentation.Render(_processingRunExecutor.Outcome);
-        Assert.NotEmpty(rendered.WarningMessages);
-        Assert.NotEmpty(rendered.ErrorMessages);
-        Assert.True(rendered.Activity.IsActive);
-        // Recorded after the setup that confirmed the Plugin List, so the sequence below is the run's alone.
-        var projectedStatuses = RecordProjectedStatuses();
-        var informationBeforePress = _viewModel.InformationMessages.ToArray();
-
-        await sut.ProcessFormIdsAsync();
-
-        Assert.Equal(rendered.WarningMessages.ToArray(), _viewModel.WarningMessages);
-        Assert.Equal(rendered.ErrorMessages.ToArray(), _viewModel.ErrorMessages);
-        Assert.Equal(informationBeforePress, _viewModel.InformationMessages);
-        Assert.Equal([StartingStatus(), rendered.Activity.Status, string.Empty], projectedStatuses);
     }
 
     /// <summary>
@@ -1250,38 +1028,6 @@ public class UserWorkflowTests
     }
 
     /// <summary>
-    /// Copies the ViewModel's error and information lists, so a test can tell what one intent added to each.
-    /// </summary>
-    /// <returns>The two lists as they are now.</returns>
-    private (string[] Errors, string[] Information) CaptureMessageLists()
-    {
-        return (_viewModel.ErrorMessages.ToArray(), _viewModel.InformationMessages.ToArray());
-    }
-
-    /// <summary>
-    /// Asserts that exactly one message was added since <paramref name="before" />: the text Game Context Presentation
-    /// renders for <paramref name="notice" />, in the list Presentation chose, with the other list left alone.
-    /// </summary>
-    /// <param name="notice">The notice the Game Context is expected to have reported.</param>
-    /// <param name="before">The lists captured before the intent.</param>
-    /// <remarks>The expected text and list come from Presentation, so no sentence is restated here.</remarks>
-    private void AssertNoticeAddedToItsList(
-        GameContextNotice notice,
-        (string[] Errors, string[] Information) before)
-    {
-        var rendered = GameContextPresentation.Render(notice);
-        string[] expectedErrors = rendered.List == GameContextMessageList.Error
-            ? [.. before.Errors, rendered.Text]
-            : before.Errors;
-        string[] expectedInformation = rendered.List == GameContextMessageList.Information
-            ? [.. before.Information, rendered.Text]
-            : before.Information;
-
-        Assert.Equal(expectedErrors, _viewModel.ErrorMessages);
-        Assert.Equal(expectedInformation, _viewModel.InformationMessages);
-    }
-
-    /// <summary>
     /// Holds one GameRelease's installed-location lookup open, so a test can act while it is still in flight.
     /// </summary>
     /// <param name="release">The GameRelease whose lookup is gated; every other release answers immediately.</param>
@@ -1328,26 +1074,6 @@ public class UserWorkflowTests
         await sut.SelectGameReleaseAsync(GameRelease.SkyrimSE);
 
         return Assert.IsType<ConfirmedPluginList>(_pluginList.Current.Confirmed);
-    }
-
-    /// <summary>
-    ///     Builds a selected-Plugin outcome whose report agrees with the outcomes it is given.
-    /// </summary>
-    /// <param name="outcomes">One outcome per selected Plugin, in selection order.</param>
-    /// <returns>A completed selected-Plugin outcome carrying that report.</returns>
-    /// <remarks>
-    ///     The ingestion request is rebuilt here rather than taken from the run, because a report validates its
-    ///     outcomes against the selection they came from and the recording executor never builds one of its own.
-    /// </remarks>
-    private static PluginRunOutcome CreatePluginRunOutcome(params PluginIngestionOutcome[] outcomes)
-    {
-        var request = new PluginProcessingRunRequest(
-            PluginListSource.Create(GameRelease.SkyrimSE, GameDirectory),
-            "ingestion.db",
-            outcomes.Select(static outcome => outcome.PluginName),
-            UpdateMode.Append);
-
-        return new PluginRunOutcome(new PluginIngestionReport(request, outcomes));
     }
 
     /// <summary>

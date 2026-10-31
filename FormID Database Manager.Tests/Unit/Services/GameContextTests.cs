@@ -26,8 +26,9 @@ namespace FormID_Database_Manager.Tests.Unit.Services;
 /// </para>
 /// <para>
 /// No ViewModel is involved either: the Game Context reports to a sink, and what the User Workflow's adapter writes
-/// from those reports is covered by <see cref="UserWorkflowTests" /> (ADR-0013). Notices are compared as value records,
-/// so no sentence is restated here; the wording is pinned by <see cref="GameContextPresentationTests" />.
+/// from those reports is covered by <see cref="ViewModelGameContextSinkTests" /> (ADR-0013, ADR-0014). Notices are
+/// compared as value records, so no sentence is restated here; the wording is pinned by
+/// <see cref="GameContextPresentationTests" />.
 /// </para>
 /// </remarks>
 public sealed class GameContextTests : IDisposable
