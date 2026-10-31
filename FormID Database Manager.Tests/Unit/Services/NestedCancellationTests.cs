@@ -11,8 +11,7 @@ namespace FormID_Database_Manager.Tests.Unit.Services;
 /// <summary>
 ///     Tests the one nested-cancellation unwrap that <c>MutagenPluginReader</c> and Entry Extraction share. Each phase
 ///     that uses it — opening, enumerating, and per record — is covered through the adapter's opening delegate in
-///     <c>MutagenPluginReaderTests</c>; enumeration and per-record cancellation are also covered end to end by
-///     <c>PluginIngestionTests</c> and <c>EntryExtractionTests</c>.
+///     <c>MutagenPluginReaderTests</c>; per-record cancellation is also covered by <c>EntryExtractionTests</c>.
 /// </summary>
 public sealed class NestedCancellationTests
 {

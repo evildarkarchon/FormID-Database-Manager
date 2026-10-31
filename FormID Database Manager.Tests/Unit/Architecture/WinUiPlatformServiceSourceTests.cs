@@ -112,7 +112,6 @@ public class WinUiPlatformServiceSourceTests
     [InlineData("GameContext")]
     [InlineData("GameInstallationProbe")]
     [InlineData("FormIdRecordStoreSessionOpener")]
-    [InlineData("MutagenPluginOverlayReader")]
     [InlineData("MutagenPluginReader")]
     public void WinUiMainWindow_Composition_ReferencesNoCoreCollaborator(string coreTypeName)
     {

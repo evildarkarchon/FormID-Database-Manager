@@ -1,49 +1,49 @@
-using Mutagen.Bethesda.Plugins.Records;
-
 namespace FormID_Database_Manager.Services;
 
 /// <summary>
 ///     Owns ordered Plugin Ingestion for one complete captured selection.
 /// </summary>
+/// <remarks>
+///     Plugins are read only through <see cref="IPluginReader" />, which keeps Mutagen's record types, its exceptions,
+///     and the Unresolvable Master classification behind it, so this module names no Mutagen type (ADR-0015).
+/// </remarks>
 internal sealed class PluginIngestion : IPluginIngestion
 {
-    private readonly EntryExtraction _entryExtraction;
     private readonly IGameLoadOrders _gameLoadOrders;
-    private readonly IPluginOverlayReader _overlayReader;
+    private readonly IPluginReader _pluginReader;
 
     /// <summary>
-    ///     Creates production Plugin Ingestion with its Mutagen-backed load-order and overlay adapters.
+    ///     Creates production Plugin Ingestion with its Mutagen-backed Game Load Orders and Plugin reader.
     /// </summary>
     internal PluginIngestion()
-        : this(new GameLoadOrders(), new MutagenPluginOverlayReader(), new EntryExtraction())
+        : this(new GameLoadOrders(), new MutagenPluginReader())
     {
     }
 
     /// <summary>
-    ///     Creates Plugin Ingestion with a supplied load-order boundary and production overlay behavior.
+    ///     Creates Plugin Ingestion with a supplied load-order boundary and the production Plugin reader.
     /// </summary>
     /// <param name="gameLoadOrders">Game Load Orders used once to prepare the complete captured selection.</param>
+    /// <remarks>
+    ///     Production Game Load Orders and the production Plugin reader are a matched pair through the opaque read
+    ///     capability, so a capability prepared by any other Game Load Orders is rejected before a Plugin is opened.
+    /// </remarks>
     /// <exception cref="ArgumentNullException"><paramref name="gameLoadOrders" /> is null.</exception>
     internal PluginIngestion(IGameLoadOrders gameLoadOrders)
-        : this(gameLoadOrders, new MutagenPluginOverlayReader(), new EntryExtraction())
+        : this(gameLoadOrders, new MutagenPluginReader())
     {
     }
 
     /// <summary>
-    ///     Creates aggregate Plugin Ingestion from its load-order, overlay, and Entry Extraction adapters.
+    ///     Creates aggregate Plugin Ingestion from Game Load Orders and the Plugin reader.
     /// </summary>
     /// <param name="gameLoadOrders">Game Load Orders used once to prepare the complete captured selection.</param>
-    /// <param name="overlayReader">The Plugin overlay adapter used sequentially for available selections.</param>
-    /// <param name="entryExtraction">The Entry Extraction module used while the Store enumerates records.</param>
-    /// <exception cref="ArgumentNullException">Any adapter is null.</exception>
-    internal PluginIngestion(
-        IGameLoadOrders gameLoadOrders,
-        IPluginOverlayReader overlayReader,
-        EntryExtraction entryExtraction)
+    /// <param name="pluginReader">The Plugin read seam used sequentially for available selections.</param>
+    /// <exception cref="ArgumentNullException">Either dependency is null.</exception>
+    internal PluginIngestion(IGameLoadOrders gameLoadOrders, IPluginReader pluginReader)
     {
         _gameLoadOrders = gameLoadOrders ?? throw new ArgumentNullException(nameof(gameLoadOrders));
-        _overlayReader = overlayReader ?? throw new ArgumentNullException(nameof(overlayReader));
-        _entryExtraction = entryExtraction ?? throw new ArgumentNullException(nameof(entryExtraction));
+        _pluginReader = pluginReader ?? throw new ArgumentNullException(nameof(pluginReader));
     }
 
     /// <summary>
@@ -123,18 +123,18 @@ internal sealed class PluginIngestion : IPluginIngestion
     }
 
     /// <summary>
-    ///     Prepares one selected-Plugin case per selection and opens every ready Plugin's overlay, without a Store
-    ///     session and without enumerating a single record, returning what each selection would contribute to a run.
+    ///     Prepares one selected-Plugin case per selection and opens every ready Plugin, without a Store session and
+    ///     without reading a single record, returning what each selection would contribute to a run.
     /// </summary>
     /// <param name="request">The immutable selected-Plugin request.</param>
     /// <param name="cancellationToken">Stops planning without returning a plan.</param>
     /// <returns>One planned outcome per selected Plugin, in selection order.</returns>
     /// <remarks>
     ///     <para>
-    ///         Planning shares the classification and overlay-opening steps of a real run so the two cannot drift, and
-    ///         stops exactly where record enumeration would begin. Every overlay it opens is released as soon as it has
+    ///         Planning shares the classification and Plugin-opening steps of a real run so the two cannot drift, and
+    ///         stops exactly where record reading would begin. Every Plugin it opens is released as soon as it has
     ///         opened, because opening is the only question a plan asks of one — including when a later Plugin fails the
-    ///         plan, since no overlay outlives the Plugin it was opened for.
+    ///         plan, since nothing opened outlives the Plugin it was opened for.
     ///     </para>
     ///     <para>
     ///         The method is deliberately synchronous inside: it does no I/O that has an asynchronous form, and its
@@ -178,10 +178,10 @@ internal sealed class PluginIngestion : IPluginIngestion
     }
 
     /// <summary>
-    ///     Classifies one selected Plugin for a plan, opening its overlay only when nothing cheaper rules it out.
+    ///     Classifies one selected Plugin for a plan, opening it only when nothing cheaper rules it out.
     /// </summary>
     /// <param name="preparedPlugin">The immutable selected-Plugin preparation case.</param>
-    /// <param name="cancellationToken">Preserves cancellation that races with immediate overlay cleanup.</param>
+    /// <param name="cancellationToken">Preserves cancellation that races with immediate cleanup of the opened Plugin.</param>
     /// <returns>What this Plugin would contribute to a run.</returns>
     /// <exception cref="UnresolvableMasterException">
     ///     The Plugin declares a master the prepared capability cannot resolve, which fails the plan
@@ -197,10 +197,10 @@ internal sealed class PluginIngestion : IPluginIngestion
         }
 
         var readyPlugin = (SelectedPluginReady)preparedPlugin;
-        IModDisposeGetter plugin;
+        IOpenedPlugin plugin;
         try
         {
-            plugin = TryCreateOverlay(readyPlugin);
+            plugin = _pluginReader.Open(readyPlugin);
         }
         catch (PluginReadException ex)
         {
@@ -211,7 +211,7 @@ internal sealed class PluginIngestion : IPluginIngestion
                 new PluginReadDiagnostic(ex.Phase, ex.DiagnosticMessage));
         }
 
-        // Nothing runs between opening and releasing the overlay, because opening it was the entire question.
+        // Nothing runs between opening and releasing the Plugin, because opening it was the entire question.
         try
         {
             plugin.Dispose();
@@ -253,23 +253,24 @@ internal sealed class PluginIngestion : IPluginIngestion
     }
 
     /// <summary>
-    ///     Opens, extracts, and stores one Plugin whose load-order membership and file availability were already verified.
+    ///     Opens, reads, and stores one Plugin whose load-order membership and file availability were already verified.
     /// </summary>
-    /// <param name="readyPlugin">The prepared selected Plugin passed intact to the overlay seam.</param>
+    /// <param name="readyPlugin">The prepared selected Plugin passed intact to the Plugin read seam.</param>
     /// <param name="updateMode">The Store update behavior.</param>
     /// <param name="recordStore">The borrowed Plugin-write Store role.</param>
-    /// <param name="cancellationToken">Stops overlay enumeration or the Store write.</param>
+    /// <param name="cancellationToken">Stops record reading or the Store write.</param>
     /// <returns>Facts describing the one selected Plugin attempt.</returns>
     /// <remarks>
-    ///     The overlay is always disposed. A standalone disposal failure propagates, while cleanup is best-effort when a
-    ///     cancellation or infrastructure exception is already in flight so the primary exception retains its identity.
+    ///     The opened Plugin is always disposed. A standalone disposal failure propagates, while cleanup is best-effort
+    ///     when a cancellation or infrastructure exception is already in flight so the primary exception retains its
+    ///     identity.
     /// </remarks>
     /// <exception cref="OperationCanceledException"><paramref name="cancellationToken" /> requests cancellation.</exception>
     /// <exception cref="UnresolvableMasterException">
     ///     The Plugin declares a master the prepared capability cannot resolve, which fails the run
     ///     rather than this Plugin.
     /// </exception>
-    /// <exception cref="Exception">An unexpected infrastructure or standalone overlay-cleanup failure occurs.</exception>
+    /// <exception cref="Exception">An unexpected infrastructure or standalone Plugin-cleanup failure occurs.</exception>
     private async Task<PluginIngestionOutcome> IngestAvailablePluginAsync(
         SelectedPluginReady readyPlugin,
         UpdateMode updateMode,
@@ -278,10 +279,13 @@ internal sealed class PluginIngestion : IPluginIngestion
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        IModDisposeGetter plugin;
+        IOpenedPlugin plugin;
         try
         {
-            plugin = TryCreateOverlay(readyPlugin);
+            // The Plugin reader has already given an opening failure its phase and unwrapped any nested cancellation,
+            // and it raises an Unresolvable Master itself, which this catch deliberately lets through to fail the
+            // whole selection (ADR-0006, ADR-0015).
+            plugin = _pluginReader.Open(readyPlugin);
         }
         catch (PluginReadException ex)
         {
@@ -293,7 +297,7 @@ internal sealed class PluginIngestion : IPluginIngestion
         try
         {
             var warningCollector = new RecordWarningCollector();
-            var records = EnumeratePluginRecords(plugin, warningCollector, cancellationToken);
+            var records = plugin.ReadRecords(warningCollector.Add, cancellationToken);
 
             try
             {
@@ -358,7 +362,7 @@ internal sealed class PluginIngestion : IPluginIngestion
     }
 
     /// <summary>
-    ///     Classifies a prepared selection that cannot reach overlay reading.
+    ///     Classifies a prepared selection that cannot reach the Plugin reader.
     /// </summary>
     /// <param name="preparedPlugin">The immutable selected-Plugin preparation case.</param>
     /// <returns>The complete typed skip fact, or <see langword="null" /> when the Plugin can be read.</returns>
@@ -379,46 +383,6 @@ internal sealed class PluginIngestion : IPluginIngestion
                 preparedPlugin,
                 "Unsupported prepared selected-Plugin case.")
         };
-    }
-
-    /// <summary>
-    ///     Lazily extracts storable records while retaining recoverable warning facts.
-    /// </summary>
-    /// <param name="plugin">The opened Plugin overlay.</param>
-    /// <param name="warningCollector">The bounded recoverable-diagnostic collector.</param>
-    /// <param name="cancellationToken">Stops record extraction.</param>
-    /// <returns>The lazy sequence consumed inside the Store's atomic Plugin write.</returns>
-    /// <remarks>
-    ///     The enumeration and per-record classification rules live in <see cref="MutagenPluginReader" />, so they exist
-    ///     in one place while this module still opens Plugins through the overlay seam (ADR-0015).
-    /// </remarks>
-    private IEnumerable<FormIdRecord> EnumeratePluginRecords(
-        IModGetter plugin,
-        RecordWarningCollector warningCollector,
-        CancellationToken cancellationToken)
-    {
-        return MutagenPluginReader.ReadRecords(plugin, _entryExtraction, warningCollector.Add, cancellationToken);
-    }
-
-    /// <summary>
-    ///     Opens an overlay, letting the adapter's opening-phase Plugin-read failure through unchanged.
-    /// </summary>
-    /// <param name="readyPlugin">The selected Plugin and opaque capability prepared by Game Load Orders.</param>
-    /// <returns>The disposable Plugin overlay.</returns>
-    /// <remarks>
-    ///     The overlay adapter classifies master-resolution failures itself, beside its Failed Plugin list, so an
-    ///     <see cref="UnresolvableMasterException" /> passes through here untouched and fails the whole selection
-    ///     (ADR-0006, ADR-0015).
-    /// </remarks>
-    /// <exception cref="PluginReadException">The overlay adapter reports an expected Plugin-specific failure.</exception>
-    /// <exception cref="UnresolvableMasterException">
-    ///     The Plugin declares a master the prepared capability cannot resolve.
-    /// </exception>
-    private IModDisposeGetter TryCreateOverlay(SelectedPluginReady readyPlugin)
-    {
-        // A PluginReadException already carries the opening phase and has had nested cancellation unwrapped by
-        // the adapter, so it passes through to the callers' Failed Plugin catches without a second wrap.
-        return _overlayReader.ReadOverlay(readyPlugin);
     }
 
     private sealed class RecordWarningCollector

@@ -84,3 +84,7 @@ unchanged.
   aspect is the optional one, so an `Npc` with no name still reaches the fallback and still reads `[Npc_000802]`.
 - The characterization assertion #49 left behind is now an assertion of intended behaviour. Its in-memory counterpart
   in `PluginIngestionTests` asserts the same literal, so the two together pin parity rather than either half alone.
+
+  > Note (2026-10-31): Under ADR-0015, Entry Extraction sits behind the Plugin read seam and Plugin Ingestion no longer
+  > sees records, so the in-memory half now lives in
+  > `EntryExtractionTests.TryExtract_RecordWithNeitherAnEditorIdNorAName_NamesTheMutagenRecordType`.

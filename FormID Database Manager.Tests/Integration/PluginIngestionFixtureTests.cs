@@ -16,7 +16,7 @@ namespace FormID_Database_Manager.Tests.Integration;
 
 /// <summary>
 ///     Covers Plugin Ingestion end to end for one release of each game family, over a Plugin generated at test time
-///     and read through the production overlay adapter and the production Entry Extraction module.
+///     and read through the production Plugin reader, which applies the production Entry Extraction module.
 /// </summary>
 /// <remarks>
 ///     <para>

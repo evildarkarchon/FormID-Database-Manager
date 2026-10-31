@@ -21,10 +21,16 @@ using Xunit;
 namespace FormID_Database_Manager.Tests.Unit.Services;
 
 /// <summary>
-///     Covers the happy path of the production Mutagen overlay adapter for every row of the Supported GameRelease
-///     table, using a Plugin generated at test time for that row's release.
+///     Covers the happy path of the production Plugin reader's overlay construction for every row of the Supported
+///     GameRelease table, using a Plugin generated at test time for that row's release.
 /// </summary>
 /// <remarks>
+///     <para>
+///         Since ADR-0015 the overlay no longer crosses the Plugin read seam, so the per-row wiring tests observe it
+///         through the reader's one test seam: the opening delegate calls the row's real overlay factory, exactly as the
+///         production default does, and hands back the overlay it built. Everything else here opens through the
+///         production reader unchanged.
+///     </para>
 ///     <para>
 ///         Overlay construction is a column of the constant table — ten rows, ten factories — and until these tests
 ///         existed the only thing asserted about those factories was that they were not null. A row wired to the wrong
@@ -46,7 +52,7 @@ namespace FormID_Database_Manager.Tests.Unit.Services;
 /// </remarks>
 public sealed class PluginOverlayConstructionTests : IDisposable
 {
-    private readonly IPluginOverlayReader _reader = new MutagenPluginOverlayReader();
+    private readonly IPluginReader _reader = new MutagenPluginReader();
     private readonly string _testDirectory;
 
     public PluginOverlayConstructionTests()
@@ -107,11 +113,11 @@ public sealed class PluginOverlayConstructionTests : IDisposable
     /// </summary>
     [Theory]
     [MemberData(nameof(SupportedReleases))]
-    public void ReadOverlay_GeneratedPluginForEachRow_ReportsThatRowsGameRelease(GameRelease release)
+    public void Open_GeneratedPluginForEachRow_ReportsThatRowsGameRelease(GameRelease release)
     {
         var readyPlugin = CreateProductionReadyPlugin(release, "Wiring.esp");
 
-        using var overlay = _reader.ReadOverlay(readyPlugin);
+        using var opened = OpenCapturingOverlay(readyPlugin, out var overlay);
 
         Assert.Equal(release, overlay.GameRelease);
     }
@@ -122,13 +128,13 @@ public sealed class PluginOverlayConstructionTests : IDisposable
     /// </summary>
     [Theory]
     [MemberData(nameof(ExpectedOverlayFamilies))]
-    public void ReadOverlay_GeneratedPluginForEachRow_ReturnsThatRowsOverlayFamily(
+    public void Open_GeneratedPluginForEachRow_ReturnsThatRowsOverlayFamily(
         GameRelease release,
         Type expectedFamily)
     {
         var readyPlugin = CreateProductionReadyPlugin(release, "Family.esp");
 
-        using var overlay = _reader.ReadOverlay(readyPlugin);
+        using var opened = OpenCapturingOverlay(readyPlugin, out var overlay);
 
         Assert.True(
             expectedFamily.IsInstanceOfType(overlay),
@@ -142,11 +148,11 @@ public sealed class PluginOverlayConstructionTests : IDisposable
     /// </summary>
     [Theory]
     [MemberData(nameof(SupportedReleases))]
-    public void ReadOverlay_ProductionReadyPluginForEachRow_ReportsCapabilitiesGameRelease(GameRelease release)
+    public void Open_ProductionReadyPluginForEachRow_ReportsCapabilitiesGameRelease(GameRelease release)
     {
         var readyPlugin = CreateProductionReadyPlugin(release, "Capability.esp");
 
-        using var overlay = _reader.ReadOverlay(readyPlugin);
+        using var opened = OpenCapturingOverlay(readyPlugin, out var overlay);
 
         Assert.Equal(release, overlay.GameRelease);
     }
@@ -156,7 +162,7 @@ public sealed class PluginOverlayConstructionTests : IDisposable
     ///     reach Mutagen or the filesystem.
     /// </summary>
     [Fact]
-    public void ReadOverlay_InMemoryReadyPlugin_RejectsCapabilityBeforeOverlayConstruction()
+    public void Open_InMemoryReadyPlugin_RejectsCapabilityBeforeOverlayConstruction()
     {
         const string pluginName = "InMemoryOnly.esp";
         var environment = new InMemoryGameLoadOrderEnvironment()
@@ -170,7 +176,7 @@ public sealed class PluginOverlayConstructionTests : IDisposable
                 TestContext.Current.CancellationToken));
         var readyPlugin = Assert.IsType<SelectedPluginReady>(preparedPlugin);
 
-        var exception = Assert.Throws<InvalidOperationException>(() => _reader.ReadOverlay(readyPlugin));
+        var exception = Assert.Throws<InvalidOperationException>(() => _reader.Open(readyPlugin));
 
         Assert.Equal("The Plugin-read capability belongs to a different adapter.", exception.Message);
         Assert.False(File.Exists(readyPlugin.ResolvedPluginPath));
@@ -181,7 +187,7 @@ public sealed class PluginOverlayConstructionTests : IDisposable
     ///     bytes rather than treating the opaque state as a new failure boundary.
     /// </summary>
     [Fact]
-    public void ReadOverlay_ProductionReadyPluginWithMalformedBytes_ThrowsPluginReadFailure()
+    public void Open_ProductionReadyPluginWithMalformedBytes_ThrowsPluginReadFailure()
     {
         const string pluginName = "CapabilityMalformed.esp";
         var pluginPath = Path.Combine(_testDirectory, pluginName);
@@ -189,7 +195,7 @@ public sealed class PluginOverlayConstructionTests : IDisposable
         var capability = new GameLoadOrderEnvironment().PreparePluginReads(GameRelease.SkyrimSE, []);
         var readyPlugin = new SelectedPluginReady(pluginName, pluginPath, capability);
 
-        var exception = Assert.Throws<PluginReadException>(() => _reader.ReadOverlay(readyPlugin));
+        var exception = Assert.Throws<PluginReadException>(() => _reader.Open(readyPlugin));
 
         Assert.Equal(PluginReadPhase.OpeningPlugin, exception.Phase);
         Assert.IsType<MalformedDataException>(exception.InnerException);
@@ -200,14 +206,14 @@ public sealed class PluginOverlayConstructionTests : IDisposable
     ///     Master naming the declared master, classified by the adapter itself rather than as a Plugin-read failure.
     /// </summary>
     [Fact]
-    public void ReadOverlay_ProductionReadyPluginWithUnresolvableMaster_ThrowsUnresolvableMasterNamingIt()
+    public void Open_ProductionReadyPluginWithUnresolvableMaster_ThrowsUnresolvableMasterNamingIt()
     {
         const string pluginName = "CapabilityMissingMaster.esp";
         var pluginPath = PluginFixture.Write(GameRelease.Starfield, _testDirectory, pluginName);
         var capability = new GameLoadOrderEnvironment().PreparePluginReads(GameRelease.Starfield, []);
         var readyPlugin = new SelectedPluginReady(pluginName, pluginPath, capability);
 
-        var exception = Record.Exception(() => _reader.ReadOverlay(readyPlugin));
+        var exception = Record.Exception(() => _reader.Open(readyPlugin));
 
         Assert.IsNotType<PluginReadException>(exception);
         var unresolvableMaster = Assert.IsType<UnresolvableMasterException>(exception);
@@ -306,7 +312,7 @@ public sealed class PluginOverlayConstructionTests : IDisposable
     ///     Widening the Failed Plugin list to swallow this would have to be a deliberate edit here.
     /// </remarks>
     [Fact]
-    public void ReadOverlay_MasterFlagsLookupMissingEntirely_ThrowsUnresolvableMasterWithoutNamingAMaster()
+    public void Open_MasterFlagsLookupMissingEntirely_ThrowsUnresolvableMasterWithoutNamingAMaster()
     {
         const string pluginName = "NoLookup.esp";
         var pluginPath = PluginFixture.Write(GameRelease.Starfield, _testDirectory, pluginName);
@@ -314,7 +320,7 @@ public sealed class PluginOverlayConstructionTests : IDisposable
             new MutagenPluginReadCapabilityPayload(GameRelease.Starfield, BinaryReadParameters.Default));
         var readyPlugin = new SelectedPluginReady(pluginName, pluginPath, capability);
 
-        var exception = Record.Exception(() => _reader.ReadOverlay(readyPlugin));
+        var exception = Record.Exception(() => _reader.Open(readyPlugin));
 
         // The "not a Failed Plugin" assertion comes first and names the actual regression; the inner-exception
         // assertion below is what identifies which Mutagen failure this case reached.
@@ -340,7 +346,7 @@ public sealed class PluginOverlayConstructionTests : IDisposable
     ///     would report a Data-directory problem as a Failed Plugin, and would have to be a deliberate edit here.
     /// </remarks>
     [Fact]
-    public void ReadOverlay_MasterFlagsLookupWithoutTheDeclaredMaster_ThrowsUnresolvableMasterNamingIt()
+    public void Open_MasterFlagsLookupWithoutTheDeclaredMaster_ThrowsUnresolvableMasterNamingIt()
     {
         const string pluginName = "WrongLookup.esp";
         var pluginPath = PluginFixture.Write(GameRelease.Starfield, _testDirectory, pluginName);
@@ -353,7 +359,7 @@ public sealed class PluginOverlayConstructionTests : IDisposable
             new MutagenPluginReadCapabilityPayload(GameRelease.Starfield, lookupMissingTheMaster));
         var readyPlugin = new SelectedPluginReady(pluginName, pluginPath, capability);
 
-        var exception = Record.Exception(() => _reader.ReadOverlay(readyPlugin));
+        var exception = Record.Exception(() => _reader.Open(readyPlugin));
 
         Assert.IsNotType<PluginReadException>(exception);
         var unresolvableMaster = Assert.IsType<UnresolvableMasterException>(exception);
@@ -361,6 +367,24 @@ public sealed class PluginOverlayConstructionTests : IDisposable
         Assert.Equal("Starfield.esm", unresolvableMaster.MasterName);
         Assert.Contains("Starfield.esm", unresolvableMaster.Message, StringComparison.Ordinal);
         Assert.IsType<MissingModException>(unresolvableMaster.InnerException);
+    }
+
+    /// <summary>
+    ///     Opens a ready Plugin through a Plugin reader whose opening delegate calls the Supported GameRelease row's real
+    ///     overlay factory, as the production default does, and captures the overlay that factory built.
+    /// </summary>
+    /// <param name="readyPlugin">The ready selected Plugin carrying a production capability.</param>
+    /// <param name="overlay">The overlay the row's factory built; disposing the returned Plugin disposes it.</param>
+    /// <returns>The opened Plugin, which owns <paramref name="overlay" />.</returns>
+    private static IOpenedPlugin OpenCapturingOverlay(SelectedPluginReady readyPlugin, out IModDisposeGetter overlay)
+    {
+        IModDisposeGetter? built = null;
+        var reader = new MutagenPluginReader((release, pluginPath, readParameters) =>
+            built = release.CreateOverlay(pluginPath, readParameters));
+
+        var opened = reader.Open(readyPlugin);
+        overlay = built ?? throw new InvalidOperationException("The Plugin reader opened without calling the factory.");
+        return opened;
     }
 
     /// <summary>

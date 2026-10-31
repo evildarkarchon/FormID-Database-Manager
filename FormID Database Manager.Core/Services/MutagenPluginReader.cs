@@ -55,10 +55,6 @@ internal sealed class MutagenPluginReader : IPluginReader
     /// </summary>
     /// <param name="readyPlugin">The selected Plugin path and capability prepared by production Game Load Orders.</param>
     /// <returns>The disposable Mutagen overlay for the capability's Supported GameRelease.</returns>
-    /// <remarks>
-    ///     Internal rather than private only so <see cref="MutagenPluginOverlayReader" /> can delegate to these rules
-    ///     instead of keeping a copy of them until it is deleted (ADR-0015).
-    /// </remarks>
     /// <exception cref="ArgumentNullException"><paramref name="readyPlugin" /> is null.</exception>
     /// <exception cref="ArgumentOutOfRangeException">
     ///     The capability identifies a GameRelease this application does not support.
@@ -72,7 +68,7 @@ internal sealed class MutagenPluginReader : IPluginReader
     ///     Mutagen raises <see cref="MissingModException" /> (naming the master's file name) or
     ///     <see cref="MissingModMappingException" /> (naming no master); the Mutagen exception is the inner exception.
     /// </exception>
-    internal IModDisposeGetter OpenOverlay(SelectedPluginReady readyPlugin)
+    private IModDisposeGetter OpenOverlay(SelectedPluginReady readyPlugin)
     {
         ArgumentNullException.ThrowIfNull(readyPlugin);
 
@@ -187,13 +183,9 @@ internal sealed class MutagenPluginReader : IPluginReader
     /// <param name="reportRecordIssue">Receives non-ignorable recoverable record issues in observation order.</param>
     /// <param name="cancellationToken">Checked once per record.</param>
     /// <returns>The lazy sequence consumed inside the Store's atomic Plugin write.</returns>
-    /// <remarks>
-    ///     Internal rather than private only so Plugin Ingestion's own enumeration can delegate to these rules instead
-    ///     of keeping a copy of them until it reads through <see cref="IPluginReader" /> (ADR-0015).
-    /// </remarks>
     /// <exception cref="PluginReadException">Mutagen reports an expected record-read failure.</exception>
     /// <exception cref="OperationCanceledException"><paramref name="cancellationToken" /> requests cancellation.</exception>
-    internal static IEnumerable<FormIdRecord> ReadRecords(
+    private static IEnumerable<FormIdRecord> ReadRecords(
         IModGetter plugin,
         EntryExtraction entryExtraction,
         Action<string> reportRecordIssue,
