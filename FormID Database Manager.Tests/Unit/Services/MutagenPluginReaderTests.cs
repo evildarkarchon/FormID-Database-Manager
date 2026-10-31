@@ -32,6 +32,12 @@ public sealed class MutagenPluginReaderTests : IDisposable
     private const string PluginPath = @"C:\Data\Tested.esp";
 
     /// <summary>
+    ///     The message every test-built wrapper carries, distinct from any cause's, so a diagnostic that reports it
+    ///     instead of the classified cause's message fails by name.
+    /// </summary>
+    private const string WrapperWording = "Wrapper wording.";
+
+    /// <summary>
     ///     A GameRelease Mutagen defines that this application deliberately does not support.
     /// </summary>
     /// <remarks>
@@ -184,57 +190,156 @@ public sealed class MutagenPluginReaderTests : IDisposable
     }
 
     // ---------------------------------------------------------------------------------------------------------
-    // Opening. One entry per family on the expected-failure list, each reached by a wrapped and an unwrapped
-    // failure, so narrowing the list or the deepest-message walk fails a case by name.
+    // Opening. One entry per family on the Plugin-data family list, each raised directly and behind each of
+    // Mutagen's enrichment wrappers, so narrowing the list or the look-through fails a case by name (ADR-0016).
     // ---------------------------------------------------------------------------------------------------------
 
     /// <summary>
-    ///     The opening failure families that make a Failed Plugin, by name.
+    ///     The Plugin-data failure families that make a Failed Plugin, by name. <see cref="RecordException" /> stands
+    ///     for the bare one Mutagen raises itself, with no inner cause.
     /// </summary>
-    public static TheoryData<string> OpeningFailureFamilies =>
+    private static readonly string[] PluginDataFailureFamilyNames =
     [
         nameof(MalformedDataException),
         nameof(RecordException),
         nameof(ArgumentException),
         nameof(OverflowException),
         nameof(IOException),
-        nameof(UnauthorizedAccessException)
+        nameof(UnauthorizedAccessException),
+        nameof(InvalidDataException),
+        nameof(IndexOutOfRangeException),
+        nameof(RecordCollisionException)
     ];
 
     /// <summary>
-    ///     Verifies each expected opening failure becomes a Failed Plugin in the opening phase carrying its message.
+    ///     Mutagen's enrichment wrappers, which the classification looks through to the cause rather than matching.
+    /// </summary>
+    private static readonly string[] EnrichmentWrapperNames =
+    [
+        nameof(RecordException),
+        nameof(SubrecordException),
+        nameof(ModGroupsMalformedException)
+    ];
+
+    /// <summary>
+    ///     Every Plugin-data failure family, by name.
+    /// </summary>
+    public static TheoryData<string> PluginDataFailureFamilies => [.. PluginDataFailureFamilyNames];
+
+    /// <summary>
+    ///     Every enrichment wrapper, by name.
+    /// </summary>
+    public static TheoryData<string> EnrichmentWrappers => [.. EnrichmentWrapperNames];
+
+    /// <summary>
+    ///     Every Plugin-data family behind every enrichment wrapper.
+    /// </summary>
+    public static TheoryData<string, string> PluginDataFailureFamiliesBehindEachEnrichmentWrapper
+    {
+        get
+        {
+            var data = new TheoryData<string, string>();
+            foreach (var family in PluginDataFailureFamilyNames)
+            {
+                foreach (var wrapper in EnrichmentWrapperNames)
+                {
+                    data.Add(family, wrapper);
+                }
+            }
+
+            return data;
+        }
+    }
+
+    /// <summary>
+    ///     Verifies each Plugin-data failure raised directly becomes a Failed Plugin in the opening phase carrying its
+    ///     own message.
     /// </summary>
     [Theory]
-    [MemberData(nameof(OpeningFailureFamilies))]
-    public void Open_ExpectedOpeningFailure_ThrowsPluginReadFailureInTheOpeningPhase(string family)
+    [MemberData(nameof(PluginDataFailureFamilies))]
+    public void Open_PluginDataFailure_ThrowsPluginReadFailureInTheOpeningPhase(string family)
     {
-        var failure = CreateOpeningFailure(family, "The Plugin header is unreadable.");
+        var failure = CreatePluginDataFailure(family, "The Plugin header is unreadable.");
         var sut = new MutagenPluginReader((_, _, _) => throw failure);
 
         var thrown = Assert.Throws<PluginReadException>(() => sut.Open(CreateReadyPlugin()));
 
         Assert.Equal(PluginReadPhase.OpeningPlugin, thrown.Phase);
-        Assert.Equal("The Plugin header is unreadable.", thrown.DiagnosticMessage);
+        Assert.Equal(failure.Message, thrown.DiagnosticMessage);
         Assert.Same(failure, thrown.InnerException);
     }
 
     /// <summary>
-    ///     Verifies an expected opening failure wrapped by an unlisted exception still becomes a Failed Plugin, and that
-    ///     the message reported is the deepest one rather than the wrapper's.
+    ///     Verifies each Plugin-data failure behind each enrichment wrapper becomes a Failed Plugin in the opening phase,
+    ///     and that its diagnostic is the listed cause's message rather than the wrapper's (ADR-0016 rules 3 and 6).
     /// </summary>
     [Theory]
-    [MemberData(nameof(OpeningFailureFamilies))]
-    public void Open_WrappedOpeningFailure_ThrowsPluginReadFailureWithTheDeepestMessage(string family)
+    [MemberData(nameof(PluginDataFailureFamiliesBehindEachEnrichmentWrapper))]
+    public void Open_PluginDataFailureBehindAnEnrichmentWrapper_ThrowsPluginReadFailureWithTheCausesMessage(
+        string family,
+        string wrapper)
     {
-        var failure = new InvalidOperationException(
-            "Wrapper wording.",
-            new TargetInvocationException(CreateOpeningFailure(family, "Deepest wording.")));
+        var cause = CreatePluginDataFailure(family, "Cause wording.");
+        var failure = Wrap(wrapper, cause);
         var sut = new MutagenPluginReader((_, _, _) => throw failure);
 
         var thrown = Assert.Throws<PluginReadException>(() => sut.Open(CreateReadyPlugin()));
 
         Assert.Equal(PluginReadPhase.OpeningPlugin, thrown.Phase);
-        Assert.Equal("Deepest wording.", thrown.DiagnosticMessage);
+        Assert.NotEqual(WrapperWording, cause.Message);
+        Assert.Equal(cause.Message, thrown.DiagnosticMessage);
+        Assert.Same(failure, thrown.InnerException);
+    }
+
+    /// <summary>
+    ///     Verifies a listed cause behind Mutagen's wrappers stacked as opening stacks them is still found, the whole
+    ///     original chain is kept, and the message is the cause's, not that of any wrapper.
+    /// </summary>
+    [Fact]
+    public void Open_PluginDataFailureBehindStackedEnrichmentWrappers_ThrowsPluginReadFailureWithTheCausesMessage()
+    {
+        var failure = Wrap(
+            nameof(ModGroupsMalformedException),
+            Wrap(nameof(RecordException), Wrap(nameof(SubrecordException), new IOException("Cause wording."))));
+        var sut = new MutagenPluginReader((_, _, _) => throw failure);
+
+        var thrown = Assert.Throws<PluginReadException>(() => sut.Open(CreateReadyPlugin()));
+
+        Assert.Equal("Cause wording.", thrown.DiagnosticMessage);
+        Assert.Same(failure, thrown.InnerException);
+    }
+
+    /// <summary>
+    ///     Verifies the diagnostic is the classified cause's message and no longer the deepest one in the chain: a
+    ///     listed cause with an inner exception of its own reports its own message (ADR-0016 rule 6).
+    /// </summary>
+    [Fact]
+    public void Open_ListedCauseWithAnInnerException_ReportsTheListedCausesMessageNotTheDeepest()
+    {
+        var failure = Wrap(
+            nameof(RecordException),
+            new IOException("Cause wording.", new InvalidOperationException("Deepest wording.")));
+        var sut = new MutagenPluginReader((_, _, _) => throw failure);
+
+        var thrown = Assert.Throws<PluginReadException>(() => sut.Open(CreateReadyPlugin()));
+
+        Assert.Equal("Cause wording.", thrown.DiagnosticMessage);
+    }
+
+    /// <summary>
+    ///     Verifies a bare <see cref="SubrecordException" />, which Mutagen raises itself for an unreadable subrecord,
+    ///     is a bare <see cref="RecordException" /> and so a Failed Plugin carrying its own message.
+    /// </summary>
+    [Fact]
+    public void Open_BareSubrecordException_ThrowsPluginReadFailureWithItsOwnMessage()
+    {
+        var failure = SubrecordException.Create("Subrecord is truncated.", new RecordType("EDID"));
+        var sut = new MutagenPluginReader((_, _, _) => throw failure);
+
+        var thrown = Assert.Throws<PluginReadException>(() => sut.Open(CreateReadyPlugin()));
+
+        Assert.Equal(PluginReadPhase.OpeningPlugin, thrown.Phase);
+        Assert.Equal("Subrecord is truncated.", thrown.DiagnosticMessage);
         Assert.Same(failure, thrown.InnerException);
     }
 
@@ -255,6 +360,58 @@ public sealed class MutagenPluginReaderTests : IDisposable
         Assert.Equal(PluginName, unrecognized.PluginName);
         Assert.Equal(PluginReadPhase.OpeningPlugin, unrecognized.Phase);
         Assert.Same(failure, unrecognized.InnerException);
+    }
+
+    /// <summary>
+    ///     Verifies an unlisted cause behind each enrichment wrapper fails the run as an unrecognized Plugin-read
+    ///     failure naming the Plugin, rather than becoming a Failed Plugin because Mutagen enriched it (ADR-0016 rule 3).
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(EnrichmentWrappers))]
+    public void Open_UnlistedCauseBehindAnEnrichmentWrapper_ThrowsUnrecognizedPluginReadFailureNamingThePlugin(
+        string wrapper)
+    {
+        var failure = Wrap(wrapper, new NullReferenceException("Mutagen defect."));
+        var sut = new MutagenPluginReader((_, _, _) => throw failure);
+
+        var thrown = Record.Exception(() => sut.Open(CreateReadyPlugin()));
+
+        var unrecognized = Assert.IsType<UnrecognizedPluginReadFailureException>(thrown);
+        Assert.Equal(PluginName, unrecognized.PluginName);
+        Assert.Equal(PluginReadPhase.OpeningPlugin, unrecognized.Phase);
+        Assert.Same(failure, unrecognized.InnerException);
+    }
+
+    /// <summary>
+    ///     Verifies only Mutagen's enrichment wrappers are looked through: a listed cause wrapped by an exception the
+    ///     application does not recognise is classified by that wrapper, which is the cause here, and fails the run.
+    /// </summary>
+    [Fact]
+    public void Open_ListedCauseBehindAnUnrecognizedWrapper_ThrowsUnrecognizedPluginReadFailure()
+    {
+        var failure = Wrap(nameof(InvalidOperationException), new IOException("Cause wording."));
+        var sut = new MutagenPluginReader((_, _, _) => throw failure);
+
+        var thrown = Record.Exception(() => sut.Open(CreateReadyPlugin()));
+
+        var unrecognized = Assert.IsType<UnrecognizedPluginReadFailureException>(thrown);
+        Assert.Same(failure, unrecognized.InnerException);
+    }
+
+    /// <summary>
+    ///     Verifies a <see cref="ModGroupsMalformedException" /> with no cause is not a Failed Plugin: unlike a bare
+    ///     <see cref="RecordException" />, it is only ever an enrichment of some other failure, so with nothing behind it
+    ///     there is no Plugin-data cause to classify.
+    /// </summary>
+    [Fact]
+    public void Open_ModGroupsMalformedWithoutACause_ThrowsUnrecognizedPluginReadFailure()
+    {
+        var failure = new ModGroupsMalformedException(ModKey.FromNameAndExtension(PluginName), "Groups malformed.");
+        var sut = new MutagenPluginReader((_, _, _) => throw failure);
+
+        var thrown = Record.Exception(() => sut.Open(CreateReadyPlugin()));
+
+        Assert.IsType<UnrecognizedPluginReadFailureException>(thrown);
     }
 
     /// <summary>
@@ -310,11 +467,11 @@ public sealed class MutagenPluginReaderTests : IDisposable
     }
 
     /// <summary>
-    ///     Verifies the Failed Plugin list is consulted before the master classification, so a master-resolution failure
-    ///     wrapping a listed cause stays the Failed Plugin it has always been.
+    ///     Verifies the master classification runs before the Plugin-data family list, so a master-resolution failure
+    ///     wrapping a listed cause is an Unresolvable Master naming its master, never a Failed Plugin (ADR-0016 rule 1).
     /// </summary>
     [Fact]
-    public void Open_MissingMasterWrappingAListedCause_ThrowsPluginReadFailure()
+    public void Open_MissingMasterWrappingAListedCause_ThrowsUnresolvableMasterNamingIt()
     {
         var failure = new MissingModException(
             ModKey.FromNameAndExtension("Starfield.esm"),
@@ -322,10 +479,83 @@ public sealed class MutagenPluginReaderTests : IDisposable
             new IOException("Master file is locked."));
         var sut = new MutagenPluginReader((_, _, _) => throw failure);
 
-        var thrown = Assert.Throws<PluginReadException>(() => sut.Open(CreateReadyPlugin(GameRelease.Starfield)));
+        var thrown = Record.Exception(() => sut.Open(CreateReadyPlugin(GameRelease.Starfield)));
 
-        Assert.Equal(PluginReadPhase.OpeningPlugin, thrown.Phase);
-        Assert.Equal("Master file is locked.", thrown.DiagnosticMessage);
+        var unresolvableMaster = Assert.IsType<UnresolvableMasterException>(thrown);
+        Assert.Equal(PluginName, unresolvableMaster.PluginName);
+        Assert.Equal("Starfield.esm", unresolvableMaster.MasterName);
+        Assert.Same(failure, unresolvableMaster.InnerException);
+    }
+
+    /// <summary>
+    ///     The wrappers a master-resolution failure can sit behind: each Mutagen enrichment wrapper, a listed Plugin-data
+    ///     cause, and an exception the application does not recognise. The master check must see through all of them.
+    /// </summary>
+    public static TheoryData<string> MasterFailureWrappers =>
+    [
+        nameof(RecordException),
+        nameof(SubrecordException),
+        nameof(ModGroupsMalformedException),
+        nameof(IOException),
+        nameof(InvalidOperationException)
+    ];
+
+    /// <summary>
+    ///     Verifies a named missing master found anywhere in the inner-exception chain fails the run as an Unresolvable
+    ///     Master naming that master, keeping Mutagen's master exception as the inner exception (ADR-0016 rule 1).
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(MasterFailureWrappers))]
+    public void Open_MissingMasterWrappedInTheChain_ThrowsUnresolvableMasterNamingIt(string wrapper)
+    {
+        var missingMaster = new MissingModException(ModKey.FromNameAndExtension("Starfield.esm"));
+        var sut = new MutagenPluginReader((_, _, _) => throw Wrap(wrapper, missingMaster));
+
+        var thrown = Record.Exception(() => sut.Open(CreateReadyPlugin(GameRelease.Starfield)));
+
+        var unresolvableMaster = Assert.IsType<UnresolvableMasterException>(thrown);
+        Assert.Equal(PluginName, unresolvableMaster.PluginName);
+        Assert.Equal("Starfield.esm", unresolvableMaster.MasterName);
+        Assert.Same(missingMaster, unresolvableMaster.InnerException);
+    }
+
+    /// <summary>
+    ///     Verifies a missing master-flags lookup found anywhere in the inner-exception chain fails the run as an
+    ///     Unresolvable Master naming no master (ADR-0016 rule 1).
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(MasterFailureWrappers))]
+    public void Open_MasterFlagsLookupMissingWrappedInTheChain_ThrowsUnresolvableMasterWithoutNamingAMaster(
+        string wrapper)
+    {
+        var missingMapping = new MissingModMappingException("No master flags lookup was supplied.");
+        var sut = new MutagenPluginReader((_, _, _) => throw Wrap(wrapper, missingMapping));
+
+        var thrown = Record.Exception(() => sut.Open(CreateReadyPlugin(GameRelease.Starfield)));
+
+        var unresolvableMaster = Assert.IsType<UnresolvableMasterException>(thrown);
+        Assert.Equal(PluginName, unresolvableMaster.PluginName);
+        Assert.Null(unresolvableMaster.MasterName);
+        Assert.Same(missingMapping, unresolvableMaster.InnerException);
+    }
+
+    /// <summary>
+    ///     Verifies cancellation is rethrown before the master classification, so a cancelled read that Mutagen happened
+    ///     to report through a master-resolution failure is still a cancellation.
+    /// </summary>
+    [Fact]
+    public void Open_CancellationNestedInAMissingMaster_ThrowsTheOriginalCancellation()
+    {
+        var cancellation = new OperationCanceledException("Opening cancelled.");
+        var sut = new MutagenPluginReader((_, _, _) => throw new MissingModException(
+            ModKey.FromNameAndExtension("Starfield.esm"),
+            "Master read cancelled.",
+            cancellation));
+
+        var thrown = Assert.ThrowsAny<OperationCanceledException>(() =>
+            sut.Open(CreateReadyPlugin(GameRelease.Starfield)));
+
+        Assert.Same(cancellation, thrown);
     }
 
     /// <summary>
@@ -345,7 +575,8 @@ public sealed class MutagenPluginReaderTests : IDisposable
 
     // ---------------------------------------------------------------------------------------------------------
     // Enumeration. Only a top-level RecordException is a Failed Plugin here, a narrower rule than opening's on
-    // purpose (#127); its message is the RecordException's own, not the deepest one.
+    // purpose (#127); its message is the RecordException's own, not the classified cause's that opening reports.
+    // Enumeration moves onto the shared fault-scope classification in #138.
     // ---------------------------------------------------------------------------------------------------------
 
     /// <summary>
@@ -533,8 +764,8 @@ public sealed class MutagenPluginReaderTests : IDisposable
     // exist, a file holding junk bytes, or a directory. No Plugin fixture is generated: Mutagen walks a Plugin's
     // mod header and top-level groups eagerly while constructing the overlay, so a malformed file fails at
     // opening rather than at first enumeration. Mutagen raises no nested chain at that point, so these pin message
-    // forwarding and each family's real trigger, while the delegate-fed cases above pin the deepest-message walk
-    // and nested cancellation. The happy path and the master-resolution boundary need a generated Plugin, so they
+    // forwarding and each family's real trigger, while the delegate-fed cases above pin the look-through to the
+    // cause behind Mutagen's enrichment wrappers and nested cancellation. The happy path and the master-resolution boundary need a generated Plugin, so they
     // live in PluginOverlayConstructionTests.
     // ---------------------------------------------------------------------------------------------------------
 
@@ -548,8 +779,8 @@ public sealed class MutagenPluginReaderTests : IDisposable
     // ---------------------------------------------------------------------------------------------------------
     // Unsupported GameRelease. The lookup sits outside the adapter's failure-handling block on purpose, and these
     // are the tests that pin it there: the fixture below is a Plugin that would itself fail to open, so if the
-    // lookup moved inside the try, its ArgumentOutOfRangeException would be caught by the expected-failure check
-    // (which treats ArgumentException, its base type, as a malformed-Plugin signal) and reported to the user as a
+    // lookup moved inside the try, its ArgumentOutOfRangeException would be caught by the Plugin-read classification
+    // (whose family list treats ArgumentException, its base type, as a malformed-Plugin signal) and reported to the user as a
     // Failed Plugin instead of surfacing as the programming error it is (ADR-0003).
     // ---------------------------------------------------------------------------------------------------------
 
@@ -606,7 +837,7 @@ public sealed class MutagenPluginReaderTests : IDisposable
     }
 
     // ---------------------------------------------------------------------------------------------------------
-    // Failure normalization. Each case below pins one entry of the adapter's expected-failure list by the input
+    // Failure normalization. Each case below pins one entry of the adapter's Plugin-data family list by the input
     // that reaches it, never by inspecting the list itself: narrowing the list later fails one of these by name.
     // ---------------------------------------------------------------------------------------------------------
 
@@ -727,7 +958,7 @@ public sealed class MutagenPluginReaderTests : IDisposable
         // Asserted against the cause's own message, not against a test-side re-implementation of the adapter's
         // unwrapping rule — a helper that walked the chain the same way production does would agree with a wrong
         // policy as readily as a right one. A real overlay raises no nested chain here, so the walk itself is
-        // pinned by Open_WrappedOpeningFailure_ThrowsPluginReadFailureWithTheDeepestMessage instead.
+        // pinned by Open_PluginDataFailureBehindAnEnrichmentWrapper_ThrowsPluginReadFailureWithTheCausesMessage instead.
         Assert.Contains(missingPlugin, exception.DiagnosticMessage, StringComparison.Ordinal);
         Assert.Equal(exception.InnerException!.Message, exception.DiagnosticMessage);
     }
@@ -875,11 +1106,14 @@ public sealed class MutagenPluginReaderTests : IDisposable
     }
 
     /// <summary>
-    ///     Creates one exception of an expected opening failure family.
+    ///     Creates one exception of a Plugin-data failure family.
     /// </summary>
     /// <param name="family">The family's type name.</param>
-    /// <param name="message">The exception's own message.</param>
-    private static Exception CreateOpeningFailure(string family, string message)
+    /// <param name="message">
+    ///     The exception's own message. <see cref="RecordCollisionException" /> composes its own message from the
+    ///     colliding FormKey instead, so assertions compare against the created exception's message.
+    /// </param>
+    private static Exception CreatePluginDataFailure(string family, string message)
     {
         return family switch
         {
@@ -889,7 +1123,55 @@ public sealed class MutagenPluginReaderTests : IDisposable
             nameof(OverflowException) => new OverflowException(message),
             nameof(IOException) => new IOException(message),
             nameof(UnauthorizedAccessException) => new UnauthorizedAccessException(message),
-            _ => throw new ArgumentOutOfRangeException(nameof(family), family, "Unknown opening failure family.")
+            nameof(InvalidDataException) => new InvalidDataException(message),
+            nameof(IndexOutOfRangeException) => new IndexOutOfRangeException(message),
+            nameof(RecordCollisionException) => new RecordCollisionException(
+                ModKey.FromNameAndExtension(PluginName),
+                new FormKey(ModKey.FromNameAndExtension(PluginName), 0x000800),
+                typeof(INpcGetter)),
+            _ => throw new ArgumentOutOfRangeException(nameof(family), family, "Unknown Plugin-data failure family.")
+        };
+    }
+
+    /// <summary>
+    ///     Wraps a cause in one named wrapper carrying <see cref="WrapperWording" /> as its own message.
+    /// </summary>
+    /// <param name="wrapper">
+    ///     The wrapper's type name: one of Mutagen's three enrichment wrappers, a listed Plugin-data cause
+    ///     (<see cref="IOException" />), or an exception the application does not recognise
+    ///     (<see cref="InvalidOperationException" />).
+    /// </param>
+    /// <param name="cause">The exception to wrap.</param>
+    /// <remarks>
+    ///     Mutagen's own enrichment copies the inner message. These wrappers carry distinct wording instead, so an
+    ///     assertion on the diagnostic message proves which exception's message was reported.
+    /// </remarks>
+    private static Exception Wrap(string wrapper, Exception cause)
+    {
+        return wrapper switch
+        {
+            nameof(RecordException) => new RecordException(
+                formKey: null,
+                recordType: null,
+                modKey: ModKey.FromNameAndExtension(PluginName),
+                edid: null,
+                message: WrapperWording,
+                innerException: cause),
+            nameof(SubrecordException) => new SubrecordException(
+                new RecordType("EDID"),
+                formKey: null,
+                majorRecordType: null,
+                modKey: null,
+                edid: null,
+                message: WrapperWording,
+                innerException: cause),
+            nameof(ModGroupsMalformedException) => new ModGroupsMalformedException(
+                ModKey.FromNameAndExtension(PluginName),
+                WrapperWording,
+                cause),
+            nameof(IOException) => new IOException(WrapperWording, cause),
+            nameof(InvalidOperationException) => new InvalidOperationException(WrapperWording, cause),
+            _ => throw new ArgumentOutOfRangeException(nameof(wrapper), wrapper, "Unknown wrapper.")
         };
     }
 

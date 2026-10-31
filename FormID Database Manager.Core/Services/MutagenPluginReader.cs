@@ -11,10 +11,20 @@ namespace FormID_Database_Manager.Services;
 ///     (ADR-0006, ADR-0015, ADR-0016).
 /// </summary>
 /// <remarks>
-///     The three classification rules keep their current, differing scopes. Opening walks the whole inner-exception
-///     chain against a list of six families and reports the deepest message; enumeration treats only a top-level
-///     <see cref="RecordException" /> as a Failed Plugin and reports its own message; per record, Entry Extraction's
-///     catch-all applies. Whether they should become one rule is #127.
+///     <para>
+///         A Plugin-read failure becomes the outcome for the narrowest thing it is a fact about, and phase only limits
+///         which outcomes are reachable (ADR-0016). <see cref="ClassifyPluginReadFailure" /> is that one
+///         classification. It rethrows cancellation, then fails the run as an Unresolvable Master if one appears
+///         anywhere in the chain. Next it looks through Mutagen's enrichment wrappers to the cause: a cause on the
+///         Plugin-data family list, or a bare <see cref="RecordException" />, is about the Plugin's data, and anything
+///         else fails the run naming the Plugin. The diagnostic message is the classified cause's.
+///     </para>
+///     <para>
+///         Opening applies it, and a Plugin-data cause there is a Failed Plugin. Enumeration still treats only a
+///         top-level <see cref="RecordException" /> as a Failed Plugin and reports its own message, and per record
+///         Entry Extraction's catch-all still applies; both move onto the shared classification in their own tickets
+///         (#138, #139).
+///     </para>
 /// </remarks>
 internal sealed class MutagenPluginReader : IPluginReader
 {
@@ -62,11 +72,11 @@ internal sealed class MutagenPluginReader : IPluginReader
     /// </exception>
     /// <exception cref="InvalidOperationException">The capability belongs to an incompatible adapter.</exception>
     /// <exception cref="PluginReadException">
-    ///     Mutagen or the filesystem reports unreadable Plugin data; the phase is
-    ///     <see cref="PluginReadPhase.OpeningPlugin" /> and the message is the deepest underlying one.
+    ///     Mutagen or the filesystem reports unreadable Plugin data, directly or behind Mutagen's enrichment wrappers;
+    ///     the phase is <see cref="PluginReadPhase.OpeningPlugin" /> and the message is the classified cause's.
     /// </exception>
     /// <exception cref="UnresolvableMasterException">
-    ///     Mutagen raises <see cref="MissingModException" /> (naming the master's file name) or
+    ///     The failure's chain contains <see cref="MissingModException" /> (naming the master's file name) or
     ///     <see cref="MissingModMappingException" /> (naming no master); the Mutagen exception is the inner exception.
     /// </exception>
     /// <exception cref="UnrecognizedPluginReadFailureException">
@@ -83,8 +93,8 @@ internal sealed class MutagenPluginReader : IPluginReader
         // Validate adapter ownership before delegating to any Supported GameRelease factory or filesystem work.
         var payload = readyPlugin.ReadCapability.RequirePayload<MutagenPluginReadCapabilityPayload>();
         // Resolved outside the try: an unsupported GameRelease is a programming error, and the ArgumentOutOfRangeException
-        // it raises would otherwise be normalized into a Failed Plugin by the expected-failure check below, which
-        // deliberately treats ArgumentException as a malformed-Plugin signal from Mutagen.
+        // it raises would otherwise be normalized into a Failed Plugin by the Plugin-read classification below, whose
+        // family list deliberately treats ArgumentException as a malformed-Plugin signal from Mutagen.
         var release = SupportedGameReleases.ForRelease(payload.GameRelease);
 
         try
@@ -93,46 +103,94 @@ internal sealed class MutagenPluginReader : IPluginReader
         }
         catch (Exception ex)
         {
-            // Cancellation is preserved before any expected Plugin-opening failure is normalized below.
-            NestedCancellation.RethrowIfPresent(ex);
-            if (IsExpectedPluginOverlayFailure(ex))
-            {
-                // The application-owned marker prevents arbitrary adapter failures from becoming Failed Plugins.
-                throw new PluginReadException(
-                    PluginReadPhase.OpeningPlugin,
-                    GetUnderlyingPluginReadMessage(ex),
-                    ex);
-            }
+            // Cancellation, an Unresolvable Master, and an unrecognised cause all leave from inside the classification;
+            // only a Plugin-data cause returns, and while opening that can only mean a Failed Plugin.
+            var cause = ClassifyPluginReadFailure(ex, readyPlugin.PluginName, PluginReadPhase.OpeningPlugin);
 
-            // Classified after the Failed Plugin list, as Plugin Ingestion used to classify whatever escaped it, so a
-            // master-resolution failure wrapping a listed cause still becomes the same Failed Plugin it did before.
-            ThrowIfUnresolvableMaster(readyPlugin.PluginName, ex);
-
-            // Anything left is a failure the application does not recognise. It still fails the run, as it did when it
-            // propagated raw, but now names the Plugin so the user can deselect it (ADR-0016 rule 7).
-            throw new UnrecognizedPluginReadFailureException(
-                readyPlugin.PluginName,
-                PluginReadPhase.OpeningPlugin,
-                ex);
+            // The application-owned marker prevents arbitrary adapter failures from becoming Failed Plugins.
+            throw new PluginReadException(PluginReadPhase.OpeningPlugin, cause.Message, ex);
         }
     }
 
     /// <summary>
-    ///     Classifies Mutagen's two master-resolution failures as an Unresolvable Master that fails the Processing Run.
+    ///     The one Plugin-read classification by fault scope, shared by every Plugin-read phase (ADR-0016 rules 1, 2, 3
+    ///     and 6). It throws for every failure that is not about the Plugin's data and returns the Plugin-data cause,
+    ///     which the caller turns into the outcome its phase allows.
+    /// </summary>
+    /// <param name="failure">The exception the phase caught, kept whole as the inner exception of any run failure.</param>
+    /// <param name="pluginName">The selected Plugin being read, which every run failure names.</param>
+    /// <param name="phase">
+    ///     The phase the failure arrived in. It changes no classification: it is only carried by the run failure for an
+    ///     unrecognised cause. The caller applies it to the returned cause, so phase limits which outcomes are reachable
+    ///     without changing what a failure is a fact about.
+    /// </param>
+    /// <returns>
+    ///     The classified Plugin-data cause: the exception that matched the Plugin-data family list, or a bare
+    ///     <see cref="RecordException" /> Mutagen raised itself. Its message is the diagnostic (rule 6). The caller
+    ///     decides what it means in its phase, such as a Failed Plugin while opening.
+    /// </returns>
+    /// <remarks>
+    ///     The order is the decision. Cancellation goes first so a cancelled read is never reported as a failure. The
+    ///     Unresolvable Master check runs next and searches the whole chain, so a master-resolution failure fails the run
+    ///     whatever it wraps or is wrapped by. Only then is the cause looked for behind Mutagen's enrichment wrappers.
+    /// </remarks>
+    /// <exception cref="OperationCanceledException">
+    ///     <paramref name="failure" />'s chain contains cancellation, which is rethrown as the original.
+    /// </exception>
+    /// <exception cref="UnresolvableMasterException">
+    ///     <paramref name="failure" />'s chain contains a <see cref="MissingModException" /> or
+    ///     <see cref="MissingModMappingException" />, kept as the inner exception.
+    /// </exception>
+    /// <exception cref="UnrecognizedPluginReadFailureException">
+    ///     The cause behind the enrichment wrappers is not on the Plugin-data family list. It names
+    ///     <paramref name="pluginName" />, carries <paramref name="phase" />, and keeps <paramref name="failure" />.
+    /// </exception>
+    private static Exception ClassifyPluginReadFailure(Exception failure, string pluginName, PluginReadPhase phase)
+    {
+        NestedCancellation.RethrowIfPresent(failure);
+        ThrowIfUnresolvableMaster(pluginName, failure);
+
+        // Anything left without a Plugin-data cause is a failure the application does not recognise. It fails the run,
+        // and names the Plugin so the user can deselect it (ADR-0016 rule 7).
+        return FindPluginDataCause(failure)
+               ?? throw new UnrecognizedPluginReadFailureException(pluginName, phase, failure);
+    }
+
+    /// <summary>
+    ///     Classifies Mutagen's two master-resolution failures, found anywhere in the inner-exception chain, as an
+    ///     Unresolvable Master that fails the Processing Run.
     /// </summary>
     /// <param name="pluginName">The selected Plugin whose declared master could not be resolved.</param>
-    /// <param name="exception">The top-level exception raised while opening the overlay.</param>
+    /// <param name="exception">The top-level Plugin-read failure.</param>
     /// <remarks>
-    ///     This is a classification of its own beside the Failed Plugin list, not an entry in it. The list stays narrow
-    ///     so an unexpected internal failure still aborts loudly, and these failures are not Plugin-specific anyway:
-    ///     they are facts about the Data directory that would fail every selected Plugin identically (ADR-0006,
-    ///     ADR-0015, issue #52). Only the top-level exception is inspected, matching the catch Plugin Ingestion held.
+    ///     This is a classification of its own ahead of the Plugin-data family list, not an entry in it. These failures
+    ///     are not Plugin-specific: they are facts about the Data directory that would fail every selected Plugin
+    ///     identically (ADR-0006, ADR-0015, issue #52). The whole chain is searched, and before the family list, so a
+    ///     master failure that wraps a listed cause, or sits behind an enrichment wrapper, is never a Failed Plugin
+    ///     (ADR-0016 rule 1). The first master failure from the top is the one reported.
     /// </remarks>
+    /// <exception cref="UnresolvableMasterException">
+    ///     <paramref name="exception" />'s chain contains a <see cref="MissingModException" /> or
+    ///     <see cref="MissingModMappingException" />, which is kept as the inner exception.
+    /// </exception>
+    private static void ThrowIfUnresolvableMaster(string pluginName, Exception exception)
+    {
+        for (var current = exception; current is not null; current = current.InnerException)
+        {
+            ThrowIfMasterResolutionFailure(pluginName, current);
+        }
+    }
+
+    /// <summary>
+    ///     Throws the Unresolvable Master for one exception of the chain if it is a master-resolution failure.
+    /// </summary>
+    /// <param name="pluginName">The selected Plugin whose declared master could not be resolved.</param>
+    /// <param name="exception">One exception of the failure's inner-exception chain.</param>
     /// <exception cref="UnresolvableMasterException">
     ///     <paramref name="exception" /> is a <see cref="MissingModException" /> or
     ///     <see cref="MissingModMappingException" />, which is kept as the inner exception.
     /// </exception>
-    private static void ThrowIfUnresolvableMaster(string pluginName, Exception exception)
+    private static void ThrowIfMasterResolutionFailure(string pluginName, Exception exception)
     {
         switch (exception)
         {
@@ -151,42 +209,69 @@ internal sealed class MutagenPluginReader : IPluginReader
     }
 
     /// <summary>
-    ///     Identifies the concrete Mutagen and filesystem failures that mean the selected Plugin could not be opened.
+    ///     Finds a Plugin-read failure's cause behind Mutagen's enrichment wrappers and returns it if it is about the
+    ///     Plugin's data (ADR-0016 rules 2 and 3).
     /// </summary>
-    /// <param name="exception">The exception raised by Mutagen while opening the configured Plugin path.</param>
-    /// <returns><see langword="true" /> only for expected malformed or unreadable Plugin failures.</returns>
-    private static bool IsExpectedPluginOverlayFailure(Exception exception)
+    /// <param name="failure">The top-level Plugin-read failure, already cleared of cancellation and master failures.</param>
+    /// <returns>
+    ///     The first exception from the top that is on the Plugin-data family list, reached through only
+    ///     <see cref="RecordException" />, <see cref="SubrecordException" /> and
+    ///     <see cref="ModGroupsMalformedException" />; or a bare <see cref="RecordException" /> at the end of those
+    ///     wrappers; or <see langword="null" /> when the cause is anything else.
+    /// </returns>
+    /// <remarks>
+    ///     Only Mutagen's own enrichment wrappers are looked through. Any other exception is the cause itself, so an
+    ///     unrecognised exception wrapping a listed one is classified as unrecognised: what wraps the data failure is
+    ///     not something the application knows to be about the Plugin. Mutagen raises a <see cref="RecordException" />
+    ///     (a <see cref="SubrecordException" /> among them) with no cause for data it rejects itself, so that one is a
+    ///     Failed Plugin; a <see cref="ModGroupsMalformedException" /> is only ever an enrichment, so with no cause it is
+    ///     not.
+    /// </remarks>
+    private static Exception? FindPluginDataCause(Exception failure)
     {
-        for (var current = exception; current is not null; current = current.InnerException)
+        var current = failure;
+        while (true)
         {
-            if (current is MalformedDataException
-                or RecordException
-                or ArgumentException
-                or OverflowException
-                or IOException
-                or UnauthorizedAccessException)
+            if (IsPluginDataFailureFamily(current))
             {
-                return true;
+                return current;
+            }
+
+            switch (current)
+            {
+                case RecordException or ModGroupsMalformedException when current.InnerException is { } cause:
+                    current = cause;
+                    break;
+                case RecordException bareRecordException:
+                    return bareRecordException;
+                default:
+                    return null;
             }
         }
-
-        return false;
     }
 
     /// <summary>
-    ///     Retains the deepest underlying Plugin-read message when Mutagen enriches an opening failure.
+    ///     The one Plugin-data family list every phase classifies against (ADR-0016 rule 2), apart from the bare
+    ///     <see cref="RecordException" />, which <see cref="FindPluginDataCause" /> recognises by its having no cause.
     /// </summary>
-    /// <param name="exception">The adapter exception chain.</param>
-    /// <returns>The deepest underlying exception message.</returns>
-    private static string GetUnderlyingPluginReadMessage(Exception exception)
+    /// <param name="exception">One exception from a failure's chain.</param>
+    /// <returns><see langword="true" /> when the exception is about the Plugin's data.</returns>
+    /// <remarks>
+    ///     <see cref="InvalidDataException" /> comes from a short group read, <see cref="IndexOutOfRangeException" />
+    ///     from truncated subrecord slices, and <see cref="RecordCollisionException" /> from duplicate FormKeys within
+    ///     the Plugin. Keep the list narrow: whatever is not on it fails the run, which is how a defect in the
+    ///     application or in Mutagen stays loud instead of passing for a broken Plugin.
+    /// </remarks>
+    private static bool IsPluginDataFailureFamily(Exception exception)
     {
-        var underlying = exception;
-        while (underlying.InnerException is { } innerException)
-        {
-            underlying = innerException;
-        }
-
-        return underlying.Message;
+        return exception is MalformedDataException
+            or ArgumentException
+            or OverflowException
+            or IOException
+            or UnauthorizedAccessException
+            or InvalidDataException
+            or IndexOutOfRangeException
+            or RecordCollisionException;
     }
 
     /// <summary>
@@ -280,7 +365,8 @@ internal sealed class MutagenPluginReader : IPluginReader
 
         /// <summary>
         ///     Classifies a top-level <see cref="RecordException" /> raised while enumerating as a Failed Plugin in the
-        ///     record-reading phase, keeping Mutagen's own message rather than the deepest one opening reports.
+        ///     record-reading phase, keeping Mutagen's own message rather than the classified cause's that opening
+        ///     reports. It moves onto <see cref="ClassifyPluginReadFailure" /> in #138.
         /// </summary>
         /// <param name="exception">The record-read failure Mutagen raised.</param>
         /// <returns>The classified failure, for the caller to throw from its own catch.</returns>
