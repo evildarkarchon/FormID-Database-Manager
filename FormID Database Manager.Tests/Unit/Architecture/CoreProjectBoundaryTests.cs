@@ -987,7 +987,7 @@ public class CoreProjectBoundaryTests
     {
         // Mutagen's record, read-parameter, key, and exception types (the enrichment wrappers and Plugin-data families
         // the fault-scope classification names among them, ADR-0016), then the application's own read-side rules
-        // that live behind the seam with them: Entry Extraction, the nested-cancellation unwrap, and the ignore list.
+        // that live behind the seam with them: Entry Extraction and the nested-cancellation unwrap.
         string[] behindTheSeamNames =
         [
             "IModGetter",
@@ -1004,8 +1004,7 @@ public class CoreProjectBoundaryTests
             "MissingModException",
             "MissingModMappingException",
             "EntryExtraction",
-            "NestedCancellation",
-            "IgnorableErrorPatterns"
+            "NestedCancellation"
         ];
 
         Assert.DoesNotMatch(@"\bMutagen\.[A-Z]", source);

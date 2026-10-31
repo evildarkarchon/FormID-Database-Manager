@@ -6,9 +6,9 @@ namespace FormID_Database_Manager.Services;
 
 /// <summary>
 ///     The production Plugin read adapter, and the one module that decides what every Mutagen failure means: a Failed
-///     Plugin while opening or enumerating, a Processing Warning or silent drop per record, an Unresolvable Master
-///     that fails the Processing Run, or, for an unrecognised opening or enumeration failure, a run failure that names
-///     the Plugin (ADR-0006, ADR-0015, ADR-0016).
+///     Plugin while opening or enumerating, a Record Issue per record, an Unresolvable Master that fails the
+///     Processing Run, or, for an unrecognised failure while opening, enumerating, or reading one record, a run failure
+///     that names the Plugin (ADR-0006, ADR-0015, ADR-0016).
 /// </summary>
 /// <remarks>
 ///     <para>
@@ -20,8 +20,9 @@ namespace FormID_Database_Manager.Services;
 ///         else fails the run naming the Plugin. The diagnostic message is the classified cause's.
 ///     </para>
 ///     <para>
-///         Opening and enumeration apply it, and a Plugin-data cause in either is a Failed Plugin. Per record, Entry
-///         Extraction's catch-all still applies; it moves onto the shared classification in its own ticket (#139).
+///         Opening and enumeration apply it, and a Plugin-data cause in either is a Failed Plugin. Entry Extraction
+///         applies it to each record's FormID and Entry getters, and a Plugin-data cause there is a Record Issue,
+///         never a Failed Plugin. In every phase an unrecognised cause fails the run.
 ///     </para>
 /// </remarks>
 internal sealed class MutagenPluginReader : IPluginReader
@@ -144,7 +145,7 @@ internal sealed class MutagenPluginReader : IPluginReader
     ///     The cause behind the enrichment wrappers is not on the Plugin-data family list. It names
     ///     <paramref name="pluginName" />, carries <paramref name="phase" />, and keeps <paramref name="failure" />.
     /// </exception>
-    private static Exception ClassifyPluginReadFailure(Exception failure, string pluginName, PluginReadPhase phase)
+    internal static Exception ClassifyPluginReadFailure(Exception failure, string pluginName, PluginReadPhase phase)
     {
         NestedCancellation.RethrowIfPresent(failure);
         ThrowIfUnresolvableMaster(pluginName, failure);
@@ -303,7 +304,7 @@ internal sealed class MutagenPluginReader : IPluginReader
         ///     rules.
         /// </summary>
         /// <param name="reportRecordIssue">
-        ///     Receives non-ignorable recoverable record issues in observation order.
+        ///     Receives every Record Issue in observation order, as the classified cause's message.
         /// </param>
         /// <param name="cancellationToken">Checked once per record.</param>
         /// <returns>The lazy sequence consumed inside the Store's atomic Plugin write.</returns>
@@ -311,12 +312,14 @@ internal sealed class MutagenPluginReader : IPluginReader
         ///     Starting or advancing enumeration failed with a Plugin-data cause; see
         ///     <see cref="CreateReadingRecordsFailure" />.
         /// </exception>
-        /// <exception cref="UnresolvableMasterException">Enumeration failed resolving one of the Plugin's masters.</exception>
+        /// <exception cref="UnresolvableMasterException">
+        ///     Enumeration, or a record's FormID or Entry getter, failed resolving one of the Plugin's masters.
+        /// </exception>
         /// <exception cref="UnrecognizedPluginReadFailureException">
-        ///     Enumeration failed with a cause the application does not recognise.
+        ///     Enumeration, or a record's FormID or Entry getter, failed with a cause the application does not recognise.
         /// </exception>
         /// <exception cref="OperationCanceledException">
-        ///     <paramref name="cancellationToken" /> requests cancellation, or enumeration's failure carries one.
+        ///     <paramref name="cancellationToken" /> requests cancellation, or a failure while reading carries one.
         /// </exception>
         private IEnumerable<FormIdRecord> EnumerateRecords(
             Action<string> reportRecordIssue,
@@ -328,7 +331,7 @@ internal sealed class MutagenPluginReader : IPluginReader
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                if (entryExtraction.TryExtract(records.Current, reportRecordIssue) is { } record)
+                if (entryExtraction.TryExtract(records.Current, pluginName, reportRecordIssue) is { } record)
                 {
                     yield return record;
                 }
