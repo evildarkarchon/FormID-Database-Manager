@@ -958,6 +958,33 @@ public class CoreProjectBoundaryTests
     public void PluginIngestionSources_PluginReadSeam_ReferenceNoMutagenNamespaceOrType(string sourceFileName)
     {
         var source = File.ReadAllText(Path.Combine(GetCoreProjectDirectory(), "Services", sourceFileName));
+
+        AssertReferencesNoMutagenNamespaceOrTypeBehindTheSeam(source);
+    }
+
+    /// <summary>
+    ///     Verifies the Plugin read seam's own contract file references no Mutagen namespace or type, nor any read-side
+    ///     rule that lives behind it, so the seam Plugin Ingestion reads through cannot leak what it hides (ADR-0015).
+    /// </summary>
+    /// <remarks>
+    ///     Spec #129. The contract is checked with the same list as Plugin Ingestion's sources: Plugin Ingestion is
+    ///     written against this contract, so a Mutagen name here is the first step of a leak into it.
+    /// </remarks>
+    [Fact]
+    public void PluginReaderContractSource_PluginReadSeam_ReferencesNoMutagenNamespaceOrType()
+    {
+        var source = File.ReadAllText(Path.Combine(GetCoreProjectDirectory(), "Services", "IPluginReader.cs"));
+
+        AssertReferencesNoMutagenNamespaceOrTypeBehindTheSeam(source);
+    }
+
+    /// <summary>
+    ///     Asserts that raw source text names no qualified Mutagen namespace, no Mutagen type, and no application
+    ///     read-side rule that lives behind the Plugin read seam.
+    /// </summary>
+    /// <param name="source">The raw C# source text, comments included.</param>
+    private static void AssertReferencesNoMutagenNamespaceOrTypeBehindTheSeam(string source)
+    {
         // Mutagen's record, read-parameter, key, and exception types, then the application's own read-side rules
         // that live behind the seam with them: Entry Extraction, the nested-cancellation unwrap, and the ignore list.
         string[] behindTheSeamNames =

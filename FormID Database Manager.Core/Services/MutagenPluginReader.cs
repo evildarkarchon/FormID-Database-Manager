@@ -176,79 +176,6 @@ internal sealed class MutagenPluginReader : IPluginReader
     }
 
     /// <summary>
-    ///     Lazily extracts storable records from an opened overlay, applying the enumeration and per-record rules.
-    /// </summary>
-    /// <param name="plugin">The opened Plugin overlay.</param>
-    /// <param name="entryExtraction">The per-record Entry Extraction rules.</param>
-    /// <param name="reportRecordIssue">Receives non-ignorable recoverable record issues in observation order.</param>
-    /// <param name="cancellationToken">Checked once per record.</param>
-    /// <returns>The lazy sequence consumed inside the Store's atomic Plugin write.</returns>
-    /// <exception cref="PluginReadException">Mutagen reports an expected record-read failure.</exception>
-    /// <exception cref="OperationCanceledException"><paramref name="cancellationToken" /> requests cancellation.</exception>
-    private static IEnumerable<FormIdRecord> ReadRecords(
-        IModGetter plugin,
-        EntryExtraction entryExtraction,
-        Action<string> reportRecordIssue,
-        CancellationToken cancellationToken)
-    {
-        using var records = CreateRecordEnumerator(plugin);
-
-        while (MoveNextRecord(records))
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            if (entryExtraction.TryExtract(records.Current, reportRecordIssue) is { } record)
-            {
-                yield return record;
-            }
-        }
-    }
-
-    /// <summary>
-    ///     Creates the Mutagen record enumerator and marks expected record-read failures with their internal phase.
-    /// </summary>
-    /// <param name="plugin">The opened Plugin overlay.</param>
-    /// <returns>The lazy major-record enumerator.</returns>
-    /// <exception cref="PluginReadException">Mutagen reports an expected record-read failure.</exception>
-    private static IEnumerator<IMajorRecordGetter> CreateRecordEnumerator(IModGetter plugin)
-    {
-        try
-        {
-            return plugin.EnumerateMajorRecords().GetEnumerator();
-        }
-        catch (RecordException ex)
-        {
-            NestedCancellation.RethrowIfPresent(ex);
-            throw new PluginReadException(
-                PluginReadPhase.ReadingRecords,
-                ex.Message,
-                ex);
-        }
-    }
-
-    /// <summary>
-    ///     Advances a lazy Mutagen enumerator while preserving expected record-read classification.
-    /// </summary>
-    /// <param name="records">The active major-record enumerator.</param>
-    /// <returns><see langword="true" /> when another record is available.</returns>
-    /// <exception cref="PluginReadException">Mutagen reports an expected record-read failure.</exception>
-    private static bool MoveNextRecord(IEnumerator<IMajorRecordGetter> records)
-    {
-        try
-        {
-            return records.MoveNext();
-        }
-        catch (RecordException ex)
-        {
-            NestedCancellation.RethrowIfPresent(ex);
-            throw new PluginReadException(
-                PluginReadPhase.ReadingRecords,
-                ex.Message,
-                ex);
-        }
-    }
-
-    /// <summary>
     ///     One opened Mutagen overlay behind the seam. Its owner disposes it, which disposes the overlay.
     /// </summary>
     /// <param name="overlay">The overlay opening produced; owned by this instance from here on.</param>
@@ -262,13 +189,101 @@ internal sealed class MutagenPluginReader : IPluginReader
         {
             // Checked here rather than in the iterator, whose body (argument checks included) runs only on first use.
             ArgumentNullException.ThrowIfNull(reportRecordIssue);
-            return MutagenPluginReader.ReadRecords(overlay, entryExtraction, reportRecordIssue, cancellationToken);
+            return EnumerateRecords(reportRecordIssue, cancellationToken);
         }
 
         /// <inheritdoc />
         public void Dispose()
         {
             overlay.Dispose();
+        }
+
+        /// <summary>
+        ///     Lazily extracts storable records from the opened overlay, applying the enumeration and per-record
+        ///     rules.
+        /// </summary>
+        /// <param name="reportRecordIssue">
+        ///     Receives non-ignorable recoverable record issues in observation order.
+        /// </param>
+        /// <param name="cancellationToken">Checked once per record.</param>
+        /// <returns>The lazy sequence consumed inside the Store's atomic Plugin write.</returns>
+        /// <exception cref="PluginReadException">Mutagen reports an expected record-read failure.</exception>
+        /// <exception cref="OperationCanceledException">
+        ///     <paramref name="cancellationToken" /> requests cancellation.
+        /// </exception>
+        private IEnumerable<FormIdRecord> EnumerateRecords(
+            Action<string> reportRecordIssue,
+            CancellationToken cancellationToken)
+        {
+            using var records = CreateRecordEnumerator(overlay);
+
+            while (MoveNextRecord(records))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                if (entryExtraction.TryExtract(records.Current, reportRecordIssue) is { } record)
+                {
+                    yield return record;
+                }
+            }
+        }
+
+        /// <summary>
+        ///     Creates the Mutagen record enumerator and marks expected record-read failures with their internal phase.
+        /// </summary>
+        /// <param name="plugin">The opened Plugin overlay.</param>
+        /// <returns>The lazy major-record enumerator.</returns>
+        /// <exception cref="PluginReadException">Mutagen reports an expected record-read failure.</exception>
+        private static IEnumerator<IMajorRecordGetter> CreateRecordEnumerator(IModGetter plugin)
+        {
+            try
+            {
+                return plugin.EnumerateMajorRecords().GetEnumerator();
+            }
+            catch (RecordException ex)
+            {
+                throw CreateReadingRecordsFailure(ex);
+            }
+        }
+
+        /// <summary>
+        ///     Advances a lazy Mutagen enumerator while preserving expected record-read classification.
+        /// </summary>
+        /// <param name="records">The active major-record enumerator.</param>
+        /// <returns><see langword="true" /> when another record is available.</returns>
+        /// <exception cref="PluginReadException">Mutagen reports an expected record-read failure.</exception>
+        private static bool MoveNextRecord(IEnumerator<IMajorRecordGetter> records)
+        {
+            try
+            {
+                return records.MoveNext();
+            }
+            catch (RecordException ex)
+            {
+                throw CreateReadingRecordsFailure(ex);
+            }
+        }
+
+        /// <summary>
+        ///     Classifies a top-level <see cref="RecordException" /> raised while enumerating as a Failed Plugin in the
+        ///     record-reading phase, keeping Mutagen's own message rather than the deepest one opening reports.
+        /// </summary>
+        /// <param name="exception">The record-read failure Mutagen raised.</param>
+        /// <returns>The classified failure, for the caller to throw from its own catch.</returns>
+        /// <exception cref="OperationCanceledException">
+        ///     <paramref name="exception" /> wraps a cancellation, which is rethrown instead of being classified.
+        /// </exception>
+        /// <remarks>
+        ///     It returns rather than throws so each caller's <c>throw</c> keeps the compiler's flow analysis intact.
+        /// </remarks>
+        private static PluginReadException CreateReadingRecordsFailure(RecordException exception)
+        {
+            // Cancellation is preserved before the record-read failure is normalized below, as on the opening path.
+            NestedCancellation.RethrowIfPresent(exception);
+            return new PluginReadException(
+                PluginReadPhase.ReadingRecords,
+                exception.Message,
+                exception);
         }
     }
 }

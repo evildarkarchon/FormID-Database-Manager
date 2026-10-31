@@ -107,6 +107,19 @@ public sealed class GameLoadOrdersArchitectureTests
     }
 
     /// <summary>
+    ///     Pins the opened Plugin's read operation to application-owned FormID records, so records leave the Plugin
+    ///     read seam as FormIDs and Entries and no Mutagen record type crosses it (ADR-0015).
+    /// </summary>
+    [Fact]
+    public void OpenedPluginContract_ReadRecords_ReturnsFormIdRecords()
+    {
+        var readOperation = typeof(IOpenedPlugin).GetMethod(nameof(IOpenedPlugin.ReadRecords));
+
+        Assert.NotNull(readOperation);
+        Assert.Equal(typeof(IEnumerable<FormIdRecord>), readOperation.ReturnType);
+    }
+
+    /// <summary>
     ///     Pins one cohesive lower environment seam and prevents the retired delegate-bundle substitution shape.
     /// </summary>
     [Fact]

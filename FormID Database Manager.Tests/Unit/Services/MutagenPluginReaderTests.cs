@@ -762,15 +762,22 @@ public sealed class MutagenPluginReaderTests : IDisposable
     }
 
     /// <summary>
-    ///     Creates one production-branded ready case at a real path, so a real-path assertion enters through the live opaque seam.
+    ///     Creates one production-branded ready case at a given path, so a real-path assertion enters through the live
+    ///     opaque seam.
     /// </summary>
-    /// <param name="pluginPath">The exact path the adapter should attempt.</param>
+    /// <param name="pluginPath">
+    ///     The exact path the adapter should attempt; its file name becomes the Plugin name.
+    /// </param>
     /// <param name="release">The GameRelease hidden inside the production capability.</param>
+    /// <param name="readParameters">The prepared read parameters, or the defaults.</param>
     /// <returns>The ready selected-Plugin case for the path and release.</returns>
-    private static SelectedPluginReady CreateReadyPluginAt(string pluginPath, GameRelease release)
+    private static SelectedPluginReady CreateReadyPluginAt(
+        string pluginPath,
+        GameRelease release,
+        BinaryReadParameters? readParameters = null)
     {
         var capability = new PluginReadCapability(
-            new MutagenPluginReadCapabilityPayload(release, BinaryReadParameters.Default));
+            new MutagenPluginReadCapabilityPayload(release, readParameters ?? BinaryReadParameters.Default));
         return new SelectedPluginReady(Path.GetFileName(pluginPath), pluginPath, capability);
     }
 
@@ -856,12 +863,7 @@ public sealed class MutagenPluginReaderTests : IDisposable
         return family switch
         {
             nameof(MalformedDataException) => new MalformedDataException(message),
-            nameof(RecordException) => new RecordException(
-                formKey: null,
-                recordType: null,
-                modKey: ModKey.FromNameAndExtension(PluginName),
-                edid: null,
-                message: message),
+            nameof(RecordException) => CreateRecordException(message),
             nameof(ArgumentException) => new ArgumentException(message),
             nameof(OverflowException) => new OverflowException(message),
             nameof(IOException) => new IOException(message),
@@ -900,8 +902,7 @@ public sealed class MutagenPluginReaderTests : IDisposable
         GameRelease release = GameRelease.SkyrimSE,
         BinaryReadParameters? readParameters = null)
     {
-        var capability = new PluginReadCapability(
-            new MutagenPluginReadCapabilityPayload(release, readParameters ?? BinaryReadParameters.Default));
-        return new SelectedPluginReady(PluginName, PluginPath, capability);
+        // PluginPath's file name is PluginName, so the case keeps the name every assertion in this file expects.
+        return CreateReadyPluginAt(PluginPath, release, readParameters);
     }
 }
