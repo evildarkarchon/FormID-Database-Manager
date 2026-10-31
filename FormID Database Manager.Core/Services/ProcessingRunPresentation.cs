@@ -232,12 +232,12 @@ internal static class ProcessingRunPresentation
                     failedDetails)
             ];
 
-        // Failures outrank warnings in the completion status, because the count line has to name the worse of the two.
-        var completionStatus = failedPlugins > 0
-            ? FormatCompletionStatus("Processing completed with failures", ingestedPlugins, skippedPlugins,
+        // Failures outrank warnings in the completion line, because the count line has to name the worse of the two.
+        var completionLine = failedPlugins > 0
+            ? FormatCompletionLine("Processing completed with failures", ingestedPlugins, skippedPlugins,
                 failedPlugins)
             : warningDetails.Count > 0
-                ? FormatCompletionStatus("Processing completed with warnings", ingestedPlugins, skippedPlugins,
+                ? FormatCompletionLine("Processing completed with warnings", ingestedPlugins, skippedPlugins,
                     failedPlugins)
                 : "Processing completed successfully!";
 
@@ -246,11 +246,11 @@ internal static class ProcessingRunPresentation
         return new RenderedRunReport(
             warningMessages,
             errorMessages,
-            [completionStatus]);
+            [completionLine]);
     }
 
     /// <summary>
-    ///     Renders the completion status of a FormID text-file run from the counts FormID Text Ingestion read.
+    ///     Renders the completion line of a FormID text-file run from the counts FormID Text Ingestion read.
     /// </summary>
     /// <param name="importResult">The distinct Plugin and valid record counts of the import.</param>
     /// <returns>The rendered report for the run.</returns>
@@ -499,7 +499,7 @@ internal static class ProcessingRunPresentation
         return string.Join(Environment.NewLine, lines);
     }
 
-    private static string FormatCompletionStatus(
+    private static string FormatCompletionLine(
         string prefix,
         int ingestedPlugins,
         int skippedPlugins,

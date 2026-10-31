@@ -217,11 +217,11 @@ public sealed class ProcessingRunPresentationTests
     }
 
     /// <summary>
-    ///     Verifies the terminal status of a run in which every selected Plugin became an Ingested Plugin without a
+    ///     Verifies the completion line of a run in which every selected Plugin became an Ingested Plugin without a
     ///     Processing Warning.
     /// </summary>
     [Fact]
-    public void Render_EveryPluginIngestedWithoutWarnings_ReportsOnlyTheSuccessfulCompletionStatus()
+    public void Render_EveryPluginIngestedWithoutWarnings_ReportsOnlyTheSuccessfulCompletionLine()
     {
         var rendered = RenderPluginRun(
             new IngestedPlugin("First.esp", 2),
@@ -231,7 +231,7 @@ public sealed class ProcessingRunPresentationTests
     }
 
     /// <summary>
-    ///     Verifies the warning report and warning completion status of a run whose Ingested Plugins carried
+    ///     Verifies the warning report and warning completion line of a run whose Ingested Plugins carried
     ///     recoverable record issues, including the singular and plural forms of both the summary and the per-Plugin
     ///     detail.
     /// </summary>
@@ -437,13 +437,13 @@ public sealed class ProcessingRunPresentationTests
 
     /// <summary>
     ///     Verifies the complete report of a run that produced Ingested, Skipped and Failed Plugins at once: the
-    ///     warning message, the failure message, and the failure completion status with all three counts.
+    ///     warning message, the failure message, and the failure completion line with all three counts.
     /// </summary>
     /// <remarks>
-    ///     Failures outrank warnings in the completion status, which is only observable when a run produced both.
+    ///     Failures outrank warnings in the completion line, which is only observable when a run produced both.
     /// </remarks>
     [Fact]
-    public void Render_IngestedSkippedAndFailedPlugins_ReportsWarningsFailuresAndTheFailureCompletionStatus()
+    public void Render_IngestedSkippedAndFailedPlugins_ReportsWarningsFailuresAndTheFailureCompletionLine()
     {
         var rendered = RenderPluginRun(
             new IngestedPlugin("Warned.esp", 2, new ProcessingWarning(1, ["Recoverable issue"])),
@@ -466,14 +466,14 @@ public sealed class ProcessingRunPresentationTests
     }
 
     /// <summary>
-    ///     Verifies the completion status of a FormID text-file run, which reports the counts FormID Text Ingestion read.
+    ///     Verifies the completion line of a FormID text-file run, which reports the counts FormID Text Ingestion read.
     /// </summary>
     /// <remarks>
     ///     This is one of the two strings parent #61 changed on purpose: a text run used to end with a flat
     ///     "Processing completed successfully!" that discarded the counts a selected-Plugin run had always reported.
     /// </remarks>
     [Fact]
-    public void Render_FormIdTextRunOutcome_ReportsThePluginAndRecordCountsInTheCompletionStatus()
+    public void Render_FormIdTextRunOutcome_ReportsThePluginAndRecordCountsInTheCompletionLine()
     {
         var rendered = UnderInvariantCulture(() => ProcessingRunPresentation.Render(
             new FormIdTextRunOutcome(new FormIdTextFileImportResult(2, 2_048))));
