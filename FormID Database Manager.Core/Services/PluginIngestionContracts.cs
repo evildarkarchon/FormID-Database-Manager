@@ -61,6 +61,10 @@ internal interface IPluginIngestion
     ///     A selected Plugin declares a master the Data directory cannot supply, which fails the whole run rather than
     ///     one Plugin (ADR-0006).
     /// </exception>
+    /// <exception cref="UnrecognizedPluginReadFailureException">
+    ///     Reading a selected Plugin failed for a reason the application does not recognise. It fails the whole run
+    ///     and names that Plugin, rather than becoming a Failed Plugin (ADR-0016).
+    /// </exception>
     Task<PluginIngestionReport> IngestAsync(
         PluginProcessingRunRequest request,
         IPluginFormIdRecordWriter recordStore,
@@ -91,6 +95,10 @@ internal interface IPluginIngestion
     /// <exception cref="UnresolvableMasterException">
     ///     A selected Plugin declares a master the Data directory cannot supply, which fails the whole plan rather than
     ///     one Plugin (ADR-0006).
+    /// </exception>
+    /// <exception cref="UnrecognizedPluginReadFailureException">
+    ///     Opening a selected Plugin failed for a reason the application does not recognise. It fails the whole plan
+    ///     and names that Plugin, rather than becoming a Failed Plugin (ADR-0016).
     /// </exception>
     Task<PluginIngestionPlan> PlanAsync(
         PluginProcessingRunRequest request,

@@ -239,17 +239,38 @@ public sealed class MutagenPluginReaderTests : IDisposable
     }
 
     /// <summary>
-    ///     Verifies an opening failure outside the expected list propagates unchanged and is not a Failed Plugin.
+    ///     Verifies an opening failure outside the expected list fails the Processing Run as an unrecognized Plugin-read
+    ///     failure that names the Plugin and the opening phase and keeps the original exception, rather than becoming a
+    ///     Failed Plugin or propagating without the Plugin's name (ADR-0016 rule 7).
     /// </summary>
     [Fact]
-    public void Open_UnexpectedOpeningFailure_PropagatesUnchanged()
+    public void Open_UnexpectedOpeningFailure_ThrowsUnrecognizedPluginReadFailureNamingThePlugin()
     {
         var failure = new InvalidOperationException("Adapter state is broken.", new NullReferenceException());
         var sut = new MutagenPluginReader((_, _, _) => throw failure);
 
         var thrown = Record.Exception(() => sut.Open(CreateReadyPlugin()));
 
-        Assert.Same(failure, thrown);
+        var unrecognized = Assert.IsType<UnrecognizedPluginReadFailureException>(thrown);
+        Assert.Equal(PluginName, unrecognized.PluginName);
+        Assert.Equal(PluginReadPhase.OpeningPlugin, unrecognized.Phase);
+        Assert.Same(failure, unrecognized.InnerException);
+    }
+
+    /// <summary>
+    ///     Verifies cancellation nested in an otherwise unrecognized opening failure is rethrown as the original
+    ///     cancellation, so it is never reported as a failure of the Plugin or the run.
+    /// </summary>
+    [Fact]
+    public void Open_CancellationNestedInAnUnrecognizedOpeningFailure_ThrowsTheOriginalCancellation()
+    {
+        var cancellation = new OperationCanceledException("Opening cancelled.");
+        var sut = new MutagenPluginReader((_, _, _) =>
+            throw new InvalidOperationException("Adapter state is broken.", cancellation));
+
+        var thrown = Assert.ThrowsAny<OperationCanceledException>(() => sut.Open(CreateReadyPlugin()));
+
+        Assert.Same(cancellation, thrown);
     }
 
     /// <summary>

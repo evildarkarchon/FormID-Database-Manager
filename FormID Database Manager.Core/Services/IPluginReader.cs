@@ -25,6 +25,12 @@ internal interface IPluginReader
     /// <exception cref="UnresolvableMasterException">
     ///     The prepared read capability cannot resolve a master the selected Plugin declares (ADR-0006).
     /// </exception>
+    /// <exception cref="UnrecognizedPluginReadFailureException">
+    ///     Opening failed for a reason that is neither malformed Plugin data nor an Unresolvable Master. It fails the
+    ///     Processing Run rather than the Plugin, names the selected Plugin, carries
+    ///     <see cref="PluginReadPhase.OpeningPlugin" />, and keeps the original failure as its inner exception
+    ///     (ADR-0016). Cancellation nested in such a failure is rethrown as the original cancellation instead.
+    /// </exception>
     IOpenedPlugin Open(SelectedPluginReady readyPlugin);
 }
 
