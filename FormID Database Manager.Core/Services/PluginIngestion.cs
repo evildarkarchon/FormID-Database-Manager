@@ -452,7 +452,7 @@ internal sealed class PluginIngestion : IPluginIngestion
     }
 
     /// <summary>
-    ///     Opens an overlay and attaches the opening phase to adapter-normalized Plugin-read failures.
+    ///     Opens an overlay, letting the adapter's opening-phase Plugin-read failure through unchanged.
     /// </summary>
     /// <param name="readyPlugin">The selected Plugin and opaque capability prepared by Game Load Orders.</param>
     /// <returns>The disposable Plugin overlay.</returns>
@@ -470,15 +470,9 @@ internal sealed class PluginIngestion : IPluginIngestion
     {
         try
         {
+            // A PluginReadException already carries the opening phase and has had nested cancellation unwrapped by
+            // the adapter, so it passes through to the callers' Failed Plugin catches without a second wrap.
             return _overlayReader.ReadOverlay(readyPlugin);
-        }
-        catch (PluginOverlayReadException ex)
-        {
-            NestedCancellation.RethrowIfPresent(ex);
-            throw new PluginReadException(
-                PluginReadPhase.OpeningPlugin,
-                ex.Message,
-                ex);
         }
         catch (MissingModException ex)
         {
@@ -528,22 +522,5 @@ internal sealed class PluginIngestion : IPluginIngestion
 
             return new ProcessingWarning(_count, _details);
         }
-    }
-
-    /// <summary>
-    ///     Carries application-owned Plugin-read phase and message facts across lazy Store enumeration.
-    /// </summary>
-    /// <param name="phase">The internal read phase that failed.</param>
-    /// <param name="diagnosticMessage">The underlying Plugin-read message.</param>
-    /// <param name="innerException">The adapter or Mutagen exception retained for diagnostics.</param>
-    private sealed class PluginReadException(
-        PluginReadPhase phase,
-        string diagnosticMessage,
-        Exception? innerException = null)
-        : Exception(diagnosticMessage, innerException)
-    {
-        public PluginReadPhase Phase { get; } = phase;
-
-        public string DiagnosticMessage { get; } = diagnosticMessage;
     }
 }
