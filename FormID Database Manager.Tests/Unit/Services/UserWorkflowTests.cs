@@ -1153,14 +1153,7 @@ public class UserWorkflowTests
 
     private UserWorkflow CreateSut()
     {
-        return new UserWorkflow(
-            _viewModel,
-            _dispatcher,
-            _fileDialogService.Object,
-            _gameInstallations,
-            _pluginList,
-            _processingRunExecutor,
-            _defaultDatabaseRoot);
+        return CreateSut(_viewModel, _dispatcher);
     }
 
     /// <summary>
