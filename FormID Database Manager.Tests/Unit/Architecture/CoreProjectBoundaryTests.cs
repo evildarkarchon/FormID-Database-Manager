@@ -645,6 +645,29 @@ public class CoreProjectBoundaryTests
     }
 
     /// <summary>
+    ///     Verifies the retired ignore list has not come back anywhere in Core, so no record can again be dropped
+    ///     uncounted by matching its failure's message text (ADR-0016 rule 5).
+    /// </summary>
+    /// <remarks>
+    ///     Issue #139, under spec #127. The name used to sit in the Plugin Ingestion seam's behind-the-seam list, which
+    ///     only kept it out of two files; this pins its deletion across every Core source.
+    /// </remarks>
+    [Fact]
+    public void CoreSources_AfterRecordIssuesAreAlwaysCounted_DoNotContainTheRetiredIgnoreList()
+    {
+        const string retiredIgnoreListName = "IgnorableErrorPatterns";
+        var retiredIgnoreListOwners = Directory
+            .EnumerateFiles(GetCoreProjectDirectory(), "*.cs", SearchOption.AllDirectories)
+            .Where(path => !IsBuildOutput(path))
+            .Where(path => File.ReadAllText(path).Contains(retiredIgnoreListName, StringComparison.Ordinal))
+            .Select(path => Path.GetRelativePath(FindRepositoryRoot(), path))
+            .OrderBy(static path => path, StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.Empty(retiredIgnoreListOwners);
+    }
+
+    /// <summary>
     ///     Verifies that the User Workflow reaches Game Installation resolution only through the Game Context it
     ///     composes: it keeps no reference to <c>GameInstallations</c> and calls none of its members (ADR-0011).
     /// </summary>
@@ -985,8 +1008,9 @@ public class CoreProjectBoundaryTests
     /// <param name="source">The raw C# source text, comments included.</param>
     private static void AssertReferencesNoMutagenNamespaceOrTypeBehindTheSeam(string source)
     {
-        // Mutagen's record, read-parameter, key, and exception types, then the application's own read-side rules
-        // that live behind the seam with them: Entry Extraction, the nested-cancellation unwrap, and the ignore list.
+        // Mutagen's record, read-parameter, key, and exception types (the enrichment wrappers and Plugin-data families
+        // the fault-scope classification names among them, ADR-0016), then the application's own read-side rules
+        // that live behind the seam with them: Entry Extraction and the nested-cancellation unwrap.
         string[] behindTheSeamNames =
         [
             "IModGetter",
@@ -996,12 +1020,14 @@ public class CoreProjectBoundaryTests
             "ModKey",
             "FormKey",
             "RecordException",
+            "SubrecordException",
+            "ModGroupsMalformedException",
+            "RecordCollisionException",
             "MalformedDataException",
             "MissingModException",
             "MissingModMappingException",
             "EntryExtraction",
-            "NestedCancellation",
-            "IgnorableErrorPatterns"
+            "NestedCancellation"
         ];
 
         Assert.DoesNotMatch(@"\bMutagen\.[A-Z]", source);

@@ -1,10 +1,13 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using FormID_Database_Manager.Services;
 using FormID_Database_Manager.TestUtilities.Builders;
 using Moq;
 using Mutagen.Bethesda;
 using Mutagen.Bethesda.Plugins;
+using Mutagen.Bethesda.Plugins.Aspects;
+using Mutagen.Bethesda.Plugins.Exceptions;
 using Mutagen.Bethesda.Plugins.Records;
 using Mutagen.Bethesda.Skyrim;
 using Xunit;
@@ -13,11 +16,17 @@ namespace FormID_Database_Manager.Tests.Unit.Services;
 
 /// <summary>
 ///     Tests Entry Extraction directly: the EditorID tier, the required name aspect (ADR-0005), the Synthesized Entry
-///     naming the registered record type (ADR-0004), unusable registrations, and nested cancellation. None of these
+///     naming the registered record type (ADR-0004), unusable registrations, nested cancellation, and the Record Issue
+///     or run failure each getter's failure is classified as (ADR-0016). None of these
 ///     needs Plugin Ingestion; the overlay halves of the parity claims live in <c>PluginIngestionFixtureTests</c>.
 /// </summary>
 public sealed class EntryExtractionTests
 {
+    /// <summary>
+    ///     The selected Plugin every extraction reads on behalf of, which a run failure must name.
+    /// </summary>
+    private const string PluginName = "Entry.esp";
+
     /// <summary>
     ///     One release per game family. Listed rather than derived, so adding a family is a deliberate edit here — the
     ///     same convention <c>PluginIngestionFixtureTests</c> follows, and re-listed rather than shared with it so
@@ -56,7 +65,7 @@ public sealed class EntryExtractionTests
         var warnings = new List<string>();
         var sut = new EntryExtraction();
 
-        var record = sut.TryExtract(npc, warnings.Add);
+        var record = sut.TryExtract(npc, PluginName, warnings.Add);
 
         Assert.NotNull(record);
         Assert.Equal("NPC_TEST", record.Value.Entry);
@@ -83,7 +92,7 @@ public sealed class EntryExtractionTests
         var warnings = new List<string>();
         var sut = new EntryExtraction();
 
-        var record = sut.TryExtract(npc, warnings.Add);
+        var record = sut.TryExtract(npc, PluginName, warnings.Add);
 
         Assert.NotNull(record);
         Assert.Equal($"[Npc_{npc.FormKey.ID:X6}]", record.Value.Entry);
@@ -111,7 +120,7 @@ public sealed class EntryExtractionTests
         var warnings = new List<string>();
         var sut = new EntryExtraction();
 
-        var extracted = sut.TryExtract(record, warnings.Add);
+        var extracted = sut.TryExtract(record, PluginName, warnings.Add);
 
         Assert.NotNull(extracted);
         Assert.Equal(PluginFixture.RequiredNamedRecordDisplayName, extracted.Value.Entry);
@@ -134,7 +143,7 @@ public sealed class EntryExtractionTests
         var sut = new EntryExtraction();
         var warnings = new List<string>();
 
-        var extracted = sut.TryExtract(CreateRecordWithUnusableRegistration(), warnings.Add);
+        var extracted = sut.TryExtract(CreateRecordWithUnusableRegistration(), PluginName, warnings.Add);
 
         Assert.NotNull(extracted);
         Assert.StartsWith("[", extracted.Value.Entry, StringComparison.Ordinal);
@@ -158,6 +167,7 @@ public sealed class EntryExtractionTests
 
         var extracted = sut.TryExtract(
             CreateRecordWithUnusableRegistration(new InvalidOperationException("registration unavailable")),
+            PluginName,
             warnings.Add);
 
         Assert.NotNull(extracted);
@@ -179,9 +189,263 @@ public sealed class EntryExtractionTests
             .Throws(new System.Reflection.TargetInvocationException(cancellation));
         var sut = new EntryExtraction();
 
-        var thrown = Assert.Throws<OperationCanceledException>(() => sut.TryExtract(record.Object, _ => { }));
+        var thrown = Assert.Throws<OperationCanceledException>(() =>
+            sut.TryExtract(record.Object, PluginName, _ => { }));
 
         Assert.Same(cancellation, thrown);
+    }
+
+    // ---------------------------------------------------------------------------------------------------------
+    // Record Issues (ADR-0016 rules 4 to 6). Each getter a record's FormID or Entry is read through is driven to
+    // fail: a cause on the Plugin-data family list is one counted Record Issue, carrying that cause's message, and
+    // any other cause fails the Processing Run naming the Plugin. Nothing is dropped without being counted.
+    // ---------------------------------------------------------------------------------------------------------
+
+    /// <summary>
+    ///     The getters Entry Extraction reads an Entry through: the EditorID, then the display name.
+    /// </summary>
+    public static TheoryData<string> EntryGetters => [EditorIdGetter, NameGetter];
+
+    /// <summary>
+    ///     Every getter Entry Extraction reads, the FormID's first.
+    /// </summary>
+    public static TheoryData<string> EveryGetter => [FormKeyGetter, EditorIdGetter, NameGetter];
+
+    /// <summary>
+    ///     Every getter, each with cancellation raised directly and nested in a reflection-style wrapper.
+    /// </summary>
+    public static TheoryData<string, bool> EveryGetterWithEachCancellationShape
+    {
+        get
+        {
+            var data = new TheoryData<string, bool>();
+            foreach (var getter in new[] { FormKeyGetter, EditorIdGetter, NameGetter })
+            {
+                data.Add(getter, false);
+                data.Add(getter, true);
+            }
+
+            return data;
+        }
+    }
+
+    /// <summary>
+    ///     A sample of Plugin-data family causes a getter can raise, including one behind a Mutagen enrichment wrapper.
+    ///     The full family list is pinned once, against opening, in <c>MutagenPluginReaderTests</c>; this sample proves
+    ///     the per-record path reaches that same list rather than a list of its own.
+    /// </summary>
+    public static TheoryData<string> ListedGetterCauses =>
+    [
+        nameof(InvalidDataException),
+        nameof(IndexOutOfRangeException),
+        nameof(IOException),
+        nameof(RecordException)
+    ];
+
+    private const string FormKeyGetter = "FormKey";
+    private const string EditorIdGetter = "EditorID";
+    private const string NameGetter = "Name";
+
+    /// <summary>
+    ///     The message every test-built cause carries, so an assertion proves which exception's message was reported.
+    /// </summary>
+    private const string CauseWording = "Cause wording.";
+
+    /// <summary>
+    ///     Verifies a listed cause from the FormID getter drops the record and reports exactly one Record Issue
+    ///     carrying the cause's message, looking through a Mutagen enrichment wrapper to that cause.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(ListedGetterCauses))]
+    public void TryExtract_ListedCauseFromTheFormIdGetter_DropsTheRecordAndReportsOneRecordIssue(string cause)
+    {
+        var record = CreateRecordWhoseGetterFails(FormKeyGetter, CreateListedCause(cause));
+        var issues = new List<string>();
+        var sut = new EntryExtraction();
+
+        var extracted = sut.TryExtract(record, PluginName, issues.Add);
+
+        Assert.Null(extracted);
+        Assert.Equal([CauseWording], issues);
+    }
+
+    /// <summary>
+    ///     Verifies a listed cause from either Entry getter keeps the record, stored under its FormID with a
+    ///     Synthesized Entry, and reports exactly one Record Issue carrying the cause's message.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(EntryGetters))]
+    public void TryExtract_ListedCauseFromAnEntryGetter_StoresASynthesizedEntryAndReportsOneRecordIssue(
+        string getter)
+    {
+        var record = CreateRecordWhoseGetterFails(getter, CreateListedCause(nameof(InvalidDataException)));
+        var issues = new List<string>();
+        var sut = new EntryExtraction();
+
+        var extracted = sut.TryExtract(record, PluginName, issues.Add);
+
+        Assert.NotNull(extracted);
+        Assert.Equal("000001", extracted.Value.FormId);
+        Assert.StartsWith("[", extracted.Value.Entry, StringComparison.Ordinal);
+        Assert.EndsWith("_000001]", extracted.Value.Entry, StringComparison.Ordinal);
+        Assert.Equal([CauseWording], issues);
+    }
+
+    /// <summary>
+    ///     Verifies an <see cref="IOException" /> from <c>Name</c>, which is how a localized Plugin's failed lazy
+    ///     <c>.STRINGS</c> load arrives, costs only the record's name: it is a Record Issue, the record keeps its
+    ///     FormID, and neither a Failed Plugin nor a run failure results.
+    /// </summary>
+    /// <remarks>
+    ///     Mutagen caches that load's failure, so it repeats for every record that uses the strings file. Two records
+    ///     here prove each one is counted and each one is stored, rather than the first failure ending the Plugin.
+    /// </remarks>
+    [Fact]
+    public void TryExtract_StringsLoadIOExceptionFromName_IsARecordIssueAndKeepsEachRecordsFormId()
+    {
+        var stringsFailure = new IOException("Could not locate strings file Tested_English.STRINGS.");
+        var issues = new List<string>();
+        var sut = new EntryExtraction();
+
+        var first = sut.TryExtract(CreateRecordWhoseGetterFails(NameGetter, stringsFailure, 0x000001), PluginName,
+            issues.Add);
+        var second = sut.TryExtract(CreateRecordWhoseGetterFails(NameGetter, stringsFailure, 0x000002), PluginName,
+            issues.Add);
+
+        Assert.Equal("000001", Assert.NotNull(first).FormId);
+        Assert.Equal("000002", Assert.NotNull(second).FormId);
+        Assert.Equal([stringsFailure.Message, stringsFailure.Message], issues);
+    }
+
+    /// <summary>
+    ///     Verifies a failure whose message the retired ignore list matched, such as one naming <c>KSIZ</c>, is now
+    ///     counted as a Record Issue when its type is listed, rather than dropped without a trace.
+    /// </summary>
+    [Fact]
+    public void TryExtract_ListedCauseWhoseMessageTheIgnoreListMatched_IsReportedAsARecordIssue()
+    {
+        var failure = new InvalidDataException("KSIZ count did not match the KWDA entries.");
+        var record = CreateRecordWhoseGetterFails(FormKeyGetter, failure);
+        var issues = new List<string>();
+        var sut = new EntryExtraction();
+
+        var extracted = sut.TryExtract(record, PluginName, issues.Add);
+
+        Assert.Null(extracted);
+        Assert.Equal([failure.Message], issues);
+    }
+
+    /// <summary>
+    ///     Verifies a cause the application does not recognise, from any getter, fails the Processing Run naming the
+    ///     Plugin and the reading-records phase, with the getter's exception kept, and reports no Record Issue.
+    /// </summary>
+    /// <remarks>
+    ///     A <see cref="NullReferenceException" /> is the case the retired ignore list used to drop silently by matching
+    ///     its message (ADR-0016 rules 4 and 5).
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(EveryGetter))]
+    public void TryExtract_UnlistedCauseFromAnyGetter_ThrowsUnrecognizedPluginReadFailureNamingThePlugin(
+        string getter)
+    {
+        var defect = new NullReferenceException("Object reference not set to an instance of an object.");
+        var record = CreateRecordWhoseGetterFails(getter, defect);
+        var issues = new List<string>();
+        var sut = new EntryExtraction();
+
+        var thrown = Record.Exception(() => sut.TryExtract(record, PluginName, issues.Add));
+
+        var failure = Assert.IsType<UnrecognizedPluginReadFailureException>(thrown);
+        Assert.Equal(PluginName, failure.PluginName);
+        Assert.Equal(PluginReadPhase.ReadingRecords, failure.Phase);
+        Assert.Same(defect, failure.InnerException);
+        Assert.Empty(issues);
+    }
+
+    /// <summary>
+    ///     Verifies cancellation from any getter, raised directly or nested in a reflection-style wrapper, is rethrown
+    ///     as the original cancellation before any classification, and reports no Record Issue.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(EveryGetterWithEachCancellationShape))]
+    public void TryExtract_CancellationFromAnyGetter_ThrowsTheOriginalCancellation(string getter, bool nested)
+    {
+        var cancellation = new OperationCanceledException("Entry extraction cancelled.");
+        Exception failure = nested ? new System.Reflection.TargetInvocationException(cancellation) : cancellation;
+        var record = CreateRecordWhoseGetterFails(getter, failure);
+        var issues = new List<string>();
+        var sut = new EntryExtraction();
+
+        var thrown = Assert.Throws<OperationCanceledException>(() => sut.TryExtract(record, PluginName, issues.Add));
+
+        Assert.Same(cancellation, thrown);
+        Assert.Empty(issues);
+    }
+
+    /// <summary>
+    ///     Builds a record with no EditorID and no usable registration whose named getter raises the given failure.
+    /// </summary>
+    /// <param name="getter">
+    ///     <see cref="FormKeyGetter" />, <see cref="EditorIdGetter" />, or <see cref="NameGetter" />. The getters
+    ///     before it succeed; for <see cref="NameGetter" /> the record carries the required name aspect, the one
+    ///     Entry Extraction reads, and its EditorID is left unset so the name is reached.
+    /// </param>
+    /// <param name="failure">The exception the getter raises.</param>
+    /// <param name="formId">The FormID the record's FormKey carries when that getter succeeds.</param>
+    /// <returns>The record.</returns>
+    private static IMajorRecordGetter CreateRecordWhoseGetterFails(string getter, Exception failure,
+        uint formId = 0x000001)
+    {
+        var record = new Mock<IMajorRecordGetter>();
+        if (getter == FormKeyGetter)
+        {
+            record.SetupGet(candidate => candidate.FormKey).Throws(failure);
+            return record.Object;
+        }
+
+        record
+            .SetupGet(candidate => candidate.FormKey)
+            .Returns(new FormKey(ModKey.FromNameAndExtension(PluginName), formId));
+        switch (getter)
+        {
+            case EditorIdGetter:
+                record.SetupGet(candidate => candidate.EditorID).Throws(failure);
+                break;
+            case NameGetter:
+                // As<> must run before Object is first read, so the proxy is generated implementing the aspect.
+                record.As<INamedRequiredGetter>().SetupGet(named => named.Name).Throws(failure);
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(getter), getter, "Unknown getter.");
+        }
+
+        return record.Object;
+    }
+
+    /// <summary>
+    ///     Creates one listed cause carrying <see cref="CauseWording" />.
+    /// </summary>
+    /// <param name="cause">
+    ///     The cause's type name. <see cref="RecordException" /> stands for an <see cref="IOException" /> behind
+    ///     Mutagen's enrichment wrapper, which carries wording of its own so the reported message proves the cause's
+    ///     was the one chosen.
+    /// </param>
+    private static Exception CreateListedCause(string cause)
+    {
+        return cause switch
+        {
+            nameof(InvalidDataException) => new InvalidDataException(CauseWording),
+            nameof(IndexOutOfRangeException) => new IndexOutOfRangeException(CauseWording),
+            nameof(IOException) => new IOException(CauseWording),
+            nameof(RecordException) => new RecordException(
+                formKey: null,
+                recordType: null,
+                modKey: ModKey.FromNameAndExtension(PluginName),
+                edid: null,
+                message: "Wrapper wording.",
+                innerException: new IOException(CauseWording)),
+            _ => throw new ArgumentOutOfRangeException(nameof(cause), cause, "Unknown listed cause.")
+        };
     }
 
     /// <summary>

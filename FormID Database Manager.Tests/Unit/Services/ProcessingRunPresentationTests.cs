@@ -716,6 +716,39 @@ public sealed class ProcessingRunPresentationTests
     }
 
     /// <summary>
+    ///     Pins the sentence an unrecognized Plugin-read failure reaches the user as: it names the Plugin and what was
+    ///     being done to it, says how to work around it, and ends with the classified cause's message (ADR-0016 rules 6
+    ///     and 7).
+    /// </summary>
+    /// <remarks>
+    ///     Issue #136. The phase is passed by name because it is internal and a public test method cannot take it as a
+    ///     parameter. The expected sentences are written out so the renderer cannot pass by echoing its input. The
+    ///     original failure carries different wording from the cause, as an enrichment wrapper can, so the sentence
+    ///     cannot pass by rendering the inner exception's message instead.
+    /// </remarks>
+    /// <param name="phaseName">The name of the Plugin-read phase the failure arrived in.</param>
+    /// <param name="expected">The exact sentence the user reads.</param>
+    [Theory]
+    [InlineData(nameof(PluginReadPhase.OpeningPlugin),
+        "Error processing FormIDs: opening Broken.esp failed unexpectedly, so the run stopped. Deselect Broken.esp " +
+        "to process the other selected plugins. Cause: Adapter state is broken.")]
+    [InlineData(nameof(PluginReadPhase.ReadingRecords),
+        "Error processing FormIDs: reading the records of Broken.esp failed unexpectedly, so the run stopped. " +
+        "Deselect Broken.esp to process the other selected plugins. Cause: Adapter state is broken.")]
+    public void RenderFailure_UnrecognizedPluginReadFailure_NamesThePluginAndThePhase(
+        string phaseName,
+        string expected)
+    {
+        var failure = new UnrecognizedPluginReadFailureException(
+            "Broken.esp",
+            Enum.Parse<PluginReadPhase>(phaseName),
+            "Adapter state is broken.",
+            new InvalidOperationException("Enrichment wording."));
+
+        Assert.Equal(expected, ProcessingRunPresentation.RenderFailure(failure));
+    }
+
+    /// <summary>
     ///     Verifies that rendering a missing failure is refused rather than rendered as a message about nothing.
     /// </summary>
     [Fact]

@@ -10,7 +10,8 @@ namespace FormID_Database_Manager.Tests.Fakes;
 /// <remarks>
 ///     Every classification of a Mutagen failure lives behind the seam in <see cref="MutagenPluginReader" />, so a
 ///     scenario here throws the already-classified result (<see cref="PluginReadException" />,
-///     <see cref="UnresolvableMasterException" />) or an unclassified failure that must propagate unchanged.
+///     <see cref="UnresolvableMasterException" />, <see cref="UnrecognizedPluginReadFailureException" />) or an
+///     unclassified failure that must propagate unchanged.
 /// </remarks>
 /// <param name="events">
 ///     An optional shared event log; each opening appends <c>open:&lt;Plugin name&gt;</c> so a scenario can assert how

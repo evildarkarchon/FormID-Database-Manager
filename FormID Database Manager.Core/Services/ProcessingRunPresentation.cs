@@ -147,8 +147,10 @@ internal static class ProcessingRunPresentation
     ///     to render: a press it does not admit is a refusal (ADR-0010, ADR-0011).
     /// </param>
     /// <returns>
-    ///     An <see cref="UnresolvableMasterException" />'s own message, unwrapped; for anything else, the failure's
-    ///     message behind the legacy "Error processing FormIDs" prefix.
+    ///     An <see cref="UnresolvableMasterException" />'s own message, unwrapped; for an
+    ///     <see cref="UnrecognizedPluginReadFailureException" />, a sentence naming the Plugin and the phase, with the
+    ///     classified cause's message last; for anything else, the failure's message behind the legacy
+    ///     "Error processing FormIDs" prefix.
     /// </returns>
     /// <exception cref="ArgumentNullException"><paramref name="failure" /> is <see langword="null" />.</exception>
     /// <remarks>
@@ -162,9 +164,40 @@ internal static class ProcessingRunPresentation
     {
         ArgumentNullException.ThrowIfNull(failure);
 
-        return failure is UnresolvableMasterException unresolvableMaster
-            ? unresolvableMaster.Message
-            : $"Error processing FormIDs: {failure.Message}";
+        return failure switch
+        {
+            UnresolvableMasterException unresolvableMaster => unresolvableMaster.Message,
+            UnrecognizedPluginReadFailureException unrecognized => RenderUnrecognizedPluginReadFailure(unrecognized),
+            _ => $"Error processing FormIDs: {failure.Message}"
+        };
+    }
+
+    /// <summary>
+    ///     Renders a Plugin-read failure the application does not recognise, naming the Plugin so the user can deselect
+    ///     it and run the rest (ADR-0016 rule 7).
+    /// </summary>
+    /// <param name="failure">
+    ///     The typed run failure, carrying the Plugin, the phase, and the classified cause's message (ADR-0016 rule 6).
+    /// </param>
+    /// <returns>The sentence the user reads.</returns>
+    /// <exception cref="ArgumentOutOfRangeException">The phase is not one this module knows how to render.</exception>
+    /// <remarks>
+    ///     The cause's message goes last, after the advice, because it is diagnostic text from outside the
+    ///     application: it may or may not end in a full stop, so nothing is appended after it.
+    /// </remarks>
+    private static string RenderUnrecognizedPluginReadFailure(UnrecognizedPluginReadFailureException failure)
+    {
+        // The activity phrases differ from FormatFailedPluginDetail's on purpose: this one sits mid-sentence after the
+        // run-failure prefix, while a Failed Plugin's detail is a sentence of its own. Only the guard is shared.
+        var activity = failure.Phase switch
+        {
+            PluginReadPhase.OpeningPlugin => $"opening {failure.PluginName}",
+            PluginReadPhase.ReadingRecords => $"reading the records of {failure.PluginName}",
+            _ => throw PluginReadPhaseGuard.Unsupported(nameof(failure), failure.Phase)
+        };
+
+        return $"Error processing FormIDs: {activity} failed unexpectedly, so the run stopped. " +
+               $"Deselect {failure.PluginName} to process the other selected plugins. Cause: {failure.Message}";
     }
 
     /// <summary>
@@ -476,10 +509,7 @@ internal static class ProcessingRunPresentation
                 $"Error opening {failedPlugin.PluginName}: {failedPlugin.Diagnostic.Message}",
             PluginReadPhase.ReadingRecords =>
                 $"Error enumerating records in {failedPlugin.PluginName}: {failedPlugin.Diagnostic.Message}",
-            _ => throw new ArgumentOutOfRangeException(
-                nameof(failedPlugin),
-                failedPlugin.Diagnostic.Phase,
-                "Unsupported Plugin-read phase.")
+            _ => throw PluginReadPhaseGuard.Unsupported(nameof(failedPlugin), failedPlugin.Diagnostic.Phase)
         };
 
         return $"{failedPlugin.PluginName}: {detail}";

@@ -25,6 +25,12 @@ internal interface IPluginReader
     /// <exception cref="UnresolvableMasterException">
     ///     The prepared read capability cannot resolve a master the selected Plugin declares (ADR-0006).
     /// </exception>
+    /// <exception cref="UnrecognizedPluginReadFailureException">
+    ///     Opening failed for a reason that is neither malformed Plugin data nor an Unresolvable Master. It fails the
+    ///     Processing Run rather than the Plugin, names the selected Plugin, carries
+    ///     <see cref="PluginReadPhase.OpeningPlugin" />, and keeps the original failure as its inner exception
+    ///     (ADR-0016). Cancellation nested in such a failure is rethrown as the original cancellation instead.
+    /// </exception>
     IOpenedPlugin Open(SelectedPluginReady readyPlugin);
 }
 
@@ -37,17 +43,37 @@ internal interface IOpenedPlugin : IDisposable
     ///     Lazily reads the Plugin's records as FormID records. Nothing is read until the sequence is consumed.
     /// </summary>
     /// <param name="reportRecordIssue">
-    ///     Receives each recoverable record issue worth reporting, in observation order, after the ignore list has run.
+    ///     Receives every Record Issue, in observation order, as the message of the Plugin-data cause it was classified
+    ///     by. None is filtered out, so each one is counted in the Plugin's Processing Warning. A record whose FormID
+    ///     failed is not yielded; a record whose Entry failed is yielded with a Synthesized Entry. A per-record failure
+    ///     is never a Failed Plugin: one whose cause is not about the Plugin's data is not reported here, and instead
+    ///     fails the Processing Run as an <see cref="UnrecognizedPluginReadFailureException" /> naming the Plugin, in
+    ///     <see cref="PluginReadPhase.ReadingRecords" /> (ADR-0016).
     /// </param>
     /// <param name="cancellationToken">Checked once per record while reading.</param>
     /// <returns>The lazy record sequence, intended to be consumed once inside the Store's atomic Plugin write.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="reportRecordIssue" /> is null.</exception>
     /// <exception cref="PluginReadException">
-    ///     Raised while enumerating: the Plugin's records cannot be read; the phase is
+    ///     Raised while enumerating: the Plugin's records contain malformed or unreadable data; the phase is
     ///     <see cref="PluginReadPhase.ReadingRecords" />.
     /// </exception>
-    /// <exception cref="OperationCanceledException">
-    ///     Raised while enumerating: <paramref name="cancellationToken" /> requests cancellation.
+    /// <exception cref="UnresolvableMasterException">
+    ///     Raised while enumerating: reading the records needed a master the prepared read capability cannot resolve
+    ///     (ADR-0006).
     /// </exception>
+    /// <exception cref="UnrecognizedPluginReadFailureException">
+    ///     Raised while enumerating: reading the records failed for a reason that is neither malformed Plugin data nor
+    ///     an Unresolvable Master. It fails the Processing Run rather than the Plugin, names the selected Plugin,
+    ///     carries <see cref="PluginReadPhase.ReadingRecords" />, and keeps the original failure as its inner exception
+    ///     (ADR-0016).
+    /// </exception>
+    /// <exception cref="OperationCanceledException">
+    ///     Raised while enumerating: <paramref name="cancellationToken" /> requests cancellation, or a failure carries
+    ///     a nested cancellation, which is rethrown as the original cancellation instead of being classified.
+    /// </exception>
+    /// <remarks>
+    ///     Every exception raised while enumerating leaves through the caller's consumption of the sequence, so when
+    ///     that consumption is the Store's atomic Plugin write, the records already yielded are rolled back.
+    /// </remarks>
     IEnumerable<FormIdRecord> ReadRecords(Action<string> reportRecordIssue, CancellationToken cancellationToken);
 }
