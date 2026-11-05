@@ -123,3 +123,32 @@ carrying a closed `RunRejectionReason`. It reads nothing from disk, creates noth
 > `PluginListSource` instead of a raw game directory. "No game directory" (reason 2) now means the Game Context has no
 > source. Admission no longer calls `PluginListSource.Create`, and no longer throws `ArgumentException` for a malformed
 > directory, because Game Context refuses one before it can be captured.
+
+> *Amended 2026-11-05:* Admission's inputs no longer carry the Game Context's `PluginListSource` or the whole
+> `PluginListState` snapshot. They carry the Plugin List's confirmation for the captured source instead: a closed
+> `PluginListConfirmation` that is either a matching Confirmed Plugin List, still loading, or unavailable. The input is
+> null exactly when the Game Context holds no Plugin List Source, which is what "no game directory" (reason 2) means.
+>
+> - **The Plugin List state answers.** `PluginListState.ConfirmationFor(PluginListSource)` holds the source-matching
+>   rule, beside `HasFailedFor`. `UserWorkflow` asks it of the one snapshot it reads, so the answer is still coherent
+>   under ADR-0009.
+> - **Admission keeps its own vocabulary.** It maps loading to reason 3 and unavailable to reason 4, so
+>   `RunRejectionReason` never crosses into the Plugin List.
+> - **Decisions are unchanged.** Every press gets the decision it got before, including a matching confirmation
+>   admitting whatever the state.
+> - **The inputs guard the capture.** `ProcessingRunInputs` throws `ArgumentException` when a confirmation arrives
+>   without a GameRelease, or when a matching Confirmed Plugin List's GameRelease differs from the captured one.
+>   Either would be a programming error in the capture, not a refusal.
+>
+> Two considered options and one consequence above are affected.
+>
+> - **"Capture only the Confirmed Plugin List" stays rejected.** The confirmation still tells loading from unavailable,
+>   which was that option's defect.
+> - **"A smaller Plugin List projection computed by `UserWorkflow`" is half reversed.** The projection now exists, but
+>   the Plugin List state computes it rather than the workflow. The rejected outcome, moving the state-to-reason mapping
+>   into `UserWorkflow`, still does not happen.
+> - **The testing consequence is reversed.** Admission tests construct confirmations as plain values, without a live
+>   Plugin List. The mapping from each Plugin List state to its confirmation is tested in `PluginListTests`, against a
+>   real Plugin List, as ADR-0009 requires.
+>
+> This amendment records the decision ahead of the change.
