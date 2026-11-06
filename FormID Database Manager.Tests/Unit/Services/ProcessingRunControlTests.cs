@@ -98,7 +98,7 @@ public sealed class ProcessingRunControlTests
         await sut.PressAsync(inputs);
 
         Assert.Equal(
-            [new MessageListsCleared(), new ErrorMessageAdded(ProcessingRunPresentation.Render(reason))],
+            [new MessageListsCleared(), MessageAdded.From(ProcessingRunPresentation.Render(reason))],
             _sink.Entries);
         Assert.Empty(_executor.Requests);
     }
@@ -122,7 +122,7 @@ public sealed class ProcessingRunControlTests
         Assert.Equal(
             [
                 new MessageListsCleared(),
-                new ErrorMessageAdded(ProcessingRunPresentation.Render(RunRejectionReason.NoPluginsSelected))
+                MessageAdded.From(ProcessingRunPresentation.Render(RunRejectionReason.NoPluginsSelected))
             ],
             _sink.Entries);
         Assert.Empty(_executor.Requests);
@@ -166,7 +166,7 @@ public sealed class ProcessingRunControlTests
                 new MessageListsCleared(),
                 StartingActivity(),
                 .. ProcessingRunPresentation.Render(_executor.Outcome).InformationMessages
-                    .Select(static message => new InformationMessageAdded(message)),
+                    .Select(static message => new MessageAdded(MessageList.Information, message)),
                 new RunActivityReported(ActivityProjection.None)
             ],
             _sink.Entries);
@@ -207,7 +207,8 @@ public sealed class ProcessingRunControlTests
             [
                 new MessageListsCleared(),
                 StartingActivity(),
-                .. rendered.InformationMessages.Select(static message => new InformationMessageAdded(message)),
+                .. rendered.InformationMessages.Select(static message =>
+                    new MessageAdded(MessageList.Information, message)),
                 new RunActivityReported(ActivityProjection.None)
             ],
             _sink.Entries);
@@ -310,7 +311,7 @@ public sealed class ProcessingRunControlTests
         Assert.Equal(
             [
                 .. ProcessingRunPresentation.Render(new CancelledRunOutcome()).InformationMessages
-                    .Select(static message => new InformationMessageAdded(message)),
+                    .Select(static message => new MessageAdded(MessageList.Information, message)),
                 new RunActivityReported(ActivityProjection.None)
             ],
             _sink.Entries.Skip(1));
@@ -357,7 +358,7 @@ public sealed class ProcessingRunControlTests
         Assert.Equal(
             [
                 .. ProcessingRunPresentation.Render(new CancelledRunOutcome()).InformationMessages
-                    .Select(static message => new InformationMessageAdded(message)),
+                    .Select(static message => new MessageAdded(MessageList.Information, message)),
                 new RunActivityReported(ActivityProjection.None)
             ],
             _sink.Entries.TakeLast(2));
@@ -392,7 +393,7 @@ public sealed class ProcessingRunControlTests
                 new MessageListsCleared(),
                 CancellationRequestedActivity(StartingValue()),
                 .. ProcessingRunPresentation.Render(new CancelledRunOutcome()).InformationMessages
-                    .Select(static message => new InformationMessageAdded(message)),
+                    .Select(static message => new MessageAdded(MessageList.Information, message)),
                 new RunActivityReported(ActivityProjection.None)
             ],
             _sink.Entries);
@@ -442,7 +443,7 @@ public sealed class ProcessingRunControlTests
         Assert.Equal(
             [
                 .. ProcessingRunPresentation.Render(new CancelledRunOutcome()).InformationMessages
-                    .Select(static message => new InformationMessageAdded(message)),
+                    .Select(static message => new MessageAdded(MessageList.Information, message)),
                 new RunActivityReported(ActivityProjection.None)
             ],
             _sink.Entries.TakeLast(2));
@@ -475,9 +476,10 @@ public sealed class ProcessingRunControlTests
             [
                 new MessageListsCleared(),
                 StartingActivity(),
-                .. rendered.WarningMessages.Select(static message => new WarningMessageAdded(message)),
-                .. rendered.ErrorMessages.Select(static message => new ErrorMessageAdded(message)),
-                .. rendered.InformationMessages.Select(static message => new InformationMessageAdded(message)),
+                .. rendered.WarningMessages.Select(static message => new MessageAdded(MessageList.Warning, message)),
+                .. rendered.ErrorMessages.Select(static message => new MessageAdded(MessageList.Error, message)),
+                .. rendered.InformationMessages.Select(static message =>
+                    new MessageAdded(MessageList.Information, message)),
                 new RunActivityReported(ActivityProjection.None)
             ],
             _sink.Entries);
@@ -549,9 +551,7 @@ public sealed class ProcessingRunControlTests
 
         await sut.PressAsync(TextInputs());
 
-        var error = Assert.IsType<ErrorMessageAdded>(Assert.Single(_sink.Entries, static entry =>
-            entry is ErrorMessageAdded));
-        Assert.Equal(ProcessingRunPresentation.RenderFailure(failure), error.Message);
+        var error = MessageAdded.From(ProcessingRunPresentation.RenderFailure(failure));
         Assert.Equal(
             [new MessageListsCleared(), StartingActivity(), error, new RunActivityReported(ActivityProjection.None)],
             _sink.Entries);

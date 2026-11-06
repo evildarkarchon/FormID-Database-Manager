@@ -181,7 +181,9 @@ public class UserWorkflowTests
 
         await sut.ProcessFormIdsAsync();
 
-        Assert.Equal([ProcessingRunPresentation.Render(RunRejectionReason.NoGameSelected)], _viewModel.ErrorMessages);
+        Assert.Equal(
+            [ProcessingRunPresentation.Render(RunRejectionReason.NoGameSelected).Text],
+            _viewModel.ErrorMessages);
         Assert.Empty(_processingRuns);
     }
 
@@ -219,7 +221,9 @@ public class UserWorkflowTests
 
         await sut.ProcessFormIdsAsync();
 
-        Assert.Equal([ProcessingRunPresentation.Render(RunRejectionReason.NoGameDirectory)], _viewModel.ErrorMessages);
+        Assert.Equal(
+            [ProcessingRunPresentation.Render(RunRejectionReason.NoGameDirectory).Text],
+            _viewModel.ErrorMessages);
         Assert.Empty(_processingRuns);
     }
 
@@ -376,7 +380,7 @@ public class UserWorkflowTests
 
         Assert.Empty(_processingRuns);
         Assert.Equal(
-            [ProcessingRunPresentation.Render(RunRejectionReason.PluginListLoading)],
+            [ProcessingRunPresentation.Render(RunRejectionReason.PluginListLoading).Text],
             _viewModel.ErrorMessages);
 
         refreshCompletion.SetResult(PluginListGameLoadOrdersStub.Discovered(["New.esp"]));
@@ -408,7 +412,9 @@ public class UserWorkflowTests
         await reentrantRun;
 
         Assert.Empty(_processingRuns);
-        Assert.Contains(ProcessingRunPresentation.Render(RunRejectionReason.NoGameDirectory), _viewModel.ErrorMessages);
+        Assert.Contains(
+            ProcessingRunPresentation.Render(RunRejectionReason.NoGameDirectory).Text,
+            _viewModel.ErrorMessages);
         Assert.Empty(_viewModel.DatabasePath);
     }
 
@@ -442,7 +448,7 @@ public class UserWorkflowTests
 
         Assert.Empty(_processingRuns);
         Assert.Equal(
-            [ProcessingRunPresentation.Render(RunRejectionReason.PluginListLoading)],
+            [ProcessingRunPresentation.Render(RunRejectionReason.PluginListLoading).Text],
             _viewModel.ErrorMessages);
 
         refreshCompletion.SetResult(PluginListGameLoadOrdersStub.Discovered(["New.esp"]));

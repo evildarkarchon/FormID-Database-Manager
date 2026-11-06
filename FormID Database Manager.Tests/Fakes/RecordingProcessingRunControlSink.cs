@@ -47,21 +47,33 @@ internal sealed class RecordingProcessingRunControlSink : IProcessingRunControlS
     }
 
     /// <inheritdoc />
+    public void AddMessage(MessageList list, string message)
+    {
+        Record(new MessageAdded(list, message));
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    ///     Recorded as the same entry as <see cref="AddMessage" />, so a test matches a message by its list and text
+    ///     whichever member carried it (#147). The per-list members go away with #148.
+    /// </remarks>
     public void AddWarningMessage(string message)
     {
-        Record(new WarningMessageAdded(message));
+        Record(new MessageAdded(MessageList.Warning, message));
     }
 
     /// <inheritdoc />
+    /// <remarks>Recorded as the same entry as <see cref="AddMessage" />; see <see cref="AddWarningMessage" />.</remarks>
     public void AddErrorMessage(string message)
     {
-        Record(new ErrorMessageAdded(message));
+        Record(new MessageAdded(MessageList.Error, message));
     }
 
     /// <inheritdoc />
+    /// <remarks>Recorded as the same entry as <see cref="AddMessage" />; see <see cref="AddWarningMessage" />.</remarks>
     public void AddInformationMessage(string message)
     {
-        Record(new InformationMessageAdded(message));
+        Record(new MessageAdded(MessageList.Information, message));
     }
 
     /// <summary>
@@ -100,19 +112,20 @@ internal sealed record DefaultedDatabasePathReported(string DefaultedDatabasePat
 internal sealed record RunActivityReported(ActivityProjection Activity) : ProcessingRunSinkEntry;
 
 /// <summary>
-///     A rendered warning message was reported.
+///     A rendered message was added to a Message List.
 /// </summary>
+/// <param name="List">The Message List the message was added to.</param>
 /// <param name="Message">The rendered message.</param>
-internal sealed record WarningMessageAdded(string Message) : ProcessingRunSinkEntry;
-
-/// <summary>
-///     A rendered error message was reported.
-/// </summary>
-/// <param name="Message">The rendered message.</param>
-internal sealed record ErrorMessageAdded(string Message) : ProcessingRunSinkEntry;
-
-/// <summary>
-///     A rendered information message was reported.
-/// </summary>
-/// <param name="Message">The rendered message.</param>
-internal sealed record InformationMessageAdded(string Message) : ProcessingRunSinkEntry;
+internal sealed record MessageAdded(MessageList List, string Message) : ProcessingRunSinkEntry
+{
+    /// <summary>
+    ///     The entry a rendered message is expected to arrive as, so a test takes the list from Presentation's output
+    ///     rather than stating it.
+    /// </summary>
+    /// <param name="rendered">The message Processing Run Presentation rendered.</param>
+    /// <returns>The entry recording that message in the list Presentation chose.</returns>
+    public static MessageAdded From(RenderedMessage rendered)
+    {
+        return new MessageAdded(rendered.List, rendered.Text);
+    }
+}

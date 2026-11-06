@@ -635,8 +635,13 @@ public sealed class ProcessingRunPresentationTests
     }
 
     /// <summary>
-    ///     Pins the sentence each Processing Run Admission refusal reaches the user as (ADR-0010).
+    ///     Pins the sentence each Processing Run Admission refusal reaches the user as (ADR-0010), and that it is one
+    ///     message in the error list.
     /// </summary>
+    /// <remarks>
+    ///     Issue #147. The render is a single rendered message, so comparing it whole pins both its Message List and its
+    ///     wording, and that a refusal renders to exactly one message.
+    /// </remarks>
     /// <param name="reasonName">
     ///     The name of the refusal reason, passed as text because the reason is internal and a public test method
     ///     cannot take it as a parameter.
@@ -653,11 +658,11 @@ public sealed class ProcessingRunPresentationTests
     [InlineData(nameof(RunRejectionReason.NoPluginsSelected), "No plugins selected")]
     [InlineData(nameof(RunRejectionReason.NoDatabaseLocation),
         "Choose a database file: the default location is unavailable.")]
-    public void Render_RunRejectionReason_ReturnsTheRefusalSentence(string reasonName, string expected)
+    public void Render_RunRejectionReason_ReturnsTheRefusalSentenceAsOneErrorMessage(string reasonName, string expected)
     {
         var reason = Enum.Parse<RunRejectionReason>(reasonName);
 
-        Assert.Equal(expected, ProcessingRunPresentation.Render(reason));
+        Assert.Equal(new RenderedMessage(MessageList.Error, expected), ProcessingRunPresentation.Render(reason));
     }
 
     /// <summary>
@@ -668,7 +673,7 @@ public sealed class ProcessingRunPresentationTests
     {
         foreach (var reason in Enum.GetValues<RunRejectionReason>())
         {
-            Assert.False(string.IsNullOrWhiteSpace(ProcessingRunPresentation.Render(reason)));
+            Assert.False(string.IsNullOrWhiteSpace(ProcessingRunPresentation.Render(reason).Text));
         }
     }
 
@@ -690,7 +695,7 @@ public sealed class ProcessingRunPresentationTests
     {
         var rendered = ProcessingRunPresentation.RenderFailure(new InvalidOperationException("store unavailable"));
 
-        Assert.Equal("Error processing FormIDs: store unavailable", rendered);
+        Assert.Equal(new RenderedMessage(MessageList.Error, "Error processing FormIDs: store unavailable"), rendered);
     }
 
     /// <summary>
@@ -709,9 +714,11 @@ public sealed class ProcessingRunPresentationTests
             new UnresolvableMasterException("User.esp", "Starfield.esm"));
 
         Assert.Equal(
-            "Could not resolve 'Starfield.esm', a master file declared by User.esp. This game separates master " +
-            "files by type in the load order, so that master must be present in the Data directory being " +
-            "processed before any selected plugin can be read.",
+            new RenderedMessage(
+                MessageList.Error,
+                "Could not resolve 'Starfield.esm', a master file declared by User.esp. This game separates master " +
+                "files by type in the load order, so that master must be present in the Data directory being " +
+                "processed before any selected plugin can be read."),
             rendered);
     }
 
@@ -745,7 +752,7 @@ public sealed class ProcessingRunPresentationTests
             "Adapter state is broken.",
             new InvalidOperationException("Enrichment wording."));
 
-        Assert.Equal(expected, ProcessingRunPresentation.RenderFailure(failure));
+        Assert.Equal(new RenderedMessage(MessageList.Error, expected), ProcessingRunPresentation.RenderFailure(failure));
     }
 
     /// <summary>

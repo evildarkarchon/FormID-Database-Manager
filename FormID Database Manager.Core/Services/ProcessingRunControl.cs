@@ -192,7 +192,7 @@ internal sealed class ProcessingRunControl : IDisposable
                     // starts all three message lists over, as every press that does not cancel does, so the reason is
                     // the only message the user reads afterwards (#95).
                     _sink.ClearMessageLists();
-                    _sink.AddErrorMessage(ProcessingRunPresentation.Render(refused.Reason));
+                    ReportMessageLocked(ProcessingRunPresentation.Render(refused.Reason));
                     return null;
                 case AdmittedRun admitted:
                     return StartAdmittedRunLocked(admitted, inputs.DatabasePath);
@@ -272,7 +272,7 @@ internal sealed class ProcessingRunControl : IDisposable
         {
             lock (_lock)
             {
-                _sink.AddErrorMessage(ProcessingRunPresentation.RenderFailure(ex));
+                ReportMessageLocked(ProcessingRunPresentation.RenderFailure(ex));
             }
         }
         finally
@@ -327,6 +327,19 @@ internal sealed class ProcessingRunControl : IDisposable
                 _sink.AddInformationMessage(message);
             }
         }
+    }
+
+    /// <summary>
+    ///     Forwards one rendered message to the Message List Presentation chose for it, with the caller holding
+    ///     <see cref="_lock" /> (#60).
+    /// </summary>
+    /// <param name="rendered">The message Processing Run Presentation rendered, already tagged with its list.</param>
+    /// <remarks>
+    ///     The list is passed through as data, so this module names no Message List of its own (ADR-0014).
+    /// </remarks>
+    private void ReportMessageLocked(RenderedMessage rendered)
+    {
+        _sink.AddMessage(rendered.List, rendered.Text);
     }
 
     /// <summary>
@@ -451,6 +464,19 @@ internal interface IProcessingRunControlSink
     /// </summary>
     /// <param name="runActivity">The rendered run activity.</param>
     void ReportRunActivity(ActivityProjection runActivity);
+
+    /// <summary>
+    ///     Adds one rendered message to the Message List its renderer chose, mirroring the ViewModel's own add-message
+    ///     operation.
+    /// </summary>
+    /// <param name="list">The Message List the message belongs to, chosen by Processing Run Presentation.</param>
+    /// <param name="message">The rendered text the user reads.</param>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="list" /> is not a defined Message List.</exception>
+    /// <remarks>
+    ///     Processing Run Control forwards a rendered message's list as data rather than choosing a member per list, so
+    ///     it names no Message List itself (ADR-0014).
+    /// </remarks>
+    void AddMessage(MessageList list, string message);
 
     /// <summary>
     ///     Adds one rendered warning message.

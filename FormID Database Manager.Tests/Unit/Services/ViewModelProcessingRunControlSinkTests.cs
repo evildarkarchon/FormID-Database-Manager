@@ -241,6 +241,52 @@ public sealed class ViewModelProcessingRunControlSinkTests
     }
 
     /// <summary>
+    ///     The name of every Message List, so the pass-through test covers a list the day it is added.
+    /// </summary>
+    /// <remarks>
+    ///     Names rather than values because <see cref="MessageList" /> is internal and a public test method cannot take
+    ///     it as a parameter.
+    /// </remarks>
+    public static TheoryData<string> EveryMessageListName => new(Enum.GetNames<MessageList>());
+
+    /// <summary>
+    ///     Verifies that the add-message member writes the text to exactly the Message List it was handed, with no
+    ///     per-list mapping of its own, and leaves every other list alone (ADR-0014).
+    /// </summary>
+    /// <remarks>
+    ///     Issue #147. Which list a run message belongs to is Processing Run Presentation's choice, so the adapter's
+    ///     only behaviour is passing that choice through; the test text is arbitrary for the same reason.
+    /// </remarks>
+    /// <param name="listName">The name of the Message List to write to.</param>
+    [Theory]
+    [MemberData(nameof(EveryMessageListName))]
+    public void AddMessage_EachMessageList_AddsTheTextToThatListOnly(string listName)
+    {
+        var list = Enum.Parse<MessageList>(listName);
+        const string text = "Rendered run message";
+
+        _sut.AddMessage(list, text);
+
+        Assert.Equal(list == MessageList.Error ? [text] : Array.Empty<string>(), _viewModel.ErrorMessages);
+        Assert.Equal(list == MessageList.Warning ? [text] : Array.Empty<string>(), _viewModel.WarningMessages);
+        Assert.Equal(list == MessageList.Information ? [text] : Array.Empty<string>(), _viewModel.InformationMessages);
+    }
+
+    /// <summary>
+    ///     Verifies that a Message List the ViewModel does not define is refused before anything is written, the same
+    ///     failure mode as the Game Context sink adapter's.
+    /// </summary>
+    [Fact]
+    public void AddMessage_UndefinedMessageList_ThrowsAndWritesNothing()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => _sut.AddMessage((MessageList)999, "Unroutable"));
+
+        Assert.Empty(_viewModel.ErrorMessages);
+        Assert.Empty(_viewModel.WarningMessages);
+        Assert.Empty(_viewModel.InformationMessages);
+    }
+
+    /// <summary>
     ///     Hands every message of a rendered run report to the sink member for its list.
     /// </summary>
     /// <param name="rendered">The rendered report.</param>

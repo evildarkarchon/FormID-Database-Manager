@@ -118,9 +118,23 @@ internal static class ProcessingRunPresentation
     ///     Renders why Processing Run Admission refused a press into the one error message its caller should show.
     /// </summary>
     /// <param name="reason">Why the press was refused before any run existed.</param>
-    /// <returns>The sentence the user reads, which says what to do next where there is something to do.</returns>
+    /// <returns>
+    ///     One message in the error list, whose sentence says what to do next where there is something to do. The list
+    ///     is chosen here, so the caller forwards it without naming one (ADR-0014).
+    /// </returns>
     /// <exception cref="ArgumentOutOfRangeException">The reason is not one this module knows how to render.</exception>
-    internal static string Render(RunRejectionReason reason)
+    internal static RenderedMessage Render(RunRejectionReason reason)
+    {
+        return new RenderedMessage(MessageList.Error, RenderRefusalSentence(reason));
+    }
+
+    /// <summary>
+    ///     Words why Processing Run Admission refused a press.
+    /// </summary>
+    /// <param name="reason">Why the press was refused before any run existed.</param>
+    /// <returns>The sentence the user reads.</returns>
+    /// <exception cref="ArgumentOutOfRangeException">The reason is not one this module knows how to render.</exception>
+    private static string RenderRefusalSentence(RunRejectionReason reason)
     {
         return reason switch
         {
@@ -147,7 +161,8 @@ internal static class ProcessingRunPresentation
     ///     to render: a press it does not admit is a refusal (ADR-0010, ADR-0011).
     /// </param>
     /// <returns>
-    ///     An <see cref="UnresolvableMasterException" />'s own message, unwrapped; for an
+    ///     One message in the error list, chosen here so the caller forwards it without naming one (ADR-0014). Its text
+    ///     is an <see cref="UnresolvableMasterException" />'s own message, unwrapped; for an
     ///     <see cref="UnrecognizedPluginReadFailureException" />, a sentence naming the Plugin and the phase, with the
     ///     classified cause's message last; for anything else, the failure's message behind the legacy
     ///     "Error processing FormIDs" prefix.
@@ -160,16 +175,18 @@ internal static class ProcessingRunPresentation
     ///     Unresolvable Master's own message already names the missing master and what to do, and the generic prefix
     ///     would only bury it (ADR-0006).
     /// </remarks>
-    internal static string RenderFailure(Exception failure)
+    internal static RenderedMessage RenderFailure(Exception failure)
     {
         ArgumentNullException.ThrowIfNull(failure);
 
-        return failure switch
+        var text = failure switch
         {
             UnresolvableMasterException unresolvableMaster => unresolvableMaster.Message,
             UnrecognizedPluginReadFailureException unrecognized => RenderUnrecognizedPluginReadFailure(unrecognized),
             _ => $"Error processing FormIDs: {failure.Message}"
         };
+
+        return new RenderedMessage(MessageList.Error, text);
     }
 
     /// <summary>
