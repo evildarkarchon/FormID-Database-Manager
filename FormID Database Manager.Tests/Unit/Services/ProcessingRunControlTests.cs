@@ -709,13 +709,11 @@ public sealed class ProcessingRunControlTests
         string[]? selectedPluginNames = null,
         string? databasePath = DatabasePath)
     {
-        var confirmed = new ConfirmedPluginList(
-            1,
+        var confirmation = PluginListConfirmations.Available(
             Source(),
-            AdvancedMode.Off,
-            [new PluginListEntry(PluginName)],
-            [.. selectedPluginNames ?? [PluginName]]);
-        return PluginInputs(new ConfirmedPluginListAvailable(confirmed), databasePath);
+            [PluginName],
+            selectedPluginNames ?? [PluginName]);
+        return PluginInputs(confirmation, databasePath);
     }
 
     /// <summary>

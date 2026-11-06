@@ -2,8 +2,10 @@
 
 using System.Collections.Immutable;
 using FormID_Database_Manager.Services;
+using FormID_Database_Manager.Tests.Fakes;
 using Mutagen.Bethesda;
 using Xunit;
+using Capture = FormID_Database_Manager.Tests.Fakes.PluginListConfirmationCapture;
 
 namespace FormID_Database_Manager.Tests.Unit.Services;
 
@@ -32,28 +34,6 @@ public sealed class ProcessingRunAdmissionTests
     ///     A game directory that is never created: building a Plugin List Source from it is pure path arithmetic.
     /// </summary>
     private readonly string _gameDirectory = CreateUncreatedTemporaryPath();
-
-    /// <summary>
-    ///     Which Plugin List confirmation a case captures.
-    /// </summary>
-    /// <remarks>Public because public theory methods take it; the confirmation types themselves are internal.</remarks>
-    public enum Capture
-    {
-        /// <summary>No confirmation: the Game Context holds no Plugin List Source.</summary>
-        None,
-
-        /// <summary>The Plugin List is still loading a Confirmed Plugin List for the captured source.</summary>
-        Loading,
-
-        /// <summary>The Plugin List cannot supply a Confirmed Plugin List for the captured source.</summary>
-        Unavailable,
-
-        /// <summary>A matching Confirmed Plugin List that selects no Plugins.</summary>
-        AvailableWithoutSelection,
-
-        /// <summary>A matching Confirmed Plugin List that selects one Plugin.</summary>
-        AvailableWithSelection
-    }
 
     [Fact]
     public void Admit_NoGameSelected_RefusesWithNoGameSelected()
@@ -192,7 +172,7 @@ public sealed class ProcessingRunAdmissionTests
     public void Admit_AvailableConfirmationWithSelection_AdmitsAPluginRunCarryingTheConfirmedSourceAndSelection()
     {
         var confirmedSource = Source(_gameDirectory);
-        var confirmed = ConfirmedList(
+        var confirmed = PluginListConfirmations.ConfirmedList(
             confirmedSource,
             ["First.esp", "Second.esp", "Third.esp"],
             ["First.esp", "Third.esp"]);
@@ -218,24 +198,31 @@ public sealed class ProcessingRunAdmissionTests
     ///     location, so the message shown first is the one to act on first.
     /// </summary>
     /// <param name="capture">The Plugin List confirmation captured with the press.</param>
-    /// <param name="expectedReasonName">
-    ///     The <see cref="RunRejectionReason" /> name, passed as a string because the enum is internal and a public test
-    ///     method cannot take it as a parameter.
-    /// </param>
+    /// <remarks>
+    ///     The expected reason is looked up from the capture inside the test, because <see cref="RunRejectionReason" />
+    ///     is internal and a public test method cannot take it as a parameter.
+    /// </remarks>
     [Theory]
-    [InlineData(Capture.None, nameof(RunRejectionReason.NoGameDirectory))]
-    [InlineData(Capture.Loading, nameof(RunRejectionReason.PluginListLoading))]
-    [InlineData(Capture.Unavailable, nameof(RunRejectionReason.PluginListUnavailable))]
-    [InlineData(Capture.AvailableWithoutSelection, nameof(RunRejectionReason.NoPluginsSelected))]
-    public void Admit_PluginRefusalWithoutDatabasePathOrRoot_RefusesWithThePluginReason(
-        Capture capture,
-        string expectedReasonName)
+    [InlineData(Capture.None)]
+    [InlineData(Capture.Loading)]
+    [InlineData(Capture.Unavailable)]
+    [InlineData(Capture.AvailableWithoutSelection)]
+    public void Admit_PluginRefusalWithoutDatabasePathOrRoot_RefusesWithThePluginReason(Capture capture)
     {
+        var expected = capture switch
+        {
+            Capture.None => RunRejectionReason.NoGameDirectory,
+            Capture.Loading => RunRejectionReason.PluginListLoading,
+            Capture.Unavailable => RunRejectionReason.PluginListUnavailable,
+            Capture.AvailableWithoutSelection => RunRejectionReason.NoPluginsSelected,
+            _ => throw new ArgumentOutOfRangeException(nameof(capture), capture, "No Plugin refusal for this capture.")
+        };
+
         var decision = ProcessingRunAdmission.Admit(
             Inputs(Confirmation(capture), databasePath: string.Empty),
             defaultDatabaseRoot: null);
 
-        AssertRefused(Enum.Parse<RunRejectionReason>(expectedReasonName), decision);
+        AssertRefused(expected, decision);
     }
 
     /// <summary>
@@ -372,36 +359,7 @@ public sealed class ProcessingRunAdmissionTests
     /// </summary>
     private PluginListConfirmation? Confirmation(Capture capture)
     {
-        return capture switch
-        {
-            Capture.None => null,
-            Capture.Loading => ConfirmedPluginListLoading.Instance,
-            Capture.Unavailable => ConfirmedPluginListUnavailable.Instance,
-            Capture.AvailableWithoutSelection => new ConfirmedPluginListAvailable(
-                ConfirmedList(Source(_gameDirectory), ["User.esp"], [])),
-            Capture.AvailableWithSelection => new ConfirmedPluginListAvailable(
-                ConfirmedList(Source(_gameDirectory), ["User.esp"], ["User.esp"])),
-            _ => throw new ArgumentOutOfRangeException(nameof(capture), capture, "Unsupported capture.")
-        };
-    }
-
-    /// <summary>
-    ///     Builds a Confirmed Plugin List as a plain value, as the Plugin List would hold it for the given source.
-    /// </summary>
-    /// <param name="source">The Plugin List Source the list was confirmed against.</param>
-    /// <param name="pluginNames">Every Plugin in Plugin List order.</param>
-    /// <param name="selectedPluginNames">The selected Plugins, already in Plugin List order.</param>
-    private static ConfirmedPluginList ConfirmedList(
-        PluginListSource source,
-        string[] pluginNames,
-        string[] selectedPluginNames)
-    {
-        return new ConfirmedPluginList(
-            1,
-            source,
-            AdvancedMode.Off,
-            [.. pluginNames.Select(static name => new PluginListEntry(name))],
-            [.. selectedPluginNames]);
+        return PluginListConfirmations.For(capture, Source(_gameDirectory));
     }
 
     /// <summary>

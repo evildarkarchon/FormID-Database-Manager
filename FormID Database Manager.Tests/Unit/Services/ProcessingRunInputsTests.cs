@@ -1,8 +1,10 @@
 #nullable enable
 
 using FormID_Database_Manager.Services;
+using FormID_Database_Manager.Tests.Fakes;
 using Mutagen.Bethesda;
 using Xunit;
+using Capture = FormID_Database_Manager.Tests.Fakes.PluginListConfirmationCapture;
 
 namespace FormID_Database_Manager.Tests.Unit.Services;
 
@@ -20,25 +22,6 @@ public sealed class ProcessingRunInputsTests
         Path.Combine(Path.GetTempPath(), $"FormIdTests-Inputs-{Guid.NewGuid():N}");
 
     /// <summary>
-    ///     Which Plugin List confirmation a case captures.
-    /// </summary>
-    /// <remarks>Public because public theory methods take it; the confirmation types themselves are internal.</remarks>
-    public enum Capture
-    {
-        /// <summary>No confirmation: the Game Context holds no Plugin List Source.</summary>
-        None,
-
-        /// <summary>The loading singleton.</summary>
-        Loading,
-
-        /// <summary>The unavailable singleton.</summary>
-        Unavailable,
-
-        /// <summary>A SkyrimSE Confirmed Plugin List wrapped in the available case.</summary>
-        Available
-    }
-
-    /// <summary>
     ///     Verifies that any confirmation captured without a GameRelease is rejected: a confirmation exists only for a
     ///     Plugin List Source, and the Game Context holds a source only beside a GameRelease (ADR-0011).
     /// </summary>
@@ -46,7 +29,7 @@ public sealed class ProcessingRunInputsTests
     [Theory]
     [InlineData(Capture.Loading)]
     [InlineData(Capture.Unavailable)]
-    [InlineData(Capture.Available)]
+    [InlineData(Capture.AvailableWithSelection)]
     public void Constructor_ConfirmationWithoutGameRelease_ThrowsArgumentException(Capture capture)
     {
         var confirmation = Confirmation(capture);
@@ -61,7 +44,7 @@ public sealed class ProcessingRunInputsTests
     [Fact]
     public void Constructor_AvailableConfirmationForAnotherGameRelease_ThrowsArgumentException()
     {
-        var confirmation = Confirmation(Capture.Available);
+        var confirmation = Confirmation(Capture.AvailableWithSelection);
 
         Assert.Throws<ArgumentException>(() => Inputs(GameRelease.Fallout4, confirmation));
     }
@@ -77,7 +60,7 @@ public sealed class ProcessingRunInputsTests
     [InlineData(true, Capture.None)]
     [InlineData(true, Capture.Loading)]
     [InlineData(true, Capture.Unavailable)]
-    [InlineData(true, Capture.Available)]
+    [InlineData(true, Capture.AvailableWithSelection)]
     public void Constructor_ConsistentCapture_KeepsTheCapturedValues(bool hasGameRelease, Capture capture)
     {
         GameRelease? gameRelease = hasGameRelease ? GameRelease.SkyrimSE : null;
@@ -104,19 +87,7 @@ public sealed class ProcessingRunInputsTests
     /// </summary>
     private PluginListConfirmation? Confirmation(Capture capture)
     {
-        return capture switch
-        {
-            Capture.None => null,
-            Capture.Loading => ConfirmedPluginListLoading.Instance,
-            Capture.Unavailable => ConfirmedPluginListUnavailable.Instance,
-            Capture.Available => new ConfirmedPluginListAvailable(new ConfirmedPluginList(
-                1,
-                PluginListSource.Create(GameRelease.SkyrimSE, _gameDirectory),
-                AdvancedMode.Off,
-                [new PluginListEntry("User.esp")],
-                ["User.esp"])),
-            _ => throw new ArgumentOutOfRangeException(nameof(capture), capture, "Unsupported capture.")
-        };
+        return PluginListConfirmations.For(capture, PluginListSource.Create(GameRelease.SkyrimSE, _gameDirectory));
     }
 
     /// <summary>

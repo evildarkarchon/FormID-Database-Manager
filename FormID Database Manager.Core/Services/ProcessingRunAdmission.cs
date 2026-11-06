@@ -232,10 +232,14 @@ internal enum RunRejectionReason
     /// <summary>A selected-Plugin run has no game directory, so the Game Context holds no Plugin List Source.</summary>
     NoGameDirectory,
 
-    /// <summary>The Plugin List is still loading for the captured Plugin List Source.</summary>
+    /// <summary>
+    ///     The captured Plugin List confirmation says the list for the Game Context's Plugin List Source is still loading.
+    /// </summary>
     PluginListLoading,
 
-    /// <summary>The Plugin List for the captured Plugin List Source did not load.</summary>
+    /// <summary>
+    ///     The captured Plugin List confirmation says the list for the Game Context's Plugin List Source did not load.
+    /// </summary>
     PluginListUnavailable,
 
     /// <summary>The matching Confirmed Plugin List selects no Plugins.</summary>
