@@ -681,6 +681,279 @@ public sealed class PluginListTests
         Assert.False(sut.Current.HasFailedFor(source));
     }
 
+    /// <summary>
+    ///     Verifies that a Plugin List with no source cannot supply a Confirmed Plugin List for any source.
+    /// </summary>
+    [Fact]
+    public void ConfirmationFor_NoSourceState_IsUnavailable()
+    {
+        using var sut = new PluginList(ScriptedGameLoadOrders.Sequenced());
+        var source = PluginListSource.Create(GameRelease.SkyrimSE, CreateGameDirectory());
+
+        Assert.IsType<PluginListNoSourceState>(sut.Current);
+        Assert.IsType<ConfirmedPluginListUnavailable>(sut.Current.ConfirmationFor(source));
+    }
+
+    /// <summary>
+    ///     Verifies that asking about a null source is a programming error rather than a loading answer.
+    /// </summary>
+    [Fact]
+    public async Task ConfirmationFor_NullSource_ThrowsArgumentNullException()
+    {
+        using var sut = new PluginList(ScriptedGameLoadOrders.Sequenced(ScriptedDiscovery.Completes("User.esp")));
+        await sut.RefreshAsync(
+            PluginListSource.Create(GameRelease.SkyrimSE, CreateGameDirectory()),
+            AdvancedMode.Off,
+            TestContext.Current.CancellationToken);
+
+        Assert.Throws<ArgumentNullException>(() => sut.Current.ConfirmationFor(null!));
+    }
+
+    /// <summary>
+    ///     Verifies that a Ready Plugin List supplies its Confirmed Plugin List for its own source.
+    /// </summary>
+    [Fact]
+    public async Task ConfirmationFor_ReadyState_IsAvailableWithTheConfirmedPluginList()
+    {
+        using var sut = new PluginList(ScriptedGameLoadOrders.Sequenced(ScriptedDiscovery.Completes("User.esp")));
+        var source = PluginListSource.Create(GameRelease.SkyrimSE, CreateGameDirectory());
+
+        await sut.RefreshAsync(source, AdvancedMode.Off, TestContext.Current.CancellationToken);
+
+        var ready = Assert.IsType<PluginListReadyState>(sut.Current);
+        var available = Assert.IsType<ConfirmedPluginListAvailable>(sut.Current.ConfirmationFor(source));
+        Assert.Same(ready.Confirmed, available.Confirmed);
+    }
+
+    /// <summary>
+    ///     Verifies that a first refresh still in flight reports its source's Confirmed Plugin List as loading.
+    /// </summary>
+    [Fact]
+    public async Task ConfirmationFor_RefreshingStateWithoutConfirmation_IsLoading()
+    {
+        var held = ScriptedDiscovery.Held("User.esp");
+        using var sut = new PluginList(ScriptedGameLoadOrders.Sequenced(held));
+        var source = PluginListSource.Create(GameRelease.SkyrimSE, CreateGameDirectory());
+
+        var refresh = sut.RefreshAsync(source, AdvancedMode.Off, TestContext.Current.CancellationToken);
+
+        Assert.IsType<PluginListRefreshingState>(sut.Current);
+        Assert.IsType<ConfirmedPluginListLoading>(sut.Current.ConfirmationFor(source));
+
+        held.Release();
+        await refresh;
+    }
+
+    /// <summary>
+    ///     Verifies that a sourced state asked about another source reports loading, whether or not it holds a
+    ///     confirmation of its own: the Game Context changed source and the refresh for the new one has not started.
+    /// </summary>
+    [Fact]
+    public async Task ConfirmationFor_SourcedStateQueriedWithDifferentSource_IsLoading()
+    {
+        using var sut = new PluginList(ScriptedGameLoadOrders.Sequenced(
+            ScriptedDiscovery.Completes("User.esp"),
+            ScriptedDiscovery.Fails()));
+        var readySource = PluginListSource.Create(GameRelease.SkyrimSE, CreateGameDirectory());
+        var failedSource = PluginListSource.Create(GameRelease.SkyrimSE, CreateGameDirectory());
+        var otherSource = PluginListSource.Create(GameRelease.SkyrimSE, CreateGameDirectory());
+
+        await sut.RefreshAsync(readySource, AdvancedMode.Off, TestContext.Current.CancellationToken);
+        Assert.IsType<PluginListReadyState>(sut.Current);
+        Assert.IsType<ConfirmedPluginListLoading>(sut.Current.ConfirmationFor(otherSource));
+
+        await sut.RefreshAsync(failedSource, AdvancedMode.Off, TestContext.Current.CancellationToken);
+        Assert.IsType<PluginListFailedState>(sut.Current);
+        Assert.Null(sut.Current.Confirmed);
+        Assert.IsType<ConfirmedPluginListLoading>(sut.Current.ConfirmationFor(otherSource));
+    }
+
+    /// <summary>
+    ///     Verifies that a same-source refresh in flight still supplies the Confirmed Plugin List it retained.
+    /// </summary>
+    [Fact]
+    public async Task ConfirmationFor_RefreshingStateWithRetainedConfirmation_IsAvailable()
+    {
+        var held = ScriptedDiscovery.Held("User.esp");
+        using var sut = new PluginList(ScriptedGameLoadOrders.Sequenced(
+            ScriptedDiscovery.Completes("User.esp"),
+            held));
+        var source = PluginListSource.Create(GameRelease.SkyrimSE, CreateGameDirectory());
+        await sut.RefreshAsync(source, AdvancedMode.Off, TestContext.Current.CancellationToken);
+        var retained = Assert.IsType<ConfirmedPluginList>(sut.Current.Confirmed);
+
+        var refresh = sut.RefreshAsync(source, AdvancedMode.Off, TestContext.Current.CancellationToken);
+
+        Assert.IsType<PluginListRefreshingState>(sut.Current);
+        var available = Assert.IsType<ConfirmedPluginListAvailable>(sut.Current.ConfirmationFor(source));
+        Assert.Same(retained, available.Confirmed);
+
+        held.Release();
+        await refresh;
+    }
+
+    /// <summary>
+    ///     Verifies that a failed first discovery cannot supply a Confirmed Plugin List for its own source.
+    /// </summary>
+    [Fact]
+    public async Task ConfirmationFor_FailedStateWithoutConfirmation_IsUnavailable()
+    {
+        using var sut = new PluginList(ScriptedGameLoadOrders.Sequenced(ScriptedDiscovery.Fails()));
+        var source = PluginListSource.Create(GameRelease.SkyrimSE, CreateGameDirectory());
+
+        await sut.RefreshAsync(source, AdvancedMode.Off, TestContext.Current.CancellationToken);
+
+        Assert.IsType<PluginListFailedState>(sut.Current);
+        Assert.IsType<ConfirmedPluginListUnavailable>(sut.Current.ConfirmationFor(source));
+    }
+
+    /// <summary>
+    ///     Verifies that a failed same-source refresh still supplies the Confirmed Plugin List it retained, even though
+    ///     <see cref="PluginListState.HasFailedFor" /> reports the failure for the same source.
+    /// </summary>
+    [Fact]
+    public async Task ConfirmationFor_FailedStateWithRetainedConfirmation_IsAvailable()
+    {
+        using var sut = new PluginList(ScriptedGameLoadOrders.Sequenced(
+            ScriptedDiscovery.Completes("User.esp"),
+            ScriptedDiscovery.Fails()));
+        var source = PluginListSource.Create(GameRelease.SkyrimSE, CreateGameDirectory());
+        await sut.RefreshAsync(source, AdvancedMode.Off, TestContext.Current.CancellationToken);
+        var retained = Assert.IsType<ConfirmedPluginList>(sut.Current.Confirmed);
+
+        await sut.RefreshAsync(source, AdvancedMode.Off, TestContext.Current.CancellationToken);
+
+        Assert.IsType<PluginListFailedState>(sut.Current);
+        Assert.True(sut.Current.HasFailedFor(source));
+        var available = Assert.IsType<ConfirmedPluginListAvailable>(sut.Current.ConfirmationFor(source));
+        Assert.Same(retained, available.Confirmed);
+    }
+
+    /// <summary>
+    ///     Verifies that a cancelled first discovery cannot supply a Confirmed Plugin List for its own source.
+    /// </summary>
+    [Fact]
+    public async Task ConfirmationFor_CancelledStateWithoutConfirmation_IsUnavailable()
+    {
+        using var sut = new PluginList(ScriptedGameLoadOrders.Sequenced(ScriptedDiscovery.Cancels()));
+        var source = PluginListSource.Create(GameRelease.SkyrimSE, CreateGameDirectory());
+
+        // The Plugin List publishes Cancelled only for caller cancellation, which the refresh then rethrows.
+        using var cancelled = new CancellationTokenSource();
+        await cancelled.CancelAsync();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => sut.RefreshAsync(source, AdvancedMode.Off, cancelled.Token));
+
+        Assert.IsType<PluginListCancelledState>(sut.Current);
+        Assert.IsType<ConfirmedPluginListUnavailable>(sut.Current.ConfirmationFor(source));
+    }
+
+    /// <summary>
+    ///     Verifies that a cancelled same-source refresh still supplies the Confirmed Plugin List it retained.
+    /// </summary>
+    [Fact]
+    public async Task ConfirmationFor_CancelledStateWithRetainedConfirmation_IsAvailable()
+    {
+        using var sut = new PluginList(ScriptedGameLoadOrders.Sequenced(
+            ScriptedDiscovery.Completes("User.esp"),
+            ScriptedDiscovery.Cancels()));
+        var source = PluginListSource.Create(GameRelease.SkyrimSE, CreateGameDirectory());
+        await sut.RefreshAsync(source, AdvancedMode.Off, TestContext.Current.CancellationToken);
+        var retained = Assert.IsType<ConfirmedPluginList>(sut.Current.Confirmed);
+
+        using var cancelled = new CancellationTokenSource();
+        await cancelled.CancelAsync();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => sut.RefreshAsync(source, AdvancedMode.Off, cancelled.Token));
+
+        Assert.IsType<PluginListCancelledState>(sut.Current);
+        var available = Assert.IsType<ConfirmedPluginListAvailable>(sut.Current.ConfirmationFor(source));
+        Assert.Same(retained, available.Confirmed);
+    }
+
+    /// <summary>
+    ///     Verifies that a faulted first discovery cannot supply a Confirmed Plugin List for its own source.
+    /// </summary>
+    [Fact]
+    public async Task ConfirmationFor_FaultedStateWithoutConfirmation_IsUnavailable()
+    {
+        using var sut = new PluginList(ScriptedGameLoadOrders.Sequenced(ScriptedDiscovery.Faults()));
+        var source = PluginListSource.Create(GameRelease.SkyrimSE, CreateGameDirectory());
+
+        await Assert.ThrowsAsync<IOException>(
+            () => sut.RefreshAsync(source, AdvancedMode.Off, TestContext.Current.CancellationToken));
+
+        Assert.IsType<PluginListFaultedState>(sut.Current);
+        Assert.IsType<ConfirmedPluginListUnavailable>(sut.Current.ConfirmationFor(source));
+    }
+
+    /// <summary>
+    ///     Verifies that a faulted same-source refresh still supplies the Confirmed Plugin List it retained.
+    /// </summary>
+    [Fact]
+    public async Task ConfirmationFor_FaultedStateWithRetainedConfirmation_IsAvailable()
+    {
+        using var sut = new PluginList(ScriptedGameLoadOrders.Sequenced(
+            ScriptedDiscovery.Completes("User.esp"),
+            ScriptedDiscovery.Faults()));
+        var source = PluginListSource.Create(GameRelease.SkyrimSE, CreateGameDirectory());
+        await sut.RefreshAsync(source, AdvancedMode.Off, TestContext.Current.CancellationToken);
+        var retained = Assert.IsType<ConfirmedPluginList>(sut.Current.Confirmed);
+
+        await Assert.ThrowsAsync<IOException>(
+            () => sut.RefreshAsync(source, AdvancedMode.Off, TestContext.Current.CancellationToken));
+
+        Assert.IsType<PluginListFaultedState>(sut.Current);
+        var available = Assert.IsType<ConfirmedPluginListAvailable>(sut.Current.ConfirmationFor(source));
+        Assert.Same(retained, available.Confirmed);
+    }
+
+    /// <summary>
+    ///     Verifies that a source built from a differently spelled directory naming the same canonical Data directory
+    ///     matches, and that the answer carries the Confirmed Plugin List with the exact Data-directory spelling it was
+    ///     discovered from, which is where a Processing Run reads its Plugins.
+    /// </summary>
+    /// <remarks>Moved from the Processing Run Admission tests with the source-matching rule (issue #143).</remarks>
+    [Fact]
+    public async Task ConfirmationFor_EquivalentDirectorySpelling_IsAvailableWithTheDiscoveredSpelling()
+    {
+        using var sut = new PluginList(ScriptedGameLoadOrders.Sequenced(ScriptedDiscovery.Completes("User.esp")));
+        var gameDirectory = CreateGameDirectory();
+        var source = PluginListSource.Create(GameRelease.SkyrimSE, gameDirectory);
+        await sut.RefreshAsync(source, AdvancedMode.Off, TestContext.Current.CancellationToken);
+        // Where paths compare case-insensitively the asked-about spelling also differs in case, so the ordinal check
+        // below tells the confirmed source apart from one rebuilt from the asked-about directory.
+        var dataDirectoryName = OperatingSystem.IsWindows() ? "data" : "Data";
+        var equivalent = PluginListSource.Create(
+            GameRelease.SkyrimSE,
+            System.IO.Path.Combine(gameDirectory, dataDirectoryName, "."));
+
+        var available = Assert.IsType<ConfirmedPluginListAvailable>(sut.Current.ConfirmationFor(equivalent));
+
+        Assert.Equal(source.DataDirectory, available.Confirmed.Source.DataDirectory, StringComparer.Ordinal);
+    }
+
+    /// <summary>
+    ///     Verifies that a list confirmed for one GameRelease does not answer for the same directory under another: that
+    ///     is another source, so its list is still on its way.
+    /// </summary>
+    /// <remarks>Moved from the Processing Run Admission tests with the source-matching rule (issue #143).</remarks>
+    [Fact]
+    public async Task ConfirmationFor_SameDirectoryUnderAnotherGameRelease_IsLoading()
+    {
+        using var sut = new PluginList(ScriptedGameLoadOrders.Sequenced(ScriptedDiscovery.Completes("User.esp")));
+        var gameDirectory = CreateGameDirectory();
+        await sut.RefreshAsync(
+            PluginListSource.Create(GameRelease.SkyrimSE, gameDirectory),
+            AdvancedMode.Off,
+            TestContext.Current.CancellationToken);
+
+        var confirmation = sut.Current.ConfirmationFor(PluginListSource.Create(GameRelease.Fallout4, gameDirectory));
+
+        Assert.IsType<PluginListReadyState>(sut.Current);
+        Assert.IsType<ConfirmedPluginListLoading>(confirmation);
+    }
+
     [Fact]
     public async Task RefreshAsync_NewerRefreshOvertakesOlder_OnlyNewerResultCanPublish()
     {

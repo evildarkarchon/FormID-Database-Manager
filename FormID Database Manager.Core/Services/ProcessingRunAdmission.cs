@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Mutagen.Bethesda;
 
 namespace FormID_Database_Manager.Services;
@@ -27,13 +28,19 @@ internal static class ProcessingRunAdmission
     /// <remarks>
     ///     <para>
     ///         The checks run in a fixed order: no GameRelease; then a non-blank FormID text path chooses a FormID text
-    ///         run, to which only the database-location check still applies; then a selected-Plugin run's Plugin List
-    ///         Source, its Plugin List match and its selection; and last the database location.
+    ///         run, which consults no Plugin List confirmation and to which only the database-location check still
+    ///         applies; then a selected-Plugin run's Plugin List confirmation (none, loading, unavailable) and its
+    ///         selection; and last the database location.
+    ///     </para>
+    ///     <para>
+    ///         Whether the Plugin List holds a Confirmed Plugin List for the Game Context's source is the Plugin List's
+    ///         answer, captured as the confirmation (ADR-0010 2026-11-05 amendment). Admission only maps a loading or
+    ///         unavailable answer onto its own refusal reasons.
     ///     </para>
     ///     <para>
     ///         There is no exception mode for a directory. The Game Context builds the Plugin List Source when it adopts
-    ///         a directory and refuses one that cannot become a source, so a captured source is always usable and a
-    ///         missing one is a refusal (ADR-0011).
+    ///         a directory and refuses one that cannot become a source, so the source a confirmation was answered for is
+    ///         always usable and a missing one is a refusal (ADR-0011).
     ///     </para>
     ///     <para>
     ///         This is pure: it reads no disk, creates nothing, and writes no ViewModel state. A defaulted database path
@@ -53,18 +60,24 @@ internal static class ProcessingRunAdmission
         ConfirmedPluginList? confirmed = null;
         if (string.IsNullOrWhiteSpace(formIdListPath))
         {
-            // The Game Context holds a directory only when it makes a source, so no source is what "no game directory"
-            // means to the user (ADR-0011).
-            if (inputs.PluginListSource is not { } capturedSource)
+            // The Game Context holds a directory only when it makes a source, and the confirmation is null exactly when
+            // it holds no source, so no confirmation is what "no game directory" means to the user (ADR-0011). The
+            // Plugin List's loading and unavailable answers map onto admission's own reasons here, so a refusal reason
+            // never crosses into the Plugin List.
+            switch (inputs.PluginListConfirmation)
             {
-                return new RefusedRun(RunRejectionReason.NoGameDirectory);
-            }
-
-            var state = inputs.PluginListState;
-            confirmed = state.Confirmed;
-            if (confirmed is null || confirmed.Source != capturedSource)
-            {
-                return new RefusedRun(MissingConfirmationReason(state, capturedSource));
+                case null:
+                    return new RefusedRun(RunRejectionReason.NoGameDirectory);
+                case ConfirmedPluginListLoading:
+                    return new RefusedRun(RunRejectionReason.PluginListLoading);
+                case ConfirmedPluginListUnavailable:
+                    return new RefusedRun(RunRejectionReason.PluginListUnavailable);
+                case ConfirmedPluginListAvailable available:
+                    confirmed = available.Confirmed;
+                    break;
+                default:
+                    // The confirmation union is closed to Core, so no other case can be constructed.
+                    throw new UnreachableException();
             }
 
             if (confirmed.SelectedPluginNames.IsEmpty)
@@ -91,7 +104,7 @@ internal static class ProcessingRunAdmission
         }
 
         // Only a FormID text run reaches this point without a matched confirmation. The request carries the source the
-        // list was confirmed against rather than the captured one: the two are equal, but the confirmed one keeps the
+        // list was confirmed against rather than the Game Context's: the two are equal, but the confirmed one keeps the
         // exact Data-directory spelling the Plugin List was discovered from, and that is where Plugins are read.
         ProcessingRunRequest request = confirmed is null
             ? new FormIdTextProcessingRunRequest(
@@ -123,52 +136,89 @@ internal static class ProcessingRunAdmission
         // The Store's own table name is the filename, so a database file and the table inside it cannot disagree.
         return Path.Combine(databaseDirectory, $"{SupportedGameReleases.ForRelease(gameRelease).TableName}.db");
     }
-
-    /// <summary>
-    ///     Explains why a Plugin List state holds no Confirmed Plugin List for the captured source.
-    /// </summary>
-    /// <param name="state">The captured Plugin List state, which has no matching confirmation.</param>
-    /// <param name="capturedSource">The Plugin List Source captured from the Game Context.</param>
-    /// <returns>
-    ///     Loading while discovery is in flight or the list still describes another source, because a list for the
-    ///     captured source is on its way; otherwise unavailable, because the captured source's discovery ended or never
-    ///     started and only a retry brings one.
-    /// </returns>
-    private static RunRejectionReason MissingConfirmationReason(
-        PluginListState state,
-        PluginListSource capturedSource)
-    {
-        return state switch
-        {
-            PluginListRefreshingState => RunRejectionReason.PluginListLoading,
-            SourcedPluginListState sourced when sourced.Source != capturedSource =>
-                RunRejectionReason.PluginListLoading,
-            _ => RunRejectionReason.PluginListUnavailable
-        };
-    }
 }
 
 /// <summary>
 ///     The inputs captured when the user pressed Process FormIDs, fixed before any startup notification can edit them.
 /// </summary>
-/// <param name="GameRelease">The selected GameRelease, or null when none is selected.</param>
-/// <param name="PluginListSource">
-///     The Game Context's Plugin List Source, or null when it holds no game directory. It is built from the same Game
-///     Context state as <paramref name="GameRelease" />, so its GameRelease is the selected one.
-/// </param>
-/// <param name="PluginListState">The Plugin List's whole immutable state snapshot at the press.</param>
-/// <param name="FormIdListPath">The optional FormID text path; a non-blank one chooses a FormID text run.</param>
-/// <param name="DatabasePath">The chosen database path, before any default is applied.</param>
-/// <param name="UpdateMode">The Store update behavior for the run.</param>
-/// <param name="DryRun">Whether the run only produces a Processing Run Plan.</param>
-internal sealed record ProcessingRunInputs(
-    GameRelease? GameRelease,
-    PluginListSource? PluginListSource,
-    PluginListState PluginListState,
-    string? FormIdListPath,
-    string? DatabasePath,
-    UpdateMode UpdateMode,
-    bool DryRun);
+/// <remarks>
+///     The properties are get-only, so a <c>with</c> expression cannot pair a GameRelease and a confirmation that the
+///     constructor's guard never saw.
+/// </remarks>
+internal sealed record ProcessingRunInputs
+{
+    /// <summary>
+    ///     Captures the inputs of one press, checking that the GameRelease and the Plugin List confirmation could have come
+    ///     from one read of the Game Context.
+    /// </summary>
+    /// <param name="gameRelease">The selected GameRelease, or null when none is selected.</param>
+    /// <param name="pluginListConfirmation">
+    ///     The Plugin List's confirmation for the Game Context's Plugin List Source, answered from one Plugin List
+    ///     snapshot, or null exactly when the Game Context holds no Plugin List Source (ADR-0010 2026-11-05 amendment).
+    /// </param>
+    /// <param name="formIdListPath">The optional FormID text path; a non-blank one chooses a FormID text run.</param>
+    /// <param name="databasePath">The chosen database path, before any default is applied.</param>
+    /// <param name="updateMode">The Store update behavior for the run.</param>
+    /// <param name="dryRun">Whether the run only produces a Processing Run Plan.</param>
+    /// <exception cref="ArgumentException">
+    ///     A confirmation is present without a GameRelease, or a matching Confirmed Plugin List belongs to a GameRelease
+    ///     other than <paramref name="gameRelease" />. Either is a programming error in the capture, not a refusal.
+    /// </exception>
+    internal ProcessingRunInputs(
+        GameRelease? gameRelease,
+        PluginListConfirmation? pluginListConfirmation,
+        string? formIdListPath,
+        string? databasePath,
+        UpdateMode updateMode,
+        bool dryRun)
+    {
+        // Both come from one read of the Game Context, which holds a source only beside a GameRelease and builds the
+        // source from that release (ADR-0011). A mismatch can only be a broken capture, so it fails here rather than
+        // reaching admission as a misleading refusal or a run against the wrong game.
+        if (pluginListConfirmation is not null && gameRelease is null)
+        {
+            throw new ArgumentException(
+                "A Plugin List confirmation was captured without a GameRelease.",
+                nameof(pluginListConfirmation));
+        }
+
+        if (pluginListConfirmation is ConfirmedPluginListAvailable available &&
+            available.Confirmed.Source.GameRelease != gameRelease)
+        {
+            throw new ArgumentException(
+                "The captured Confirmed Plugin List belongs to a GameRelease other than the captured one.",
+                nameof(pluginListConfirmation));
+        }
+
+        GameRelease = gameRelease;
+        PluginListConfirmation = pluginListConfirmation;
+        FormIdListPath = formIdListPath;
+        DatabasePath = databasePath;
+        UpdateMode = updateMode;
+        DryRun = dryRun;
+    }
+
+    /// <summary>Gets the selected GameRelease, or null when none is selected.</summary>
+    public GameRelease? GameRelease { get; }
+
+    /// <summary>
+    ///     Gets the Plugin List's confirmation for the Game Context's Plugin List Source, or null when the Game Context
+    ///     holds no source. A matching Confirmed Plugin List's GameRelease is <see cref="GameRelease" />.
+    /// </summary>
+    public PluginListConfirmation? PluginListConfirmation { get; }
+
+    /// <summary>Gets the optional FormID text path; a non-blank one chooses a FormID text run.</summary>
+    public string? FormIdListPath { get; }
+
+    /// <summary>Gets the chosen database path, before any default is applied.</summary>
+    public string? DatabasePath { get; }
+
+    /// <summary>Gets the Store update behavior for the run.</summary>
+    public UpdateMode UpdateMode { get; }
+
+    /// <summary>Gets whether the run only produces a Processing Run Plan.</summary>
+    public bool DryRun { get; }
+}
 
 /// <summary>
 ///     Why Processing Run Admission refused a press. The words for each reason live only in
@@ -182,10 +232,14 @@ internal enum RunRejectionReason
     /// <summary>A selected-Plugin run has no game directory, so the Game Context holds no Plugin List Source.</summary>
     NoGameDirectory,
 
-    /// <summary>The Plugin List is still loading for the captured Plugin List Source.</summary>
+    /// <summary>
+    ///     The captured Plugin List confirmation says the list for the Game Context's Plugin List Source is still loading.
+    /// </summary>
     PluginListLoading,
 
-    /// <summary>The Plugin List for the captured Plugin List Source did not load.</summary>
+    /// <summary>
+    ///     The captured Plugin List confirmation says the list for the Game Context's Plugin List Source did not load.
+    /// </summary>
     PluginListUnavailable,
 
     /// <summary>The matching Confirmed Plugin List selects no Plugins.</summary>

@@ -32,7 +32,7 @@ namespace FormID_Database_Manager.Tests.Unit.Services;
 ///         the run, never from timed waits.
 ///     </para>
 /// </remarks>
-public sealed class ProcessingRunControlTests : IDisposable
+public sealed class ProcessingRunControlTests
 {
     private const string DatabasePath = @"C:\Databases\formids.db";
     private const string FormIdListPath = @"C:\Lists\formids.txt";
@@ -71,21 +71,7 @@ public sealed class ProcessingRunControlTests : IDisposable
     private readonly string _gameDirectory =
         Path.Combine(Path.GetTempPath(), $"FormIdTests-ControlGame-{Guid.NewGuid():N}");
 
-    /// <summary>
-    ///     Plugin Lists built to produce captured states, disposed with the test.
-    /// </summary>
-    private readonly List<PluginList> _pluginLists = [];
-
     private readonly RecordingProcessingRunControlSink _sink = new();
-
-    /// <inheritdoc />
-    public void Dispose()
-    {
-        foreach (var pluginList in _pluginLists)
-        {
-            pluginList.Dispose();
-        }
-    }
 
     /// <summary>
     ///     Verifies that every refusal reason reaches the sink as the list clear followed by Presentation's rendered
@@ -105,7 +91,7 @@ public sealed class ProcessingRunControlTests : IDisposable
     public async Task PressAsync_RefusedInputs_ReportsTheListClearThenTheRenderedRefusal(string reasonName)
     {
         var reason = Enum.Parse<RunRejectionReason>(reasonName);
-        var (inputs, defaultDatabaseRoot, held) = await RefusedInputsAsync(reason);
+        var (inputs, defaultDatabaseRoot) = RefusedInputs(reason);
         // Built directly, because the root may be deliberately null here and CreateSut would substitute its own.
         using var sut = new ProcessingRunControl(_executor, defaultDatabaseRoot, _sink);
 
@@ -115,7 +101,6 @@ public sealed class ProcessingRunControlTests : IDisposable
             [new MessageListsCleared(), new ErrorMessageAdded(ProcessingRunPresentation.Render(reason))],
             _sink.Entries);
         Assert.Empty(_executor.Requests);
-        held?.Release();
     }
 
     /// <summary>
@@ -129,10 +114,7 @@ public sealed class ProcessingRunControlTests : IDisposable
     [Fact]
     public async Task PressAsync_RefusedWithAnEmptyDatabasePath_ReportsNoDefaultedPath()
     {
-        var pluginList = NewPluginList(ScriptedGameLoadOrders.Fixed(PluginName));
-        var source = Source();
-        await RefreshAsync(pluginList, source);
-        var inputs = PluginInputs(pluginList.Current, source) with { DatabasePath = string.Empty };
+        var inputs = PluginInputs(selectedPluginNames: [], databasePath: string.Empty);
         using var sut = CreateSut();
 
         await sut.PressAsync(inputs);
@@ -169,7 +151,7 @@ public sealed class ProcessingRunControlTests : IDisposable
     [Fact]
     public async Task PressAsync_AdmittedPluginRun_HandsTheExecutorTheRequestAndAnUncancelledToken()
     {
-        var inputs = await PluginInputsAsync();
+        var inputs = PluginInputs();
         using var sut = CreateSut();
 
         await sut.PressAsync(inputs);
@@ -427,7 +409,7 @@ public sealed class ProcessingRunControlTests : IDisposable
     [Fact]
     public async Task PressAsync_PressedDuringStartupWithTheRealExecutor_EndsCancelledWithoutOpeningAStore()
     {
-        var inputs = await PluginInputsAsync();
+        var inputs = PluginInputs();
         var ingestion = new UnexpectedPluginIngestion();
         var opener = new RecordingRecordStoreSessionOpener(new RecordingRecordStoreSession());
         using var sut = new ProcessingRunControl(
@@ -699,9 +681,11 @@ public sealed class ProcessingRunControlTests : IDisposable
     }
 
     /// <summary>
-    ///     Builds captured inputs for a FormID text run, which needs no Plugin List, with a database path chosen.
+    ///     Builds captured inputs for a FormID text run, which consults no Plugin List, so the Game Context is captured
+    ///     with no Plugin List Source and therefore no confirmation. A database path is chosen unless a test says
+    ///     otherwise.
     /// </summary>
-    private ProcessingRunInputs TextInputs(
+    private static ProcessingRunInputs TextInputs(
         GameRelease? gameRelease = GameRelease.SkyrimSE,
         string? databasePath = DatabasePath,
         UpdateMode updateMode = UpdateMode.Append,
@@ -710,7 +694,6 @@ public sealed class ProcessingRunControlTests : IDisposable
         return new ProcessingRunInputs(
             gameRelease,
             null,
-            NewPluginList(ScriptedGameLoadOrders.Fixed()).Current,
             FormIdListPath,
             databasePath,
             updateMode,
@@ -718,71 +701,57 @@ public sealed class ProcessingRunControlTests : IDisposable
     }
 
     /// <summary>
-    ///     Builds captured inputs for a selected-Plugin run over a real Confirmed Plugin List selecting one Plugin.
+    ///     Builds captured inputs for a selected-Plugin run over a hand-built Confirmed Plugin List for the test's source.
     /// </summary>
-    private async Task<ProcessingRunInputs> PluginInputsAsync()
+    /// <param name="selectedPluginNames">The selected Plugins; the one test Plugin unless a test says otherwise.</param>
+    /// <param name="databasePath">The chosen database path.</param>
+    private ProcessingRunInputs PluginInputs(
+        string[]? selectedPluginNames = null,
+        string? databasePath = DatabasePath)
     {
-        var pluginList = NewPluginList(ScriptedGameLoadOrders.Fixed(PluginName));
-        var source = Source();
-        await RefreshAsync(pluginList, source);
-        Select(pluginList);
-        return PluginInputs(pluginList.Current, source);
+        var confirmation = PluginListConfirmations.Available(
+            Source(),
+            [PluginName],
+            selectedPluginNames ?? [PluginName]);
+        return PluginInputs(confirmation, databasePath);
+    }
+
+    /// <summary>
+    ///     Builds captured selected-Plugin inputs from the Plugin List confirmation captured for the Game Context's
+    ///     source, or null when the Game Context holds none.
+    /// </summary>
+    private static ProcessingRunInputs PluginInputs(
+        PluginListConfirmation? confirmation,
+        string? databasePath = DatabasePath)
+    {
+        return new ProcessingRunInputs(
+            GameRelease.SkyrimSE,
+            confirmation,
+            null,
+            databasePath,
+            UpdateMode.Append,
+            false);
     }
 
     /// <summary>
     ///     Builds captured inputs that admission refuses for exactly the given reason.
     /// </summary>
     /// <param name="reason">The refusal the inputs must produce.</param>
-    /// <returns>
-    ///     The inputs, the default database root to compose with, and a held discovery the test releases at the end
-    ///     when the reason needs a Plugin List still loading.
-    /// </returns>
-    private async Task<(ProcessingRunInputs Inputs, string? DefaultDatabaseRoot, HeldDiscovery? Held)>
-        RefusedInputsAsync(RunRejectionReason reason)
+    /// <returns>The inputs and the default database root to compose with.</returns>
+    private (ProcessingRunInputs Inputs, string? DefaultDatabaseRoot) RefusedInputs(RunRejectionReason reason)
     {
-        switch (reason)
+        return reason switch
         {
-            case RunRejectionReason.NoGameSelected:
-                return (TextInputs(gameRelease: null), _defaultDatabaseRoot, null);
-            case RunRejectionReason.NoGameDirectory:
-                return (PluginInputs(NewPluginList(ScriptedGameLoadOrders.Fixed()).Current, null),
-                    _defaultDatabaseRoot, null);
-            case RunRejectionReason.PluginListLoading:
-            {
-                var held = ScriptedDiscovery.Held(PluginName);
-                var pluginList = NewPluginList(ScriptedGameLoadOrders.Sequenced(held));
-                _ = RefreshAsync(pluginList, Source());
-                return (PluginInputs(pluginList.Current, Source()), _defaultDatabaseRoot, held);
-            }
-            case RunRejectionReason.PluginListUnavailable:
-                return (PluginInputs(NewPluginList(ScriptedGameLoadOrders.Fixed(PluginName)).Current, Source()),
-                    _defaultDatabaseRoot, null);
-            case RunRejectionReason.NoPluginsSelected:
-            {
-                var pluginList = NewPluginList(ScriptedGameLoadOrders.Fixed(PluginName));
-                await RefreshAsync(pluginList, Source());
-                return (PluginInputs(pluginList.Current, Source()), _defaultDatabaseRoot, null);
-            }
-            case RunRejectionReason.NoDatabaseLocation:
-                return (TextInputs(databasePath: string.Empty), null, null);
-            default:
-                throw new ArgumentOutOfRangeException(nameof(reason), reason, "Unsupported refusal reason.");
-        }
-    }
-
-    /// <summary>
-    ///     Builds captured selected-Plugin inputs from a Plugin List state and the Game Context's source.
-    /// </summary>
-    private static ProcessingRunInputs PluginInputs(PluginListState state, PluginListSource? source)
-    {
-        return new ProcessingRunInputs(
-            GameRelease.SkyrimSE,
-            source,
-            state,
-            null,
-            DatabasePath,
-            UpdateMode.Append,
-            false);
+            RunRejectionReason.NoGameSelected => (TextInputs(gameRelease: null), _defaultDatabaseRoot),
+            RunRejectionReason.NoGameDirectory => (PluginInputs(confirmation: null), _defaultDatabaseRoot),
+            RunRejectionReason.PluginListLoading =>
+                (PluginInputs(ConfirmedPluginListLoading.Instance), _defaultDatabaseRoot),
+            RunRejectionReason.PluginListUnavailable =>
+                (PluginInputs(ConfirmedPluginListUnavailable.Instance), _defaultDatabaseRoot),
+            RunRejectionReason.NoPluginsSelected => (PluginInputs(selectedPluginNames: []), _defaultDatabaseRoot),
+            RunRejectionReason.NoDatabaseLocation => (TextInputs(databasePath: string.Empty), null),
+            _ => throw new ArgumentOutOfRangeException(nameof(reason), reason, "Unsupported refusal reason.")
+        };
     }
 
     /// <summary>
@@ -791,33 +760,6 @@ public sealed class ProcessingRunControlTests : IDisposable
     private PluginListSource Source()
     {
         return PluginListSource.Create(GameRelease.SkyrimSE, _gameDirectory);
-    }
-
-    /// <summary>
-    ///     Builds a Plugin List the test disposes, so only it can construct the captured states (ADR-0009).
-    /// </summary>
-    private PluginList NewPluginList(ScriptedGameLoadOrders gameLoadOrders)
-    {
-        var pluginList = new PluginList(gameLoadOrders);
-        _pluginLists.Add(pluginList);
-        return pluginList;
-    }
-
-    /// <summary>
-    ///     Refreshes a Plugin List for the given source.
-    /// </summary>
-    private static Task RefreshAsync(PluginList pluginList, PluginListSource source)
-    {
-        return pluginList.RefreshAsync(source, AdvancedMode.Off, TestContext.Current.CancellationToken);
-    }
-
-    /// <summary>
-    ///     Selects the one test Plugin in the current Confirmed Plugin List.
-    /// </summary>
-    private static void Select(PluginList pluginList)
-    {
-        var confirmed = Assert.IsType<ConfirmedPluginList>(pluginList.Current.Confirmed);
-        pluginList.Apply(new PluginSelectionByNameIntent(confirmed.MembershipVersion, PluginName, true));
     }
 
     /// <summary>

@@ -1,9 +1,11 @@
 #nullable enable
 
+using System.Collections.Immutable;
 using FormID_Database_Manager.Services;
 using FormID_Database_Manager.Tests.Fakes;
 using Mutagen.Bethesda;
 using Xunit;
+using Capture = FormID_Database_Manager.Tests.Fakes.PluginListConfirmationCapture;
 
 namespace FormID_Database_Manager.Tests.Unit.Services;
 
@@ -12,9 +14,11 @@ namespace FormID_Database_Manager.Tests.Unit.Services;
 ///     refused when it is not (ADR-0010).
 /// </summary>
 /// <remarks>
-///     Admission is pure, so every case calls it with values. Cases that depend on a Plugin List state drive a real
-///     Plugin List over the shared <see cref="ScriptedGameLoadOrders" /> fake, because only the Plugin List may construct
-///     its states (ADR-0009); cases that need no Plugin List use a fresh list's No Source state.
+///     Admission is pure, so every case calls it with plain values. The Plugin List confirmation is captured as a value
+///     too: a hand-built <see cref="ConfirmedPluginList" /> wrapped in the available case, the loading or unavailable
+///     singleton, or null when the Game Context holds no Plugin List Source. No live Plugin List is constructed; how each
+///     Plugin List state answers its confirmation is covered by <see cref="PluginListTests" /> (ADR-0009, ADR-0010
+///     2026-11-05 amendment).
 /// </remarks>
 public sealed class ProcessingRunAdmissionTests
 {
@@ -34,10 +38,8 @@ public sealed class ProcessingRunAdmissionTests
     [Fact]
     public void Admit_NoGameSelected_RefusesWithNoGameSelected()
     {
-        using var pluginList = new PluginList(ScriptedGameLoadOrders.Fixed());
-
         var decision = ProcessingRunAdmission.Admit(
-            Inputs(pluginList.Current, gameRelease: null, source: Source(_gameDirectory)),
+            Inputs(confirmation: null, gameRelease: null),
             _defaultDatabaseRoot);
 
         AssertRefused(RunRejectionReason.NoGameSelected, decision);
@@ -49,29 +51,29 @@ public sealed class ProcessingRunAdmissionTests
     [Fact]
     public void Admit_NoGameSelectedWithFormIdTextPath_RefusesWithNoGameSelected()
     {
-        using var pluginList = new PluginList(ScriptedGameLoadOrders.Fixed());
-
         var decision = ProcessingRunAdmission.Admit(
-            Inputs(pluginList.Current, gameRelease: null, formIdListPath: FormIdListPath),
+            Inputs(confirmation: null, gameRelease: null, formIdListPath: FormIdListPath),
             _defaultDatabaseRoot);
 
         AssertRefused(RunRejectionReason.NoGameSelected, decision);
     }
 
     /// <summary>
-    ///     Verifies that a FormID text path chooses a FormID text run before any Plugin check applies: with no game
-    ///     directory and no Plugin List source, every Plugin check would otherwise refuse.
+    ///     Verifies that a FormID text path chooses a FormID text run before any Plugin check applies, whatever the
+    ///     captured confirmation: every case but the one with a selection would otherwise refuse.
     /// </summary>
-    [Fact]
-    public void Admit_FormIdTextPath_AdmitsATextRunAheadOfEveryPluginCheck()
+    /// <param name="capture">The Plugin List confirmation captured with the press.</param>
+    [Theory]
+    [InlineData(Capture.None)]
+    [InlineData(Capture.Loading)]
+    [InlineData(Capture.Unavailable)]
+    [InlineData(Capture.AvailableWithoutSelection)]
+    [InlineData(Capture.AvailableWithSelection)]
+    public void Admit_FormIdTextPath_AdmitsATextRunWithAnyConfirmation(Capture capture)
     {
-        using var pluginList = new PluginList(ScriptedGameLoadOrders.Fixed());
-
         var decision = ProcessingRunAdmission.Admit(
             Inputs(
-                pluginList.Current,
-                GameRelease.Fallout4,
-                source: null,
+                Confirmation(capture),
                 formIdListPath: FormIdListPath,
                 updateMode: UpdateMode.ReplacePluginRecords),
             _defaultDatabaseRoot);
@@ -80,7 +82,7 @@ public sealed class ProcessingRunAdmissionTests
         var request = Assert.IsType<FormIdTextProcessingRunRequest>(admitted.Request);
         Assert.Equal(FormIdListPath, request.FormIdListPath);
         Assert.Equal(DatabasePath, request.DatabasePath);
-        Assert.Equal(GameRelease.Fallout4, request.GameRelease);
+        Assert.Equal(GameRelease.SkyrimSE, request.GameRelease);
         Assert.Equal(UpdateMode.ReplacePluginRecords, request.UpdateMode);
         Assert.False(request.DryRun);
         Assert.Null(admitted.DefaultedDatabasePath);
@@ -96,212 +98,94 @@ public sealed class ProcessingRunAdmissionTests
     [InlineData("   ")]
     public void Admit_BlankFormIdTextPath_ChoosesAPluginRun(string? formIdListPath)
     {
-        using var pluginList = new PluginList(ScriptedGameLoadOrders.Fixed());
-
         var decision = ProcessingRunAdmission.Admit(
-            Inputs(pluginList.Current, source: null, formIdListPath: formIdListPath),
+            Inputs(confirmation: null, formIdListPath: formIdListPath),
             _defaultDatabaseRoot);
 
         AssertRefused(RunRejectionReason.NoGameDirectory, decision);
     }
 
     /// <summary>
-    ///     Verifies that a Plugin run whose Game Context holds no Plugin List Source is refused for the missing game
-    ///     directory before the Plugin List is consulted, even when that list holds a confirmation.
+    ///     Verifies that a Plugin run captured with no confirmation is refused for the missing game directory.
     /// </summary>
     /// <remarks>
-    ///     The Game Context holds a directory only when it makes a source (ADR-0011), so "no source" is what "no game
-    ///     directory" means here.
+    ///     The confirmation is null exactly when the Game Context holds no Plugin List Source, and the Game Context holds
+    ///     a directory only when it makes a source (ADR-0011), so "no confirmation" is what "no game directory" means.
     /// </remarks>
     [Fact]
-    public async Task Admit_PluginRunWithoutSource_RefusesWithNoGameDirectory()
+    public void Admit_PluginRunWithoutConfirmation_RefusesWithNoGameDirectory()
     {
-        using var pluginList = new PluginList(ScriptedGameLoadOrders.Fixed("User.esp"));
-        await RefreshAsync(pluginList, _gameDirectory);
-        SelectAll(pluginList);
-
-        var decision = ProcessingRunAdmission.Admit(
-            Inputs(pluginList.Current, source: null),
-            _defaultDatabaseRoot);
+        var decision = ProcessingRunAdmission.Admit(Inputs(confirmation: null), _defaultDatabaseRoot);
 
         AssertRefused(RunRejectionReason.NoGameDirectory, decision);
     }
 
     /// <summary>
-    ///     Verifies that a Plugin List with no source, as after a cleared or retried directory, is refused as unavailable.
+    ///     Verifies that a Plugin run whose Plugin List is still loading for the captured source is refused as loading.
     /// </summary>
     [Fact]
-    public void Admit_PluginListWithoutSource_RefusesWithPluginListUnavailable()
+    public void Admit_LoadingConfirmation_RefusesWithPluginListLoading()
     {
-        using var pluginList = new PluginList(ScriptedGameLoadOrders.Fixed("User.esp"));
-
         var decision = ProcessingRunAdmission.Admit(
-            Inputs(pluginList.Current, source: Source(_gameDirectory)),
+            Inputs(ConfirmedPluginListLoading.Instance),
+            _defaultDatabaseRoot);
+
+        AssertRefused(RunRejectionReason.PluginListLoading, decision);
+    }
+
+    /// <summary>
+    ///     Verifies that a Plugin run whose Plugin List cannot supply a confirmation for the captured source is refused as
+    ///     unavailable.
+    /// </summary>
+    [Fact]
+    public void Admit_UnavailableConfirmation_RefusesWithPluginListUnavailable()
+    {
+        var decision = ProcessingRunAdmission.Admit(
+            Inputs(ConfirmedPluginListUnavailable.Instance),
             _defaultDatabaseRoot);
 
         AssertRefused(RunRejectionReason.PluginListUnavailable, decision);
-    }
-
-    /// <summary>
-    ///     Verifies that a first discovery still in flight for the captured source is refused as loading.
-    /// </summary>
-    [Fact]
-    public async Task Admit_PluginListLoadingForCapturedSource_RefusesWithPluginListLoading()
-    {
-        var held = ScriptedDiscovery.Held("User.esp");
-        using var pluginList = new PluginList(ScriptedGameLoadOrders.Sequenced(held));
-        var refresh = StartRefresh(pluginList, _gameDirectory);
-
-        var decision = ProcessingRunAdmission.Admit(
-            Inputs(pluginList.Current, source: Source(_gameDirectory)),
-            _defaultDatabaseRoot);
-
-        AssertRefused(RunRejectionReason.PluginListLoading, decision);
-        held.Release();
-        await refresh;
-    }
-
-    /// <summary>
-    ///     Verifies that a Plugin List refreshing a new directory after an old one was confirmed is refused as loading,
-    ///     not as an empty selection: the old confirmation belongs to another source.
-    /// </summary>
-    [Fact]
-    public async Task Admit_PluginListLoadingAfterAnotherSourceWasConfirmed_RefusesWithPluginListLoading()
-    {
-        var held = ScriptedDiscovery.Held("New.esp");
-        using var pluginList = new PluginList(ScriptedGameLoadOrders.Sequenced(
-            ScriptedDiscovery.Completes("Old.esp"),
-            held));
-        await RefreshAsync(pluginList, CreateUncreatedTemporaryPath());
-        SelectAll(pluginList);
-        var refresh = StartRefresh(pluginList, _gameDirectory);
-
-        var decision = ProcessingRunAdmission.Admit(
-            Inputs(pluginList.Current, source: Source(_gameDirectory)),
-            _defaultDatabaseRoot);
-
-        AssertRefused(RunRejectionReason.PluginListLoading, decision);
-        held.Release();
-        await refresh;
-    }
-
-    /// <summary>
-    ///     Verifies that a Plugin List confirmed for a different directory, before the captured directory's refresh has
-    ///     started, is refused as loading.
-    /// </summary>
-    [Fact]
-    public async Task Admit_PluginListReadyForAnotherDirectory_RefusesWithPluginListLoading()
-    {
-        using var pluginList = new PluginList(ScriptedGameLoadOrders.Fixed("User.esp"));
-        await RefreshAsync(pluginList, CreateUncreatedTemporaryPath());
-        SelectAll(pluginList);
-
-        var decision = ProcessingRunAdmission.Admit(
-            Inputs(pluginList.Current, source: Source(_gameDirectory)),
-            _defaultDatabaseRoot);
-
-        AssertRefused(RunRejectionReason.PluginListLoading, decision);
-    }
-
-    /// <summary>
-    ///     Verifies that a Plugin List confirmed for the same directory under another GameRelease belongs to another
-    ///     source, so it is refused as loading rather than reused.
-    /// </summary>
-    [Fact]
-    public async Task Admit_PluginListReadyForAnotherGameRelease_RefusesWithPluginListLoading()
-    {
-        using var pluginList = new PluginList(ScriptedGameLoadOrders.Fixed("User.esp"));
-        await RefreshAsync(pluginList, _gameDirectory);
-        SelectAll(pluginList);
-
-        var decision = ProcessingRunAdmission.Admit(
-            Inputs(pluginList.Current, GameRelease.Fallout4,
-                PluginListSource.Create(GameRelease.Fallout4, _gameDirectory)),
-            _defaultDatabaseRoot);
-
-        AssertRefused(RunRejectionReason.PluginListLoading, decision);
-    }
-
-    /// <summary>
-    ///     Verifies that a refresh that ended without a confirmation for the captured source is refused as unavailable.
-    /// </summary>
-    /// <param name="ending">How the captured source's only refresh ended.</param>
-    [Theory]
-    [InlineData(RefreshEnding.Failed)]
-    [InlineData(RefreshEnding.Cancelled)]
-    [InlineData(RefreshEnding.Faulted)]
-    public async Task Admit_RefreshEndedWithoutConfirmation_RefusesWithPluginListUnavailable(RefreshEnding ending)
-    {
-        using var pluginList = new PluginList(ScriptedGameLoadOrders.Sequenced(EndingStep(ending)));
-        await EndRefreshAsync(pluginList, _gameDirectory, ending);
-
-        var decision = ProcessingRunAdmission.Admit(
-            Inputs(pluginList.Current, source: Source(_gameDirectory)),
-            _defaultDatabaseRoot);
-
-        Assert.Null(pluginList.Current.Confirmed);
-        AssertRefused(RunRejectionReason.PluginListUnavailable, decision);
-    }
-
-    /// <summary>
-    ///     Verifies that a failed refresh for an old directory is refused as loading for the captured directory, because
-    ///     its source differs from the captured one.
-    /// </summary>
-    [Fact]
-    public async Task Admit_PluginListFailedForAnotherDirectory_RefusesWithPluginListLoading()
-    {
-        using var pluginList = new PluginList(ScriptedGameLoadOrders.Sequenced(ScriptedDiscovery.Fails()));
-        await RefreshAsync(pluginList, CreateUncreatedTemporaryPath());
-
-        var decision = ProcessingRunAdmission.Admit(
-            Inputs(pluginList.Current, source: Source(_gameDirectory)),
-            _defaultDatabaseRoot);
-
-        Assert.IsType<PluginListFailedState>(pluginList.Current);
-        AssertRefused(RunRejectionReason.PluginListLoading, decision);
     }
 
     /// <summary>
     ///     Verifies that a matching Confirmed Plugin List with nothing selected is refused as no Plugins selected.
     /// </summary>
     [Fact]
-    public async Task Admit_MatchingConfirmationWithEmptySelection_RefusesWithNoPluginsSelected()
+    public void Admit_AvailableConfirmationWithEmptySelection_RefusesWithNoPluginsSelected()
     {
-        using var pluginList = new PluginList(ScriptedGameLoadOrders.Fixed("User.esp"));
-        await RefreshAsync(pluginList, _gameDirectory);
-
         var decision = ProcessingRunAdmission.Admit(
-            Inputs(pluginList.Current, source: Source(_gameDirectory)),
+            Inputs(Confirmation(Capture.AvailableWithoutSelection)),
             _defaultDatabaseRoot);
 
         AssertRefused(RunRejectionReason.NoPluginsSelected, decision);
     }
 
     /// <summary>
-    ///     Verifies that an admitted Plugin run carries the matched Plugin List Source, takes its GameRelease from that
-    ///     source, and carries the captured facts and the confirmed selection in confirmed Plugin List order rather than
-    ///     the order Plugins were clicked.
+    ///     Verifies that an admitted Plugin run carries the Confirmed Plugin List's own source, takes its GameRelease from
+    ///     that source, and carries the captured facts and the confirmed selection in its confirmed order.
     /// </summary>
+    /// <remarks>
+    ///     The confirmed source keeps the exact Data-directory spelling the Plugin List was discovered from, which is where
+    ///     Plugins are read, so the ordinal comparison pins that the request carries that source and not a rebuilt one.
+    /// </remarks>
     [Fact]
-    public async Task Admit_MatchingConfirmationWithSelection_AdmitsAPluginRunInConfirmedOrder()
+    public void Admit_AvailableConfirmationWithSelection_AdmitsAPluginRunCarryingTheConfirmedSourceAndSelection()
     {
-        using var pluginList = new PluginList(ScriptedGameLoadOrders.Fixed("First.esp", "Second.esp", "Third.esp"));
-        await RefreshAsync(pluginList, _gameDirectory);
-        Select(pluginList, "Third.esp");
-        Select(pluginList, "First.esp");
+        var confirmedSource = Source(_gameDirectory);
+        var confirmed = PluginListConfirmations.ConfirmedList(
+            confirmedSource,
+            ["First.esp", "Second.esp", "Third.esp"],
+            ["First.esp", "Third.esp"]);
 
         var decision = ProcessingRunAdmission.Admit(
-            Inputs(
-                pluginList.Current,
-                source: Source(_gameDirectory),
-                updateMode: UpdateMode.ReplacePluginRecords),
+            Inputs(new ConfirmedPluginListAvailable(confirmed), updateMode: UpdateMode.ReplacePluginRecords),
             _defaultDatabaseRoot);
 
         var admitted = Assert.IsType<AdmittedRun>(decision);
         var request = Assert.IsType<PluginProcessingRunRequest>(admitted.Request);
-        Assert.Equal(PluginListSource.Create(GameRelease.SkyrimSE, _gameDirectory), request.Source);
+        Assert.Equal(confirmedSource, request.Source);
+        Assert.Equal(confirmedSource.DataDirectory, request.Source.DataDirectory, StringComparer.Ordinal);
         Assert.Equal(GameRelease.SkyrimSE, request.GameRelease);
-        Assert.Equal(request.Source.GameRelease, request.GameRelease);
         Assert.Equal(["First.esp", "Third.esp"], request.PluginNames);
         Assert.Equal(DatabasePath, request.DatabasePath);
         Assert.Equal(UpdateMode.ReplacePluginRecords, request.UpdateMode);
@@ -310,82 +194,35 @@ public sealed class ProcessingRunAdmissionTests
     }
 
     /// <summary>
-    ///     Verifies that a captured source built from a directory spelled differently from the confirmed one still
-    ///     matches when both name the same canonical Data directory, and that the admitted request carries the Plugin
-    ///     List Source the list was confirmed against, so its Plugins are read from exactly the Data directory they were
-    ///     discovered from.
+    ///     Verifies the refusal order against the last check: every Plugin refusal is reported ahead of a missing database
+    ///     location, so the message shown first is the one to act on first.
     /// </summary>
-    [Fact]
-    public async Task Admit_EquivalentDirectorySpelling_MatchesTheConfirmationAndCarriesItsSource()
-    {
-        using var pluginList = new PluginList(ScriptedGameLoadOrders.Fixed("User.esp"));
-        await RefreshAsync(pluginList, _gameDirectory);
-        SelectAll(pluginList);
-        var confirmedSource = Assert.IsType<ConfirmedPluginList>(pluginList.Current.Confirmed).Source;
-        // Where paths compare case-insensitively the captured spelling also differs in case, so the ordinal check
-        // below tells the confirmed source apart from one rebuilt from the captured directory.
-        var dataDirectoryName = OperatingSystem.IsWindows() ? "data" : "Data";
-
-        var decision = ProcessingRunAdmission.Admit(
-            Inputs(pluginList.Current, source: Source(Path.Combine(_gameDirectory, dataDirectoryName, "."))),
-            _defaultDatabaseRoot);
-
-        var request = Assert.IsType<PluginProcessingRunRequest>(Assert.IsType<AdmittedRun>(decision).Request);
-        Assert.Equal(["User.esp"], request.PluginNames);
-        Assert.Equal(confirmedSource, request.Source);
-        Assert.Equal(confirmedSource.DataDirectory, request.Source.DataDirectory, StringComparer.Ordinal);
-    }
-
-    /// <summary>
-    ///     Verifies that a matching confirmation admits the run while the same source refreshes, using the confirmed
-    ///     selection rather than waiting for the refresh.
-    /// </summary>
-    [Fact]
-    public async Task Admit_MatchingConfirmationDuringSameSourceRefresh_AdmitsThePluginRun()
-    {
-        var held = ScriptedDiscovery.Held("User.esp", "New.esp");
-        using var pluginList = new PluginList(ScriptedGameLoadOrders.Sequenced(
-            ScriptedDiscovery.Completes("User.esp"),
-            held));
-        await RefreshAsync(pluginList, _gameDirectory);
-        SelectAll(pluginList);
-        var refresh = StartRefresh(pluginList, _gameDirectory);
-
-        var decision = ProcessingRunAdmission.Admit(
-            Inputs(pluginList.Current, source: Source(_gameDirectory)),
-            _defaultDatabaseRoot);
-
-        Assert.IsType<PluginListRefreshingState>(pluginList.Current);
-        var request = Assert.IsType<PluginProcessingRunRequest>(Assert.IsType<AdmittedRun>(decision).Request);
-        Assert.Equal(["User.esp"], request.PluginNames);
-        held.Release();
-        await refresh;
-    }
-
-    /// <summary>
-    ///     Verifies that a matching confirmation retained through a failed, cancelled or faulted same-source refresh
-    ///     still admits the run.
-    /// </summary>
-    /// <param name="ending">How the second, same-source refresh ended.</param>
+    /// <param name="capture">The Plugin List confirmation captured with the press.</param>
+    /// <remarks>
+    ///     The expected reason is looked up from the capture inside the test, because <see cref="RunRejectionReason" />
+    ///     is internal and a public test method cannot take it as a parameter.
+    /// </remarks>
     [Theory]
-    [InlineData(RefreshEnding.Failed)]
-    [InlineData(RefreshEnding.Cancelled)]
-    [InlineData(RefreshEnding.Faulted)]
-    public async Task Admit_MatchingConfirmationRetainedThroughEndedRefresh_AdmitsThePluginRun(RefreshEnding ending)
+    [InlineData(Capture.None)]
+    [InlineData(Capture.Loading)]
+    [InlineData(Capture.Unavailable)]
+    [InlineData(Capture.AvailableWithoutSelection)]
+    public void Admit_PluginRefusalWithoutDatabasePathOrRoot_RefusesWithThePluginReason(Capture capture)
     {
-        using var pluginList = new PluginList(ScriptedGameLoadOrders.Sequenced(
-            ScriptedDiscovery.Completes("User.esp"),
-            EndingStep(ending)));
-        await RefreshAsync(pluginList, _gameDirectory);
-        SelectAll(pluginList);
-        await EndRefreshAsync(pluginList, _gameDirectory, ending);
+        var expected = capture switch
+        {
+            Capture.None => RunRejectionReason.NoGameDirectory,
+            Capture.Loading => RunRejectionReason.PluginListLoading,
+            Capture.Unavailable => RunRejectionReason.PluginListUnavailable,
+            Capture.AvailableWithoutSelection => RunRejectionReason.NoPluginsSelected,
+            _ => throw new ArgumentOutOfRangeException(nameof(capture), capture, "No Plugin refusal for this capture.")
+        };
 
         var decision = ProcessingRunAdmission.Admit(
-            Inputs(pluginList.Current, source: Source(_gameDirectory)),
-            _defaultDatabaseRoot);
+            Inputs(Confirmation(capture), databasePath: string.Empty),
+            defaultDatabaseRoot: null);
 
-        var request = Assert.IsType<PluginProcessingRunRequest>(Assert.IsType<AdmittedRun>(decision).Request);
-        Assert.Equal(["User.esp"], request.PluginNames);
+        AssertRefused(expected, decision);
     }
 
     /// <summary>
@@ -400,10 +237,8 @@ public sealed class ProcessingRunAdmissionTests
     [InlineData("   ")]
     public void Admit_RealRunWithoutDatabasePath_DefaultsUnderTheRootAndCreatesNothing(string? databasePath)
     {
-        using var pluginList = new PluginList(ScriptedGameLoadOrders.Fixed());
-
         var decision = ProcessingRunAdmission.Admit(
-            Inputs(pluginList.Current, GameRelease.Fallout4VR, formIdListPath: FormIdListPath,
+            Inputs(confirmation: null, GameRelease.Fallout4VR, formIdListPath: FormIdListPath,
                 databasePath: databasePath),
             _defaultDatabaseRoot);
 
@@ -422,10 +257,8 @@ public sealed class ProcessingRunAdmissionTests
     [Fact]
     public void Admit_DefaultedDatabasePath_IsUnderTheRootRatherThanTheWorkingOrSystemDirectory()
     {
-        using var pluginList = new PluginList(ScriptedGameLoadOrders.Fixed());
-
         var decision = ProcessingRunAdmission.Admit(
-            Inputs(pluginList.Current, GameRelease.SkyrimSEGog, formIdListPath: FormIdListPath,
+            Inputs(confirmation: null, GameRelease.SkyrimSEGog, formIdListPath: FormIdListPath,
                 databasePath: string.Empty),
             _defaultDatabaseRoot);
 
@@ -442,14 +275,10 @@ public sealed class ProcessingRunAdmissionTests
     ///     Verifies that an admitted Plugin run also gets the default, so the default does not depend on the run kind.
     /// </summary>
     [Fact]
-    public async Task Admit_PluginRunWithoutDatabasePath_DefaultsUnderTheRoot()
+    public void Admit_PluginRunWithoutDatabasePath_DefaultsUnderTheRoot()
     {
-        using var pluginList = new PluginList(ScriptedGameLoadOrders.Fixed("User.esp"));
-        await RefreshAsync(pluginList, _gameDirectory);
-        SelectAll(pluginList);
-
         var decision = ProcessingRunAdmission.Admit(
-            Inputs(pluginList.Current, source: Source(_gameDirectory), databasePath: string.Empty),
+            Inputs(Confirmation(Capture.AvailableWithSelection), databasePath: string.Empty),
             _defaultDatabaseRoot);
 
         var admitted = Assert.IsType<AdmittedRun>(decision);
@@ -465,10 +294,8 @@ public sealed class ProcessingRunAdmissionTests
     [Fact]
     public void Admit_DryRunWithoutDatabasePath_GetsNoDefault()
     {
-        using var pluginList = new PluginList(ScriptedGameLoadOrders.Fixed());
-
         var decision = ProcessingRunAdmission.Admit(
-            Inputs(pluginList.Current, formIdListPath: FormIdListPath, databasePath: string.Empty, dryRun: true),
+            Inputs(confirmation: null, formIdListPath: FormIdListPath, databasePath: string.Empty, dryRun: true),
             _defaultDatabaseRoot);
 
         var admitted = Assert.IsType<AdmittedRun>(decision);
@@ -487,10 +314,8 @@ public sealed class ProcessingRunAdmissionTests
     [InlineData("   ")]
     public void Admit_RealRunWithoutDatabasePathOrRoot_RefusesWithNoDatabaseLocation(string? defaultDatabaseRoot)
     {
-        using var pluginList = new PluginList(ScriptedGameLoadOrders.Fixed());
-
         var decision = ProcessingRunAdmission.Admit(
-            Inputs(pluginList.Current, formIdListPath: FormIdListPath, databasePath: string.Empty),
+            Inputs(confirmation: null, formIdListPath: FormIdListPath, databasePath: string.Empty),
             defaultDatabaseRoot);
 
         AssertRefused(RunRejectionReason.NoDatabaseLocation, decision);
@@ -500,33 +325,13 @@ public sealed class ProcessingRunAdmissionTests
     ///     Verifies that a selected-Plugin run that passes every Plugin check is refused when it has nowhere to write.
     /// </summary>
     [Fact]
-    public async Task Admit_PluginRunWithoutDatabasePathOrRoot_RefusesWithNoDatabaseLocation()
+    public void Admit_PluginRunWithoutDatabasePathOrRoot_RefusesWithNoDatabaseLocation()
     {
-        using var pluginList = new PluginList(ScriptedGameLoadOrders.Fixed("User.esp"));
-        await RefreshAsync(pluginList, _gameDirectory);
-        SelectAll(pluginList);
-
         var decision = ProcessingRunAdmission.Admit(
-            Inputs(pluginList.Current, source: Source(_gameDirectory), databasePath: string.Empty),
+            Inputs(Confirmation(Capture.AvailableWithSelection), databasePath: string.Empty),
             defaultDatabaseRoot: null);
 
         AssertRefused(RunRejectionReason.NoDatabaseLocation, decision);
-    }
-
-    /// <summary>
-    ///     Verifies that an empty selection is reported ahead of a missing database location.
-    /// </summary>
-    [Fact]
-    public async Task Admit_EmptySelectionWithoutDatabasePathOrRoot_RefusesWithNoPluginsSelected()
-    {
-        using var pluginList = new PluginList(ScriptedGameLoadOrders.Fixed("User.esp"));
-        await RefreshAsync(pluginList, _gameDirectory);
-
-        var decision = ProcessingRunAdmission.Admit(
-            Inputs(pluginList.Current, source: Source(_gameDirectory), databasePath: string.Empty),
-            defaultDatabaseRoot: null);
-
-        AssertRefused(RunRejectionReason.NoPluginsSelected, decision);
     }
 
     /// <summary>
@@ -540,10 +345,8 @@ public sealed class ProcessingRunAdmissionTests
     [InlineData(false, DatabasePath)]
     public void Admit_WithoutRootButNoDefaultNeeded_AdmitsTheRun(bool dryRun, string databasePath)
     {
-        using var pluginList = new PluginList(ScriptedGameLoadOrders.Fixed());
-
         var decision = ProcessingRunAdmission.Admit(
-            Inputs(pluginList.Current, formIdListPath: FormIdListPath, databasePath: databasePath, dryRun: dryRun),
+            Inputs(confirmation: null, formIdListPath: FormIdListPath, databasePath: databasePath, dryRun: dryRun),
             defaultDatabaseRoot: null);
 
         var admitted = Assert.IsType<AdmittedRun>(decision);
@@ -552,99 +355,19 @@ public sealed class ProcessingRunAdmissionTests
     }
 
     /// <summary>
-    ///     How a scripted refresh ends without completing.
+    ///     Builds the Plugin List confirmation a case captures for the SkyrimSE source of the test's game directory.
     /// </summary>
-    public enum RefreshEnding
+    private PluginListConfirmation? Confirmation(Capture capture)
     {
-        Failed,
-        Cancelled,
-        Faulted
-    }
-
-    /// <summary>
-    ///     Returns the scripted discovery step that ends a refresh the given way.
-    /// </summary>
-    private static ScriptedDiscovery EndingStep(RefreshEnding ending)
-    {
-        return ending switch
-        {
-            RefreshEnding.Failed => ScriptedDiscovery.Fails(),
-            RefreshEnding.Cancelled => ScriptedDiscovery.Cancels(),
-            RefreshEnding.Faulted => ScriptedDiscovery.Faults(),
-            _ => throw new ArgumentOutOfRangeException(nameof(ending), ending, "Unsupported refresh ending.")
-        };
-    }
-
-    /// <summary>
-    ///     Runs one refresh scripted by <see cref="EndingStep" /> and absorbs the exception that ending rethrows.
-    /// </summary>
-    /// <remarks>
-    ///     The Plugin List publishes Cancelled only for its caller's cancellation, so a cancelled ending refreshes with a
-    ///     token that is already cancelled; a faulted ending rethrows the scripted <see cref="IOException" />.
-    /// </remarks>
-    private static async Task EndRefreshAsync(PluginList pluginList, string gameDirectory, RefreshEnding ending)
-    {
-        switch (ending)
-        {
-            case RefreshEnding.Failed:
-                await RefreshAsync(pluginList, gameDirectory);
-                break;
-            case RefreshEnding.Cancelled:
-                await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pluginList.RefreshAsync(
-                    PluginListSource.Create(GameRelease.SkyrimSE, gameDirectory),
-                    AdvancedMode.Off,
-                    new CancellationToken(true)));
-                break;
-            case RefreshEnding.Faulted:
-                await Assert.ThrowsAsync<IOException>(() => RefreshAsync(pluginList, gameDirectory));
-                break;
-            default:
-                throw new ArgumentOutOfRangeException(nameof(ending), ending, "Unsupported refresh ending.");
-        }
-    }
-
-    /// <summary>
-    ///     Refreshes the Plugin List for SkyrimSE in the given directory and waits for the refresh to finish.
-    /// </summary>
-    private static Task RefreshAsync(PluginList pluginList, string gameDirectory)
-    {
-        return pluginList.RefreshAsync(PluginListSource.Create(GameRelease.SkyrimSE, gameDirectory), AdvancedMode.Off,
-            TestContext.Current.CancellationToken);
-    }
-
-    /// <summary>
-    ///     Starts a SkyrimSE refresh without waiting for it, so a held discovery keeps the Plugin List refreshing.
-    /// </summary>
-    private static Task StartRefresh(PluginList pluginList, string gameDirectory)
-    {
-        return RefreshAsync(pluginList, gameDirectory);
-    }
-
-    /// <summary>
-    ///     Selects every Plugin in the current Confirmed Plugin List.
-    /// </summary>
-    private static void SelectAll(PluginList pluginList)
-    {
-        var confirmed = Assert.IsType<ConfirmedPluginList>(pluginList.Current.Confirmed);
-        pluginList.Apply(new PluginSelectionForAllIntent(confirmed.MembershipVersion, true));
-    }
-
-    /// <summary>
-    ///     Selects one Plugin in the current Confirmed Plugin List.
-    /// </summary>
-    private static void Select(PluginList pluginList, string pluginName)
-    {
-        var confirmed = Assert.IsType<ConfirmedPluginList>(pluginList.Current.Confirmed);
-        pluginList.Apply(new PluginSelectionByNameIntent(confirmed.MembershipVersion, pluginName, true));
+        return PluginListConfirmations.For(capture, Source(_gameDirectory));
     }
 
     /// <summary>
     ///     Builds captured run inputs with a database path chosen and Dry Run off unless a test says otherwise.
     /// </summary>
     private static ProcessingRunInputs Inputs(
-        PluginListState pluginListState,
+        PluginListConfirmation? confirmation,
         GameRelease? gameRelease = GameRelease.SkyrimSE,
-        PluginListSource? source = null,
         string? formIdListPath = null,
         string? databasePath = DatabasePath,
         UpdateMode updateMode = UpdateMode.Append,
@@ -652,8 +375,7 @@ public sealed class ProcessingRunAdmissionTests
     {
         return new ProcessingRunInputs(
             gameRelease,
-            source,
-            pluginListState,
+            confirmation,
             formIdListPath,
             databasePath,
             updateMode,

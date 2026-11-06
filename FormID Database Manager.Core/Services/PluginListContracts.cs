@@ -25,6 +25,75 @@ internal sealed record ConfirmedPluginList(
     ImmutableArray<string> SelectedPluginNames);
 
 /// <summary>
+///     The Plugin List confirmation: what one Plugin List snapshot can say about a given Plugin List Source. It holds a
+///     Confirmed Plugin List for that source, is still loading one, or cannot supply one.
+/// </summary>
+/// <remarks>
+///     Derivation is closed to this assembly, as it is for the admission decision, so the three cases below are the only
+///     ones a consumer has to handle. The cases use Plugin List vocabulary only; a consumer such as Processing Run
+///     Admission maps them to its own reasons.
+/// </remarks>
+internal abstract record PluginListConfirmation
+{
+    private protected PluginListConfirmation()
+    {
+    }
+}
+
+/// <summary>
+///     The snapshot holds a Confirmed Plugin List for the asked-about Plugin List Source.
+/// </summary>
+internal sealed record ConfirmedPluginListAvailable : PluginListConfirmation
+{
+    /// <summary>
+    ///     Initializes the available case from the matching Confirmed Plugin List.
+    /// </summary>
+    /// <param name="confirmed">The Confirmed Plugin List whose source matched.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="confirmed" /> is null.</exception>
+    internal ConfirmedPluginListAvailable(ConfirmedPluginList confirmed)
+    {
+        Confirmed = confirmed ?? throw new ArgumentNullException(nameof(confirmed));
+    }
+
+    /// <summary>
+    ///     Gets the Confirmed Plugin List for the asked-about source, with its own Data-directory spelling.
+    /// </summary>
+    public ConfirmedPluginList Confirmed { get; }
+}
+
+/// <summary>
+///     The snapshot holds no Confirmed Plugin List for the asked-about source, but one is on its way: discovery is in
+///     flight, or the list still describes another source because its refresh has not started.
+/// </summary>
+internal sealed record ConfirmedPluginListLoading : PluginListConfirmation
+{
+    private ConfirmedPluginListLoading()
+    {
+    }
+
+    /// <summary>
+    ///     Gets the only instance of the loading case.
+    /// </summary>
+    public static ConfirmedPluginListLoading Instance { get; } = new();
+}
+
+/// <summary>
+///     The snapshot cannot supply a Confirmed Plugin List for the asked-about source: there is no source, or that
+///     source's discovery ended without a confirmation, and only a retry brings one.
+/// </summary>
+internal sealed record ConfirmedPluginListUnavailable : PluginListConfirmation
+{
+    private ConfirmedPluginListUnavailable()
+    {
+    }
+
+    /// <summary>
+    ///     Gets the only instance of the unavailable case.
+    /// </summary>
+    public static ConfirmedPluginListUnavailable Instance { get; } = new();
+}
+
+/// <summary>
 ///     Provides one immutable, coherent view of Plugin List membership, selection, and current activity.
 /// </summary>
 internal abstract record PluginListState
@@ -67,6 +136,40 @@ internal abstract record PluginListState
     public virtual bool HasFailedFor(PluginListSource source)
     {
         return false;
+    }
+
+    /// <summary>
+    ///     Answers the Plugin List confirmation for the given source from this one snapshot.
+    /// </summary>
+    /// <param name="source">The Plugin List Source to ask about.</param>
+    /// <returns>
+    ///     Available when this snapshot's Confirmed Plugin List belongs to <paramref name="source" />, whatever the state
+    ///     kind, so a refresh, failure, cancellation, or fault of the same source keeps the retained list usable.
+    ///     Otherwise loading while discovery is in flight or while the snapshot still describes another source; otherwise
+    ///     unavailable, because there is no source or the source's discovery ended without a confirmation.
+    /// </returns>
+    /// <remarks>
+    ///     The answer comes from this one snapshot, so a caller that reads <see cref="PluginList.Current" /> once gets a
+    ///     coherent answer (ADR-0009). It answers a different question from <see cref="HasFailedFor" />: a Failed state
+    ///     that retained a same-source confirmation has failed for that source and still supplies its confirmation.
+    /// </remarks>
+    /// <exception cref="ArgumentNullException"><paramref name="source" /> is null.</exception>
+    public PluginListConfirmation ConfirmationFor(PluginListSource source)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        if (Confirmed is { } confirmed && confirmed.Source == source)
+        {
+            return new ConfirmedPluginListAvailable(confirmed);
+        }
+
+        // A list still describing another source means the Game Context moved on and the refresh for the asked-about
+        // source has not started yet, so a list for it is on its way rather than unavailable.
+        return this switch
+        {
+            PluginListRefreshingState => ConfirmedPluginListLoading.Instance,
+            SourcedPluginListState sourced when sourced.Source != source => ConfirmedPluginListLoading.Instance,
+            _ => ConfirmedPluginListUnavailable.Instance
+        };
     }
 }
 
