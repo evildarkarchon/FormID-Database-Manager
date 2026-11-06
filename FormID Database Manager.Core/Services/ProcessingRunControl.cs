@@ -192,7 +192,7 @@ internal sealed class ProcessingRunControl : IDisposable
                     // starts all three message lists over, as every press that does not cancel does, so the reason is
                     // the only message the user reads afterwards (#95).
                     _sink.ClearMessageLists();
-                    _sink.AddErrorMessage(ProcessingRunPresentation.Render(refused.Reason));
+                    ReportMessageLocked(ProcessingRunPresentation.Render(refused.Reason));
                     return null;
                 case AdmittedRun admitted:
                     return StartAdmittedRunLocked(admitted, inputs.DatabasePath);
@@ -272,7 +272,7 @@ internal sealed class ProcessingRunControl : IDisposable
         {
             lock (_lock)
             {
-                _sink.AddErrorMessage(ProcessingRunPresentation.RenderFailure(ex));
+                ReportMessageLocked(ProcessingRunPresentation.RenderFailure(ex));
             }
         }
         finally
@@ -300,11 +300,12 @@ internal sealed class ProcessingRunControl : IDisposable
     /// </summary>
     /// <param name="outcome">The outcome the executor returned.</param>
     /// <remarks>
-    ///     <see cref="ProcessingRunPresentation" /> is a pure renderer, so the order the run's terminal facts reach the
-    ///     user is decided here: warnings, then errors, then information, all under <see cref="_lock" /> (#60). Every
-    ///     one of them is a message, and nothing goes to the transient channel: how a run ended — its completion line,
-    ///     its plan, or its cancellation acknowledgement — is a terminal fact, and reporting it there would only have it
-    ///     erased as the run hands the channel back (#60, #94).
+    ///     <see cref="ProcessingRunPresentation" /> decides the order the run's terminal facts reach the user, and the
+    ///     Message List each one belongs to, and returns them as one ordered sequence. This module forwards that
+    ///     sequence as it stands, in one loop under <see cref="_lock" />, so no report from the executor's thread can
+    ///     interleave with it (#60). Every one of them is a message, and nothing goes to the transient channel: how a
+    ///     run ended — its completion line, its plan, or its cancellation acknowledgement — is a terminal fact, and
+    ///     reporting it there would only have it erased as the run hands the channel back (#60, #94).
     /// </remarks>
     private void ReportOutcome(ProcessingRunOutcome outcome)
     {
@@ -312,21 +313,24 @@ internal sealed class ProcessingRunControl : IDisposable
 
         lock (_lock)
         {
-            foreach (var message in rendered.WarningMessages)
+            foreach (var message in rendered.Messages)
             {
-                _sink.AddWarningMessage(message);
-            }
-
-            foreach (var message in rendered.ErrorMessages)
-            {
-                _sink.AddErrorMessage(message);
-            }
-
-            foreach (var message in rendered.InformationMessages)
-            {
-                _sink.AddInformationMessage(message);
+                ReportMessageLocked(message);
             }
         }
+    }
+
+    /// <summary>
+    ///     Forwards one rendered message to the Message List Presentation chose for it, with the caller holding
+    ///     <see cref="_lock" /> (#60).
+    /// </summary>
+    /// <param name="rendered">The message Processing Run Presentation rendered, already tagged with its list.</param>
+    /// <remarks>
+    ///     The list is passed through as data, so this module names no Message List of its own (ADR-0014).
+    /// </remarks>
+    private void ReportMessageLocked(RenderedMessage rendered)
+    {
+        _sink.AddMessage(rendered.List, rendered.Text);
     }
 
     /// <summary>
@@ -420,7 +424,8 @@ internal sealed class ProcessingRunControl : IDisposable
 
 /// <summary>
 ///     Where Processing Run Control reports everything a Processing Run shows the user, already rendered and in the
-///     order it sequenced them.
+///     order it sequenced them; the messages of one outcome arrive in the order Processing Run Presentation returned
+///     them.
 /// </summary>
 /// <remarks>
 ///     Processing Run Control calls every member while holding its lock, so an implementation sees reports from the UI
@@ -453,20 +458,15 @@ internal interface IProcessingRunControlSink
     void ReportRunActivity(ActivityProjection runActivity);
 
     /// <summary>
-    ///     Adds one rendered warning message.
+    ///     Adds one rendered message to the Message List its renderer chose, mirroring the ViewModel's own add-message
+    ///     operation.
     /// </summary>
-    /// <param name="message">The rendered message.</param>
-    void AddWarningMessage(string message);
-
-    /// <summary>
-    ///     Adds one rendered error message.
-    /// </summary>
-    /// <param name="message">The rendered message.</param>
-    void AddErrorMessage(string message);
-
-    /// <summary>
-    ///     Adds one rendered information message.
-    /// </summary>
-    /// <param name="message">The rendered message.</param>
-    void AddInformationMessage(string message);
+    /// <param name="list">The Message List the message belongs to, chosen by Processing Run Presentation.</param>
+    /// <param name="message">The rendered text the user reads.</param>
+    /// <remarks>
+    ///     Processing Run Control forwards a rendered message's list as data rather than choosing a member per list, so
+    ///     it names no Message List itself (ADR-0014). Rejecting a list that is not defined is the implementation's
+    ///     concern, as it is for the Game Context sink; the sink adapter documents its own failure mode.
+    /// </remarks>
+    void AddMessage(MessageList list, string message);
 }

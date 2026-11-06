@@ -46,20 +46,16 @@ internal sealed class ViewModelProcessingRunControlSink(MainWindowViewModel view
     }
 
     /// <inheritdoc />
-    public void AddWarningMessage(string message)
+    /// <remarks>
+    ///     Which list a run message belongs to is Processing Run Presentation's choice, so it is passed straight through
+    ///     with no per-list switch here (ADR-0014).
+    /// </remarks>
+    /// <exception cref="ArgumentOutOfRangeException">
+    ///     Presentation names a message list the ViewModel does not define; <see cref="MainWindowViewModel.AddMessage" />
+    ///     throws before writing anything.
+    /// </exception>
+    public void AddMessage(MessageList list, string message)
     {
-        viewModel.AddMessage(MessageList.Warning, message);
-    }
-
-    /// <inheritdoc />
-    public void AddErrorMessage(string message)
-    {
-        viewModel.AddMessage(MessageList.Error, message);
-    }
-
-    /// <inheritdoc />
-    public void AddInformationMessage(string message)
-    {
-        viewModel.AddMessage(MessageList.Information, message);
+        viewModel.AddMessage(list, message);
     }
 }

@@ -118,9 +118,23 @@ internal static class ProcessingRunPresentation
     ///     Renders why Processing Run Admission refused a press into the one error message its caller should show.
     /// </summary>
     /// <param name="reason">Why the press was refused before any run existed.</param>
-    /// <returns>The sentence the user reads, which says what to do next where there is something to do.</returns>
+    /// <returns>
+    ///     One message in the error list, whose sentence says what to do next where there is something to do. The list
+    ///     is chosen here, so the caller forwards it without naming one (ADR-0014).
+    /// </returns>
     /// <exception cref="ArgumentOutOfRangeException">The reason is not one this module knows how to render.</exception>
-    internal static string Render(RunRejectionReason reason)
+    internal static RenderedMessage Render(RunRejectionReason reason)
+    {
+        return new RenderedMessage(MessageList.Error, RenderRefusalSentence(reason));
+    }
+
+    /// <summary>
+    ///     Words why Processing Run Admission refused a press.
+    /// </summary>
+    /// <param name="reason">Why the press was refused before any run existed.</param>
+    /// <returns>The sentence the user reads.</returns>
+    /// <exception cref="ArgumentOutOfRangeException">The reason is not one this module knows how to render.</exception>
+    private static string RenderRefusalSentence(RunRejectionReason reason)
     {
         return reason switch
         {
@@ -147,7 +161,8 @@ internal static class ProcessingRunPresentation
     ///     to render: a press it does not admit is a refusal (ADR-0010, ADR-0011).
     /// </param>
     /// <returns>
-    ///     An <see cref="UnresolvableMasterException" />'s own message, unwrapped; for an
+    ///     One message in the error list, chosen here so the caller forwards it without naming one (ADR-0014). Its text
+    ///     is an <see cref="UnresolvableMasterException" />'s own message, unwrapped; for an
     ///     <see cref="UnrecognizedPluginReadFailureException" />, a sentence naming the Plugin and the phase, with the
     ///     classified cause's message last; for anything else, the failure's message behind the legacy
     ///     "Error processing FormIDs" prefix.
@@ -160,16 +175,18 @@ internal static class ProcessingRunPresentation
     ///     Unresolvable Master's own message already names the missing master and what to do, and the generic prefix
     ///     would only bury it (ADR-0006).
     /// </remarks>
-    internal static string RenderFailure(Exception failure)
+    internal static RenderedMessage RenderFailure(Exception failure)
     {
         ArgumentNullException.ThrowIfNull(failure);
 
-        return failure switch
+        var text = failure switch
         {
             UnresolvableMasterException unresolvableMaster => unresolvableMaster.Message,
             UnrecognizedPluginReadFailureException unrecognized => RenderUnrecognizedPluginReadFailure(unrecognized),
             _ => $"Error processing FormIDs: {failure.Message}"
         };
+
+        return new RenderedMessage(MessageList.Error, text);
     }
 
     /// <summary>
@@ -204,7 +221,10 @@ internal static class ProcessingRunPresentation
     ///     Renders one Processing Run outcome into the report its caller should show.
     /// </summary>
     /// <param name="outcome">How the run ended.</param>
-    /// <returns>The messages the outcome implies, each in the list it belongs to.</returns>
+    /// <returns>
+    ///     The messages the outcome implies, each tagged with the Message List it belongs to, in the order they are to
+    ///     be written: warnings, then errors, then information.
+    /// </returns>
     /// <exception cref="ArgumentNullException"><paramref name="outcome" /> is <see langword="null" />.</exception>
     /// <exception cref="ArgumentOutOfRangeException">The outcome is not one this module knows how to render.</exception>
     internal static RenderedRunReport Render(ProcessingRunOutcome outcome)
@@ -229,7 +249,10 @@ internal static class ProcessingRunPresentation
     ///     wording.
     /// </summary>
     /// <param name="report">The complete Plugin Ingestion report in selected-Plugin order.</param>
-    /// <returns>The rendered report for the run.</returns>
+    /// <returns>
+    ///     The rendered report for the run: its warning message, then its failure message, then its completion line,
+    ///     each present only when the run has something to say in that list.
+    /// </returns>
     private static RenderedRunReport RenderPluginRun(PluginIngestionReport report)
     {
         var warningDetails = report.Outcomes
@@ -248,22 +271,27 @@ internal static class ProcessingRunPresentation
         var skippedPlugins = report.Outcomes.OfType<SkippedPlugin>().Count();
         var failedPlugins = failedDetails.Count;
 
-        var warningMessages = warningDetails.Count == 0
-            ? ImmutableArray<string>.Empty
-            :
-            [
+        // The report is written in this order — warnings, then failures, then how the run ended — whatever order the
+        // selected Plugins produced them in. Processing Run Control forwards the sequence as it stands (#148).
+        var messages = ImmutableArray.CreateBuilder<RenderedMessage>(3);
+
+        if (warningDetails.Count > 0)
+        {
+            messages.Add(new RenderedMessage(
+                MessageList.Warning,
                 FormatOutcomeDetails(
                     $"{warningDetails.Count} processing warning{(warningDetails.Count == 1 ? string.Empty : "s")}.",
-                    warningDetails)
-            ];
-        var errorMessages = failedDetails.Count == 0
-            ? ImmutableArray<string>.Empty
-            :
-            [
+                    warningDetails)));
+        }
+
+        if (failedDetails.Count > 0)
+        {
+            messages.Add(new RenderedMessage(
+                MessageList.Error,
                 FormatOutcomeDetails(
                     $"{failedPlugins} failed plugin{(failedPlugins == 1 ? string.Empty : "s")}.",
-                    failedDetails)
-            ];
+                    failedDetails)));
+        }
 
         // Failures outrank warnings in the completion line, because the count line has to name the worse of the two.
         var completionLine = failedPlugins > 0
@@ -276,10 +304,9 @@ internal static class ProcessingRunPresentation
 
         // The completion line is how the run ended, so it is a terminal fact for the information list rather than a
         // final status on the transient channel, which the run hands back as it ends and would erase (#60, #94).
-        return new RenderedRunReport(
-            warningMessages,
-            errorMessages,
-            [completionLine]);
+        messages.Add(new RenderedMessage(MessageList.Information, completionLine));
+
+        return new RenderedRunReport(messages.ToImmutable());
     }
 
     /// <summary>
@@ -295,12 +322,12 @@ internal static class ProcessingRunPresentation
     private static RenderedRunReport RenderFormIdTextRun(FormIdTextFileImportResult importResult)
     {
         return new RenderedRunReport(
-            ImmutableArray<string>.Empty,
-            ImmutableArray<string>.Empty,
-            [
+        [
+            new RenderedMessage(
+                MessageList.Information,
                 $"Processing completed successfully: {importResult.PluginCount} Plugins and " +
-                $"{importResult.RecordCount:N0} records."
-            ]);
+                $"{importResult.RecordCount:N0} records.")
+        ]);
     }
 
     /// <summary>
@@ -323,9 +350,7 @@ internal static class ProcessingRunPresentation
         };
 
         return new RenderedRunReport(
-            ImmutableArray<string>.Empty,
-            ImmutableArray<string>.Empty,
-            plannedWork);
+            plannedWork.Select(static text => new RenderedMessage(MessageList.Information, text)).ToImmutableArray());
     }
 
     /// <summary>
@@ -437,10 +462,7 @@ internal static class ProcessingRunPresentation
     /// </remarks>
     private static RenderedRunReport RenderCancellation()
     {
-        return new RenderedRunReport(
-            ImmutableArray<string>.Empty,
-            ImmutableArray<string>.Empty,
-            ["Processing cancelled by user."]);
+        return new RenderedRunReport([new RenderedMessage(MessageList.Information, "Processing cancelled by user.")]);
     }
 
     /// <summary>
@@ -577,17 +599,20 @@ internal sealed record ProcessingRunCancellationRequested;
 ///     Everything one Processing Run outcome has to say to the user, rendered but not yet written anywhere.
 /// </summary>
 /// <remarks>
-///     How a run ended is a terminal fact, so the report has only message lists and no activity: the transient
-///     progress channel is handed back as the run ends, and a terminal status written there would be erased in the
-///     same tick (#60, #94). Leaving the field out means no outcome can put that defect back.
+///     <para>
+///         How a run ended is a terminal fact, so the report has only messages and no activity: the transient
+///         progress channel is handed back as the run ends, and a terminal status written there would be erased in the
+///         same tick (#60, #94). Leaving the field out means no outcome can put that defect back.
+///     </para>
+///     <para>
+///         The messages are one sequence rather than one array per Message List, so the order they reach the user is
+///         Presentation's decision, carried as data, and whoever writes them forwards each one's list without a
+///         per-list switch (ADR-0014).
+///     </para>
 /// </remarks>
-/// <param name="WarningMessages">Messages for the warning list, in report order.</param>
-/// <param name="ErrorMessages">Messages for the error list, in report order.</param>
-/// <param name="InformationMessages">
-///     Messages for the information list, in report order: a completed run's completion line, a dry run's plan, or a
-///     cancelled run's acknowledgement.
+/// <param name="Messages">
+///     Every message the outcome implies, each tagged with its Message List, in the order they are to be written:
+///     warnings, then errors, then information. Within a list, messages keep report order. The information messages
+///     are a completed run's completion line, a dry run's plan, or a cancelled run's acknowledgement.
 /// </param>
-internal readonly record struct RenderedRunReport(
-    ImmutableArray<string> WarningMessages,
-    ImmutableArray<string> ErrorMessages,
-    ImmutableArray<string> InformationMessages);
+internal readonly record struct RenderedRunReport(ImmutableArray<RenderedMessage> Messages);

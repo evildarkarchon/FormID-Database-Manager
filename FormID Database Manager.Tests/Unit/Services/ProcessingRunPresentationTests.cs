@@ -23,9 +23,9 @@ namespace FormID_Database_Manager.Tests.Unit.Services;
 ///     </para>
 ///     <para>
 ///         Both halves of what a run says are covered: the transient progress it reports while running, and the report
-///         rendered from how it ended, across all four of that report's channels. Asserting the untouched channels
-///         empty is deliberate — which list a fact lands in is behaviour, so a message that also appeared elsewhere
-///         must not pass.
+///         rendered from how it ended, as its whole ordered sequence of messages. Asserting every message's Message
+///         List alongside its wording, and the whole sequence rather than a member of it, is deliberate — which list a
+///         fact lands in, and in what order, is behaviour, so a message that also appeared elsewhere must not pass.
 ///     </para>
 /// </remarks>
 public sealed class ProcessingRunPresentationTests
@@ -466,6 +466,29 @@ public sealed class ProcessingRunPresentationTests
     }
 
     /// <summary>
+    ///     Pins the order a Plugin run's report is written in across the Message Lists: its Processing Warnings, then
+    ///     its Failed Plugins, then its completion line.
+    /// </summary>
+    /// <remarks>
+    ///     Issue #148. Processing Run Control forwards the report's messages in the order Presentation returns them, so
+    ///     this order is what the user sees; it is the order the run wrote its lists in before the report became one
+    ///     sequence. Only the lists are asserted here — the wording is pinned by the tests above.
+    /// </remarks>
+    [Fact]
+    public void Render_PluginRunWithWarningsFailuresAndCompletion_OrdersWarningsThenErrorsThenInformation()
+    {
+        var rendered = RenderPluginRun(
+            new FailedPlugin(
+                "Bad.esp",
+                new PluginReadDiagnostic(PluginReadPhase.OpeningPlugin, "Invalid plugin header.")),
+            new IngestedPlugin("Warned.esp", 2, new ProcessingWarning(1, ["Recoverable issue"])));
+
+        Assert.Equal(
+            [MessageList.Warning, MessageList.Error, MessageList.Information],
+            rendered.Messages.Select(static message => message.List));
+    }
+
+    /// <summary>
     ///     Verifies the completion line of a FormID text-file run, which reports the counts FormID Text Ingestion read.
     /// </summary>
     /// <remarks>
@@ -494,9 +517,9 @@ public sealed class ProcessingRunPresentationTests
     {
         var rendered = ProcessingRunPresentation.Render(new CancelledRunOutcome());
 
-        Assert.Equal(["Processing cancelled by user."], rendered.InformationMessages);
-        Assert.Empty(rendered.WarningMessages);
-        Assert.Empty(rendered.ErrorMessages);
+        Assert.Equal(
+            [new RenderedMessage(MessageList.Information, "Processing cancelled by user.")],
+            rendered.Messages);
     }
 
     /// <summary>
@@ -534,16 +557,16 @@ public sealed class ProcessingRunPresentationTests
 
         Assert.Equal(
             [
-                Lines(
-                    "Dry run: 1 would be ingested, 2 would be skipped, and 1 would fail.",
-                    "Would ingest First.esp",
-                    "Would skip Absent.esp: not present in the load order",
-                    $"Would skip Unavailable.esp: could not find plugin file: {resolvedPluginPath}",
-                    "Would fail to open Broken.esp: Unreadable header.")
+                new RenderedMessage(
+                    MessageList.Information,
+                    Lines(
+                        "Dry run: 1 would be ingested, 2 would be skipped, and 1 would fail.",
+                        "Would ingest First.esp",
+                        "Would skip Absent.esp: not present in the load order",
+                        $"Would skip Unavailable.esp: could not find plugin file: {resolvedPluginPath}",
+                        "Would fail to open Broken.esp: Unreadable header."))
             ],
-            rendered.InformationMessages);
-        Assert.Empty(rendered.WarningMessages);
-        Assert.Empty(rendered.ErrorMessages);
+            rendered.Messages);
     }
 
     /// <summary>
@@ -567,13 +590,14 @@ public sealed class ProcessingRunPresentationTests
 
         var rendered = ProcessingRunPresentation.Render(new PlannedRunOutcome(new PluginRunPlan(plan)));
 
-        var plannedWork = Assert.Single(rendered.InformationMessages);
+        var plannedWork = Assert.Single(rendered.Messages);
+        Assert.Equal(MessageList.Information, plannedWork.List);
         Assert.StartsWith(
             "Dry run: 40 would be ingested, 0 would be skipped, and 0 would fail.",
-            plannedWork,
+            plannedWork.Text,
             StringComparison.Ordinal);
-        Assert.Contains("Would ingest Plugin1.esp", plannedWork, StringComparison.Ordinal);
-        Assert.Contains("Would ingest Plugin40.esp", plannedWork, StringComparison.Ordinal);
+        Assert.Contains("Would ingest Plugin1.esp", plannedWork.Text, StringComparison.Ordinal);
+        Assert.Contains("Would ingest Plugin40.esp", plannedWork.Text, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -587,10 +611,12 @@ public sealed class ProcessingRunPresentationTests
             new PlannedRunOutcome(new FormIdTextRunPlan(@"C:\Imports\formids.txt", 1_234_567))));
 
         Assert.Equal(
-            [@"Would import FormID list file: C:\Imports\formids.txt (1,234,567 bytes)"],
-            rendered.InformationMessages);
-        Assert.Empty(rendered.WarningMessages);
-        Assert.Empty(rendered.ErrorMessages);
+            [
+                new RenderedMessage(
+                    MessageList.Information,
+                    @"Would import FormID list file: C:\Imports\formids.txt (1,234,567 bytes)")
+            ],
+            rendered.Messages);
     }
 
     /// <summary>
@@ -607,8 +633,12 @@ public sealed class ProcessingRunPresentationTests
             new PlannedRunOutcome(new FormIdTextRunPlan(@"C:\Imports\formids.txt", 0)));
 
         Assert.Equal(
-            [@"Would import FormID list file: C:\Imports\formids.txt (0 bytes)"],
-            rendered.InformationMessages);
+            [
+                new RenderedMessage(
+                    MessageList.Information,
+                    @"Would import FormID list file: C:\Imports\formids.txt (0 bytes)")
+            ],
+            rendered.Messages);
     }
 
     /// <summary>
@@ -621,8 +651,12 @@ public sealed class ProcessingRunPresentationTests
             new PlannedRunOutcome(new FormIdTextRunPlan(@"C:\Imports\formids.txt", null)));
 
         Assert.Equal(
-            [@"Would import FormID list file: C:\Imports\formids.txt (file not found)"],
-            rendered.InformationMessages);
+            [
+                new RenderedMessage(
+                    MessageList.Information,
+                    @"Would import FormID list file: C:\Imports\formids.txt (file not found)")
+            ],
+            rendered.Messages);
     }
 
     /// <summary>
@@ -635,8 +669,13 @@ public sealed class ProcessingRunPresentationTests
     }
 
     /// <summary>
-    ///     Pins the sentence each Processing Run Admission refusal reaches the user as (ADR-0010).
+    ///     Pins the sentence each Processing Run Admission refusal reaches the user as (ADR-0010), and that it is one
+    ///     message in the error list.
     /// </summary>
+    /// <remarks>
+    ///     Issue #147. The render is a single rendered message, so comparing it whole pins both its Message List and its
+    ///     wording, and that a refusal renders to exactly one message.
+    /// </remarks>
     /// <param name="reasonName">
     ///     The name of the refusal reason, passed as text because the reason is internal and a public test method
     ///     cannot take it as a parameter.
@@ -653,11 +692,11 @@ public sealed class ProcessingRunPresentationTests
     [InlineData(nameof(RunRejectionReason.NoPluginsSelected), "No plugins selected")]
     [InlineData(nameof(RunRejectionReason.NoDatabaseLocation),
         "Choose a database file: the default location is unavailable.")]
-    public void Render_RunRejectionReason_ReturnsTheRefusalSentence(string reasonName, string expected)
+    public void Render_RunRejectionReason_ReturnsTheRefusalSentenceAsOneErrorMessage(string reasonName, string expected)
     {
         var reason = Enum.Parse<RunRejectionReason>(reasonName);
 
-        Assert.Equal(expected, ProcessingRunPresentation.Render(reason));
+        Assert.Equal(new RenderedMessage(MessageList.Error, expected), ProcessingRunPresentation.Render(reason));
     }
 
     /// <summary>
@@ -668,7 +707,7 @@ public sealed class ProcessingRunPresentationTests
     {
         foreach (var reason in Enum.GetValues<RunRejectionReason>())
         {
-            Assert.False(string.IsNullOrWhiteSpace(ProcessingRunPresentation.Render(reason)));
+            Assert.False(string.IsNullOrWhiteSpace(ProcessingRunPresentation.Render(reason).Text));
         }
     }
 
@@ -690,7 +729,7 @@ public sealed class ProcessingRunPresentationTests
     {
         var rendered = ProcessingRunPresentation.RenderFailure(new InvalidOperationException("store unavailable"));
 
-        Assert.Equal("Error processing FormIDs: store unavailable", rendered);
+        Assert.Equal(new RenderedMessage(MessageList.Error, "Error processing FormIDs: store unavailable"), rendered);
     }
 
     /// <summary>
@@ -709,9 +748,11 @@ public sealed class ProcessingRunPresentationTests
             new UnresolvableMasterException("User.esp", "Starfield.esm"));
 
         Assert.Equal(
-            "Could not resolve 'Starfield.esm', a master file declared by User.esp. This game separates master " +
-            "files by type in the load order, so that master must be present in the Data directory being " +
-            "processed before any selected plugin can be read.",
+            new RenderedMessage(
+                MessageList.Error,
+                "Could not resolve 'Starfield.esm', a master file declared by User.esp. This game separates master " +
+                "files by type in the load order, so that master must be present in the Data directory being " +
+                "processed before any selected plugin can be read."),
             rendered);
     }
 
@@ -745,7 +786,7 @@ public sealed class ProcessingRunPresentationTests
             "Adapter state is broken.",
             new InvalidOperationException("Enrichment wording."));
 
-        Assert.Equal(expected, ProcessingRunPresentation.RenderFailure(failure));
+        Assert.Equal(new RenderedMessage(MessageList.Error, expected), ProcessingRunPresentation.RenderFailure(failure));
     }
 
     /// <summary>
@@ -779,7 +820,8 @@ public sealed class ProcessingRunPresentationTests
     }
 
     /// <summary>
-    ///     Asserts the complete rendered report of one completed run across all three of its message lists.
+    ///     Asserts the complete rendered report of one completed run: every message, its Message List, and its place
+    ///     in the sequence.
     /// </summary>
     /// <param name="rendered">The report rendered from how the run ended.</param>
     /// <param name="expectedCompletion">The exact completion line, the run's only information message.</param>
@@ -789,7 +831,9 @@ public sealed class ProcessingRunPresentationTests
     ///     Issue #94. The completion line is how the run ended, a terminal fact, so it is the information message next
     ///     to where a dry run's plan and a cancelled run's acknowledgement already go. It used to be the run's terminal
     ///     activity, which the run erased again as it handed the progress channel back (#60). The warning and failure
-    ///     details stay in their own lists, so the completion line is asserted as the single information message.
+    ///     details stay in their own lists, so the completion line is asserted as the single information message, and
+    ///     the expected sequence is warning, then failure, then completion — the order the report is written in
+    ///     (#148).
     /// </remarks>
     private static void AssertTerminalReport(
         RenderedRunReport rendered,
@@ -797,12 +841,18 @@ public sealed class ProcessingRunPresentationTests
         string? expectedWarning = null,
         string? expectedError = null)
     {
-        string[] expectedWarnings = expectedWarning is null ? [] : [expectedWarning];
-        string[] expectedErrors = expectedError is null ? [] : [expectedError];
+        RenderedMessage[] expectedWarnings =
+            expectedWarning is null ? [] : [new RenderedMessage(MessageList.Warning, expectedWarning)];
+        RenderedMessage[] expectedErrors =
+            expectedError is null ? [] : [new RenderedMessage(MessageList.Error, expectedError)];
 
-        Assert.Equal(expectedWarnings, rendered.WarningMessages);
-        Assert.Equal(expectedErrors, rendered.ErrorMessages);
-        Assert.Equal([expectedCompletion], rendered.InformationMessages);
+        Assert.Equal(
+            [
+                .. expectedWarnings,
+                .. expectedErrors,
+                new RenderedMessage(MessageList.Information, expectedCompletion)
+            ],
+            rendered.Messages);
     }
 
     /// <summary>

@@ -2,11 +2,9 @@
 
 using System;
 using System.Collections.Specialized;
-using System.Linq;
 using FormID_Database_Manager.Services;
 using FormID_Database_Manager.TestUtilities.Mocks;
 using FormID_Database_Manager.ViewModels;
-using Mutagen.Bethesda;
 using Xunit;
 
 namespace FormID_Database_Manager.Tests.Unit.Services;
@@ -20,8 +18,9 @@ namespace FormID_Database_Manager.Tests.Unit.Services;
 ///         Issue #120, under parent #118. The adapter is called directly over a real ViewModel with
 ///         <see cref="SynchronousThreadDispatcher" />, so no admission inputs, Plugin List or executor are involved.
 ///         When and in what order Processing Run Control reports is pinned by <see cref="ProcessingRunControlTests" />,
-///         and run wording by <see cref="ProcessingRunPresentationTests" />; expected text here comes from
-///         Presentation's output.
+///         and run wording by <see cref="ProcessingRunPresentationTests" />. Where a test needs real run wording, its
+///         expected text comes from Presentation's output; the add-message pass-through tests use arbitrary text,
+///         because the adapter writes whatever it is handed.
 ///     </para>
 ///     <para>
 ///         The assertions read ViewModel state rather than which ViewModel members were called, and messages are
@@ -32,7 +31,6 @@ namespace FormID_Database_Manager.Tests.Unit.Services;
 /// </remarks>
 public sealed class ViewModelProcessingRunControlSinkTests
 {
-    private const string GameDirectory = @"C:\Games\Skyrim";
     private const string EditedDatabasePath = @"C:\Databases\edited.db";
     private const string DefaultedDatabasePath = @"C:\Defaults\FormID Database Manager\Databases\SkyrimSE.db";
 
@@ -74,9 +72,9 @@ public sealed class ViewModelProcessingRunControlSinkTests
     [Fact]
     public void ClearMessageLists_StaleMessagesInEveryList_ClearsEveryList()
     {
-        _sut.AddErrorMessage("Stale error");
-        _sut.AddWarningMessage("Stale warning");
-        _sut.AddInformationMessage("Earlier information");
+        _sut.AddMessage(MessageList.Error, "Stale error");
+        _sut.AddMessage(MessageList.Warning, "Stale warning");
+        _sut.AddMessage(MessageList.Information, "Earlier information");
 
         _sut.ClearMessageLists();
 
@@ -184,82 +182,49 @@ public sealed class ViewModelProcessingRunControlSinkTests
     }
 
     /// <summary>
-    ///     Verifies where each message part of a rendered run report lands when one run produced all three: the warning
-    ///     messages in the warning list, the failure messages in the error list, and the completion line in the
-    ///     information list.
+    ///     The name of every Message List, so the pass-through test covers a list the day it is added.
     /// </summary>
     /// <remarks>
-    ///     Each part is handed to the sink member Processing Run Control uses for it, as it does for a finished run.
-    ///     What is asserted is which list each part reached; the order they are reported in is pinned by
-    ///     <see cref="ProcessingRunControlTests" />. The completion line reaching the information list is issue #94: it
-    ///     is how the run ended, so it stays readable after the run hands the progress channel back.
+    ///     Names rather than values because <see cref="MessageList" /> is internal and a public test method cannot take
+    ///     it as a parameter.
     /// </remarks>
-    [Fact]
-    public void AddWarningErrorAndInformationMessage_RenderedRunReportWithEveryPart_RouteEachPartToItsOwnList()
+    public static TheoryData<string> EveryMessageListName => new(Enum.GetNames<MessageList>());
+
+    /// <summary>
+    ///     Verifies that the add-message member writes the text to exactly the Message List it was handed, with no
+    ///     per-list mapping of its own, and leaves every other list alone (ADR-0014).
+    /// </summary>
+    /// <remarks>
+    ///     Issue #147. Which list a run message belongs to is Processing Run Presentation's choice, so the adapter's
+    ///     only behaviour is passing that choice through; the test text is arbitrary for the same reason.
+    /// </remarks>
+    /// <param name="listName">The name of the Message List to write to.</param>
+    [Theory]
+    [MemberData(nameof(EveryMessageListName))]
+    public void AddMessage_EachMessageList_AddsTheTextToThatListOnly(string listName)
     {
-        var rendered = ProcessingRunPresentation.Render(CreatePluginRunOutcome(
-            new IngestedPlugin("User.esp", 1, new ProcessingWarning(1, ["Recoverable issue"])),
-            new FailedPlugin(
-                "Bad.esp",
-                new PluginReadDiagnostic(PluginReadPhase.OpeningPlugin, "Invalid plugin header."))));
-        Assert.NotEmpty(rendered.WarningMessages);
-        Assert.NotEmpty(rendered.ErrorMessages);
-        Assert.NotEmpty(rendered.InformationMessages);
+        var list = Enum.Parse<MessageList>(listName);
+        const string text = "Rendered run message";
 
-        ReportMessages(rendered);
+        _sut.AddMessage(list, text);
 
-        Assert.Equal(rendered.WarningMessages.ToArray(), _viewModel.WarningMessages);
-        Assert.Equal(rendered.ErrorMessages.ToArray(), _viewModel.ErrorMessages);
-        Assert.Equal(rendered.InformationMessages.ToArray(), _viewModel.InformationMessages);
+        Assert.Equal(list == MessageList.Error ? [text] : Array.Empty<string>(), _viewModel.ErrorMessages);
+        Assert.Equal(list == MessageList.Warning ? [text] : Array.Empty<string>(), _viewModel.WarningMessages);
+        Assert.Equal(list == MessageList.Information ? [text] : Array.Empty<string>(), _viewModel.InformationMessages);
     }
 
     /// <summary>
-    ///     Verifies that a dry run's rendered plan lands in the information list the user reads, and nowhere else.
+    ///     Verifies that a Message List the ViewModel does not define is refused before anything is written, the same
+    ///     failure mode as the Game Context sink adapter's.
     /// </summary>
     [Fact]
-    public void AddInformationMessage_RenderedDryRunPlan_AddsThePlanToTheInformationList()
+    public void AddMessage_UndefinedMessageList_ThrowsAndWritesNothing()
     {
-        var rendered = ProcessingRunPresentation.Render(new PlannedRunOutcome(new PluginRunPlan(
-            new PluginIngestionPlan(
-                new PluginProcessingRunRequest(
-                    PluginListSource.Create(GameRelease.SkyrimSE, GameDirectory),
-                    string.Empty,
-                    ["User.esp", "Absent.esp"],
-                    UpdateMode.Append,
-                    dryRun: true),
-                [
-                    new PlannedPluginIngestion("User.esp"),
-                    new PlannedPluginSkip("Absent.esp", PlannedSkipReason.NotPresentInLoadOrder)
-                ]))));
-        Assert.NotEmpty(rendered.InformationMessages);
+        Assert.Throws<ArgumentOutOfRangeException>(() => _sut.AddMessage((MessageList)999, "Unroutable"));
 
-        ReportMessages(rendered);
-
-        Assert.Equal(rendered.InformationMessages.ToArray(), _viewModel.InformationMessages);
-        Assert.Empty(_viewModel.WarningMessages);
         Assert.Empty(_viewModel.ErrorMessages);
-    }
-
-    /// <summary>
-    ///     Hands every message of a rendered run report to the sink member for its list.
-    /// </summary>
-    /// <param name="rendered">The rendered report.</param>
-    private void ReportMessages(RenderedRunReport rendered)
-    {
-        foreach (var message in rendered.WarningMessages)
-        {
-            _sut.AddWarningMessage(message);
-        }
-
-        foreach (var message in rendered.ErrorMessages)
-        {
-            _sut.AddErrorMessage(message);
-        }
-
-        foreach (var message in rendered.InformationMessages)
-        {
-            _sut.AddInformationMessage(message);
-        }
+        Assert.Empty(_viewModel.WarningMessages);
+        Assert.Empty(_viewModel.InformationMessages);
     }
 
     /// <summary>
@@ -270,25 +235,5 @@ public sealed class ViewModelProcessingRunControlSinkTests
     {
         var starting = ProcessingRunPresentation.Render(new ProcessingRunStarting());
         return new ActivityProjection(true, starting.Status, starting.Value ?? 0);
-    }
-
-    /// <summary>
-    ///     Builds a selected-Plugin outcome whose report agrees with the outcomes it is given.
-    /// </summary>
-    /// <param name="outcomes">One outcome per selected Plugin, in selection order.</param>
-    /// <returns>A completed selected-Plugin outcome carrying that report.</returns>
-    /// <remarks>
-    ///     A report validates its outcomes against the selection they came from, so the request is rebuilt from the
-    ///     outcomes' Plugin names.
-    /// </remarks>
-    private static PluginRunOutcome CreatePluginRunOutcome(params PluginIngestionOutcome[] outcomes)
-    {
-        var request = new PluginProcessingRunRequest(
-            PluginListSource.Create(GameRelease.SkyrimSE, GameDirectory),
-            "ingestion.db",
-            outcomes.Select(static outcome => outcome.PluginName),
-            UpdateMode.Append);
-
-        return new PluginRunOutcome(new PluginIngestionReport(request, outcomes));
     }
 }

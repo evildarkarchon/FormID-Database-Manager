@@ -47,21 +47,9 @@ internal sealed class RecordingProcessingRunControlSink : IProcessingRunControlS
     }
 
     /// <inheritdoc />
-    public void AddWarningMessage(string message)
+    public void AddMessage(MessageList list, string message)
     {
-        Record(new WarningMessageAdded(message));
-    }
-
-    /// <inheritdoc />
-    public void AddErrorMessage(string message)
-    {
-        Record(new ErrorMessageAdded(message));
-    }
-
-    /// <inheritdoc />
-    public void AddInformationMessage(string message)
-    {
-        Record(new InformationMessageAdded(message));
+        Record(new MessageAdded(list, message));
     }
 
     /// <summary>
@@ -100,19 +88,20 @@ internal sealed record DefaultedDatabasePathReported(string DefaultedDatabasePat
 internal sealed record RunActivityReported(ActivityProjection Activity) : ProcessingRunSinkEntry;
 
 /// <summary>
-///     A rendered warning message was reported.
+///     A rendered message was added to a Message List.
 /// </summary>
+/// <param name="List">The Message List the message was added to.</param>
 /// <param name="Message">The rendered message.</param>
-internal sealed record WarningMessageAdded(string Message) : ProcessingRunSinkEntry;
-
-/// <summary>
-///     A rendered error message was reported.
-/// </summary>
-/// <param name="Message">The rendered message.</param>
-internal sealed record ErrorMessageAdded(string Message) : ProcessingRunSinkEntry;
-
-/// <summary>
-///     A rendered information message was reported.
-/// </summary>
-/// <param name="Message">The rendered message.</param>
-internal sealed record InformationMessageAdded(string Message) : ProcessingRunSinkEntry;
+internal sealed record MessageAdded(MessageList List, string Message) : ProcessingRunSinkEntry
+{
+    /// <summary>
+    ///     The entry a rendered message is expected to arrive as, so a test takes the list from Presentation's output
+    ///     rather than stating it.
+    /// </summary>
+    /// <param name="rendered">The message Processing Run Presentation rendered.</param>
+    /// <returns>The entry recording that message in the list Presentation chose.</returns>
+    public static MessageAdded From(RenderedMessage rendered)
+    {
+        return new MessageAdded(rendered.List, rendered.Text);
+    }
+}
