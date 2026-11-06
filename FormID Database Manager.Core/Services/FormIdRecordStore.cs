@@ -316,43 +316,38 @@ public sealed class FormIdRecordStore : IFormIdRecordStoreSession
         ArgumentException.ThrowIfNullOrWhiteSpace(pluginName);
         ArgumentNullException.ThrowIfNull(records);
 
-        await using var transaction = (SqliteTransaction)await _connection
-            .BeginTransactionAsync(cancellationToken)
-            .ConfigureAwait(false);
-
-        try
-        {
-            await using var insertCommand = CreateTargetInsertCommand(transaction);
-            var batch = new List<FormIdRecord>(PluginBatchSize);
-            var recordCount = 0;
-
-            foreach (var record in records)
+        var recordCount = await RunGuardedTransactionAsync(
+            _connection,
+            async transaction =>
             {
-                cancellationToken.ThrowIfCancellationRequested();
+                await using var insertCommand = CreateTargetInsertCommand(transaction);
+                var batch = new List<FormIdRecord>(PluginBatchSize);
+                var insertedCount = 0;
 
-                if (recordCount == 0 && replaceExistingPluginRows)
+                foreach (var record in records)
                 {
-                    await DeletePluginRowsAsync(pluginName, transaction, cancellationToken).ConfigureAwait(false);
+                    cancellationToken.ThrowIfCancellationRequested();
+
+                    if (insertedCount == 0 && replaceExistingPluginRows)
+                    {
+                        await DeletePluginRowsAsync(pluginName, transaction, cancellationToken).ConfigureAwait(false);
+                    }
+
+                    insertedCount++;
+                    batch.Add(record);
+
+                    if (batch.Count >= PluginBatchSize)
+                    {
+                        FlushPluginBatch(insertCommand, pluginName, batch, cancellationToken);
+                    }
                 }
 
-                recordCount++;
-                batch.Add(record);
+                FlushPluginBatch(insertCommand, pluginName, batch, cancellationToken);
+                return insertedCount;
+            },
+            cancellationToken).ConfigureAwait(false);
 
-                if (batch.Count >= PluginBatchSize)
-                {
-                    FlushPluginBatch(insertCommand, pluginName, batch, cancellationToken);
-                }
-            }
-
-            FlushPluginBatch(insertCommand, pluginName, batch, cancellationToken);
-            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-            return new FormIdPluginWriteResult(recordCount);
-        }
-        catch
-        {
-            await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
-            throw;
-        }
+        return new FormIdPluginWriteResult(recordCount);
     }
 
     /// <summary>
@@ -530,41 +525,77 @@ public sealed class FormIdRecordStore : IFormIdRecordStoreSession
         string tableName,
         CancellationToken cancellationToken)
     {
+        await RunGuardedTransactionAsync(
+            connection,
+            async transaction =>
+            {
+                await using var command = connection.CreateCommand();
+                command.Transaction = transaction;
+                command.CommandText = $@"
+                    CREATE TABLE IF NOT EXISTS {tableName} (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        plugin TEXT,
+                        formid TEXT,
+                        entry TEXT
+                    );
+
+                    CREATE INDEX IF NOT EXISTS {tableName}_covering_idx
+                    ON {tableName}(formid, plugin COLLATE nocase, entry);
+
+                    CREATE INDEX IF NOT EXISTS {tableName}_plugin_idx
+                    ON {tableName}(plugin COLLATE nocase);
+
+                    DROP INDEX IF EXISTS {tableName}_index;";
+                return await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            },
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    ///     Runs <paramref name="work" /> inside one SQLite transaction on <paramref name="connection" />, committing when
+    ///     it succeeds and rolling back when it, or the commit, fails. This is the only code in the Store that begins,
+    ///     commits or rolls back a transaction.
+    /// </summary>
+    /// <typeparam name="TResult">The work's result type.</typeparam>
+    /// <param name="connection">
+    ///     The open connection to run on. It is explicit, not the instance's, because schema preparation runs before the
+    ///     Store instance's connection is in use.
+    /// </param>
+    /// <param name="work">The statements to run; each command it creates must be bound to the transaction it is handed.</param>
+    /// <param name="cancellationToken">Token honoured when beginning and committing; never used for the rollback.</param>
+    /// <returns>The work's result, once the transaction has committed.</returns>
+    /// <remarks>
+    ///     A failure to begin propagates unchanged, since there is nothing to roll back. Any later failure is rethrown
+    ///     as the same instance with its type and stack, never wrapped or aggregated, even when the rollback itself
+    ///     fails: Plugin Ingestion classifies a write failure by its exception type, so a rollback failure must not
+    ///     replace it.
+    /// </remarks>
+    internal static async Task<TResult> RunGuardedTransactionAsync<TResult>(
+        SqliteConnection connection,
+        Func<SqliteTransaction, Task<TResult>> work,
+        CancellationToken cancellationToken)
+    {
+        // A rollback that throws still marks the transaction completed, so this disposal needs no guard of its own.
         await using var transaction =
             (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
 
         try
         {
-            await using var command = connection.CreateCommand();
-            command.Transaction = transaction;
-            command.CommandText = $@"
-                CREATE TABLE IF NOT EXISTS {tableName} (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    plugin TEXT,
-                    formid TEXT,
-                    entry TEXT
-                );
-
-                CREATE INDEX IF NOT EXISTS {tableName}_covering_idx
-                ON {tableName}(formid, plugin COLLATE nocase, entry);
-
-                CREATE INDEX IF NOT EXISTS {tableName}_plugin_idx
-                ON {tableName}(plugin COLLATE nocase);
-
-                DROP INDEX IF EXISTS {tableName}_index;";
-            await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            var result = await work(transaction).ConfigureAwait(false);
             await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            return result;
         }
         catch
         {
             try
             {
-                // Roll back independently of caller cancellation so persisted schema changes never escape a failed open.
+                // Roll back independently of caller cancellation, so a cancelled or failed write never leaves its
+                // partial rows, or a failed open its partial schema, behind.
                 await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
             }
             catch
             {
-                // Connection disposal remains the final cleanup path; preserve the original schema exception.
+                // Connection disposal remains the final cleanup path; preserve the original exception.
             }
 
             throw;
@@ -657,33 +688,30 @@ public sealed class FormIdRecordStore : IFormIdRecordStoreSession
             return;
         }
 
-        _stagingInsertCommand ??= CreateStagingInsertCommand();
-        await using var transaction = (SqliteTransaction)await _connection
-            .BeginTransactionAsync(cancellationToken)
-            .ConfigureAwait(false);
-        _stagingInsertCommand.Transaction = transaction;
-
-        try
-        {
-            foreach (var (pluginName, formId, entry) in _stagingBatch)
+        var stagingInsertCommand = _stagingInsertCommand ??= CreateStagingInsertCommand();
+        await RunGuardedTransactionAsync(
+            _connection,
+            transaction =>
             {
-                cancellationToken.ThrowIfCancellationRequested();
+                stagingInsertCommand.Transaction = transaction;
 
-                _stagingInsertCommand.Parameters["@plugin_key"].Value = pluginName;
-                _stagingInsertCommand.Parameters["@plugin"].Value = pluginName;
-                _stagingInsertCommand.Parameters["@formid"].Value = formId;
-                _stagingInsertCommand.Parameters["@entry"].Value = entry;
-                _stagingInsertCommand.ExecuteNonQuery();
-            }
+                foreach (var (pluginName, formId, entry) in _stagingBatch)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
 
-            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-            _stagingBatch.Clear();
-        }
-        catch
-        {
-            await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
-            throw;
-        }
+                    stagingInsertCommand.Parameters["@plugin_key"].Value = pluginName;
+                    stagingInsertCommand.Parameters["@plugin"].Value = pluginName;
+                    stagingInsertCommand.Parameters["@formid"].Value = formId;
+                    stagingInsertCommand.Parameters["@entry"].Value = entry;
+                    stagingInsertCommand.ExecuteNonQuery();
+                }
+
+                return Task.FromResult(_stagingBatch.Count);
+            },
+            cancellationToken).ConfigureAwait(false);
+
+        // Cleared only once the flush has committed; a failed flush leaves clearing to the import's own cleanup.
+        _stagingBatch.Clear();
     }
 
     private SqliteCommand CreateStagingInsertCommand()
@@ -726,35 +754,27 @@ public sealed class FormIdRecordStore : IFormIdRecordStoreSession
         bool replaceExistingPluginRows,
         CancellationToken cancellationToken)
     {
-        await using var transaction = (SqliteTransaction)await _connection
-            .BeginTransactionAsync(cancellationToken)
-            .ConfigureAwait(false);
-
-        try
-        {
-            if (replaceExistingPluginRows)
+        await RunGuardedTransactionAsync(
+            _connection,
+            async transaction =>
             {
-                await DeletePluginRowsAsync(pluginKey, transaction, cancellationToken).ConfigureAwait(false);
-            }
+                if (replaceExistingPluginRows)
+                {
+                    await DeletePluginRowsAsync(pluginKey, transaction, cancellationToken).ConfigureAwait(false);
+                }
 
-            await using var insertCommand = _connection.CreateCommand();
-            insertCommand.Transaction = transaction;
-            insertCommand.CommandText = $@"
-                INSERT INTO {_tableName} (plugin, formid, entry)
-                SELECT plugin, formid, entry
-                FROM {StagingTableName}
-                WHERE plugin_key COLLATE NOCASE = @plugin_key
-                ORDER BY id";
-            insertCommand.Parameters.AddWithValue("@plugin_key", pluginKey);
-            await insertCommand.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-
-            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-        }
-        catch
-        {
-            await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
-            throw;
-        }
+                await using var insertCommand = _connection.CreateCommand();
+                insertCommand.Transaction = transaction;
+                insertCommand.CommandText = $@"
+                    INSERT INTO {_tableName} (plugin, formid, entry)
+                    SELECT plugin, formid, entry
+                    FROM {StagingTableName}
+                    WHERE plugin_key COLLATE NOCASE = @plugin_key
+                    ORDER BY id";
+                insertCommand.Parameters.AddWithValue("@plugin_key", pluginKey);
+                return await insertCommand.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            },
+            cancellationToken).ConfigureAwait(false);
     }
 
     private async Task ClearStagingTableBestEffortAsync()
