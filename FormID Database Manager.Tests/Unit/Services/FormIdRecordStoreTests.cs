@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Data;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -114,6 +115,43 @@ public sealed class FormIdRecordStoreTests : IDisposable
         Assert.Equal(0, result.RecordCount);
         Assert.Single(records);
         Assert.Contains(records, record => record is { plugin: "Plugin.esp", formid: "000001", entry: "OldEntry" });
+    }
+
+    /// <summary>
+    ///     Verifies that an Update Mode Plugin write spanning several 1000-record flushes replaces the Plugin's old rows
+    ///     once, before its first record, and keeps every newly written record from every flush.
+    /// </summary>
+    [Fact]
+    public async Task WritePluginAsync_ReplaceModeAcrossSeveralBatches_ReplacesOldRowsOnceAndKeepsEveryRecord()
+    {
+        // Must stay above twice the Store's private 1000-record Plugin batch size so the write spans several flushes;
+        // raise it if that batch size grows.
+        const int totalRecords = 2500;
+        await InsertTestRecordAsync("Plugin.esp", "OLD001", "OldEntry");
+        await InsertTestRecordAsync("Other.esp", "OTHER1", "OtherEntry");
+        await using var store = await OpenStoreAsync();
+        var written = Enumerable.Range(0, totalRecords)
+            .Select(index => new FormIdRecord($"{index:X6}", $"Entry{index}"))
+            .ToList();
+
+        var result = await store.WritePluginAsync(
+            "PLUGIN.ESP",
+            written,
+            UpdateMode.ReplacePluginRecords,
+            TestContext.Current.CancellationToken);
+
+        var pluginRecords = await store.ReadRecordsAsync(
+            new FormIdRecordQuery { PluginName = "Plugin.esp" },
+            TestContext.Current.CancellationToken);
+        var otherRecords = await store.ReadRecordsAsync(
+            new FormIdRecordQuery { PluginName = "Other.esp" },
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(totalRecords, result.RecordCount);
+        Assert.Equal(
+            written.Select(record => new FormIdStoredRecord("PLUGIN.ESP", record.FormId, record.Entry)),
+            pluginRecords);
+        Assert.Equal([new FormIdStoredRecord("Other.esp", "OTHER1", "OtherEntry")], otherRecords);
     }
 
     [Fact]
@@ -853,6 +891,74 @@ public sealed class FormIdRecordStoreTests : IDisposable
 
         var records = await store.ReadRecordsAsync(FormIdRecordQuery.All, TestContext.Current.CancellationToken);
         Assert.Equal(new FormIdStoredRecord("Fresh.esp", "FFFFFF", "FreshEntry"), Assert.Single(records));
+    }
+
+    /// <summary>
+    ///     Verifies that when the guarded transaction's own <c>ROLLBACK</c> statement fails, the failure that caused the
+    ///     rollback, here a Plugin-read failure, propagates as the very same instance.
+    /// </summary>
+    /// <remarks>
+    ///     A raw <c>COMMIT</c> ends the SQLite transaction without firing Microsoft.Data.Sqlite's rollback hook, so the
+    ///     library still believes the transaction is active and its explicit rollback fails with "no transaction is
+    ///     active". A trigger's <c>RAISE(ROLLBACK)</c> or a raw <c>ROLLBACK</c> would instead be recorded as an external
+    ///     rollback and skipped, so the helper's rollback would never throw.
+    /// </remarks>
+    [Fact]
+    public async Task RunGuardedTransactionAsync_RollbackStatementFails_RethrowsOriginalExceptionInstance()
+    {
+        var sentinel = new PluginReadException(PluginReadPhase.ReadingRecords, "Sentinel Plugin-read failure.");
+        await using var connection = await OpenUnpooledDatabaseConnectionAsync();
+        await using (var setup = connection.CreateCommand())
+        {
+            setup.CommandText = "CREATE TABLE injected (value TEXT NOT NULL)";
+            await setup.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+        }
+
+        var thrown = await Assert.ThrowsAsync<PluginReadException>(() =>
+            FormIdRecordStore.RunGuardedTransactionAsync<int>(
+                connection,
+                async transaction =>
+                {
+                    await using var command = connection.CreateCommand();
+                    command.Transaction = transaction;
+                    command.CommandText = "INSERT INTO injected (value) VALUES ('committed externally'); COMMIT;";
+                    await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+                    throw sentinel;
+                },
+                TestContext.Current.CancellationToken));
+
+        Assert.Same(sentinel, thrown);
+
+        // The row persisting proves the injection worked: the raw COMMIT really ended the transaction, so the helper's
+        // ROLLBACK statement had no transaction to roll back.
+        await using var verify = connection.CreateCommand();
+        verify.CommandText = "SELECT COUNT(*) FROM injected";
+        Assert.Equal(1L, await verify.ExecuteScalarAsync(TestContext.Current.CancellationToken));
+    }
+
+    /// <summary>
+    ///     Verifies that when the guarded transaction's connection is closed under it, so its explicit rollback throws an
+    ///     invalid-operation error, the failure that caused the rollback propagates as the very same instance.
+    /// </summary>
+    [Fact]
+    public async Task RunGuardedTransactionAsync_ConnectionClosedByWork_RethrowsOriginalExceptionInstance()
+    {
+        var sentinel = new PluginReadException(PluginReadPhase.ReadingRecords, "Sentinel Plugin-read failure.");
+        await using var connection = await OpenUnpooledDatabaseConnectionAsync();
+
+        var thrown = await Assert.ThrowsAsync<PluginReadException>(() =>
+            FormIdRecordStore.RunGuardedTransactionAsync<int>(
+                connection,
+                async _ =>
+                {
+                    // Closing disposes the open transaction, so the helper's rollback finds it already completed.
+                    await connection.CloseAsync();
+                    throw sentinel;
+                },
+                TestContext.Current.CancellationToken));
+
+        Assert.Same(sentinel, thrown);
+        Assert.Equal(ConnectionState.Closed, connection.State);
     }
 
     private Task<FormIdRecordStore> OpenStoreAsync()
