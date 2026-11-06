@@ -56,6 +56,16 @@ the sink over the ViewModel as a private nested adapter" and ADR-0013's "a priva
   adapter-side.
 - `UserWorkflow` still constructs both adapters. Everything else in ADR-0012 and ADR-0013 stands.
 
+> *Note (2026-11-05):* The run sink now writes the Message Lists through one operation as well.
+> `IProcessingRunControlSink` takes one `AddMessage(MessageList, string)` in place of `AddWarningMessage`,
+> `AddErrorMessage` and `AddInformationMessage`. `ProcessingRunPresentation` chooses each run message's Message List,
+> as `GameContextPresentation` already did. An outcome renders to an ordered sequence of list-tagged messages, and a
+> refusal and a run failure each render to one. Both renderers return one shared `RenderedMessage(MessageList, string)`,
+> which replaces `RenderedGameContextNotice`. Processing Run Control forwards each message under its lock, so the #60
+> ordering (ADR-0012) is unchanged. The order across lists, warnings, then errors, then information, is preserved and
+> now lives in Presentation. The run sink still differs from the Game Context sink by taking rendered messages rather
+> than typed facts, because rendering stays where Processing Run Control holds the run activity (ADR-0012).
+
 **Everyone else writes through the same operation.** The Plugin List Presentation Adapter stays a direct ViewModel writer
 (ADR-0009), and `UserWorkflow`'s picker failures and the shell's catches stay where they are. All three append through
 `AddMessage`. Moving their wording into renderers is a separate question.

@@ -151,6 +151,9 @@ Run's plan is terminal for the same reason and goes to the information messages.
 > failures. No outcome has anything left to say on the transient channel, so `RenderedRunReport` no longer carries an
 > activity projection, and Processing Run Control only writes the outcome's messages before handing the channel back.
 
+> Note (2026-11-05, ADR-0014): `RenderedRunReport` now carries one ordered sequence of list-tagged messages instead of
+> three lists. Presentation, not the writer, chooses each message's list. It still carries no activity.
+
 ## Consequences
 
 - A caller can ask what a run did without parsing prose. `UserWorkflow` lost `ApplyProcessingRunEvent`, its
