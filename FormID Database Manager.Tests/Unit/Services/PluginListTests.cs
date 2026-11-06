@@ -908,6 +908,52 @@ public sealed class PluginListTests
         Assert.Same(retained, available.Confirmed);
     }
 
+    /// <summary>
+    ///     Verifies that a source built from a differently spelled directory naming the same canonical Data directory
+    ///     matches, and that the answer carries the Confirmed Plugin List with the exact Data-directory spelling it was
+    ///     discovered from, which is where a Processing Run reads its Plugins.
+    /// </summary>
+    /// <remarks>Moved from the Processing Run Admission tests with the source-matching rule (issue #143).</remarks>
+    [Fact]
+    public async Task ConfirmationFor_EquivalentDirectorySpelling_IsAvailableWithTheDiscoveredSpelling()
+    {
+        using var sut = new PluginList(ScriptedGameLoadOrders.Sequenced(ScriptedDiscovery.Completes("User.esp")));
+        var gameDirectory = CreateGameDirectory();
+        var source = PluginListSource.Create(GameRelease.SkyrimSE, gameDirectory);
+        await sut.RefreshAsync(source, AdvancedMode.Off, TestContext.Current.CancellationToken);
+        // Where paths compare case-insensitively the asked-about spelling also differs in case, so the ordinal check
+        // below tells the confirmed source apart from one rebuilt from the asked-about directory.
+        var dataDirectoryName = OperatingSystem.IsWindows() ? "data" : "Data";
+        var equivalent = PluginListSource.Create(
+            GameRelease.SkyrimSE,
+            System.IO.Path.Combine(gameDirectory, dataDirectoryName, "."));
+
+        var available = Assert.IsType<ConfirmedPluginListAvailable>(sut.Current.ConfirmationFor(equivalent));
+
+        Assert.Equal(source.DataDirectory, available.Confirmed.Source.DataDirectory, StringComparer.Ordinal);
+    }
+
+    /// <summary>
+    ///     Verifies that a list confirmed for one GameRelease does not answer for the same directory under another: that
+    ///     is another source, so its list is still on its way.
+    /// </summary>
+    /// <remarks>Moved from the Processing Run Admission tests with the source-matching rule (issue #143).</remarks>
+    [Fact]
+    public async Task ConfirmationFor_SameDirectoryUnderAnotherGameRelease_IsLoading()
+    {
+        using var sut = new PluginList(ScriptedGameLoadOrders.Sequenced(ScriptedDiscovery.Completes("User.esp")));
+        var gameDirectory = CreateGameDirectory();
+        await sut.RefreshAsync(
+            PluginListSource.Create(GameRelease.SkyrimSE, gameDirectory),
+            AdvancedMode.Off,
+            TestContext.Current.CancellationToken);
+
+        var confirmation = sut.Current.ConfirmationFor(PluginListSource.Create(GameRelease.Fallout4, gameDirectory));
+
+        Assert.IsType<PluginListReadyState>(sut.Current);
+        Assert.IsType<ConfirmedPluginListLoading>(confirmation);
+    }
+
     [Fact]
     public async Task RefreshAsync_NewerRefreshOvertakesOlder_OnlyNewerResultCanPublish()
     {

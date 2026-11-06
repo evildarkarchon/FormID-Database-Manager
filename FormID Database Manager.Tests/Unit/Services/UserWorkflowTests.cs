@@ -298,6 +298,10 @@ public class UserWorkflowTests
     /// <summary>
     /// Verifies that a Plugin Processing Run captures one confirmed source and ordered selection snapshot.
     /// </summary>
+    /// <remarks>
+    /// The press captures the Plugin List's available confirmation for the Game Context's source, so the request
+    /// carries that Confirmed Plugin List's own source and selection.
+    /// </remarks>
     [Fact]
     public async Task ProcessFormIdsAsync_PluginRun_CapturesCanonicalConfirmedPluginListFactsInOrder()
     {
@@ -348,6 +352,11 @@ public class UserWorkflowTests
     /// Verifies that a different-source transition invalidates old selection before a run can be admitted, and that the
     /// press is refused as the Plugin List still loading rather than as an empty selection.
     /// </summary>
+    /// <remarks>
+    /// This is the wiring for the captured Plugin List confirmation: the real press asks the Plugin List's current
+    /// snapshot for its confirmation of the Game Context's new source while that source's refresh is in flight, and the
+    /// loading answer reaches the ViewModel as Presentation's loading refusal (ADR-0010 2026-11-05 amendment).
+    /// </remarks>
     [Fact]
     public async Task ProcessFormIdsAsync_DuringSourceTransition_DoesNotMixOldSelectionWithNewGameContext()
     {

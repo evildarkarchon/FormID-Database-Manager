@@ -376,15 +376,18 @@ public sealed class UserWorkflow : IDisposable
     public async Task ProcessFormIdsAsync()
     {
         // Capture needs no lock: every press arrives on the UI thread, and a press re-entering from a notification
-        // only has to find the run active, which Processing Run Control decides under its own lock. The whole Plugin
-        // List state is captured, not just its confirmation, so admission can tell a list still loading from one that
-        // failed to load. The Game Context is read once, so the release and Plugin List Source always come from the
-        // same state.
+        // only has to find the run active, which Processing Run Control decides under its own lock. The Plugin List's
+        // confirmation for the source is captured rather than its bare Confirmed Plugin List, so admission can tell a
+        // list still loading from one that failed to load; it is answered from one snapshot, so it is coherent
+        // (ADR-0009). The Game Context is read once, so the release and the source the confirmation was asked about
+        // always come from the same state, which the captured inputs check. No source means no confirmation.
         var gameContext = _gameContext.Current;
+        var confirmation = gameContext.PluginListSource is { } source
+            ? _pluginList.Current.ConfirmationFor(source)
+            : null;
         var inputs = new ProcessingRunInputs(
             gameContext.SelectedGameRelease,
-            gameContext.PluginListSource,
-            _pluginList.Current,
+            confirmation,
             _viewModel.FormIdListPath,
             _viewModel.DatabasePath,
             _viewModel.UpdateMode ? UpdateMode.ReplacePluginRecords : UpdateMode.Append,

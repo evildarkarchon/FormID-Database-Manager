@@ -516,9 +516,9 @@ public class CoreProjectBoundaryTests
     ///     </para>
     ///     <para>
     ///         The text search is on whole type names. The captured inputs legitimately carry a
-    ///         <c>PluginListState</c> and a <c>PluginListSource</c>, which are values, and run activity is an
-    ///         <see cref="ActivityProjection" /> from the ViewModels namespace, so neither "PluginList" as a prefix nor
-    ///         the namespace can be forbidden.
+    ///         <c>PluginListConfirmation</c>, which is a value answered from one Plugin List snapshot, and run activity
+    ///         is an <see cref="ActivityProjection" /> from the ViewModels namespace, so neither "PluginList" as a prefix
+    ///         nor the namespace can be forbidden.
     ///     </para>
     /// </remarks>
     [Fact]
