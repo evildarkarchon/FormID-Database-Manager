@@ -52,30 +52,6 @@ internal sealed class RecordingProcessingRunControlSink : IProcessingRunControlS
         Record(new MessageAdded(list, message));
     }
 
-    /// <inheritdoc />
-    /// <remarks>
-    ///     Recorded as the same entry as <see cref="AddMessage" />, so a test matches a message by its list and text
-    ///     whichever member carried it (#147). The per-list members go away with #148.
-    /// </remarks>
-    public void AddWarningMessage(string message)
-    {
-        Record(new MessageAdded(MessageList.Warning, message));
-    }
-
-    /// <inheritdoc />
-    /// <remarks>Recorded as the same entry as <see cref="AddMessage" />; see <see cref="AddWarningMessage" />.</remarks>
-    public void AddErrorMessage(string message)
-    {
-        Record(new MessageAdded(MessageList.Error, message));
-    }
-
-    /// <inheritdoc />
-    /// <remarks>Recorded as the same entry as <see cref="AddMessage" />; see <see cref="AddWarningMessage" />.</remarks>
-    public void AddInformationMessage(string message)
-    {
-        Record(new MessageAdded(MessageList.Information, message));
-    }
-
     /// <summary>
     ///     Appends one entry and then runs the test's callback for it.
     /// </summary>

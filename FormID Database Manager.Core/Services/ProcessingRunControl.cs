@@ -300,11 +300,12 @@ internal sealed class ProcessingRunControl : IDisposable
     /// </summary>
     /// <param name="outcome">The outcome the executor returned.</param>
     /// <remarks>
-    ///     <see cref="ProcessingRunPresentation" /> is a pure renderer, so the order the run's terminal facts reach the
-    ///     user is decided here: warnings, then errors, then information, all under <see cref="_lock" /> (#60). Every
-    ///     one of them is a message, and nothing goes to the transient channel: how a run ended — its completion line,
-    ///     its plan, or its cancellation acknowledgement — is a terminal fact, and reporting it there would only have it
-    ///     erased as the run hands the channel back (#60, #94).
+    ///     <see cref="ProcessingRunPresentation" /> decides the order the run's terminal facts reach the user, and the
+    ///     Message List each one belongs to, and returns them as one ordered sequence. This module forwards that
+    ///     sequence as it stands, in one loop under <see cref="_lock" />, so no report from the executor's thread can
+    ///     interleave with it (#60). Every one of them is a message, and nothing goes to the transient channel: how a
+    ///     run ended — its completion line, its plan, or its cancellation acknowledgement — is a terminal fact, and
+    ///     reporting it there would only have it erased as the run hands the channel back (#60, #94).
     /// </remarks>
     private void ReportOutcome(ProcessingRunOutcome outcome)
     {
@@ -312,19 +313,9 @@ internal sealed class ProcessingRunControl : IDisposable
 
         lock (_lock)
         {
-            foreach (var message in rendered.WarningMessages)
+            foreach (var message in rendered.Messages)
             {
-                _sink.AddWarningMessage(message);
-            }
-
-            foreach (var message in rendered.ErrorMessages)
-            {
-                _sink.AddErrorMessage(message);
-            }
-
-            foreach (var message in rendered.InformationMessages)
-            {
-                _sink.AddInformationMessage(message);
+                ReportMessageLocked(message);
             }
         }
     }
@@ -433,7 +424,8 @@ internal sealed class ProcessingRunControl : IDisposable
 
 /// <summary>
 ///     Where Processing Run Control reports everything a Processing Run shows the user, already rendered and in the
-///     order it sequenced them.
+///     order it sequenced them; the messages of one outcome arrive in the order Processing Run Presentation returned
+///     them.
 /// </summary>
 /// <remarks>
 ///     Processing Run Control calls every member while holding its lock, so an implementation sees reports from the UI
@@ -477,22 +469,4 @@ internal interface IProcessingRunControlSink
     ///     it names no Message List itself (ADR-0014).
     /// </remarks>
     void AddMessage(MessageList list, string message);
-
-    /// <summary>
-    ///     Adds one rendered warning message.
-    /// </summary>
-    /// <param name="message">The rendered message.</param>
-    void AddWarningMessage(string message);
-
-    /// <summary>
-    ///     Adds one rendered error message.
-    /// </summary>
-    /// <param name="message">The rendered message.</param>
-    void AddErrorMessage(string message);
-
-    /// <summary>
-    ///     Adds one rendered information message.
-    /// </summary>
-    /// <param name="message">The rendered message.</param>
-    void AddInformationMessage(string message);
 }

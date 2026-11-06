@@ -165,8 +165,7 @@ public sealed class ProcessingRunControlTests
             [
                 new MessageListsCleared(),
                 StartingActivity(),
-                .. ProcessingRunPresentation.Render(_executor.Outcome).InformationMessages
-                    .Select(static message => new MessageAdded(MessageList.Information, message)),
+                .. ProcessingRunPresentation.Render(_executor.Outcome).Messages.Select(MessageAdded.From),
                 new RunActivityReported(ActivityProjection.None)
             ],
             _sink.Entries);
@@ -207,8 +206,7 @@ public sealed class ProcessingRunControlTests
             [
                 new MessageListsCleared(),
                 StartingActivity(),
-                .. rendered.InformationMessages.Select(static message =>
-                    new MessageAdded(MessageList.Information, message)),
+                .. rendered.Messages.Select(MessageAdded.From),
                 new RunActivityReported(ActivityProjection.None)
             ],
             _sink.Entries);
@@ -310,8 +308,7 @@ public sealed class ProcessingRunControlTests
 
         Assert.Equal(
             [
-                .. ProcessingRunPresentation.Render(new CancelledRunOutcome()).InformationMessages
-                    .Select(static message => new MessageAdded(MessageList.Information, message)),
+                .. ProcessingRunPresentation.Render(new CancelledRunOutcome()).Messages.Select(MessageAdded.From),
                 new RunActivityReported(ActivityProjection.None)
             ],
             _sink.Entries.Skip(1));
@@ -357,8 +354,7 @@ public sealed class ProcessingRunControlTests
         Assert.Contains(CancellationRequestedActivity(StartingValue()), _sink.Entries);
         Assert.Equal(
             [
-                .. ProcessingRunPresentation.Render(new CancelledRunOutcome()).InformationMessages
-                    .Select(static message => new MessageAdded(MessageList.Information, message)),
+                .. ProcessingRunPresentation.Render(new CancelledRunOutcome()).Messages.Select(MessageAdded.From),
                 new RunActivityReported(ActivityProjection.None)
             ],
             _sink.Entries.TakeLast(2));
@@ -392,8 +388,7 @@ public sealed class ProcessingRunControlTests
             [
                 new MessageListsCleared(),
                 CancellationRequestedActivity(StartingValue()),
-                .. ProcessingRunPresentation.Render(new CancelledRunOutcome()).InformationMessages
-                    .Select(static message => new MessageAdded(MessageList.Information, message)),
+                .. ProcessingRunPresentation.Render(new CancelledRunOutcome()).Messages.Select(MessageAdded.From),
                 new RunActivityReported(ActivityProjection.None)
             ],
             _sink.Entries);
@@ -442,32 +437,33 @@ public sealed class ProcessingRunControlTests
         Assert.Equal(0, ingestion.CallCount);
         Assert.Equal(
             [
-                .. ProcessingRunPresentation.Render(new CancelledRunOutcome()).InformationMessages
-                    .Select(static message => new MessageAdded(MessageList.Information, message)),
+                .. ProcessingRunPresentation.Render(new CancelledRunOutcome()).Messages.Select(MessageAdded.From),
                 new RunActivityReported(ActivityProjection.None)
             ],
             _sink.Entries.TakeLast(2));
     }
 
     /// <summary>
-    ///     Verifies that how a run ended reaches the sink as messages only, warnings then errors then the completion
-    ///     line as information, before the activity returns to none with no terminal activity in between.
+    ///     Verifies that how a run ended reaches the sink as messages only, every rendered message in the order and the
+    ///     Message List Presentation gave it, before the activity returns to none with no terminal activity in between.
     /// </summary>
     /// <remarks>
     ///     Issue #94. The completion line used to be reported as the run's terminal activity, which the hand-back
-    ///     erased in the same continuation, so a finished run left no trace of how it ended. The guard on the rendered
-    ///     lists keeps this case from passing vacuously should the outcome stop rendering any of them.
+    ///     erased in the same continuation, so a finished run left no trace of how it ended. Issue #148: the order
+    ///     across lists is Presentation's, pinned by <see cref="ProcessingRunPresentationTests" />, so the expected
+    ///     entries come from its output and name no list. The guard that the report reaches every Message List keeps
+    ///     this case from passing vacuously should the outcome stop rendering any of them.
     /// </remarks>
     [Fact]
-    public async Task PressAsync_OutcomeWithWarningsAndFailures_ReportsWarningsErrorsAndInformationThenNoActivity()
+    public async Task PressAsync_OutcomeWithWarningsAndFailures_ForwardsEveryRenderedMessageInOrderThenNoActivity()
     {
         _executor.Outcome = CreatePluginRunOutcome(
             new IngestedPlugin(PluginName, 1, new ProcessingWarning(1, ["Recoverable issue"])),
             new FailedPlugin("Bad.esp", new PluginReadDiagnostic(PluginReadPhase.OpeningPlugin, "Invalid header.")));
         var rendered = ProcessingRunPresentation.Render(_executor.Outcome);
-        Assert.NotEmpty(rendered.WarningMessages);
-        Assert.NotEmpty(rendered.ErrorMessages);
-        Assert.NotEmpty(rendered.InformationMessages);
+        Assert.Equal(
+            Enum.GetValues<MessageList>().Length,
+            rendered.Messages.Select(static message => message.List).Distinct().Count());
         using var sut = CreateSut();
 
         await sut.PressAsync(TextInputs());
@@ -476,10 +472,7 @@ public sealed class ProcessingRunControlTests
             [
                 new MessageListsCleared(),
                 StartingActivity(),
-                .. rendered.WarningMessages.Select(static message => new MessageAdded(MessageList.Warning, message)),
-                .. rendered.ErrorMessages.Select(static message => new MessageAdded(MessageList.Error, message)),
-                .. rendered.InformationMessages.Select(static message =>
-                    new MessageAdded(MessageList.Information, message)),
+                .. rendered.Messages.Select(MessageAdded.From),
                 new RunActivityReported(ActivityProjection.None)
             ],
             _sink.Entries);

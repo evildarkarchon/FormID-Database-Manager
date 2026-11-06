@@ -58,22 +58,4 @@ internal sealed class ViewModelProcessingRunControlSink(MainWindowViewModel view
     {
         viewModel.AddMessage(list, message);
     }
-
-    /// <inheritdoc />
-    public void AddWarningMessage(string message)
-    {
-        viewModel.AddMessage(MessageList.Warning, message);
-    }
-
-    /// <inheritdoc />
-    public void AddErrorMessage(string message)
-    {
-        viewModel.AddMessage(MessageList.Error, message);
-    }
-
-    /// <inheritdoc />
-    public void AddInformationMessage(string message)
-    {
-        viewModel.AddMessage(MessageList.Information, message);
-    }
 }

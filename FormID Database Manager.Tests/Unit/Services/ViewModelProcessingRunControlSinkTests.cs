@@ -2,11 +2,9 @@
 
 using System;
 using System.Collections.Specialized;
-using System.Linq;
 using FormID_Database_Manager.Services;
 using FormID_Database_Manager.TestUtilities.Mocks;
 using FormID_Database_Manager.ViewModels;
-using Mutagen.Bethesda;
 using Xunit;
 
 namespace FormID_Database_Manager.Tests.Unit.Services;
@@ -32,7 +30,6 @@ namespace FormID_Database_Manager.Tests.Unit.Services;
 /// </remarks>
 public sealed class ViewModelProcessingRunControlSinkTests
 {
-    private const string GameDirectory = @"C:\Games\Skyrim";
     private const string EditedDatabasePath = @"C:\Databases\edited.db";
     private const string DefaultedDatabasePath = @"C:\Defaults\FormID Database Manager\Databases\SkyrimSE.db";
 
@@ -74,9 +71,9 @@ public sealed class ViewModelProcessingRunControlSinkTests
     [Fact]
     public void ClearMessageLists_StaleMessagesInEveryList_ClearsEveryList()
     {
-        _sut.AddErrorMessage("Stale error");
-        _sut.AddWarningMessage("Stale warning");
-        _sut.AddInformationMessage("Earlier information");
+        _sut.AddMessage(MessageList.Error, "Stale error");
+        _sut.AddMessage(MessageList.Warning, "Stale warning");
+        _sut.AddMessage(MessageList.Information, "Earlier information");
 
         _sut.ClearMessageLists();
 
@@ -184,63 +181,6 @@ public sealed class ViewModelProcessingRunControlSinkTests
     }
 
     /// <summary>
-    ///     Verifies where each message part of a rendered run report lands when one run produced all three: the warning
-    ///     messages in the warning list, the failure messages in the error list, and the completion line in the
-    ///     information list.
-    /// </summary>
-    /// <remarks>
-    ///     Each part is handed to the sink member Processing Run Control uses for it, as it does for a finished run.
-    ///     What is asserted is which list each part reached; the order they are reported in is pinned by
-    ///     <see cref="ProcessingRunControlTests" />. The completion line reaching the information list is issue #94: it
-    ///     is how the run ended, so it stays readable after the run hands the progress channel back.
-    /// </remarks>
-    [Fact]
-    public void AddWarningErrorAndInformationMessage_RenderedRunReportWithEveryPart_RouteEachPartToItsOwnList()
-    {
-        var rendered = ProcessingRunPresentation.Render(CreatePluginRunOutcome(
-            new IngestedPlugin("User.esp", 1, new ProcessingWarning(1, ["Recoverable issue"])),
-            new FailedPlugin(
-                "Bad.esp",
-                new PluginReadDiagnostic(PluginReadPhase.OpeningPlugin, "Invalid plugin header."))));
-        Assert.NotEmpty(rendered.WarningMessages);
-        Assert.NotEmpty(rendered.ErrorMessages);
-        Assert.NotEmpty(rendered.InformationMessages);
-
-        ReportMessages(rendered);
-
-        Assert.Equal(rendered.WarningMessages.ToArray(), _viewModel.WarningMessages);
-        Assert.Equal(rendered.ErrorMessages.ToArray(), _viewModel.ErrorMessages);
-        Assert.Equal(rendered.InformationMessages.ToArray(), _viewModel.InformationMessages);
-    }
-
-    /// <summary>
-    ///     Verifies that a dry run's rendered plan lands in the information list the user reads, and nowhere else.
-    /// </summary>
-    [Fact]
-    public void AddInformationMessage_RenderedDryRunPlan_AddsThePlanToTheInformationList()
-    {
-        var rendered = ProcessingRunPresentation.Render(new PlannedRunOutcome(new PluginRunPlan(
-            new PluginIngestionPlan(
-                new PluginProcessingRunRequest(
-                    PluginListSource.Create(GameRelease.SkyrimSE, GameDirectory),
-                    string.Empty,
-                    ["User.esp", "Absent.esp"],
-                    UpdateMode.Append,
-                    dryRun: true),
-                [
-                    new PlannedPluginIngestion("User.esp"),
-                    new PlannedPluginSkip("Absent.esp", PlannedSkipReason.NotPresentInLoadOrder)
-                ]))));
-        Assert.NotEmpty(rendered.InformationMessages);
-
-        ReportMessages(rendered);
-
-        Assert.Equal(rendered.InformationMessages.ToArray(), _viewModel.InformationMessages);
-        Assert.Empty(_viewModel.WarningMessages);
-        Assert.Empty(_viewModel.ErrorMessages);
-    }
-
-    /// <summary>
     ///     The name of every Message List, so the pass-through test covers a list the day it is added.
     /// </summary>
     /// <remarks>
@@ -287,28 +227,6 @@ public sealed class ViewModelProcessingRunControlSinkTests
     }
 
     /// <summary>
-    ///     Hands every message of a rendered run report to the sink member for its list.
-    /// </summary>
-    /// <param name="rendered">The rendered report.</param>
-    private void ReportMessages(RenderedRunReport rendered)
-    {
-        foreach (var message in rendered.WarningMessages)
-        {
-            _sut.AddWarningMessage(message);
-        }
-
-        foreach (var message in rendered.ErrorMessages)
-        {
-            _sut.AddErrorMessage(message);
-        }
-
-        foreach (var message in rendered.InformationMessages)
-        {
-            _sut.AddInformationMessage(message);
-        }
-    }
-
-    /// <summary>
     ///     The active starting activity Processing Run Control reports for an admitted press, built from Processing Run
     ///     Presentation's starting status so no wording is restated here.
     /// </summary>
@@ -316,25 +234,5 @@ public sealed class ViewModelProcessingRunControlSinkTests
     {
         var starting = ProcessingRunPresentation.Render(new ProcessingRunStarting());
         return new ActivityProjection(true, starting.Status, starting.Value ?? 0);
-    }
-
-    /// <summary>
-    ///     Builds a selected-Plugin outcome whose report agrees with the outcomes it is given.
-    /// </summary>
-    /// <param name="outcomes">One outcome per selected Plugin, in selection order.</param>
-    /// <returns>A completed selected-Plugin outcome carrying that report.</returns>
-    /// <remarks>
-    ///     A report validates its outcomes against the selection they came from, so the request is rebuilt from the
-    ///     outcomes' Plugin names.
-    /// </remarks>
-    private static PluginRunOutcome CreatePluginRunOutcome(params PluginIngestionOutcome[] outcomes)
-    {
-        var request = new PluginProcessingRunRequest(
-            PluginListSource.Create(GameRelease.SkyrimSE, GameDirectory),
-            "ingestion.db",
-            outcomes.Select(static outcome => outcome.PluginName),
-            UpdateMode.Append);
-
-        return new PluginRunOutcome(new PluginIngestionReport(request, outcomes));
     }
 }
