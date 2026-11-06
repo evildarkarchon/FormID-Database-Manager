@@ -23,7 +23,7 @@ public sealed class GameContextPresentationTests
     [Fact]
     public void Render_GameDirectoryPickerFailed_ReturnsThePickerErrorAsAnError()
     {
-        var rendered = GameContextPresentation.Render(new GameDirectoryPickerFailed("picker unavailable"));
+        RenderedMessage rendered = GameContextPresentation.Render(new GameDirectoryPickerFailed("picker unavailable"));
 
         Assert.Equal(MessageList.Error, rendered.List);
         Assert.Equal("Error selecting game directory: picker unavailable", rendered.Text);
@@ -36,7 +36,7 @@ public sealed class GameContextPresentationTests
     [Fact]
     public void Render_NoInstalledLocationsFound_ReturnsTheBrowseGuidanceAsInformation()
     {
-        var rendered = GameContextPresentation.Render(new NoInstalledLocationsFound(GameRelease.Fallout4));
+        RenderedMessage rendered = GameContextPresentation.Render(new NoInstalledLocationsFound(GameRelease.Fallout4));
 
         Assert.Equal(MessageList.Information, rendered.List);
         Assert.Equal("No installed locations found for Fallout4. Use Browse to select a directory.", rendered.Text);
@@ -48,7 +48,7 @@ public sealed class GameContextPresentationTests
     [Fact]
     public void Render_DirectoryRefused_ReturnsTheUnreadableDirectoryErrorWithTheFailureMessage()
     {
-        var rendered = GameContextPresentation.Render(new DirectoryRefused("drive not ready"));
+        RenderedMessage rendered = GameContextPresentation.Render(new DirectoryRefused("drive not ready"));
 
         Assert.Equal(MessageList.Error, rendered.List);
         Assert.Equal("Could not read the selected directory: drive not ready", rendered.Text);
@@ -60,7 +60,7 @@ public sealed class GameContextPresentationTests
     [Fact]
     public void Render_NoGameDetected_ReturnsTheDropdownGuidanceAsAnError()
     {
-        var rendered = GameContextPresentation.Render(new NoGameDetected());
+        RenderedMessage rendered = GameContextPresentation.Render(new NoGameDetected());
 
         Assert.Equal(MessageList.Error, rendered.List);
         Assert.Equal(

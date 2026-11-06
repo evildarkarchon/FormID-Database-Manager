@@ -21,26 +21,29 @@ internal static class GameContextPresentation
     ///     Renders one Game Context notice into the message its caller should show and the list it belongs to.
     /// </summary>
     /// <param name="notice">What Game Context reported.</param>
-    /// <returns>The message list the notice belongs to, and its text.</returns>
+    /// <returns>
+    ///     The message list the notice belongs to, and its text. Game Context never warns, so the list is only ever
+    ///     <see cref="MessageList.Error" /> or <see cref="MessageList.Information" />.
+    /// </returns>
     /// <exception cref="ArgumentNullException"><paramref name="notice" /> is <see langword="null" />.</exception>
     /// <exception cref="ArgumentOutOfRangeException">The notice is not one this module knows how to render.</exception>
-    internal static RenderedGameContextNotice Render(GameContextNotice notice)
+    internal static RenderedMessage Render(GameContextNotice notice)
     {
         ArgumentNullException.ThrowIfNull(notice);
 
         return notice switch
         {
-            GameDirectoryPickerFailed pickerFailed => new RenderedGameContextNotice(
+            GameDirectoryPickerFailed pickerFailed => new RenderedMessage(
                 MessageList.Error,
                 $"Error selecting game directory: {pickerFailed.ErrorMessage}"),
             // No installed location is not a failure: the user can still Browse, so this is guidance, not an error.
-            NoInstalledLocationsFound noLocations => new RenderedGameContextNotice(
+            NoInstalledLocationsFound noLocations => new RenderedMessage(
                 MessageList.Information,
                 $"No installed locations found for {noLocations.GameRelease}. Use Browse to select a directory."),
-            DirectoryRefused refused => new RenderedGameContextNotice(
+            DirectoryRefused refused => new RenderedMessage(
                 MessageList.Error,
                 $"Could not read the selected directory: {refused.FailureMessage}"),
-            NoGameDetected => new RenderedGameContextNotice(
+            NoGameDetected => new RenderedMessage(
                 MessageList.Error,
                 "Could not detect game from directory. Please select a game from the dropdown."),
             _ => throw new ArgumentOutOfRangeException(
@@ -50,13 +53,3 @@ internal static class GameContextPresentation
         };
     }
 }
-
-/// <summary>
-///     One Game Context notice, rendered but not yet written anywhere.
-/// </summary>
-/// <param name="List">
-///     The Message List the notice belongs to. Game Context never warns, so this is only ever
-///     <see cref="MessageList.Error" /> or <see cref="MessageList.Information" />.
-/// </param>
-/// <param name="Text">The sentence the user reads.</param>
-internal readonly record struct RenderedGameContextNotice(MessageList List, string Text);

@@ -112,7 +112,7 @@ public sealed class ViewModelGameContextSinkTests
     /// <remarks>The expected text and list come from Presentation, so no sentence is restated here.</remarks>
     private void AssertReportedNoticeReachesOnlyItsList(GameContextNotice notice)
     {
-        var rendered = GameContextPresentation.Render(notice);
+        RenderedMessage rendered = GameContextPresentation.Render(notice);
 
         _sut.ReportNotice(notice);
 
