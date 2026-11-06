@@ -18,8 +18,9 @@ namespace FormID_Database_Manager.Tests.Unit.Services;
 ///         Issue #120, under parent #118. The adapter is called directly over a real ViewModel with
 ///         <see cref="SynchronousThreadDispatcher" />, so no admission inputs, Plugin List or executor are involved.
 ///         When and in what order Processing Run Control reports is pinned by <see cref="ProcessingRunControlTests" />,
-///         and run wording by <see cref="ProcessingRunPresentationTests" />; expected text here comes from
-///         Presentation's output.
+///         and run wording by <see cref="ProcessingRunPresentationTests" />. Where a test needs real run wording, its
+///         expected text comes from Presentation's output; the add-message pass-through tests use arbitrary text,
+///         because the adapter writes whatever it is handed.
 ///     </para>
 ///     <para>
 ///         The assertions read ViewModel state rather than which ViewModel members were called, and messages are

@@ -463,10 +463,10 @@ internal interface IProcessingRunControlSink
     /// </summary>
     /// <param name="list">The Message List the message belongs to, chosen by Processing Run Presentation.</param>
     /// <param name="message">The rendered text the user reads.</param>
-    /// <exception cref="ArgumentOutOfRangeException"><paramref name="list" /> is not a defined Message List.</exception>
     /// <remarks>
     ///     Processing Run Control forwards a rendered message's list as data rather than choosing a member per list, so
-    ///     it names no Message List itself (ADR-0014).
+    ///     it names no Message List itself (ADR-0014). Rejecting a list that is not defined is the implementation's
+    ///     concern, as it is for the Game Context sink; the sink adapter documents its own failure mode.
     /// </remarks>
     void AddMessage(MessageList list, string message);
 }

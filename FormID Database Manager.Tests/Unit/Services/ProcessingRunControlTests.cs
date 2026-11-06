@@ -451,8 +451,9 @@ public sealed class ProcessingRunControlTests
     ///     Issue #94. The completion line used to be reported as the run's terminal activity, which the hand-back
     ///     erased in the same continuation, so a finished run left no trace of how it ended. Issue #148: the order
     ///     across lists is Presentation's, pinned by <see cref="ProcessingRunPresentationTests" />, so the expected
-    ///     entries come from its output and name no list. The guard that the report reaches every Message List keeps
-    ///     this case from passing vacuously should the outcome stop rendering any of them.
+    ///     entries come from its output and name no list. The guard that the report spans more than one Message List
+    ///     keeps this case from passing vacuously should the outcome stop rendering across lists; it counts lists
+    ///     rather than comparing against every defined one, so adding a Message List does not break it.
     /// </remarks>
     [Fact]
     public async Task PressAsync_OutcomeWithWarningsAndFailures_ForwardsEveryRenderedMessageInOrderThenNoActivity()
@@ -461,9 +462,9 @@ public sealed class ProcessingRunControlTests
             new IngestedPlugin(PluginName, 1, new ProcessingWarning(1, ["Recoverable issue"])),
             new FailedPlugin("Bad.esp", new PluginReadDiagnostic(PluginReadPhase.OpeningPlugin, "Invalid header.")));
         var rendered = ProcessingRunPresentation.Render(_executor.Outcome);
-        Assert.Equal(
-            Enum.GetValues<MessageList>().Length,
-            rendered.Messages.Select(static message => message.List).Distinct().Count());
+        Assert.True(
+            rendered.Messages.Select(static message => message.List).Distinct().Count() > 1,
+            "The outcome must render to more than one Message List for the forwarded order to be meaningful.");
         using var sut = CreateSut();
 
         await sut.PressAsync(TextInputs());
