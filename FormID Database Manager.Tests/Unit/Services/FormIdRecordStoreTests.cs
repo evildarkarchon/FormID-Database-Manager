@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Data;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -123,6 +124,8 @@ public sealed class FormIdRecordStoreTests : IDisposable
     [Fact]
     public async Task WritePluginAsync_ReplaceModeAcrossSeveralBatches_ReplacesOldRowsOnceAndKeepsEveryRecord()
     {
+        // Must stay above twice the Store's private 1000-record Plugin batch size so the write spans several flushes;
+        // raise it if that batch size grows.
         const int totalRecords = 2500;
         await InsertTestRecordAsync("Plugin.esp", "OLD001", "OldEntry");
         await InsertTestRecordAsync("Other.esp", "OTHER1", "OtherEntry");
@@ -955,7 +958,7 @@ public sealed class FormIdRecordStoreTests : IDisposable
                 TestContext.Current.CancellationToken));
 
         Assert.Same(sentinel, thrown);
-        Assert.Equal(System.Data.ConnectionState.Closed, connection.State);
+        Assert.Equal(ConnectionState.Closed, connection.State);
     }
 
     private Task<FormIdRecordStore> OpenStoreAsync()

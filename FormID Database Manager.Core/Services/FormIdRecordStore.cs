@@ -742,6 +742,11 @@ public sealed class FormIdRecordStore : IFormIdRecordStoreSession
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
+    /// <summary>
+    ///     Writes the buffered FormID text rows to the staging table in one guarded transaction, then clears the buffer.
+    ///     The flush is not Plugin-scoped: it only stages rows and never deletes a Plugin's rows, so it uses the guarded
+    ///     transaction alone. An empty buffer opens no transaction.
+    /// </summary>
     private async Task FlushStagingBatchAsync(CancellationToken cancellationToken)
     {
         if (_stagingBatch.Count == 0)
