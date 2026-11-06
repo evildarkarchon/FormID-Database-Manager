@@ -116,6 +116,41 @@ public sealed class FormIdRecordStoreTests : IDisposable
         Assert.Contains(records, record => record is { plugin: "Plugin.esp", formid: "000001", entry: "OldEntry" });
     }
 
+    /// <summary>
+    ///     Verifies that an Update Mode Plugin write spanning several 1000-record flushes replaces the Plugin's old rows
+    ///     once, before its first record, and keeps every newly written record from every flush.
+    /// </summary>
+    [Fact]
+    public async Task WritePluginAsync_ReplaceModeAcrossSeveralBatches_ReplacesOldRowsOnceAndKeepsEveryRecord()
+    {
+        const int totalRecords = 2500;
+        await InsertTestRecordAsync("Plugin.esp", "OLD001", "OldEntry");
+        await InsertTestRecordAsync("Other.esp", "OTHER1", "OtherEntry");
+        await using var store = await OpenStoreAsync();
+        var written = Enumerable.Range(0, totalRecords)
+            .Select(index => new FormIdRecord($"{index:X6}", $"Entry{index}"))
+            .ToList();
+
+        var result = await store.WritePluginAsync(
+            "PLUGIN.ESP",
+            written,
+            UpdateMode.ReplacePluginRecords,
+            TestContext.Current.CancellationToken);
+
+        var pluginRecords = await store.ReadRecordsAsync(
+            new FormIdRecordQuery { PluginName = "Plugin.esp" },
+            TestContext.Current.CancellationToken);
+        var otherRecords = await store.ReadRecordsAsync(
+            new FormIdRecordQuery { PluginName = "Other.esp" },
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(totalRecords, result.RecordCount);
+        Assert.Equal(
+            written.Select(record => new FormIdStoredRecord("PLUGIN.ESP", record.FormId, record.Entry)),
+            pluginRecords);
+        Assert.Equal([new FormIdStoredRecord("Other.esp", "OTHER1", "OtherEntry")], otherRecords);
+    }
+
     [Fact]
     public async Task WritePluginAsync_ReplaceInsertFails_RollsBackOldRows()
     {

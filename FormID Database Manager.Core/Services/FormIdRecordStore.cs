@@ -307,6 +307,15 @@ public sealed class FormIdRecordStore : IFormIdRecordStoreSession
         return plugins;
     }
 
+    /// <summary>
+    ///     Writes one Plugin's lazy FormID records in a single Plugin-scoped transaction, enumerating
+    ///     <paramref name="records" /> exactly once and flushing every <see cref="PluginBatchSize" /> records.
+    /// </summary>
+    /// <param name="pluginName">The Plugin name stored with every record.</param>
+    /// <param name="records">The lazy record stream to write.</param>
+    /// <param name="replaceExistingPluginRows">Whether the Plugin's existing rows are replaced (Update Mode).</param>
+    /// <param name="cancellationToken">Token to monitor for cancellation.</param>
+    /// <returns>The number of records written; zero leaves the Plugin's existing rows intact.</returns>
     private async Task<FormIdPluginWriteResult> WritePluginRecordsCoreAsync(
         string pluginName,
         IEnumerable<FormIdRecord> records,
@@ -316,9 +325,10 @@ public sealed class FormIdRecordStore : IFormIdRecordStoreSession
         ArgumentException.ThrowIfNullOrWhiteSpace(pluginName);
         ArgumentNullException.ThrowIfNull(records);
 
-        var recordCount = await RunGuardedTransactionAsync(
-            _connection,
-            async transaction =>
+        var recordCount = await RunPluginScopedWriteAsync(
+            pluginName,
+            replaceExistingPluginRows,
+            async (transaction, beforeFirstRowAsync) =>
             {
                 await using var insertCommand = CreateTargetInsertCommand(transaction);
                 var batch = new List<FormIdRecord>(PluginBatchSize);
@@ -328,9 +338,11 @@ public sealed class FormIdRecordStore : IFormIdRecordStoreSession
                 {
                     cancellationToken.ThrowIfCancellationRequested();
 
-                    if (insertedCount == 0 && replaceExistingPluginRows)
+                    // Signalled only once a record has actually arrived, because the stream is lazy: a Plugin that
+                    // yields no records never reaches this line, so its existing rows survive.
+                    if (insertedCount == 0)
                     {
-                        await DeletePluginRowsAsync(pluginName, transaction, cancellationToken).ConfigureAwait(false);
+                        await beforeFirstRowAsync().ConfigureAwait(false);
                     }
 
                     insertedCount++;
@@ -602,6 +614,55 @@ public sealed class FormIdRecordStore : IFormIdRecordStoreSession
         }
     }
 
+    /// <summary>
+    ///     Runs one write of a single Plugin's rows inside a guarded transaction, and is the only place the Store applies
+    ///     the Update Mode replace rule: a Plugin's existing rows are deleted, inside its transaction, only once the
+    ///     write contributes a row.
+    /// </summary>
+    /// <param name="pluginName">The Plugin name or staged Plugin key whose rows are written.</param>
+    /// <param name="replaceExistingPluginRows">Whether the Plugin's existing rows are replaced (Update Mode).</param>
+    /// <param name="insertRows">
+    ///     Inserts the Plugin's rows with the transaction it is handed and returns how many it inserted. It must await
+    ///     the "before the first row" callback it is handed immediately before inserting its first row, and never if it
+    ///     inserts none.
+    /// </param>
+    /// <param name="cancellationToken">Token honoured by the transaction and by the replace delete.</param>
+    /// <returns>The row count <paramref name="insertRows" /> returned, once the transaction has committed.</returns>
+    /// <remarks>
+    ///     The callback deletes the Plugin's existing rows, matched case-insensitively, on its first call when replacing.
+    ///     It does nothing when appending or on any later call, so calling it again can never delete rows this write
+    ///     already inserted. Failures propagate unchanged, as <see cref="RunGuardedTransactionAsync{TResult}" /> states.
+    /// </remarks>
+    private Task<int> RunPluginScopedWriteAsync(
+        string pluginName,
+        bool replaceExistingPluginRows,
+        Func<SqliteTransaction, Func<Task>, Task<int>> insertRows,
+        CancellationToken cancellationToken)
+    {
+        return RunGuardedTransactionAsync(
+            _connection,
+            transaction =>
+            {
+                var firstRowSignalled = false;
+
+                Task BeforeFirstRowAsync()
+                {
+                    if (firstRowSignalled)
+                    {
+                        return Task.CompletedTask;
+                    }
+
+                    firstRowSignalled = true;
+                    return replaceExistingPluginRows
+                        ? DeletePluginRowsAsync(pluginName, transaction, cancellationToken)
+                        : Task.CompletedTask;
+                }
+
+                return insertRows(transaction, BeforeFirstRowAsync);
+            },
+            cancellationToken);
+    }
+
     private async Task CreateStagingTableAsync(CancellationToken cancellationToken)
     {
         await using var command = _connection.CreateCommand();
@@ -749,19 +810,26 @@ public sealed class FormIdRecordStore : IFormIdRecordStoreSession
         return pluginKeys;
     }
 
+    /// <summary>
+    ///     Commits one staged Plugin key's rows into the target table, in staging order, in a single Plugin-scoped
+    ///     transaction.
+    /// </summary>
+    /// <param name="pluginKey">A staged Plugin key, matched case-insensitively against the staged rows.</param>
+    /// <param name="replaceExistingPluginRows">Whether the Plugin's existing rows are replaced (Update Mode).</param>
+    /// <param name="cancellationToken">Token to monitor for cancellation.</param>
     private async Task CommitStagedPluginAsync(
         string pluginKey,
         bool replaceExistingPluginRows,
         CancellationToken cancellationToken)
     {
-        await RunGuardedTransactionAsync(
-            _connection,
-            async transaction =>
+        await RunPluginScopedWriteAsync(
+            pluginKey,
+            replaceExistingPluginRows,
+            async (transaction, beforeFirstRowAsync) =>
             {
-                if (replaceExistingPluginRows)
-                {
-                    await DeletePluginRowsAsync(pluginKey, transaction, cancellationToken).ConfigureAwait(false);
-                }
+                // Signalled unconditionally because a staged key always contributes at least one row: the key was
+                // read from the staged rows themselves, so this can never replace a Plugin with nothing.
+                await beforeFirstRowAsync().ConfigureAwait(false);
 
                 await using var insertCommand = _connection.CreateCommand();
                 insertCommand.Transaction = transaction;
